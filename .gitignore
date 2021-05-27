@@ -1,0 +1,6 @@
+result/*
+data/*
+tags
+.idea
+__pycache__/
+runs/*
