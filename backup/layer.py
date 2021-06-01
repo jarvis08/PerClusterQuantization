@@ -120,8 +120,8 @@ class FakeQConv2d(nn.Conv2d):
         n_channel = self.weight.shape[0]
         self.bias = torch.nn.Parameter(beta)
         for c in range(n_channel):
-            self.weight.data[c] = self.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-            self.bias.data[c] = self.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
+            self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
+            self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
 
 
 class FakeQLinear(nn.Linear):

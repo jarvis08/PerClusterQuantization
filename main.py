@@ -35,7 +35,7 @@ parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to u
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--pre_path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--mode', default='eval', type=str, help="pre or tune or eval")
+parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--fused', default=False, type=bool, help="Path of Model, fused or not")
 parser.add_argument('--darknet_data', default=False, type=bool, help="Evaluate model with dataset preprocessed with darknet")
 
@@ -52,7 +52,7 @@ mode = args.mode
 if mode == 'fine':
     max_epoch = 1
 fused = args.fused
-use_darknet_preprocessed_dataset = args.darknet_data
+use_darknet = args.darknet_data
 print(vars(args))
 
 n_class = 0
@@ -131,7 +131,7 @@ def validate(test_loader, model, criterion, is_darknet):
                     prec = accuracy(output, target)[0]
                     losses.update(loss.item(), input.size(0))
                     top1.update(prec.item(), input.size(0))
-                    # exit()
+
                     t.set_postfix(loss=losses.avg, acc=top1.avg)
     return top1.avg
 
@@ -187,7 +187,6 @@ if __name__=='__main__':
             model = create_fused_resnet18(model, bit=target_bit, num_classes=n_class)
             checkpoint = torch.load(pretrained_model)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
-            model = fuse_resnet18(model)
         else:
             model = resnet18(num_classes=n_class)
             checkpoint = torch.load(pretrained_model)
@@ -197,14 +196,14 @@ if __name__=='__main__':
         checkpoint = torch.load(pretrained_model)
         model.load_state_dict(checkpoint['state_dict'], strict=False)
 
-        fused_model = create_fused_resnet18(model, bit=target_bit, num_classes=n_class)
+        fused_model = create_fused_resnet18(bit=target_bit, num_classes=n_class)
         model = set_fused_resnet18_params(fused_model, model)
     else:
         model = resnet18(num_classes=n_class)
     # elif arch == 'alexnet':
     #     model = alexnet(dataset=dataset, pretrained=False, num_classes=n_class)
 
-    summary(model, (3, 32, 32))
+    # summary(model, (3, 32, 32))
 
     model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
@@ -243,28 +242,29 @@ if __name__=='__main__':
         ]))
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
 
-    if use_darknet_preprocessed_dataset:
+    if use_darknet:
         test_loader = load_preprocessed_cifar10_from_darknet()
 
-
     if mode == "eval":
-        validate(test_loader, model, criterion, use_darknet_preprocessed_dataset)
-        exit()
+        validate(test_loader, model, criterion, use_darknet)
+    else:
+        for e in range(1, max_epoch + 1):
+            train_epoch(train_loader, model, criterion, optimizer, e)
+            opt_scheduler.step()
 
-    for e in range(1, max_epoch + 1):
-        train_epoch(train_loader, model, criterion, optimizer, e)
-        opt_scheduler.step()
+            prec = validate(test_loader, model, criterion, use_darknet)
 
-        prec = validate(test_loader, model, criterion, use_darknet_preprocessed_dataset)
-
-        is_best = prec > best_prec
-        best_prec = max(prec, best_prec)
-        print('best acc: {:1f}'.format(best_prec))
-        save_checkpoint({
-            'epoch': e,
-            'state_dict': model.state_dict(),
-            'best_prec': best_prec,
-            'optimizer': optimizer.state_dict(),
-        }, is_best, save_dir, mode)
-
-    #save_fused_network_in_darknet_form(model, arch)
+            is_best = prec > best_prec
+            best_prec = max(prec, best_prec)
+            print('best acc: {:1f}'.format(best_prec))
+            save_checkpoint({
+                'epoch': e,
+                'state_dict': model.state_dict(),
+                'best_prec': best_prec,
+                'optimizer': optimizer.state_dict(),
+            }, is_best, save_dir, mode)
+        if mode == 'fine':
+            model = fuse_resnet18(model)
+            print("Model fused, and validate to verify.")
+            validate(test_loader, model, criterion, use_darknet)
+            save_fused_network_in_darknet_form(model, arch)
