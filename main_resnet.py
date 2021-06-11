@@ -18,12 +18,12 @@ from torchsummary import summary
 
 import torchvision
 import torchvision.transforms as transforms
-from models import *
 import json
 
 from models import *
+from quantization.models import *
 from utils import *
-from models.quantization import *
+
 
 parser = argparse.ArgumentParser(description='PyTorch Cifar10 Training')
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to fine-tune')
@@ -49,8 +49,6 @@ initial_lr = args.lr
 weight_decay = args.weight_decay
 pretrained_model = args.pre_path
 mode = args.mode
-if mode == 'fine':
-    max_epoch = 1
 fused = args.fused
 use_darknet = args.darknet_data
 print(vars(args))

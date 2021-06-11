@@ -2,68 +2,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
-
-
-def calc_qprams(_min, _max, q_max):
-    s = (_max - _min) / q_max
-    z = - round(_min / s)
-    return s, np.clip(z, 0, q_max)
-
-
-class SkipBN(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x
-
-
-class FakeLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, bit=32, smooth=0.995):
-        super(FakeLinear, self).__init__(in_features, out_features, bias)
-        self.layer_type = 'FakeLinear'
-        self.bit = bit
-        self.q_max = 2 ** self.bit - 1
-        self.ema_init = False
-        self.act_range = np.zeros(2, dtype=np.float32)
-        self.smooth = smooth
-        print("Set Fake Quantizing Linear layer")
-
-    def forward(self, x):
-        if self.bit == 32 or not self.training:
-            return F.linear(x, self.weight, self.bias)
-
-        self.fake_quantize_weight()
-        out = F.linear(x, self.weight, self.bias)
-        if self.ema_init:
-            self.ema(out)
-            out = self.fake_quantize_activation(out)
-        else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
-            self.ema_init = True
-        return out
-
-    def ema(self, x):
-        _min = torch.min(x).item()
-        _max = torch.max(x).item()
-        self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
-        self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-
-    def get_weight_qparams(self):
-        return calc_qprams(torch.min(self.weight).item(), torch.max(self.weight).item(), self.q_max)
-
-    def fake_quantize_weight(self):
-        s, z = self.get_weight_qparams()
-        self.weight.data = torch.round(self.weight.div(s).add(z)).sub(z).mul(s)
-
-    def get_activation_qparams(self):
-        return calc_qprams(self.act_range[0], self.act_range[1], self.q_max)
-
-    def fake_quantize_activation(self, x):
-        s, z = self.get_activation_qparams()
-        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
-        return x
+from ..quantization_utils import *
 
 
 class FakeConv2d(nn.Conv2d):
@@ -90,24 +29,25 @@ class FusedConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bit=32, smooth=0.995, fuse_relu=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, bn=False, relu=True, smooth=0.995, bit=32):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2D'
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.ema_init = False
+        # self.ema_init = 5000
         self.smooth = smooth
         self.act_range = np.zeros(2, dtype=np.float32)
         self.fused = False
+        self.out_channels = out_channels
 
-        self.conv = FakeConv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bit=bit)
-        self.bn = nn.BatchNorm2d(out_channels)
+        self.conv = FakeConv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias, bit=bit)
+        self.bn = None
+        if bn:
+            self.bn = nn.BatchNorm2d(out_channels)
         self.relu = None
-        if fuse_relu:
-            print("Set [Conv + BatchNorm + ReLU] Fused layer")
+        if relu:
             self.relu = nn.ReLU(inplace=True)
-        else:
-            print("Set [Conv + BatchNorm] Fused layer")
 
     def forward(self, x):
         out = self.conv(x)
@@ -117,7 +57,8 @@ class FusedConv2d(nn.Module):
                 out = self.relu(out)
             return out
 
-        out = self.bn(out)
+        if self.bn:
+            out = self.bn(out)
         if self.relu:
             out = self.relu(out)
 
@@ -125,15 +66,16 @@ class FusedConv2d(nn.Module):
             # General Validation
             return out
 
-        if self.relu:
-            # QAT
-            if self.ema_init:
-                self.ema(out)
-                out = self.fake_quantize_activation(out)
-            else:
-                self.act_range[0] = torch.min(out).item()
-                self.act_range[1] = torch.max(out).item()
-                self.ema_init = True
+        # self.ema(out)
+        # if not self.ema_init:
+        if self.ema_init:
+            self.ema(out)
+            out = self.fake_quantize_activation(out)
+        else:
+            self.act_range[0] = torch.min(out).item()
+            self.act_range[1] = torch.max(out).item()
+            self.ema_init = True
+            # self.ema_init -= 1
         return out
 
     def ema(self, x):
@@ -153,7 +95,10 @@ class FusedConv2d(nn.Module):
     def copy_from_pretrained(self, conv, bn):
         # Copy weights from pretrained FP model
         self.conv.weight.data = torch.nn.Parameter(conv.weight.data)
-        self.bn = bn
+        if bn:
+            self.bn = bn
+        else:
+            self.conv.bias.data = torch.nn.Parameter(conv.bias.data)
 
     def fuse_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
