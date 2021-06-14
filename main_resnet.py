@@ -41,12 +41,6 @@ args = parser.parse_args()
 max_epoch = args.epoch
 batch_size = args.batch
 dataset = args.dataset
-arch = 'resnet18'
-# arch = None
-# if dataset == 'imagenet':
-#     arch = 'resnet18'
-# else:
-#     arch = 'resnet20'
 target_bit = args.bit
 initial_lr = args.lr
 weight_decay = args.weight_decay
@@ -56,11 +50,11 @@ fused = args.fused
 use_darknet = args.darknet_data
 print(vars(args))
 
-n_class = 0
-if dataset == 'cifar10' or dataset == 'svhn':
-    n_class = 10
-elif dataset == 'imagenet':
-    n_class = 1000
+arch = None
+if dataset == 'imagenet':
+    arch = 'resnet18'
+else:
+    arch = 'resnet20'
 
 
 class AverageMeter(object):
@@ -187,24 +181,24 @@ if __name__=='__main__':
     if dataset == 'ImageNet':
         if mode == 'eval':
             if fused:
-                model = create_fused_resnet18(model, bit=target_bit, num_classes=n_class)
+                model = create_fused_resnet18(bit=target_bit)
                 checkpoint = torch.load(pretrained_model)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
             else:
-                model = resnet18(num_classes=n_class)
+                model = resnet18()
                 checkpoint = torch.load(pretrained_model)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
         elif mode == 'fine':
-            model = resnet18(num_classes=n_class)
+            model = resnet18()
             checkpoint = torch.load(pretrained_model)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
 
-            fused_model = create_fused_resnet18(bit=target_bit, num_classes=n_class)
+            fused_model = create_fused_resnet18(bit=target_bit)
             model = set_fused_resnet18_params(fused_model, model)
         else:
-            model = resnet18(num_classes=n_class)
+            model = resnet18()
 
-    elif dataset == 'cifar10':
+    else:
         if mode == 'eval':
             if fused:
                 model = create_fused_resnet20(bit=target_bit)
@@ -227,7 +221,6 @@ if __name__=='__main__':
     summary(model, (3, 32, 32))
     for m in model.children():
         print(m)
-    # exit()
 
     model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
@@ -237,35 +230,42 @@ if __name__=='__main__':
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     cudnn.benchmark = True
 
-    print('Load CIFAR-10 dataset..')
-    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    normalize = None
+    if dataset == 'imagenet':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    else:
+        normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+
     train_loader = None
-    if mode != 'eval':
-        train_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    test_loader = None
+    if dataset == 'imagenet':
+        pass
+    else:
+        if mode != 'eval':
+            train_dataset = torchvision.datasets.CIFAR10(
+                root='./data',
+                train=True,
+                download=True,
+                transform=transforms.Compose([
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    normalize,
+                ]))
+            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    test_dataset = torchvision.datasets.CIFAR10(
-        root='./data',
-        train=False,
-        download=True,
-        transform=transforms.Compose([
-            transforms.ToTensor(),
-            normalize,
-        ]))
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
-
-    if use_darknet:
-        test_loader = load_preprocessed_cifar10_from_darknet()
+        if use_darknet:
+            test_loader = load_preprocessed_cifar10_from_darknet()
+        else:
+            test_dataset = torchvision.datasets.CIFAR10(
+                root='./data',
+                train=False,
+                download=True,
+                transform=transforms.Compose([
+                    transforms.ToTensor(),
+                    normalize,
+                ]))
+            test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
 
     if mode == "eval":
         validate(test_loader, model, criterion, use_darknet)
@@ -285,11 +285,12 @@ if __name__=='__main__':
                 'best_prec': best_prec,
                 'optimizer': optimizer.state_dict(),
             }, is_best, save_dir, mode)
+
         if mode == 'fine':
-            if dataset == 'cifar10':
-                model = fuse_resnet20(model)
-            else:
+            if dataset == 'imagenet':
                 model = fuse_resnet18(model)
-            print("Model fused, and validate to verify.")
+            else:
+                model = fuse_resnet20(model)
+            print("Model fused, and validate again.")
             validate(test_loader, model, criterion, use_darknet)
             save_fused_network_in_darknet_form(model, arch)
