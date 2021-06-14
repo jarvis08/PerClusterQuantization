@@ -13,7 +13,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 
-# from tensorboardX import SummaryWriter
 from torchsummary import summary
 
 import torchvision
@@ -30,7 +29,6 @@ parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to 
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
 parser.add_argument('--lr', default=0.1, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
-parser.add_argument('--arch', default='resnet18', type=str, help='Architecture to quantize')
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
@@ -41,9 +39,14 @@ parser.add_argument('--darknet_data', default=False, type=bool, help="Evaluate m
 
 args = parser.parse_args()
 max_epoch = args.epoch
-arch = args.arch
 batch_size = args.batch
 dataset = args.dataset
+arch = 'resnet18'
+# arch = None
+# if dataset == 'imagenet':
+#     arch = 'resnet18'
+# else:
+#     arch = 'resnet20'
 target_bit = args.bit
 initial_lr = args.lr
 weight_decay = args.weight_decay
@@ -164,7 +167,11 @@ if __name__=='__main__':
         save_dir = os.path.join(save_dir, mode)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_dir = os.path.join(save_dir, arch + '_' + str(target_bit) + 'bit')
+
+        if mode == 'pre':
+            save_dir = os.path.join(save_dir, arch + '_' + str(target_bit) + 'bit')
+        else:
+            save_dir = os.path.join(save_dir, arch)
         now = datetime.now().strftime("%m-%d-%H%M")
         save_dir = os.path.join(save_dir, now)
         if not os.path.exists(save_dir):
@@ -177,45 +184,62 @@ if __name__=='__main__':
     assert use_gpu, "Code works on GPU"
 
     model = None
-    pre_model = None
-    arch_sup = ['resnet18', 'alexnet']
-    assert arch in arch_sup, 'Architecture not support!'
-    if mode == 'eval':
-        if fused:
-            model = create_fused_resnet18(model, bit=target_bit, num_classes=n_class)
-            checkpoint = torch.load(pretrained_model)
-            model.load_state_dict(checkpoint['state_dict'], strict=False)
-        else:
+    if dataset == 'ImageNet':
+        if mode == 'eval':
+            if fused:
+                model = create_fused_resnet18(model, bit=target_bit, num_classes=n_class)
+                checkpoint = torch.load(pretrained_model)
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
+            else:
+                model = resnet18(num_classes=n_class)
+                checkpoint = torch.load(pretrained_model)
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
+        elif mode == 'fine':
             model = resnet18(num_classes=n_class)
             checkpoint = torch.load(pretrained_model)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
-    elif mode == 'fine':
-        model = resnet18(num_classes=n_class)
-        checkpoint = torch.load(pretrained_model)
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
 
-        fused_model = create_fused_resnet18(bit=target_bit, num_classes=n_class)
-        model = set_fused_resnet18_params(fused_model, model)
-    else:
-        model = resnet18(num_classes=n_class)
-    # elif arch == 'alexnet':
-    #     model = alexnet(dataset=dataset, pretrained=False, num_classes=n_class)
+            fused_model = create_fused_resnet18(bit=target_bit, num_classes=n_class)
+            model = set_fused_resnet18_params(fused_model, model)
+        else:
+            model = resnet18(num_classes=n_class)
 
-    # summary(model, (3, 32, 32))
+    elif dataset == 'cifar10':
+        if mode == 'eval':
+            if fused:
+                model = create_fused_resnet20(bit=target_bit)
+                checkpoint = torch.load(pretrained_model)
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
+            else:
+                model = resnet20()
+                checkpoint = torch.load(pretrained_model)
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
+        elif mode == 'fine':
+            model = resnet20()
+            checkpoint = torch.load(pretrained_model)
+            model.load_state_dict(checkpoint['state_dict'], strict=False)
+
+            fused_model = create_fused_resnet20(bit=target_bit)
+            model = set_fused_resnet20_params(fused_model, model)
+        else:
+            model = resnet20()
+
+    summary(model, (3, 32, 32))
+    for m in model.children():
+        print(m)
+    # exit()
 
     model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=initial_lr, momentum=0.9, weight_decay=weight_decay)
 
-    opt_scheduler = None
-    if arch == 'resnet18':
-        opt_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150], gamma=0.1)
-    elif arch == 'alexnet':
-        opt_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 80], gamma=0.1)
+    # opt_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150], gamma=0.1)
+    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     cudnn.benchmark = True
 
     print('Load CIFAR-10 dataset..')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     train_loader = None
     if mode != 'eval':
         train_dataset = torchvision.datasets.CIFAR10(
@@ -262,7 +286,10 @@ if __name__=='__main__':
                 'optimizer': optimizer.state_dict(),
             }, is_best, save_dir, mode)
         if mode == 'fine':
-            model = fuse_resnet18(model)
+            if dataset == 'cifar10':
+                model = fuse_resnet20(model)
+            else:
+                model = fuse_resnet18(model)
             print("Model fused, and validate to verify.")
             validate(test_loader, model, criterion, use_darknet)
             save_fused_network_in_darknet_form(model, arch)

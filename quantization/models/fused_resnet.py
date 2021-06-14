@@ -205,88 +205,87 @@ class FusedResNet(nn.Module):
         return x
 
 
-def fused_resnet(block, layers, bit=32, num_classes=1000, **kwargs):
-    model = FusedResNet(block, layers, bit=bit, num_classes=num_classes, **kwargs)
-    return model
+class FisedResNet20(nn.Module):
+    def __init__(self, block, layers, num_classes=10, bit=32, smooth=0.995):
+        super(FisedResNet20, self).__init__()
+        self.bit = bit
+        self.in_range = np.zeros(2, dtype=np.float32)
+        self.ema_init = False
+        self.smooth = smooth
+        self.q_max = 2 ** self.bit - 1
 
+        self._norm_layer = nn.BatchNorm2d
+        self.inplanes = 16
+        self.dilation = 1
 
-def set_fused_resnet18_params(fused, pre):
-    """
-        Copy pre model's params & set fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # First layer
-    fused.first_conv.copy_from_pretrained(pre.conv1, pre.bn1)
+        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False, bit=self.bit, bn=True, relu=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.fc = FusedLinear(64 * block.expansion, num_classes, smooth=self.smooth, bit=self.bit, relu=False)
 
-    # Block 1
-    fused.layer1[0].conv1.copy_from_pretrained(pre.layer1[0].conv1, pre.layer1[0].bn1)
-    fused.layer1[0].conv2.copy_from_pretrained(pre.layer1[0].conv2, pre.layer1[0].bn2)
-    fused.layer1[1].conv1.copy_from_pretrained(pre.layer1[1].conv1, pre.layer1[1].bn1)
-    fused.layer1[1].conv2.copy_from_pretrained(pre.layer1[1].conv2, pre.layer1[1].bn2)
+        for m in self.modules():
+            if isinstance(m, FusedConv2d):
+                nn.init.kaiming_normal_(m.conv.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
-    # Block 2
-    fused.layer2[0].conv1.copy_from_pretrained(pre.layer2[0].conv1, pre.layer2[0].bn1)
-    fused.layer2[0].conv2.copy_from_pretrained(pre.layer2[0].conv2, pre.layer2[0].bn2)
-    fused.layer2[0].downsample.copy_from_pretrained(pre.layer2[0].downsample[0], pre.layer2[0].downsample[1])
-    fused.layer2[1].conv1.copy_from_pretrained(pre.layer2[1].conv1, pre.layer2[1].bn1)
-    fused.layer2[1].conv2.copy_from_pretrained(pre.layer2[1].conv2, pre.layer2[1].bn2)
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, bit=self.bit, smooth=self.smooth, relu=False)
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample, bit=self.bit, smooth=self.smooth))
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes, bit=self.bit, smooth=self.smooth))
 
-    # Block 3
-    fused.layer3[0].conv1.copy_from_pretrained(pre.layer3[0].conv1, pre.layer3[0].bn1)
-    fused.layer3[0].conv2.copy_from_pretrained(pre.layer3[0].conv2, pre.layer3[0].bn2)
-    fused.layer3[0].downsample.copy_from_pretrained(pre.layer3[0].downsample[0], pre.layer3[0].downsample[1])
-    fused.layer3[1].conv1.copy_from_pretrained(pre.layer3[1].conv1, pre.layer3[1].bn1)
-    fused.layer3[1].conv2.copy_from_pretrained(pre.layer3[1].conv2, pre.layer3[1].bn2)
+        return nn.Sequential(*layers)
 
-    # Block 4
-    fused.layer4[0].conv1.copy_from_pretrained(pre.layer4[0].conv1, pre.layer4[0].bn1)
-    fused.layer4[0].conv2.copy_from_pretrained(pre.layer4[0].conv2, pre.layer4[0].bn2)
-    fused.layer4[0].downsample.copy_from_pretrained(pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
-    fused.layer4[1].conv1.copy_from_pretrained(pre.layer4[1].conv1, pre.layer4[1].bn1)
-    fused.layer4[1].conv2.copy_from_pretrained(pre.layer4[1].conv2, pre.layer4[1].bn2)
+    def forward(self, x):
+        if self.bit != 32 and self.training:
+            if self.ema_init:
+                self.ema(x)
+                x = self.fake_quantize_input(x)
+            else:
+                self.in_range[0] = torch.min(x).item()
+                self.in_range[1] = torch.max(x).item()
+                self.ema_init = True
 
-    # Classifier
-    fused.fc.fc.weight = torch.nn.Parameter(pre.fc.weight)
-    fused.fc.fc.bias = torch.nn.Parameter(pre.fc.bias)
-    return fused
+        x = self.first_conv(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
+
+    def show_params(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                m.show_params()
+
+    def ema(self, x):
+        _min = torch.min(x).item()
+        _max = torch.max(x).item()
+        self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
+        self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+
+    def get_input_qparams(self):
+        return calc_qprams(self.in_range[0], self.in_range[1], self.q_max)
+
+    def fake_quantize_input(self, x):
+        s, z = self.get_input_qparams()
+        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
+        return x
 
 
 def create_fused_resnet18(bit=32, num_classes=1000, **kwargs):
-    r"""ResNet-18 model from
-    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>'_
-    """
-    model = fused_resnet(FusedBasicBlock, [2, 2, 2, 2], bit=bit, num_classes=num_classes, **kwargs)
-    return model
+    return FusedResNet(FusedBasicBlock, [2, 2, 2, 2], bit=bit, num_classes=num_classes, **kwargs)
 
 
-def fuse_resnet18(model):
-    # First layer
-    model.first_conv.fuse_conv_and_bn()
-
-    # Block 1
-    model.layer1[0].conv1.fuse_conv_and_bn()
-    model.layer1[0].conv2.fuse_conv_and_bn()
-    model.layer1[1].conv1.fuse_conv_and_bn()
-    model.layer1[1].conv2.fuse_conv_and_bn()
-
-    # Block 2
-    model.layer2[0].conv1.fuse_conv_and_bn()
-    model.layer2[0].conv2.fuse_conv_and_bn()
-    model.layer2[0].downsample.fuse_conv_and_bn()
-    model.layer2[1].conv1.fuse_conv_and_bn()
-    model.layer2[1].conv2.fuse_conv_and_bn()
-
-    # Block 3
-    model.layer3[0].conv1.fuse_conv_and_bn()
-    model.layer3[0].conv2.fuse_conv_and_bn()
-    model.layer3[0].downsample.fuse_conv_and_bn()
-    model.layer3[1].conv1.fuse_conv_and_bn()
-    model.layer3[1].conv2.fuse_conv_and_bn()
-
-    # Block 4
-    model.layer4[0].conv1.fuse_conv_and_bn()
-    model.layer4[0].conv2.fuse_conv_and_bn()
-    model.layer4[0].downsample.fuse_conv_and_bn()
-    model.layer4[1].conv1.fuse_conv_and_bn()
-    model.layer4[1].conv2.fuse_conv_and_bn()
-    return model
+def create_fused_resnet20(bit=32):
+    return FisedResNet20(FusedBasicBlock, [3, 3, 3], bit=bit)
