@@ -42,9 +42,7 @@ class FusedLinear(nn.Module):
         self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
         self.fc = FakeLinear(in_features, out_features, bias=bias, bit=bit)
-        self.relu = None
-        if relu:
-            self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
         out = self.fc(x)

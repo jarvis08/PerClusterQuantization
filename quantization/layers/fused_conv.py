@@ -45,12 +45,8 @@ class FusedConv2d(nn.Module):
         self.out_channels = out_channels
 
         self.conv = FakeConv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias, bit=bit)
-        self.bn = None
-        if bn:
-            self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = None
-        if relu:
-            self.relu = nn.ReLU(inplace=True)
+        self.bn = nn.BatchNorm2d(out_channels) if bn else None
+        self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
         out = self.conv(x)
