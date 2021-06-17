@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 import json
 
 from models import *
-from quantization.models import *
+from quantization import *
 from utils import *
 
 
@@ -44,7 +44,7 @@ dataset = args.dataset
 target_bit = args.bit
 initial_lr = args.lr
 weight_decay = args.weight_decay
-pretrained_model = args.pre_path
+pretrained_path = args.pre_path
 mode = args.mode
 fused = args.fused
 use_darknet = args.darknet_data
@@ -105,7 +105,8 @@ def validate(test_loader, model, criterion, is_darknet):
     model.eval()
     with torch.no_grad():
         if is_darknet:
-            for i in range(1000):
+            #for i in range(1000):
+            for i in range(1):
                 _in = test_loader[0][i]
                 _targ = test_loader[1][i]
                 input, target = _in.cuda(), _targ.cuda()
@@ -182,15 +183,15 @@ if __name__=='__main__':
         if mode == 'eval':
             if fused:
                 model = create_fused_resnet18(bit=target_bit)
-                checkpoint = torch.load(pretrained_model)
+                checkpoint = torch.load(pretrained_path)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
             else:
                 model = resnet18()
-                checkpoint = torch.load(pretrained_model)
+                checkpoint = torch.load(pretrained_path)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
         elif mode == 'fine':
             model = resnet18()
-            checkpoint = torch.load(pretrained_model)
+            checkpoint = torch.load(pretrained_path)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
 
             fused_model = create_fused_resnet18(bit=target_bit)
@@ -202,15 +203,15 @@ if __name__=='__main__':
         if mode == 'eval':
             if fused:
                 model = create_fused_resnet20(bit=target_bit)
-                checkpoint = torch.load(pretrained_model)
+                checkpoint = torch.load(pretrained_path)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
             else:
                 model = resnet20()
-                checkpoint = torch.load(pretrained_model)
+                checkpoint = torch.load(pretrained_path)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
         elif mode == 'fine':
             model = resnet20()
-            checkpoint = torch.load(pretrained_model)
+            checkpoint = torch.load(pretrained_path)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
 
             fused_model = create_fused_resnet20(bit=target_bit)
@@ -254,18 +255,19 @@ if __name__=='__main__':
                 ]))
             train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-        if use_darknet:
-            test_loader = load_preprocessed_cifar10_from_darknet()
-        else:
-            test_dataset = torchvision.datasets.CIFAR10(
-                root='./data',
-                train=False,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    normalize,
-                ]))
-            test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
+        test_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=False,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalize,
+            ]))
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
+
+    darknet_loader = None
+    if use_darknet:
+        darknet_loader = load_preprocessed_cifar10_from_darknet()
 
     if mode == "eval":
         validate(test_loader, model, criterion, use_darknet)
@@ -274,7 +276,7 @@ if __name__=='__main__':
             train_epoch(train_loader, model, criterion, optimizer, e)
             opt_scheduler.step()
 
-            prec = validate(test_loader, model, criterion, use_darknet)
+            prec = validate(test_loader, model, criterion, False)
 
             is_best = prec > best_prec
             best_prec = max(prec, best_prec)
@@ -287,10 +289,9 @@ if __name__=='__main__':
             }, is_best, save_dir, mode)
 
         if mode == 'fine':
-            if dataset == 'imagenet':
-                model = fuse_resnet18(model)
-            else:
-                model = fuse_resnet20(model)
+            model = fuse_resnet(model, arch)
             print("Model fused, and validate again.")
-            validate(test_loader, model, criterion, use_darknet)
+            if use_darknet:
+                validate(darknet_loader, model, criterion, use_darknet)
+            validate(test_loader, model, criterion, False)
             save_fused_network_in_darknet_form(model, arch)

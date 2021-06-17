@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Any
 from ..layers.fused_conv import *
 from ..layers.fused_linear import *
+from ..quantization_utils import *
 
 
 class FusedAlexNet(nn.Module):
@@ -11,7 +12,9 @@ class FusedAlexNet(nn.Module):
 
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
-        self.in_range = np.zeros(2, dtype=np.float32)
+        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.ema_init = False
         self.smooth = smooth
 
@@ -34,14 +37,17 @@ class FusedAlexNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.bit != 32 and self.training:
+        if self.training:
             if self.ema_init:
                 self.ema(x)
+                self.set_qparams()
                 x = self.fake_quantize_input(x)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
                 self.ema_init = True
+        else:
+            x = self.fake_quantize_input(x)
 
         x = self.features(x)
         x = self.avgpool(x)
@@ -55,12 +61,11 @@ class FusedAlexNet(nn.Module):
         self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
         self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
 
-    def get_input_qparams(self):
-        return calc_qprams(self.in_range[0], self.in_range[1], self.q_max)
+    def set_qparams(self):
+        self.scale, self.zero_point = calc_qprams(self.in_range[0], self.in_range[1], self.q_max)
 
     def fake_quantize_input(self, x):
-        s, z = self.get_input_qparams()
-        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
+        x = torch.round(x.div(self.scale).add(self.zero_point)).sub(self.zero_point).mul(self.scale)
         return x
 
 

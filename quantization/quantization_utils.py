@@ -14,15 +14,23 @@ class SkipBN(nn.Module):
 
 def calc_qprams(_min, _max, q_max):
     assert q_max == 15 or q_max == 255, print("Not Supported int type!\nPlz use uint4 or int8")
+    # if q_max == 15:
+    #     s = (_max - _min) / q_max
+    #     z = - round(_min / s)
+    #     return s, np.clip(z, 0, q_max)
+    # elif q_max == 255:
+    #     s = (_max - _min) / q_max
+    #     z = -128 - round(_min / s)
+    #     return s, np.clip(z, -128, q_max - 128)
     if q_max == 15:
-        s = (_max - _min) / q_max
-        z = - round(_min / s)
-        return s, np.clip(z, 0, q_max)
+        s = _max.sub(_min).div(q_max)
+        z = - torch.round(_min.div(s))
+        return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, 0, q_max), requires_grad=False)
     elif q_max == 255:
-        # Darknet uses INT8, not UINT8
-        s = (_max - _min) / q_max
-        z = -128 - round(_min / s)
-        return s, np.clip(z, -128, q_max - 128)
+        s = _max.sub(_min).div(q_max)
+        z = -128 - torch.round(_min.div(s))
+        return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, -128, 127), requires_grad=False)
+
 
 
 def set_fused_resnet18_params(fused, pre):
@@ -100,62 +108,37 @@ def set_fused_resnet20_params(fused, pre):
     return fused
 
 
-def fuse_resnet18(model):
+def fuse_resnet(model, arch):
     # First layer
     model.first_conv.fuse_conv_and_bn()
 
     # Block 1
     block = model.layer1
-    for i in range(1, len(model.layer1)):
+    for i in range(len(block)):
         block[i].conv1.fuse_conv_and_bn()
         block[i].conv2.fuse_conv_and_bn()
 
     # Block 2
     block = model.layer2
-    block.downsample.fuse_conv_and_bn()
-    for i in range(1, len(model.layer2)):
+    block[0].downsample.fuse_conv_and_bn()
+    for i in range(len(block)):
         block[i].conv1.fuse_conv_and_bn()
         block[i].conv2.fuse_conv_and_bn()
 
     # Block 3
     block = model.layer3
-    block.downsample.fuse_conv_and_bn()
-    for i in range(1, len(model.layer3)):
+    block[0].downsample.fuse_conv_and_bn()
+    for i in range(len(block)):
         block[i].conv1.fuse_conv_and_bn()
         block[i].conv2.fuse_conv_and_bn()
 
     # Block 4
-    block = model.layer4
-    block.downsample.fuse_conv_and_bn()
-    for i in range(1, len(model.layer4)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
-    return model
-
-
-def fuse_resnet20(model):
-    # First layer
-    model.first_conv.fuse_conv_and_bn()
-
-    # Block 1
-    block = model.layer1
-    for i in range(1, len(model.layer1)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
-
-    # Block 2
-    block = model.layer2
-    block.downsample.fuse_conv_and_bn()
-    for i in range(1, len(model.layer2)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
-
-    # Block 3
-    block = model.layer3
-    block.downsample.fuse_conv_and_bn()
-    for i in range(1, len(model.layer3)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
+    if arch in ['resnet18']:
+        block = model.layer4
+        block[0].downsample.fuse_conv_and_bn()
+        for i in range(len(block)):
+            block[i].conv1.fuse_conv_and_bn()
+            block[i].conv2.fuse_conv_and_bn()
     return model
 
 
@@ -163,186 +146,88 @@ def transform(param):
     return param.flatten().numpy().astype('float32')
 
 
-def save_fc_qparams(m, prev_s, prev_z, f):
-    s2, z2 = m.fc.get_weight_qparams()
-    s3, z3 = m.get_activation_qparams()
+def save_qparams(m, prev_s, prev_z, f):
+    assert m.layer_type in ['FusedConv2d', 'FusedLinear'],\
+        "Can't parse Q-params from {}".format(type(m))
+    if m.layer_type == 'FusedConv2d':
+        s2, z2 = m.conv.scale, m.conv.zero_point
+    else:
+        s2, z2 = m.fc.scale, m.fc.zero_point
+    s3, z3 = m.scale, m.zero_point
+
     print("S1: {} | Z1: {}".format(prev_s, prev_z))
     print("S2: {} | Z2: {}".format(s2, z2))
     print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(prev_s).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(prev_z).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
+    prev_s.numpy().astype('float32').tofile(f)
+    s2.numpy().astype('float32').tofile(f)
+    s3.numpy().astype('float32').tofile(f)
+    prev_z.numpy().astype('int32').tofile(f)
+    z2.numpy().astype('int32').tofile(f)
+    z3.numpy().astype('int32').tofile(f)
     return s3, z3
 
 
-def save_conv_qparams(m, prev_s, prev_z, f):
-    s2, z2 = m.conv.get_weight_qparams()
-    s3, z3 = m.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(prev_s, prev_z))
-    print("S2: {} | Z2: {}".format(s2, z2))
-    print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(prev_s).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(prev_z).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-    return s3, z3
-
-
-def save_block_qparams(m, bypass_in_s, bypass_in_z, f):
-    # CONV after bypass-connection
-    s2, z2 = m.conv1.conv.get_weight_qparams()
-    s3, z3 = m.conv1.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(bypass_in_s, bypass_in_z))
-    print("S2: {} | Z2: {}".format(s2, z2))
-    print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(bypass_in_s).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(bypass_in_z).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-    prev_s3, prev_z3 = s3, z3
-
-    # 2nd CONV in a block
-    s2, z2 = m.conv2.conv.get_weight_qparams()
-    s3, z3 = m.conv2.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(prev_s3, prev_z3))
-    print("S2: {} | Z2: {}".format(s2, z2))
-    print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(prev_s3).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(prev_z3).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-
-    # Darknet's Shortcut layer
-    bypass_out_s, bypass_out_z = m.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(bypass_in_s, bypass_in_z))
-    print("S2: {} | Z2: {}".format(s3, z3))
-    print("S3: {} | Z3: {}".format(bypass_out_s, bypass_out_z))
-    np.array(bypass_in_s).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(bypass_out_s).astype('float32').tofile(f)
-    np.array(bypass_in_z).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-    np.array(bypass_out_z).astype('int32').tofile(f)
-    return bypass_out_s, bypass_out_z
-
-
-def save_block_qparams_with_downsample(m, bypass_in_s, bypass_in_z, f):
+def save_block_qparams(block, bypass_in_s, bypass_in_z, f):
+    in_s, in_z = bypass_in_s, bypass_in_z
     # Downsampling after bypass-connection
-    s2, z2 = m.downsample.conv.get_weight_qparams()
-    s3, z3 = m.downsample.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(bypass_in_s, bypass_in_z))
-    print("S2: {} | Z2: {}".format(s2, z2))
-    print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(bypass_in_s).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(bypass_in_z).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-    prev_s3, prev_z3 = s3, z3  # Will be saved as bypass_in after using current bypass_in at the next layer
+    if block.downsample:
+        in_s, in_z = save_qparams(block.downsample, bypass_in_s, bypass_in_z, f)
 
     # CONV after bypass-connection
-    s2, z2 = m.conv1.conv.get_weight_qparams()
-    s3, z3 = m.conv1.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(bypass_in_s, bypass_in_z))
-    print("S2: {} | Z2: {}".format(s2, z2))
-    print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(bypass_in_s).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(bypass_in_z).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-    bypass_in_s, bypass_in_z = prev_s3, prev_z3  # Save downsampling layer's s3, z3 for next shortcut
-    prev_s3, prev_z3 = s3, z3
+    prev_s, prev_z = save_qparams(block.conv1, bypass_in_s, bypass_in_z, f)
 
     # 2nd CONV in a block
-    s2, z2 = m.conv2.conv.get_weight_qparams()
-    s3, z3 = m.conv2.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(prev_s3, prev_z3))
-    print("S2: {} | Z2: {}".format(s2, z2))
-    print("S3: {} | Z3: {}".format(s3, z3))
-    np.array(prev_s3).astype('float32').tofile(f)
-    np.array(s2).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(prev_z3).astype('int32').tofile(f)
-    np.array(z2).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
+    prev_s, prev_z = save_qparams(block.conv2, prev_s, prev_z, f)
 
-    # Darknet's Shortcut layer
-    bypass_out_s, bypass_out_z = m.get_activation_qparams()
-    print("S1: {} | Z1: {}".format(bypass_in_s, bypass_in_z))
-    print("S2: {} | Z2: {}".format(s3, z3))
-    print("S3: {} | Z3: {}".format(bypass_out_s, bypass_out_z))
-    np.array(bypass_in_s).astype('float32').tofile(f)
-    np.array(s3).astype('float32').tofile(f)
-    np.array(bypass_out_s).astype('float32').tofile(f)
-    np.array(bypass_in_z).astype('int32').tofile(f)
-    np.array(z3).astype('int32').tofile(f)
-    np.array(bypass_out_z).astype('int32').tofile(f)
-    return bypass_out_s, bypass_out_z
+    # SHORTCUT layer in Darknet
+    in_s.numpy().astype('float32').tofile(f)
+    prev_s.numpy().astype('float32').tofile(f)
+    block.scale.numpy().astype('float32').tofile(f)
+    in_z.numpy().astype('int32').tofile(f)
+    prev_z.numpy().astype('int32').tofile(f)
+    block.zero_point.numpy().astype('int32').tofile(f)
+    return block.scale, block.zero_point
 
 
 def save_params(model, path):
     with open(path, 'w') as f:
         weight = None
         for name, param in model.named_parameters():
-            print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
-            if "bias" in name:
+            if 'weight' in name:
+                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
+                weight = transform(param.data)
+            elif 'bias' in name:
+                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
                 transform(param.data).tofile(f)
                 weight.tofile(f)
-            else:
-                weight = transform(param.data)
 
 
 def save_fused_alexnet_qparams(model, path):
     with open(path, 'w') as f:
-        # All conv layers before bypass connections use the same S,Z from the last block's activation
-        prev_s3, prev_z3 = None, None
-        print("input's range: {} , {}".format(model.in_range[0], model.in_range[1]))
+        prev_s3, prev_z3 = model.get_input_qparams()
         for name, m in model.named_children():
             if 'features' in name:
-                input_s, input_z = model.get_input_qparams()
-                prev_s3, prev_z3 = save_conv_qparams(m[0], input_s, input_z, f)
-                prev_s3, prev_z3 = save_conv_qparams(m[2], prev_s3, prev_z3, f)
-                prev_s3, prev_z3 = save_conv_qparams(m[4], prev_s3, prev_z3, f)
-                prev_s3, prev_z3 = save_conv_qparams(m[5], prev_s3, prev_z3, f)
-                prev_s3, prev_z3 = save_conv_qparams(m[6], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[0], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[2], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[4], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[5], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[6], prev_s3, prev_z3, f)
 
             elif 'classifier' in name:
-                prev_s3, prev_z3 = save_fc_qparams(m[0], prev_s3, prev_z3, f)
-                prev_s3, prev_z3 = save_fc_qparams(m[1], prev_s3, prev_z3, f)
-                _, _ = save_fc_qparams(m[2], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[0], prev_s3, prev_z3, f)
+                prev_s3, prev_z3 = save_qparams(m[1], prev_s3, prev_z3, f)
+                _, _ = save_qparams(m[2], prev_s3, prev_z3, f)
 
 
 def save_fused_resnet_qparams(model, path):
-    with open(path, 'w') as f:
-        bypass_in_s, bypass_in_z = None, None
-        print("input's range: {} , {}".format(model.in_range[0], model.in_range[1]))
+    with open(path, 'wb') as f:
+        prev_s, prev_z = model.scale, model.zero_point
         for name, m in model.named_children():
-            if 'first_conv' in name:
-                input_s, input_z = model.get_input_qparams()
-                bypass_in_s, bypass_in_z = save_conv_qparams(m, input_s, input_z, f)
-
-            elif "layer" in name:
-                if "layer1" in name:
-                    bypass_in_s, bypass_in_z = save_block_qparams(m[0], bypass_in_s, bypass_in_z, f)
-                else:
-                    bypass_in_s, bypass_in_z = save_block_qparams_with_downsample(m[0], bypass_in_s, bypass_in_z, f)
-                for i in range(1, len(m)):
-                    bypass_in_s, bypass_in_z = save_block_qparams(m[i], bypass_in_s, bypass_in_z, f)
-
-            elif 'fc' in name:
-                _, _ = save_fc_qparams(m, bypass_in_s, bypass_in_z, f)
+            if "layer" in name:
+                for i in range(len(m)):
+                    prev_s, prev_z = save_block_qparams(m[i], prev_s, prev_z, f)
+            elif name in ["first_conv", "fc"]:
+                prev_s, prev_z = save_qparams(m, prev_s, prev_z, f)
 
 
 def save_fused_network_in_darknet_form(model, arch):

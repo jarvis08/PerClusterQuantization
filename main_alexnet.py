@@ -107,7 +107,7 @@ def validate(test_loader, model, criterion, is_darknet):
     model.eval()
     with torch.no_grad():
         if is_darknet:
-            for i in range(1000):
+            for i in range(1):
                 _in = test_loader[0][i]
                 _targ = test_loader[1][i]
                 input, target = _in.cuda(), _targ.cuda()
@@ -197,8 +197,12 @@ if __name__=='__main__':
     opt_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 80], gamma=0.1)
     cudnn.benchmark = True
 
-    print('Load CIFAR-10 dataset..')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    normalize = None
+    if dataset == 'imagenet':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    else:
+        normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+
     train_loader = None
     if mode != 'eval':
         train_dataset = torchvision.datasets.CIFAR10(
@@ -223,8 +227,9 @@ if __name__=='__main__':
         ]))
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
 
+    darknet_loader = None
     if use_darknet:
-        test_loader = load_preprocessed_cifar10_from_darknet()
+        darknet_loader = load_preprocessed_cifar10_from_darknet()
 
     if mode == "eval":
         validate(test_loader, model, criterion, use_darknet)
@@ -233,7 +238,7 @@ if __name__=='__main__':
             train_epoch(train_loader, model, criterion, optimizer, e)
             opt_scheduler.step()
 
-            prec = validate(test_loader, model, criterion, use_darknet)
+            prec = validate(test_loader, model, criterion, False)
 
             is_best = prec > best_prec
             best_prec = max(prec, best_prec)
@@ -245,5 +250,8 @@ if __name__=='__main__':
                 'optimizer': optimizer.state_dict(),
             }, is_best, save_dir, mode)
         if mode == 'fine':
-            validate(test_loader, model, criterion, use_darknet)
+            print("Model fused, and validate again.")
+            if use_darknet:
+                validate(darknet_loader, model, criterion, use_darknet)
+            validate(darknet_loader, model, criterion, True)
             save_fused_network_in_darknet_form(model, arch)

@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
+
 from ..quantization_utils import *
 
 
@@ -11,18 +12,19 @@ class FakeConv2d(nn.Conv2d):
         self.layer_type = 'FakeConv2d'
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
+        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
     def forward(self, x):
-        if self.bit != 32 and self.training:
-            self.fake_quantize_weight()
+        self.set_qparams()
+        self.fake_quantize_weight()
         return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
-    def get_weight_qparams(self):
-        return calc_qprams(torch.min(self.weight).item(), torch.max(self.weight).item(), self.q_max)
+    def set_qparams(self):
+        self.scale, self.zero_point = calc_qprams(torch.min(self.weight), torch.max(self.weight), self.q_max)
 
     def fake_quantize_weight(self):
-        s, z = self.get_weight_qparams()
-        self.weight.data = torch.round(self.weight.div(s).add(z)).sub(z).mul(s)
+        self.weight.data = torch.round(self.weight.div(self.scale).add(self.zero_point)).sub(self.zero_point).mul(self.scale)
 
 
 class FusedConv2d(nn.Module):
@@ -31,13 +33,14 @@ class FusedConv2d(nn.Module):
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, bn=False, relu=True, smooth=0.995, bit=32):
         super(FusedConv2d, self).__init__()
-        self.layer_type = 'FusedConv2D'
+        self.layer_type = 'FusedConv2d'
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.ema_init = False
-        # self.ema_init = 5000
         self.smooth = smooth
-        self.act_range = np.zeros(2, dtype=np.float32)
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.fused = False
         self.out_channels = out_channels
 
@@ -62,20 +65,17 @@ class FusedConv2d(nn.Module):
         if self.relu:
             out = self.relu(out)
 
-        if self.bit == 32 or not self.training:
-            # General Validation
-            return out
-
-        # self.ema(out)
-        # if not self.ema_init:
-        if self.ema_init:
-            self.ema(out)
-            out = self.fake_quantize_activation(out)
+        if self.training:
+            if self.ema_init:
+                self.ema(out)
+                self.set_qparams()
+                out = self.fake_quantize_activation(out)
+            else:
+                self.act_range[0] = torch.min(out).item()
+                self.act_range[1] = torch.max(out).item()
+                self.ema_init = True
         else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
-            self.ema_init = True
-            # self.ema_init -= 1
+            out = self.fake_quantize_activation(out)
         return out
 
     def ema(self, x):
@@ -84,12 +84,11 @@ class FusedConv2d(nn.Module):
         self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
         self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
 
-    def get_activation_qparams(self):
-        return calc_qprams(self.act_range[0], self.act_range[1], self.q_max)
+    def set_qparams(self):
+        self.scale, self.zero_point = calc_qprams(self.act_range[0], self.act_range[1], self.q_max)
 
     def fake_quantize_activation(self, x):
-        s, z = self.get_activation_qparams()
-        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
+        x = torch.round(x.div(self.scale).add(self.zero_point)).sub(self.zero_point).mul(self.scale)
         return x
 
     def copy_from_pretrained(self, conv, bn):
