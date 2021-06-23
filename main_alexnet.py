@@ -251,7 +251,9 @@ if __name__=='__main__':
             }, is_best, save_dir, mode)
         if mode == 'fine':
             print("Model fused, and validate again.")
+            model.set_quantization_params()
+            # model.set_quantized_flag()
             if use_darknet:
-                validate(darknet_loader, model, criterion, use_darknet)
-            validate(darknet_loader, model, criterion, True)
+                validate(darknet_loader, model, criterion, True)
+            validate(test_loader, model, criterion, False)
             save_fused_network_in_darknet_form(model, arch)

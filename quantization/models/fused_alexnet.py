@@ -9,7 +9,7 @@ from ..quantization_utils import *
 class FusedAlexNet(nn.Module):
     def __init__(self, dataset: str = 'imagenet', num_classes: int = 1000, smooth: float = 0.995, bit: int = 32) -> None:
         super(FusedAlexNet, self).__init__()
-
+        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -40,14 +40,11 @@ class FusedAlexNet(nn.Module):
         if self.training:
             if self.ema_init:
                 self.ema(x)
-                self.set_qparams()
                 x = self.fake_quantize_input(x)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
                 self.ema_init = True
-        else:
-            x = self.fake_quantize_input(x)
 
         x = self.features(x)
         x = self.avgpool(x)
@@ -61,12 +58,32 @@ class FusedAlexNet(nn.Module):
         self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
         self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
 
-    def set_qparams(self):
-        self.scale, self.zero_point = calc_qprams(self.in_range[0], self.in_range[1], self.q_max)
-
     def fake_quantize_input(self, x):
-        x = torch.round(x.div(self.scale).add(self.zero_point)).sub(self.zero_point).mul(self.scale)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
         return x
+
+    def set_quantization_params(self):
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        prev_s, prev_z = self.features[0].set_conv_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.features[2].set_conv_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[4].set_conv_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[5].set_conv_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[6].set_conv_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.classifier[0].set_fc_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.classifier[1].set_fc_qparams(prev_s, prev_z)
+        _, _ = self.classifier[2].set_fc_qparams(prev_s, prev_z)
+
+    def set_quantized_flag(self):
+        self.quantized = True
+        self.features[0].set_conv_qflag()
+        self.features[2].set_conv_qflag()
+        self.features[4].set_conv_qflag()
+        self.features[5].set_conv_qflag()
+        self.features[6].set_conv_qflag()
+        self.classifier[0].set_fc_qflag()
+        self.classifier[1].set_fc_qflag()
+        self.classifier[2].set_fc_qflag()
 
 
 def create_fused_alexnet(dataset: str = 'imagenet', num_classes: int = 1000, smooth: float = 0.995, bit: int = 32, **kwargs: Any) -> FusedAlexNet:
@@ -79,20 +96,12 @@ def set_fused_alexnet_params(fused, pre):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
-    print(pre.features[0])
-    print(pre.features[3])
-    print(pre.features[6])
-    print(pre.features[8])
-    print(pre.features[10])
     fused.features[0].copy_from_pretrained(pre.features[0], False)
     fused.features[2].copy_from_pretrained(pre.features[3], False)
     fused.features[4].copy_from_pretrained(pre.features[6], False)
     fused.features[5].copy_from_pretrained(pre.features[8], False)
     fused.features[6].copy_from_pretrained(pre.features[10], False)
 
-    print(pre.classifier[0])
-    print(pre.classifier[2])
-    print(pre.classifier[4])
     fused.classifier[0].fc.weight = torch.nn.Parameter(pre.classifier[0].weight)
     fused.classifier[0].fc.bias = torch.nn.Parameter(pre.classifier[0].bias)
     fused.classifier[1].fc.weight = torch.nn.Parameter(pre.classifier[2].weight)

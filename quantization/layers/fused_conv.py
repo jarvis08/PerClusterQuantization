@@ -12,19 +12,15 @@ class FakeConv2d(nn.Conv2d):
         self.layer_type = 'FakeConv2d'
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
-        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
     def forward(self, x):
-        self.set_qparams()
-        self.fake_quantize_weight()
+        if self.training:
+            self.fake_quantize_weight()
         return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
-    def set_qparams(self):
-        self.scale, self.zero_point = calc_qprams(torch.min(self.weight), torch.max(self.weight), self.q_max)
-
     def fake_quantize_weight(self):
-        self.weight.data = torch.round(self.weight.div(self.scale).add(self.zero_point)).sub(self.zero_point).mul(self.scale)
+        s, z = calc_qparams(torch.min(self.weight), torch.max(self.weight), self.q_max)
+        self.weight.data = torch.round(self.weight.div(s).add(z)).sub(z).mul(s)
 
 
 class FusedConv2d(nn.Module):
@@ -34,45 +30,62 @@ class FusedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, bn=False, relu=True, smooth=0.995, bit=32):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
+        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.ema_init = False
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
-        self.fused = False
-        self.out_channels = out_channels
+        self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z3 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
+        self.out_channels = out_channels
         self.conv = FakeConv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias, bit=bit)
         self.bn = nn.BatchNorm2d(out_channels) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
-        out = self.conv(x)
-        if self.fused:
-            # Validation with actually fused layer : Skip BatchNorm (fused into CONV weight/bias)
-            if self.relu:
-                out = self.relu(out)
-            return out
+        if self.training:
+            x = self.qat(x)
+        elif self.quantized:
+            x = self.int_eval(x)
+        else:
+            x = self.fp_eval(x)
+        return x
 
+    def qat(self, x):
+        out = self.conv(x)
         if self.bn:
             out = self.bn(out)
         if self.relu:
             out = self.relu(out)
 
-        if self.training:
-            if self.ema_init:
-                self.ema(out)
-                self.set_qparams()
-                out = self.fake_quantize_activation(out)
-            else:
-                self.act_range[0] = torch.min(out).item()
-                self.act_range[1] = torch.max(out).item()
-                self.ema_init = True
-        else:
+        if self.ema_init:
+            self.ema(out)
             out = self.fake_quantize_activation(out)
+        else:
+            self.act_range[0] = torch.min(out).item()
+            self.act_range[1] = torch.max(out).item()
+            self.ema_init = True
         return out
+
+    def fp_eval(self, x):
+        out = self.conv(x)
+        if self.bn:
+            out = self.bn(out)
+        if self.relu:
+            out = self.relu(out)
+        return out
+
+    def int_eval(self, x):
+        # TODO: totalsum
+        return x
 
     def ema(self, x):
         _min = torch.min(x).item()
@@ -80,11 +93,9 @@ class FusedConv2d(nn.Module):
         self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
         self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
 
-    def set_qparams(self):
-        self.scale, self.zero_point = calc_qprams(self.act_range[0], self.act_range[1], self.q_max)
-
     def fake_quantize_activation(self, x):
-        x = torch.round(x.div(self.scale).add(self.zero_point)).sub(self.zero_point).mul(self.scale)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
         return x
 
     def copy_from_pretrained(self, conv, bn):
@@ -105,4 +116,13 @@ class FusedConv2d(nn.Module):
             self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
             self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
         self.bn = SkipBN()
-        self.fused = True  # Change Flag
+
+    def set_conv_qparams(self, s1, z1):
+        self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
+        self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
+        return self.s3, self.z3
+
+    def set_conv_qflag(self):
+        self.quantized = True
