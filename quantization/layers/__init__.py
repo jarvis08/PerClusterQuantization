@@ -1,2 +1,2 @@
-from .fused_linear import *
-from .fused_conv import *
+from .linear import *
+from .conv2d import *

@@ -4,6 +4,37 @@ import torch.nn.functional as F
 import numpy as np
 from quantization.quantization_utils import *
 
+
+class QuantizedLinear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True, bit=8):
+        super(QuantizedLinear, self).__init__(in_features, out_features, bias)
+        self.layer_type = 'FakeLinear'
+        self.bit = bit
+        self.q_max = 2 ** self.bit - 1
+        self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z3 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+
+    def forward(self, x):
+        # TODO: Totalsum
+        return F.linear(x, self.weight, self.bias)
+
+    def quantize(self, fake_linear):
+        self.s1 = torch.nn.Parameter(fake_linear.s1, requires_grad=False)
+        self.s2 = torch.nn.Parameter(fake_linear.s2, requires_grad=False)
+        self.s3 = torch.nn.Parameter(fake_linear.s3, requires_grad=False)
+        self.z1 = torch.nn.Parameter(fake_linear.z1, requires_grad=False)
+        self.z2 = torch.nn.Parameter(fake_linear.z2, requires_grad=False)
+        self.z3 = torch.nn.Parameter(fake_linear.z3, requires_grad=False)
+        self.M0 = torch.nn.Parameter(fake_linear.M0, requires_grad=False)
+        self.shift = torch.nn.Parameter(fake_linear.shift, requires_grad=False)
+
+
 class FakeLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True, bit=32):
         super(FakeLinear, self).__init__(in_features, out_features, bias)
@@ -47,15 +78,6 @@ class FusedLinear(nn.Module):
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
-        if self.training:
-            x = self.qat(x)
-        elif self.quantized:
-            x = self.int_eval(x)
-        else:
-            x = self.fp_eval(x)
-        return x
-
-    def qat(self, x):
         out = self.fc(x)
         if self.relu:
             out = self.relu(out)
@@ -68,19 +90,7 @@ class FusedLinear(nn.Module):
                 self.act_range[0] = torch.min(out).item()
                 self.act_range[1] = torch.max(out).item()
                 self.ema_init = True
-        else:
-            out = self.fake_quantize_activation(out)
         return out
-
-    def fp_eval(self, x):
-        out = self.fc(x)
-        if self.relu:
-            out = self.relu(out)
-        return out
-
-    def int_eval(self, x):
-        # TODO: totalsum
-        return x
 
     def ema(self, x):
         _min = torch.min(x).item()
@@ -104,6 +114,3 @@ class FusedLinear(nn.Module):
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
-
-    def set_fc_qflag(self):
-        self.quantized = True

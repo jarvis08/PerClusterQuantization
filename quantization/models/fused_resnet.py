@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from quantization.layers.fused_conv import *
-from quantization.layers.fused_linear import *
+from quantization.layers.conv2d import *
+from quantization.layers.linear import *
 from quantization.quantization_utils import *
 
 # import pandas as pd
@@ -22,7 +22,7 @@ def fused_conv1x1(in_planes, out_planes, stride=1, bit=32, smooth=0.995, bn=Fals
 class FusedBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, norm_layer=None, bit=32, smooth=0.995):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, bit=32, smooth=0.995):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -87,13 +87,6 @@ class FusedBasicBlock(nn.Module):
         _, _ = self.conv2.set_conv_qparams(prev_s, prev_z)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         return self.s3, self.z3
-
-    def set_block_qflag(self):
-        self.quantized = True
-        if self.downsample:
-            self.downsample.set_conv_qflag()
-        self.conv1.set_conv_qflag()
-        self.conv2.set_conv_qflag()
 
 
 class FusedResNet(nn.Module):
@@ -221,18 +214,6 @@ class FusedResNet(nn.Module):
         prev_s, prev_z = self.layer4[1].set_block_qparams(prev_s, prev_z)
         _, _ = self.fc.set_fc_qparams(prev_s, prev_z)
 
-    def set_quantized_flag(self):
-        self.quantized = True
-        self.layer1[0].set_block_qflag()
-        self.layer1[1].set_block_qflag()
-        self.layer2[0].set_block_qflag()
-        self.layer2[1].set_block_qflag()
-        self.layer3[0].set_block_qflag()
-        self.layer3[1].set_block_qflag()
-        self.layer4[0].set_block_qflag()
-        self.layer4[1].set_block_qflag()
-        self.fc.set_fc_qflag()
-
 
 class FusedResNet20(nn.Module):
     def __init__(self, block, layers, num_classes=10, bit=32, smooth=0.995):
@@ -325,23 +306,86 @@ class FusedResNet20(nn.Module):
         prev_s, prev_z = self.layer3[2].set_block_qparams(prev_s, prev_z)
         _, _ = self.fc.set_fc_qparams(prev_s, prev_z)
 
-    def set_quantized_flag(self):
-        self.quantized = True
-        self.layer1[0].set_block_qflag()
-        self.layer1[1].set_block_qflag()
-        self.layer1[2].set_block_qflag()
-        self.layer2[0].set_block_qflag()
-        self.layer2[1].set_block_qflag()
-        self.layer2[2].set_block_qflag()
-        self.layer3[0].set_block_qflag()
-        self.layer3[1].set_block_qflag()
-        self.layer3[2].set_block_qflag()
-        self.fc.set_fc_qflag()
+
+def fused_resnet18(bit=32, smooth=0.999, num_classes=1000, **kwargs):
+    return FusedResNet(FusedBasicBlock, [2, 2, 2, 2], bit=bit, smooth=smooth, num_classes=num_classes, **kwargs)
 
 
-def create_fused_resnet18(bit=32, num_classes=1000, **kwargs):
-    return FusedResNet(FusedBasicBlock, [2, 2, 2, 2], bit=bit, num_classes=num_classes, **kwargs)
+def fused_resnet20(bit=32, smooth=0.999):
+    return FusedResNet20(FusedBasicBlock, [3, 3, 3], bit=bit, smooth=smooth)
 
 
-def create_fused_resnet20(bit=32):
-    return FusedResNet20(FusedBasicBlock, [3, 3, 3], bit=bit)
+def set_fused_resnet(fused, pre, arch):
+    """
+        Copy from pre model's params to fused layers.
+        Use fused architecture, but not really fused (use CONV & BN seperately)
+    """
+    # First layer
+    fused.first_conv.copy_from_pretrained(pre.conv1, pre.bn1)
+
+    # Block 1
+    block = fused.layer1
+    for i in range(len(block)):
+        block[i].conv1.copy_from_pretrained(pre.layer1[i].conv1, pre.layer1[i].bn1)
+        block[i].conv2.copy_from_pretrained(pre.layer1[i].conv2, pre.layer1[i].bn2)
+
+    # Block 2
+    block = fused.layer2
+    block[0].downsample.copy_from_pretrained(pre.layer2[0].downsample[0], pre.layer2[0].downsample[1])
+    for i in range(len(block)):
+        block[i].conv1.copy_from_pretrained(pre.layer2[i].conv1, pre.layer2[i].bn1)
+        block[i].conv2.copy_from_pretrained(pre.layer2[i].conv2, pre.layer2[i].bn2)
+
+    # Block 3
+    block = fused.layer3
+    block[0].downsample.copy_from_pretrained(pre.layer3[0].downsample[0], pre.layer3[0].downsample[1])
+    for i in range(len(block)):
+        block[i].conv1.copy_from_pretrained(pre.layer3[i].conv1, pre.layer3[i].bn1)
+        block[i].conv2.copy_from_pretrained(pre.layer3[i].conv2, pre.layer3[i].bn2)
+
+    # Block 4
+    if arch in ['resnet18']:
+        block = fused.layer4
+        block[0].downsample.copy_from_pretrained(pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
+        for i in range(len(block)):
+            block[i].conv1.copy_from_pretrained(pre.layer4[i].conv1, pre.layer4[i].bn1)
+            block[i].conv2.copy_from_pretrained(pre.layer4[i].conv2, pre.layer4[i].bn2)
+
+    # Classifier
+    fused.fc.fc.weight = torch.nn.Parameter(pre.fc.weight)
+    fused.fc.fc.bias = torch.nn.Parameter(pre.fc.bias)
+    return fused
+
+
+def fuse_resnet(model, arch):
+    # First layer
+    model.first_conv.fuse_conv_and_bn()
+
+    # Block 1
+    fp_block = model.layer1
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fuse_conv_and_bn()
+        fp_block[i].conv2.fuse_conv_and_bn()
+
+    # Block 2
+    fp_block = model.layer2
+    fp_block[0].downsample.fuse_conv_and_bn()
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fuse_conv_and_bn()
+        fp_block[i].conv2.fuse_conv_and_bn()
+
+    # Block 3
+    fp_block = model.layer3
+    fp_block[0].downsample.fuse_conv_and_bn()
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fuse_conv_and_bn()
+        fp_block[i].conv2.fuse_conv_and_bn()
+
+    # Block 4
+    if arch in ['resnet18']:
+        fp_block = model.layer4
+        fp_block[0].downsample.fuse_conv_and_bn()
+        for i in range(len(fp_block)):
+            fp_block[i].conv1.fuse_conv_and_bn()
+            fp_block[i].conv2.fuse_conv_and_bn()
+    return model

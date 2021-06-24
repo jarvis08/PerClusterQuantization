@@ -182,7 +182,7 @@ if __name__=='__main__':
     if dataset == 'ImageNet':
         if mode == 'eval':
             if fused:
-                model = create_fused_resnet18(bit=target_bit)
+                model = fused_resnet18(bit=target_bit)
                 checkpoint = torch.load(pretrained_path)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
             else:
@@ -194,7 +194,7 @@ if __name__=='__main__':
             checkpoint = torch.load(pretrained_path)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
 
-            fused_model = create_fused_resnet18(bit=target_bit)
+            fused_model = fused_resnet18(bit=target_bit)
             model = set_fused_resnet18_params(fused_model, model)
         else:
             model = resnet18()
@@ -202,7 +202,7 @@ if __name__=='__main__':
     else:
         if mode == 'eval':
             if fused:
-                model = create_fused_resnet20(bit=target_bit)
+                model = fused_resnet20(bit=target_bit)
                 checkpoint = torch.load(pretrained_path)
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
             else:
@@ -214,12 +214,12 @@ if __name__=='__main__':
             checkpoint = torch.load(pretrained_path)
             model.load_state_dict(checkpoint['state_dict'], strict=False)
 
-            fused_model = create_fused_resnet20(bit=target_bit)
+            fused_model = fused_resnet20(bit=target_bit)
             model = set_fused_resnet20_params(fused_model, model)
         else:
             model = resnet20()
 
-    summary(model, (3, 32, 32))
+    # summary(model, (3, 32, 32))
     for m in model.children():
         print(m)
 
@@ -270,6 +270,8 @@ if __name__=='__main__':
         darknet_loader = load_preprocessed_cifar10_from_darknet()
 
     if mode == "eval":
+        print(model.state_dict())
+        exit()
         validate(test_loader, model, criterion, use_darknet)
     else:
         for e in range(1, max_epoch + 1):

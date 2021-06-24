@@ -41,113 +41,20 @@ def quantize_M(M):
     return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(torch.tensor(shift, dtype=torch.int32), requires_grad=False)
 
 
-def set_fused_resnet18_params(fused, pre):
-    """
-        Copy from pre model's params to fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # First layer
-    fused.first_conv.copy_from_pretrained(pre.conv1, pre.bn1)
+def quantize(_fp, _int):
+    # Set quantization params
+    _int.s1 = torch.nn.Parameter(_fp.s1, requires_grad=False)
+    _int.s2 = torch.nn.Parameter(_fp.s2, requires_grad=False)
+    _int.s3 = torch.nn.Parameter(_fp.s3, requires_grad=False)
+    _int.z1 = torch.nn.Parameter(_fp.z1, requires_grad=False)
+    _int.z2 = torch.nn.Parameter(_fp.z2, requires_grad=False)
+    _int.z3 = torch.nn.Parameter(_fp.z3, requires_grad=False)
+    _int.M0 = torch.nn.Parameter(_fp.M0, requires_grad=False)
+    _int.shift = torch.nn.Parameter(_fp.shift, requires_grad=False)
 
-    # Block 1
-    block = fused.layer1
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer1[i].conv1, pre.layer1[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer1[i].conv2, pre.layer1[i].bn2)
-
-    # Block 2
-    block = fused.layer2
-    block[0].downsample.copy_from_pretrained(pre.layer2[0].downsample[0], pre.layer2[0].downsample[1])
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer2[i].conv1, pre.layer2[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer2[i].conv2, pre.layer2[i].bn2)
-
-    # Block 3
-    block = fused.layer3
-    block[0].downsample.copy_from_pretrained(pre.layer3[0].downsample[0], pre.layer3[0].downsample[1])
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer3[i].conv1, pre.layer3[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer3[i].conv2, pre.layer3[i].bn2)
-
-    # Block 4
-    block = fused.layer4
-    block[0].downsample.copy_from_pretrained(pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer4[i].conv1, pre.layer4[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer4[i].conv2, pre.layer4[i].bn2)
-
-    # Classifier
-    fused.fc.fc.weight = torch.nn.Parameter(pre.fc.weight)
-    fused.fc.fc.bias = torch.nn.Parameter(pre.fc.bias)
-    return fused
-
-
-def set_fused_resnet20_params(fused, pre):
-    """
-        Copy pre model's params to fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # First layer
-    fused.first_conv.copy_from_pretrained(pre.conv1, pre.bn1)
-
-    # Block 1
-    block = fused.layer1
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer1[i].conv1, pre.layer1[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer1[i].conv2, pre.layer1[i].bn2)
-
-    # Block 2
-    block = fused.layer2
-    block[0].downsample.copy_from_pretrained(pre.layer2[0].downsample[0], pre.layer2[0].downsample[1])
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer2[i].conv1, pre.layer2[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer2[i].conv2, pre.layer2[i].bn2)
-
-    # Block 3
-    block = fused.layer3
-    block[0].downsample.copy_from_pretrained(pre.layer3[0].downsample[0], pre.layer3[0].downsample[1])
-    for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer3[i].conv1, pre.layer3[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer3[i].conv2, pre.layer3[i].bn2)
-
-    # Classifier
-    fused.fc.fc.weight = torch.nn.Parameter(pre.fc.weight)
-    fused.fc.fc.bias = torch.nn.Parameter(pre.fc.bias)
-    return fused
-
-
-def quantize_resnet(model, arch):
-    # First layer
-    model.first_conv.fuse_conv_and_bn()
-
-    # Block 1
-    block = model.layer1
-    for i in range(len(block)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
-
-    # Block 2
-    block = model.layer2
-    block[0].downsample.fuse_conv_and_bn()
-    for i in range(len(block)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
-
-    # Block 3
-    block = model.layer3
-    block[0].downsample.fuse_conv_and_bn()
-    for i in range(len(block)):
-        block[i].conv1.fuse_conv_and_bn()
-        block[i].conv2.fuse_conv_and_bn()
-
-    # Block 4
-    if arch in ['resnet18']:
-        block = model.layer4
-        block[0].downsample.fuse_conv_and_bn()
-        for i in range(len(block)):
-            block[i].conv1.fuse_conv_and_bn()
-            block[i].conv2.fuse_conv_and_bn()
-    return model
+    # Set quantized weights
+    _int.weight.data = torch.round(torch.nn.Parameter(_fp.conv.weight.data).div(_int.s2).add(_int.z2))
+    _int.bias.data = torch.round(torch.nn.Parameter(_fp.conv.bias.data).div(_int.s1 * _int.s2))
 
 
 def transform(param):
@@ -195,19 +102,6 @@ def save_block_qparams(block, f):
     block.z3.numpy().astype('int32').tofile(f)
 
 
-def save_params(model, path):
-    with open(path, 'w') as f:
-        weight = None
-        for name, param in model.named_parameters():
-            if 'weight' in name:
-                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
-                weight = transform(param.data)
-            elif 'bias' in name:
-                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
-                transform(param.data).tofile(f)
-                weight.tofile(f)
-
-
 def save_fused_alexnet_qparams(model, path):
     with open(path, 'w') as f:
         for name, m in model.named_children():
@@ -230,6 +124,19 @@ def save_fused_resnet_qparams(model, path):
                 save_qparams(m, f)
 
 
+def save_params(model, path):
+    with open(path, 'w') as f:
+        weight = None
+        for name, param in model.named_parameters():
+            if 'weight' in name:
+                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
+                weight = transform(param.data)
+            elif 'bias' in name:
+                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
+                transform(param.data).tofile(f)
+                weight.tofile(f)
+
+
 def save_fused_network_in_darknet_form(model, arch):
     path = './result/darknet'
     if not os.path.exists(path):
@@ -238,7 +145,7 @@ def save_fused_network_in_darknet_form(model, arch):
 
     model.cpu()
     save_params(model, path + 'weights')
-    if "resnet" in arch:
+    if arch == "resnet":
         save_fused_resnet_qparams(model, path + 'qparams')
     elif arch == "alexnet":
         save_fused_alexnet_qparams(model, path + 'qparams')

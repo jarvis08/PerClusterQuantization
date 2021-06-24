@@ -1,9 +1,28 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-import numpy as np
 
 from ..quantization_utils import *
+
+
+class QuantizedConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, bit=8):
+        super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        self.layer_type = 'QuantizedConv2d'
+        self.bit = bit
+        self.q_max = 2 ** self.bit - 1
+        self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z3 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+
+    def forward(self, x):
+        # TODO: Totalsum
+        return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 
 class FakeConv2d(nn.Conv2d):
@@ -12,6 +31,7 @@ class FakeConv2d(nn.Conv2d):
         self.layer_type = 'FakeConv2d'
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
+
 
     def forward(self, x):
         if self.training:
@@ -51,41 +71,21 @@ class FusedConv2d(nn.Module):
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
+        out = self.conv(x)
+        if self.bn:
+            out = self.bn(out)
+        if self.relu:
+            out = self.relu(out)
+
         if self.training:
-            x = self.qat(x)
-        elif self.quantized:
-            x = self.int_eval(x)
-        else:
-            x = self.fp_eval(x)
-        return x
-
-    def qat(self, x):
-        out = self.conv(x)
-        if self.bn:
-            out = self.bn(out)
-        if self.relu:
-            out = self.relu(out)
-
-        if self.ema_init:
-            self.ema(out)
-            out = self.fake_quantize_activation(out)
-        else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
-            self.ema_init = True
+            if self.ema_init:
+                self.ema(out)
+                out = self.fake_quantize_activation(out)
+            else:
+                self.act_range[0] = torch.min(out).item()
+                self.act_range[1] = torch.max(out).item()
+                self.ema_init = True
         return out
-
-    def fp_eval(self, x):
-        out = self.conv(x)
-        if self.bn:
-            out = self.bn(out)
-        if self.relu:
-            out = self.relu(out)
-        return out
-
-    def int_eval(self, x):
-        # TODO: totalsum
-        return x
 
     def ema(self, x):
         _min = torch.min(x).item()
@@ -123,6 +123,3 @@ class FusedConv2d(nn.Module):
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
-
-    def set_conv_qflag(self):
-        self.quantized = True
