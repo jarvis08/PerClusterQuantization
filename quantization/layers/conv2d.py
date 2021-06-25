@@ -66,11 +66,8 @@ class QuantizedConv2d(nn.Conv2d):
 
         sub_sum = sub_sum.type(torch.cuda.LongTensor)         
         
-        q_M, shift = self.M0, self.shift
-        
-        cur = multiply_M(sub_sum, q_M, shift)     
-        
-        total = shifting(cur, shift, self.z3)
+        multiplied = multiply_M(sub_sum, self.M0, self.shift)   
+        total = shifting(multiplied, self.shift.item(), self.z3)
 
         return total
 

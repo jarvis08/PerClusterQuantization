@@ -24,7 +24,7 @@ class QuantizedLinear(nn.Linear):
 
     def forward(self, x):
         # TODO: Totalsum
-        sum_q1q2 = F.linear(self.x, self.weight, None)
+        sum_q1q2 = F.linear(x, self.weight, None)
         return self.totalsum(x, sum_q1q2)
 
     def quantize(self, fake_linear):
@@ -44,7 +44,7 @@ class QuantizedLinear(nn.Linear):
             for out_f in range(output_feature):
                 sum_q1q2[:, out_f] += self.bias[out_f]
         
-        N = self.x.shape[1]
+        N = x.shape[1]
         nz1z2 = N * self.z1 * self.z2
 
         sum_a1 = torch.zeros(input_feature)
@@ -54,7 +54,7 @@ class QuantizedLinear(nn.Linear):
             sum_a2[out_f] = self.z1 * torch.sum(self.weight[out_f, :])  
 
         for in_f in range(input_feature):
-            sum_a1[in_f] = self.z2 * torch.sum(self.x[in_f, :])
+            sum_a1[in_f] = self.z2 * torch.sum(x[in_f, :])
 
         sub_sum = sum_q1q2.add(nz1z2).type(torch.cuda.LongTensor) 
 
@@ -65,11 +65,9 @@ class QuantizedLinear(nn.Linear):
 
         sub_sum = sub_sum.type(torch.cuda.LongTensor)     
 
-        q_M, shift = self.M0, self.shift
-
-        cur = multiply_M(sub_sum, q_M, shift)     
+        multiplied = multiply_M(sub_sum, self.M0, self.shift)     
         
-        total = shifting(cur, shift, self.z3)
+        total = shifting(multiplied, self.shift.item(), self.z3)
 
         return total
 

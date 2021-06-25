@@ -42,12 +42,15 @@ def get_model(args):
             else:
                 initializer = resnet20
 
-    if args.quantized or args.fused:
+    if args.fused:
         model = initializer(bit=args.bit, smooth=args.smooth)
+    elif args.quantized:
+        model = initializer(bit=args.bit)
     else:
         model = initializer()
     checkpoint = torch.load(args.path)
-    return model.load_state_dict(checkpoint['state_dict'], strict=False)
+    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    return model
 
 
 def _evaluate(args):
@@ -55,7 +58,8 @@ def _evaluate(args):
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:
-        summary(model, (3, 32, 32))
+        if not args.quantized:
+            summary(model, (3, 32, 32))
     model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
     cudnn.benchmark = True

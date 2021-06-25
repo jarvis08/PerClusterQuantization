@@ -41,8 +41,7 @@ class QuantizedAlexNet(nn.Module):
         return x
 
     def quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        x = torch.round(x.div(s).add(z))
+        x = torch.round(x.div(self.scale).add(self.zero_point))
         return x
 
 
@@ -80,8 +79,7 @@ class QuantizedAlexNetSmall(nn.Module):
         return x
 
     def quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        x = torch.round(x.div(s).add(z))
+        x = torch.round(x.div(self.scale).add(self.zero_point))
         return x
 
 
