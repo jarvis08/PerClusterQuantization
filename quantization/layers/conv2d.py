@@ -66,8 +66,13 @@ class QuantizedConv2d(nn.Conv2d):
 
         sub_sum = sub_sum.type(torch.cuda.LongTensor)         
         
-        multiplied = multiply_M(sub_sum, self.M0, self.shift)   
-        total = shifting(multiplied, self.shift.item(), self.z3)
+        multiplied = multiply_M(sub_sum, self.M0)   
+        total = shifting(multiplied, self.shift.item())
+        total = total.add(self.z3)
+        if self.bit == 4:
+            total = torch.clamp(total, 0, 15).type(torch.cuda.FloatTensor)
+        else: 
+            total = torch.clamp(total, -128, 127).type(torch.cuda.FloatTensor)
 
         return total
 

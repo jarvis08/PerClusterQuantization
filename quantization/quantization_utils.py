@@ -41,7 +41,7 @@ def quantize_M(M):
     return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(torch.tensor(shift, dtype=torch.int32), requires_grad=False)
 
 
-def multiply_M(sub_sum, q_M, shift):
+def multiply_M(sub_sum, q_M):
     max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
 
     overflow_max = torch.where(sub_sum == q_M, True, False)
@@ -57,7 +57,7 @@ def multiply_M(sub_sum, q_M, shift):
     return torch.where(overflow, max_int, subsummultiplier_high)
 
 
-def shifting(cur, shift, zero_point):
+def shifting(cur, shift):
     assert shift >= 0 or shift <= 31
 
     mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
@@ -69,9 +69,7 @@ def shifting(cur, shift, zero_point):
     threshold = ((mask >> 1) + (maskiflessthan & 1)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
 
-    total = ((cur >> shift).add(maskifgreaterthan & 1)).type(torch.cuda.IntTensor)
-    total = total.add(zero_point)
-    total = torch.clamp(total, 0, 15).type(torch.cuda.FloatTensor)
+    total = ((cur >> shift).add(maskifgreaterthan & 1)).type(torch.cuda.IntTensor)    
     return total
 
 

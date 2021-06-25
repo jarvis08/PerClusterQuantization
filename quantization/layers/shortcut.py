@@ -25,4 +25,12 @@ class QuantizedShortcut(nn.Module):
         x2 = multiply_M(prev.sub(self.z_prev), self.M0_prev)
         x1 = shifting(x1, self.shift_bypass)
         x2 = shifting(x2, self.shift_prev)
+        x1 = x1.add(self.z3)
+        x2 = x2.add(self.z3)
+        if self.bit == 4:
+            x1 = torch.clamp(x1, 0, 15).type(torch.cuda.FloatTensor)
+            x2 = torch.clamp(x2, 0, 15).type(torch.cuda.FloatTensor)
+        else:
+            x1 = torch.clamp(x1, -128, 127).type(torch.cuda.FloatTensor)
+            x2 = torch.clamp(x2, -128, 127).type(torch.cuda.FloatTensor)
         return x1 + x2
