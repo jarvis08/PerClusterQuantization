@@ -33,15 +33,11 @@ class QuantizedAlexNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.quantize_input(x)
+        x = quantize_matrix(x, self.scale, self.zero_point)
         x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return x
-
-    def quantize_input(self, x):
-        x = torch.round(x.div(self.scale).add(self.zero_point))
         return x
 
 
@@ -71,15 +67,11 @@ class QuantizedAlexNetSmall(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.quantize_input(x)
+        x = quantize_matrix(x, self.scale, self.zero_point)
         x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return x
-
-    def quantize_input(self, x):
-        x = torch.round(x.div(self.scale).add(self.zero_point))
         return x
 
 
@@ -96,6 +88,8 @@ def quantize_alexnet(fp_model, int_model):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
+    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
+    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     quantize(fp_model.features[0], int_model.features[0])
     int_model.features[1].zero_point = torch.nn.Parameter(int_model.features[0].z3, requires_grad=False)
     quantize(fp_model.features[2], int_model.features[2])

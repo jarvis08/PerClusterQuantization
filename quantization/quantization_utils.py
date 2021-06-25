@@ -24,12 +24,20 @@ def calc_qparams(_min, _max, q_max):
         return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, -128, 127), requires_grad=False)
 
 
+def quantize_matrix(x, scale, zero_point):
+    return torch.round(x.div(scale).add(zero_point))
+
+
 def quantize_M(M):
-    assert M > 0 or M < 1
+    assert M > 0
+    assert M < 1.0
     shift = 0
     while M < 0.5:
         M *= 2
         shift += 1
+    # while M > 1:
+    #     M /= 2
+    #     shift -= 1
     q_M = torch.tensor(torch.round(M * (1 << 31)), dtype=torch.int64, device='cuda:0').clone().detach()
     assert (q_M <= (1 << 31))
     if q_M == (1 << 31):
@@ -43,37 +51,33 @@ def quantize_M(M):
 
 def multiply_M(sub_sum, q_M):
     max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
-
     overflow_max = torch.where(sub_sum == q_M, True, False)
-    overflow_min = torch.where(sub_sum == -max_int - 1, True, False)
+    overflow_min = torch.where(sub_sum == -max_int -1, True, False)
     overflow = torch.logical_and(overflow_max, overflow_min)
 
-    subsummultiplier = sub_sum.mul(q_M)
-
+    subsummultiplier = sub_sum.mul(q_M).type(torch.cuda.LongTensor)
     nudge =  torch.where(subsummultiplier >= 0, (1 << 30), (1 - (1 << 30))).type(torch.cuda.IntTensor)
-
     subsummultiplier_high = ((subsummultiplier + nudge) / (1 << 31)).type(torch.cuda.LongTensor)
-
     return torch.where(overflow, max_int, subsummultiplier_high)
 
 
 def shifting(cur, shift):
-    assert shift >= 0 or shift <= 31
-
+    # assert shift >= 0
+    assert shift <= 31
     mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
     zero = torch.tensor(0, dtype=torch.int32, device='cuda:0')
     one = torch.tensor(1, dtype=torch.int32, device='cuda:0')
 
-    remainder = (cur & mask).type(torch.cuda.IntTensor) 
-    maskiflessthan = torch.where(cur < zero, ~zero, zero)        
-    threshold = ((mask >> 1) + (maskiflessthan & 1)).type(torch.cuda.IntTensor)
+    remainder = (cur & mask).type(torch.cuda.IntTensor)
+    maskiflessthan = torch.where(cur < zero, ~zero, zero)
+    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
 
-    total = ((cur >> shift).add(maskifgreaterthan & 1)).type(torch.cuda.IntTensor)    
+    total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
     return total
 
 
-def quantize_params(_fp, _int):
+def quantize_and_transfer_params(_fp, _int):
     if _int.layer_type == 'QuantizedConv2d':
         _int.weight.data = torch.round(torch.nn.Parameter(_fp.conv.weight.data).div(_int.s2).add(_int.z2))
         _int.bias.data = torch.round(torch.nn.Parameter(_fp.conv.bias.data).div(_int.s1 * _int.s2))
@@ -97,7 +101,7 @@ def transfer_qparams(_fp, _int):
 
 def quantize(_fp, _int):
     _int = transfer_qparams(_fp, _int)
-    _int = quantize_params(_fp, _int)
+    _int = quantize_and_transfer_params(_fp, _int)
     return _int
 
 

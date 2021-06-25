@@ -16,7 +16,7 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
 
     def forward(self, x):
         if self.padding > 0:
-             x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point)
+             x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point.item())
         out = self.maxpool(x)
         return out
 

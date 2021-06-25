@@ -23,57 +23,38 @@ class QuantizedLinear(nn.Linear):
         self.max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
 
     def forward(self, x):
-        # TODO: Totalsum
         sum_q1q2 = F.linear(x, self.weight, None)
-        return self.totalsum(x, sum_q1q2)
-
-    def quantize(self, fake_linear):
-        self.s1 = torch.nn.Parameter(fake_linear.s1, requires_grad=False)
-        self.s2 = torch.nn.Parameter(fake_linear.s2, requires_grad=False)
-        self.s3 = torch.nn.Parameter(fake_linear.s3, requires_grad=False)
-        self.z1 = torch.nn.Parameter(fake_linear.z1, requires_grad=False)
-        self.z2 = torch.nn.Parameter(fake_linear.z2, requires_grad=False)
-        self.z3 = torch.nn.Parameter(fake_linear.z3, requires_grad=False)
-        self.M0 = torch.nn.Parameter(fake_linear.M0, requires_grad=False)
-        self.shift = torch.nn.Parameter(fake_linear.shift, requires_grad=False)
+        return self.totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def totalsum(self, x, sum_q1q2):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
-
         if self.bias is not None:
             for out_f in range(output_feature):
-                sum_q1q2[:, out_f] += self.bias[out_f]
-        
+                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add(self.bias[out_f])
         N = x.shape[1]
         nz1z2 = N * self.z1 * self.z2
 
-        sum_a1 = torch.zeros(input_feature)
-        sum_a2 = torch.zeros(output_feature)
-
-        for out_f in range(output_feature):                                                   
-            sum_a2[out_f] = self.z1 * torch.sum(self.weight[out_f, :])  
-
+        sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
+        sum_a2 = torch.zeros(output_feature, dtype=torch.int32)
+        for out_f in range(output_feature):
+            sum_a2[out_f] = torch.sum(self.weight[out_f, :]).mul(self.z1)
         for in_f in range(input_feature):
-            sum_a1[in_f] = self.z2 * torch.sum(x[in_f, :])
+            sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
 
-        sub_sum = sum_q1q2.add(nz1z2).type(torch.cuda.LongTensor) 
-
+        sub_sum = sum_q1q2.add(nz1z2)
         for in_f in range(input_feature):
             sub_sum[in_f, :] = torch.sub(sub_sum[in_f, :], sum_a1[in_f])
         for out_f in range(output_feature):      
-            sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])     
+            sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
 
-        sub_sum = sub_sum.type(torch.cuda.LongTensor)     
-
-        multiplied = multiply_M(sub_sum, self.M0)     
-        
+        sub_sum = sub_sum.type(torch.cuda.LongTensor)
+        multiplied = multiply_M(sub_sum, self.M0)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
         if self.bit == 4:
             total = torch.clamp(total, 0, 15).type(torch.cuda.FloatTensor)
         else: 
             total = torch.clamp(total, -128, 127).type(torch.cuda.FloatTensor)
-
         return total
 
 

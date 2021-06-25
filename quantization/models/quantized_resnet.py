@@ -34,8 +34,6 @@ class QuantizedBasicBlock(nn.Module):
         self.ema_init = False
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.z3 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, bit=bit)
         self.conv2 = quantized_conv3x3(planes, planes, bit=bit)
@@ -44,11 +42,46 @@ class QuantizedBasicBlock(nn.Module):
     def forward(self, x):
         identity = x
         out = self.conv1(x)
+        # print("CONV")
+        # print(out.cpu()[0][0][0][0])
+        # print(out.cpu()[0][0][0][1])
+        # print(out.cpu()[0][0][0][2])
+        # print(out.cpu()[0][0][0][3])
+        # print(out.cpu()[0][-1][-1][-4])
+        # print(out.cpu()[0][-1][-1][-3])
+        # print(out.cpu()[0][-1][-1][-2])
+        # print(out.cpu()[0][-1][-1][-1])
         out = self.conv2(out)
-
+        # print("CONV")
+        # print(out.cpu()[0][0][0][0])
+        # print(out.cpu()[0][0][0][1])
+        # print(out.cpu()[0][0][0][2])
+        # print(out.cpu()[0][0][0][3])
+        # print(out.cpu()[0][-1][-1][-4])
+        # print(out.cpu()[0][-1][-1][-3])
+        # print(out.cpu()[0][-1][-1][-2])
+        # print(out.cpu()[0][-1][-1][-1])
         if self.downsample is not None:
             identity = self.downsample(x)
+            # print("Downsample")
+            # print(identity.cpu()[0][0][0][0])
+            # print(identity.cpu()[0][0][0][1])
+            # print(identity.cpu()[0][0][0][2])
+            # print(identity.cpu()[0][0][0][3])
+            # print(identity.cpu()[0][-1][-1][-4])
+            # print(identity.cpu()[0][-1][-1][-3])
+            # print(identity.cpu()[0][-1][-1][-2])
+            # print(identity.cpu()[0][-1][-1][-1])
         out = self.shortcut(identity, out)
+        # print("Shortcut")
+        # print(out.cpu()[0][0][0][0])
+        # print(out.cpu()[0][0][0][1])
+        # print(out.cpu()[0][0][0][2])
+        # print(out.cpu()[0][0][0][3])
+        # print(out.cpu()[0][-1][-1][-4])
+        # print(out.cpu()[0][-1][-1][-3])
+        # print(out.cpu()[0][-1][-1][-2])
+        # print(out.cpu()[0][-1][-1][-1])
         return out
 
 
@@ -106,6 +139,7 @@ class QuantizedResNet18(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        x = quantize_matrix(x, self.scale, self.zero_point)
         x = self.first_conv(x)
         x = self.maxpool(x)
 
@@ -160,7 +194,17 @@ class QuantizedResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        x = quantize_matrix(x, self.scale, self.zero_point)
         x = self.first_conv(x)
+        # print("CONV")
+        # print(x.cpu()[0][0][0][0])
+        # print(x.cpu()[0][0][0][1])
+        # print(x.cpu()[0][0][0][2])
+        # print(x.cpu()[0][0][0][3])
+        # print(x.cpu()[0][-1][-1][-4])
+        # print(x.cpu()[0][-1][-1][-3])
+        # print(x.cpu()[0][-1][-1][-2])
+        # print(x.cpu()[0][-1][-1][-1])
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -190,8 +234,8 @@ def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
     m.z_prev = nn.Parameter(z_prev, requires_grad=False)
     m.s3 = nn.Parameter(s3, requires_grad=False)
     m.z3 = nn.Parameter(z3, requires_grad=False)
-    m.M0_bypass, m.shift_bypass = quantize_M(s_bypass / s3)
-    m.M0_prev, m.shift_prev = quantize_M(s_prev / s3)
+    # m.M0_bypass, m.shift_bypass = quantize_M(s_bypass / s3)
+    # m.M0_prev, m.shift_prev = quantize_M(s_prev / s3)
     return m
 
 
@@ -204,16 +248,18 @@ def quantize_block(_fp, _int):
             _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
                                                     _int[i].downsample.s3, _int[i].downsample.z3,
                                                     _int[i].conv2.s3, _int[i].conv2.z3,
-                                                    _int[i].scale, _int[i].zero_point)
+                                                    _fp[i].s3, _fp[i].z3)
         else:
             _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
                                                     _int[i].conv1.s1, _int[i].conv1.z1,
                                                     _int[i].conv2.s3, _int[i].conv2.z3,
-                                                    _int[i].scale, _int[i].zero_point)
+                                                    _fp[i].s3, _fp[i].z3)
     return _int
 
 
 def quantize_resnet(fp_model, int_model, arch):
+    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
+    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
     int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
     int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
