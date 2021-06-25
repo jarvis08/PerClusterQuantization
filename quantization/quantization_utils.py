@@ -40,9 +40,49 @@ def quantize_M(M):
     assert q_M <= max_int
     return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(torch.tensor(shift, dtype=torch.int32), requires_grad=False)
 
+def multiply_M(sub_sum, q_M, shift):
+    max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
 
-def quantize(_fp, _int):
-    # Set quantization params
+    overflow_max = torch.where(sub_sum == q_M, True, False)
+    overflow_min = torch.where(sub_sum == -max_int - 1, True, False)
+    overflow = torch.logical_and(overflow_max, overflow_min)
+
+    subsummultiplier = sub_sum.mul(q_M)
+
+    nudge =  torch.where(subsummultiplier >= 0, (1 << 30), (1 - (1 << 30))).type(torch.cuda.IntTensor)
+
+    subsummultiplier_high = ((subsummultiplier + nudge) / (1 << 31)).type(torch.cuda.LongTensor)
+
+    return torch.where(overflow, max_int, subsummultiplier_high)
+
+def shifting(cur, shift, zero_point):
+    assert shift >= 0 or shift <= 31
+
+    mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
+    zero = torch.tensor(0, dtype=torch.int32, device='cuda:0')
+    one = torch.tensor(1, dtype=torch.int32, device='cuda:0')
+
+    remainder = (cur & mask).type(torch.cuda.IntTensor) 
+    maskiflessthan = torch.where(cur < zero, ~zero, zero)        
+    threshold = ((mask >> 1) + (maskiflessthan & 1)).type(torch.cuda.IntTensor)
+    maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
+
+    total = ((cur >> shift).add(maskifgreaterthan & 1)).type(torch.cuda.IntTensor)
+    total = total.add(zero_point)
+    total = torch.clamp(total, 0, 15).type(torch.cuda.FloatTensor)
+
+
+def quantize_params(_fp, _int):
+    if _int.layer_type == 'QuantizedConv2d':
+        _int.weight.data = torch.round(torch.nn.Parameter(_fp.conv.weight.data).div(_int.s2).add(_int.z2))
+        _int.bias.data = torch.round(torch.nn.Parameter(_fp.conv.bias.data).div(_int.s1 * _int.s2))
+    elif _int.layer_type == 'QuantizedLinear':
+        _int.weight.data = torch.round(torch.nn.Parameter(_fp.fc.weight.data).div(_int.s2).add(_int.z2))
+        _int.bias.data = torch.round(torch.nn.Parameter(_fp.fc.bias.data).div(_int.s1 * _int.s2))
+    return _int
+
+
+def transfer_qparams(_fp, _int):
     _int.s1 = torch.nn.Parameter(_fp.s1, requires_grad=False)
     _int.s2 = torch.nn.Parameter(_fp.s2, requires_grad=False)
     _int.s3 = torch.nn.Parameter(_fp.s3, requires_grad=False)
@@ -51,10 +91,13 @@ def quantize(_fp, _int):
     _int.z3 = torch.nn.Parameter(_fp.z3, requires_grad=False)
     _int.M0 = torch.nn.Parameter(_fp.M0, requires_grad=False)
     _int.shift = torch.nn.Parameter(_fp.shift, requires_grad=False)
+    return _int
 
-    # Set quantized weights
-    _int.weight.data = torch.round(torch.nn.Parameter(_fp.conv.weight.data).div(_int.s2).add(_int.z2))
-    _int.bias.data = torch.round(torch.nn.Parameter(_fp.conv.bias.data).div(_int.s1 * _int.s2))
+
+def quantize(_fp, _int):
+    _int = transfer_qparams(_fp, _int)
+    _int = quantize_params(_fp, _int)
+    return _int
 
 
 def transform(param):

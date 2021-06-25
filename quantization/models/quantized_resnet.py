@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 
-from quantization.layers.conv2d import *
-from quantization.layers.linear import *
-from quantization.layers.shortcut import *
+from quantization.layers import *
 from quantization.quantization_utils import *
 
 
@@ -45,13 +43,11 @@ class QuantizedBasicBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.conv2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-
         out = self.shortcut(identity, out)
         return out
 
@@ -81,7 +77,7 @@ class QuantizedResNet18(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=True, bit=self.bit)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
@@ -187,50 +183,42 @@ def quantized_resnet20(bit=8):
     return QuantizedResNet20(QuantizedBasicBlock, [3, 3, 3], bit=bit)
 
 
+def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
+    m.s_bypass = nn.Parameter(s_bypass, requires_grad=False)
+    m.z_bypass = nn.Parameter(z_bypass, requires_grad=False)
+    m.s_prev = nn.Parameter(s_prev, requires_grad=False)
+    m.z_prev = nn.Parameter(z_prev, requires_grad=False)
+    m.s3 = nn.Parameter(s3, requires_grad=False)
+    m.z3 = nn.Parameter(z3, requires_grad=False)
+    m.M0_bypass, m.shift_bypass = quantize_M(s_bypass / s3)
+    m.M0_prev, m.shift_prev = quantize_M(s_prev / s3)
+    return m
+
+
+def quantize_block(_fp, _int):
+    for i in range(len(_int)):
+        _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
+        _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
+        if _int[i].downsample:
+            _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
+            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                    _int[i].downsample.s3, _int[i].downsample.z3,
+                                                    _int[i].conv2.s3, _int[i].conv2.z3,
+                                                    _int[i].scale, _int[i].zero_point)
+        else:
+            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                    _int[i].conv1.s1, _int[i].conv1.z1,
+                                                    _int[i].conv2.s3, _int[i].conv2.z3,
+                                                    _int[i].scale, _int[i].zero_point)
+    return _int
+
+
 def quantize_resnet(fp_model, int_model, arch):
-    # First layer
-    quantize(fp_model.first_conv, int_model.first_conv)
-
-    # Block 1
-    fp_block = fp_model.layer1
-    int_block = int_model.layer1
-    for i in range(len(fp_block)):
-        quantize(fp_block[i].conv1, int_block[i].conv1)
-        quantize(fp_block[i].conv2, int_block[i].conv2)
-
-    # Block 2
-    fp_block = fp_model.layer2
-    int_block = int_model.layer2
-    quantize(fp_block[0].downsample, int_block[0].downsample)
-    for i in range(len(fp_block)):
-        quantize(fp_block[i].conv1, int_block[i].conv1)
-        quantize(fp_block[i].conv2, int_block[i].conv2)
-
-    # Block 3
-    fp_block = fp_model.layer3
-    int_block = int_model.layer3
-    quantize(fp_block[0].downsample, int_block[0].downsample)
-    for i in range(len(fp_block)):
-        quantize(fp_block[i].conv1, int_block[i].conv1)
-        quantize(fp_block[i].conv2, int_block[i].conv2)
-
-    # Block 4
+    int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
+    int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
+    int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
     if arch in ['resnet18']:
-        fp_block = fp_model.layer4
-        int_block = int_model.layer4
-        quantize(fp_block[0].downsample, int_block[0].downsample)
-        for i in range(len(fp_block)):
-            quantize(fp_block[i].conv1, int_block[i].conv1)
-            quantize(fp_block[i].conv2, int_block[i].conv2)
+        int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
+    int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
-
-
-    def set_shortcut_qparams(self, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
-        self.s_bypass = nn.Parameter(s_bypass, requires_grad=False)
-        self.z_bypass = nn.Parameter(z_bypass, requires_grad=False)
-        self.s_prev = nn.Parameter(s_prev, requires_grad=False)
-        self.z_prev = nn.Parameter(z_prev, requires_grad=False)
-        self.s3 = nn.Parameter(s3, requires_grad=False)
-        self.z3 = nn.Parameter(z3, requires_grad=False)
-        self.M0_bypass, self.shift_bypass = quantize_M(s_bypass / s3)
-        self.M0_prev, self.shift_prev = quantize_M(s_prev / s3)

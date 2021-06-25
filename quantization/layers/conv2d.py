@@ -22,7 +22,57 @@ class QuantizedConv2d(nn.Conv2d):
 
     def forward(self, x):
         # TODO: Totalsum
-        return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        if self.padding[0] > 0 or self.padding[1] > 0:
+             x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1)
+
+        sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0,0), self.dilation, self.groups)
+        return self.totalsum(x, sum_q1q2)
+
+    def totalsum(self, x, sum_q1q2):
+        input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
+        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+        
+        stride = self.stride[0]
+        pad = self.padding[0]
+        
+        output_col = sum_q1q2.shape[2]
+        output_row = sum_q1q2.shape[3]     
+
+        sum_a1 = torch.zeros(input_batch, output_col, output_row).cuda()
+        sum_a2 = torch.zeros(filter_batch).cuda()
+
+        if self.bias is not None:
+            for output_ch in range(0, filter_batch):
+                sum_q1q2[:, output_ch, :, :] += self.bias[output_ch]
+        
+        nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
+        
+        for output_ch in range(0,filter_batch):
+            sum_a2[output_ch] = self.z1 * torch.sum(self.weight.data[output_ch, :, :, :])
+
+        for o_col in range(0,output_col):
+            for o_row in range(0,output_row):
+                col_st, col_end = o_col * stride, o_col * stride + filter_col
+                row_st, row_end = o_row * stride, o_row * stride + filter_row
+                
+                sum_a1[:, o_col, o_row] = self.z2 * torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)) 
+               
+        sub_sum = sum_q1q2.add(nz1z2).type(torch.cuda.LongTensor) 
+
+        for i_batch in range(0, input_batch):
+            for out_c in range(0, filter_batch):
+                sub_sum[i_batch, out_c] = torch.sub(sub_sum[i_batch, out_c], sum_a1[i_batch])
+                sub_sum[i_batch, out_c] = torch.sub(sub_sum[i_batch, out_c], sum_a2[out_c])      
+
+        sub_sum = sub_sum.type(torch.cuda.LongTensor)         
+        
+        q_M, shift = self.M0, self.shift
+        
+        cur = multiply_M(sub_sum, q_M, shift)     
+        
+        total = shifting(cur, shift, self.z3)
+
+        return total
 
 
 class FakeConv2d(nn.Conv2d):
@@ -31,7 +81,6 @@ class FakeConv2d(nn.Conv2d):
         self.layer_type = 'FakeConv2d'
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
-
 
     def forward(self, x):
         if self.training:

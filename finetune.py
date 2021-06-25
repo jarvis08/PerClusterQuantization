@@ -11,8 +11,10 @@ def quantize_model(fp_model, args):
     if args.arch == 'alexnet':
         if args.dataset == 'imagenet':
             int_model = quantized_alexnet(bit=args.bit)
+            int_model = quantize_alexnet(fp_model, int_model)
         else:
             int_model = quantized_alexnet_small(bit=args.bit)
+            int_model = quantize_alexnet(fp_model, int_model)
     elif args.arch == 'resnet':
         if args.dataset == 'imagenet':
             int_model = quantized_resnet18(bit=args.bit)
@@ -21,7 +23,7 @@ def quantize_model(fp_model, args):
             int_model = quantized_resnet20(bit=args.bit)
             int_model = quantize_resnet(fp_model, int_model, 'resnet20')
     else:
-        "Arch. not supported"
+        print("Arch. not supported")
         exit()
     return int_model
 
@@ -44,7 +46,7 @@ def get_finetuning_model(args):
             pre_initializer = resnet20
             fused_initializer = fused_resnet20
     else:
-        "Arch. not supported"
+        print("Arch. not supported")
         exit()
 
     pre_model = pre_initializer()
@@ -59,7 +61,7 @@ def get_finetuning_model(args):
         else:
             fused_model = set_fused_resnet(fused_model, pre_model, 'resnet20')
     else:
-        "Arch. not supported"
+        print("Arch. not supported")
         exit()
     return fused_model
 
@@ -99,7 +101,6 @@ def _finetune(args):
         }, is_best, save_dir)
 
     # Quantize and save quantized model
-    path = set_save_dir(args, quantize=True)
     if args.arch == 'resnet':
         if args.dataset == 'imagenet':
             model = fuse_resnet(model, 'resnet18')
@@ -107,6 +108,8 @@ def _finetune(args):
             model = fuse_resnet(model, 'resnet20')
     model.set_quantization_params()
     save_fused_network_in_darknet_form(model, args.arch)
+
     quantized_model = quantize_model(model, args)
+    path = set_save_dir(args, quantize=True)
     f_path = os.path.join(path, 'checkpoint.pth')
     torch.save({'state_dict': quantized_model.state_dict()}, f_path)
