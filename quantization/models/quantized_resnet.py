@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from quantization.layers.conv2d import *
 from quantization.layers.linear import *
+from quantization.layers.shortcut import *
 from quantization.quantization_utils import *
 
 
@@ -40,7 +41,7 @@ class QuantizedBasicBlock(nn.Module):
 
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, bit=bit)
         self.conv2 = quantized_conv3x3(planes, planes, bit=bit)
-        self.relu = nn.ReLU(inplace=True)
+        self.shortcut = QuantizedShortcut(bit=bit)
 
     def forward(self, x):
         identity = x
@@ -51,8 +52,7 @@ class QuantizedBasicBlock(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
 
-        out += identity
-        out = self.relu(out)
+        out = self.shortcut(identity, out)
         return out
 
 
@@ -223,3 +223,14 @@ def quantize_resnet(fp_model, int_model, arch):
             quantize(fp_block[i].conv1, int_block[i].conv1)
             quantize(fp_block[i].conv2, int_block[i].conv2)
     return int_model
+
+
+    def set_shortcut_qparams(self, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
+        self.s_bypass = nn.Parameter(s_bypass, requires_grad=False)
+        self.z_bypass = nn.Parameter(z_bypass, requires_grad=False)
+        self.s_prev = nn.Parameter(s_prev, requires_grad=False)
+        self.z_prev = nn.Parameter(z_prev, requires_grad=False)
+        self.s3 = nn.Parameter(s3, requires_grad=False)
+        self.z3 = nn.Parameter(z3, requires_grad=False)
+        self.M0_bypass, self.shift_bypass = quantize_M(s_bypass / s3)
+        self.M0_prev, self.shift_prev = quantize_M(s_prev / s3)
