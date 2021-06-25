@@ -1,12 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-import numpy as np
-import sys
-import psutil
-
 from quantization.quantization_utils import *
+
 
 class QuantizedMaxPool2d(nn.MaxPool2d):
     def __init__(self, kernel_size, stride=1, padding=0, quant_only=False):
@@ -23,3 +19,4 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
              x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point)
         out = self.maxpool(x)
         return out
+

@@ -85,7 +85,7 @@ def quantize_params(_fp, _int):
     return _int
 
 
-def quantize_qparams(_fp, _int):
+def transfer_qparams(_fp, _int):
     _int.s1 = torch.nn.Parameter(_fp.s1, requires_grad=False)
     _int.s2 = torch.nn.Parameter(_fp.s2, requires_grad=False)
     _int.s3 = torch.nn.Parameter(_fp.s3, requires_grad=False)
@@ -98,7 +98,7 @@ def quantize_qparams(_fp, _int):
 
 
 def quantize(_fp, _int):
-    _int = quantize_qparams(_fp, _int)
+    _int = transfer_qparams(_fp, _int)
     _int = quantize_params(_fp, _int)
     return _int
 

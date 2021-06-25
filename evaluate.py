@@ -55,10 +55,10 @@ def get_model(args):
 
 def _evaluate(args):
     model = get_model(args)
-    if args.dataset == 'imagenet':
-        summary(model, (3, 224, 224))
-    else:
-        if not args.quantized:
+    if not args.quantized:
+        if args.dataset == 'imagenet':
+            summary(model, (3, 224, 224))
+        else:
             summary(model, (3, 32, 32))
     model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()

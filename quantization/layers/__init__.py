@@ -1,3 +1,4 @@
 from .linear import *
 from .conv2d import *
-from .maxpool import *
+from .shortcut import *
+from .maxpool2d import *

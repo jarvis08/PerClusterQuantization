@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Any
 from ..layers.conv2d import *
 from ..layers.linear import *
-from ..layers.maxpool import *
+from ..layers.maxpool2d import *
 from ..quantization_utils import *
 
 
