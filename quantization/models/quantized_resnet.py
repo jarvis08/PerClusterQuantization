@@ -189,37 +189,39 @@ def quantized_resnet20(bit=8):
 
 def quantize_resnet(fp_model, int_model, arch):
     # First layer
-    quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
 
     # Block 1
     fp_block = fp_model.layer1
     int_block = int_model.layer1
     for i in range(len(fp_block)):
-        quantize(fp_block[i].conv1, int_block[i].conv1)
-        quantize(fp_block[i].conv2, int_block[i].conv2)
+        int_block[i].conv1 = quantize(fp_block[i].conv1, int_block[i].conv1)
+        int_block[i].conv2 = quantize(fp_block[i].conv2, int_block[i].conv2)
 
     # Block 2
     fp_block = fp_model.layer2
     int_block = int_model.layer2
-    quantize(fp_block[0].downsample, int_block[0].downsample)
+    int_block[0].downsample = quantize(fp_block[0].downsample, int_block[0].downsample)
     for i in range(len(fp_block)):
-        quantize(fp_block[i].conv1, int_block[i].conv1)
-        quantize(fp_block[i].conv2, int_block[i].conv2)
+        int_block[i].conv1 = quantize(fp_block[i].conv1, int_block[i].conv1)
+        int_block[i].conv2 = quantize(fp_block[i].conv2, int_block[i].conv2)
 
     # Block 3
     fp_block = fp_model.layer3
     int_block = int_model.layer3
-    quantize(fp_block[0].downsample, int_block[0].downsample)
+    int_block[0].downsample = quantize(fp_block[0].downsample, int_block[0].downsample)
     for i in range(len(fp_block)):
-        quantize(fp_block[i].conv1, int_block[i].conv1)
-        quantize(fp_block[i].conv2, int_block[i].conv2)
+        int_block[i].conv1 = quantize(fp_block[i].conv1, int_block[i].conv1)
+        int_block[i].conv2 = quantize(fp_block[i].conv2, int_block[i].conv2)
 
     # Block 4
     if arch in ['resnet18']:
         fp_block = fp_model.layer4
         int_block = int_model.layer4
-        quantize(fp_block[0].downsample, int_block[0].downsample)
+        int_block[0].downsample = quantize(fp_block[0].downsample, int_block[0].downsample)
         for i in range(len(fp_block)):
-            quantize(fp_block[i].conv1, int_block[i].conv1)
-            quantize(fp_block[i].conv2, int_block[i].conv2)
+            int_block[i].conv1 = quantize(fp_block[i].conv1, int_block[i].conv1)
+            int_block[i].conv2 = quantize(fp_block[i].conv2, int_block[i].conv2)
+    
+    int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model

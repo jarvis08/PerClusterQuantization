@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Any
 from ..layers.conv2d import *
 from ..layers.linear import *
+from ..layers.maxpool import *
 from ..quantization_utils import *
 
 
@@ -16,13 +17,13 @@ class QuantizedAlexNet(nn.Module):
 
         self.features = nn.Sequential(
             QuantizedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bit=bit),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+            QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0),
             QuantizedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, bit=bit),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+            QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0),
             QuantizedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit),
             QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit),
             QuantizedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+            QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0),
         )
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
         self.classifier = nn.Sequential(
@@ -32,10 +33,16 @@ class QuantizedAlexNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.quantize_input(x)
         x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
+        return x
+
+    def quantize_input(self, x):
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        x = torch.round(x.div(s).add(z))
         return x
 
 
@@ -49,13 +56,13 @@ class QuantizedAlexNetSmall(nn.Module):
 
         self.features = nn.Sequential(
             QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bit=bit),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+            QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0),
             QuantizedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bit=bit),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+            QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0),
             QuantizedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit),
             QuantizedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit),
             QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+            QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0),
         )
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.classifier = nn.Sequential(
@@ -65,10 +72,16 @@ class QuantizedAlexNetSmall(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.quantize_input(x)
         x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
+        return x
+
+    def quantize_input(self, x):
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        x = torch.round(x.div(s).add(z))
         return x
 
 
@@ -86,10 +99,13 @@ def quantize_alexnet(fp_model, int_model):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     quantize(fp_model.features[0], int_model.features[0])
+    int_model.features[1].zero_point = torch.nn.Parameter(int_model.features[0].z3, requires_grad=False)
     quantize(fp_model.features[2], int_model.features[2])
+    int_model.features[3].zero_point = torch.nn.Parameter(int_model.features[2].z3, requires_grad=False)
     quantize(fp_model.features[4], int_model.features[4])
     quantize(fp_model.features[5], int_model.features[5])
     quantize(fp_model.features[6], int_model.features[6])
+    int_model.features[7].zero_point = torch.nn.Parameter(int_model.features[6].z3, requires_grad=False)
     quantize(fp_model.classifier[0], int_model.classifier[0])
     quantize(fp_model.classifier[1], int_model.classifier[1])
     quantize(fp_model.classifier[2], int_model.classifier[2])

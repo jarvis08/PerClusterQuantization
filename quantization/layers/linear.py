@@ -8,7 +8,7 @@ from quantization.quantization_utils import *
 class QuantizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True, bit=8):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
-        self.layer_type = 'FakeLinear'
+        self.layer_type = 'QuantizedLinear'
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
@@ -20,9 +20,12 @@ class QuantizedLinear(nn.Linear):
         self.M0 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
+        self.max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
+
     def forward(self, x):
         # TODO: Totalsum
-        return F.linear(x, self.weight, self.bias)
+        sum_q1q2 = F.linear(self.x, self.weight, None)
+        return self.totalsum(x, sum_q1q2)
 
     def quantize(self, fake_linear):
         self.s1 = torch.nn.Parameter(fake_linear.s1, requires_grad=False)
@@ -33,6 +36,42 @@ class QuantizedLinear(nn.Linear):
         self.z3 = torch.nn.Parameter(fake_linear.z3, requires_grad=False)
         self.M0 = torch.nn.Parameter(fake_linear.M0, requires_grad=False)
         self.shift = torch.nn.Parameter(fake_linear.shift, requires_grad=False)
+
+    def totalsum(self, x, sum_q1q2):
+        input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
+
+        if self.bias is not None:
+            for out_f in range(output_feature):
+                sum_q1q2[:, out_f] += self.bias[out_f]
+        
+        N = self.x.shape[1]
+        nz1z2 = N * self.z1 * self.z2
+
+        sum_a1 = torch.zeros(input_feature)
+        sum_a2 = torch.zeros(output_feature)
+
+        for out_f in range(output_feature):                                                   
+            sum_a2[out_f] = self.z1 * torch.sum(self.weight[out_f, :])  
+
+        for in_f in range(input_feature):
+            sum_a1[in_f] = self.z2 * torch.sum(self.x[in_f, :])
+
+        sub_sum = sum_q1q2.add(nz1z2).type(torch.cuda.LongTensor) 
+
+        for in_f in range(input_feature):
+            sub_sum[in_f, :] = torch.sub(sub_sum[in_f, :], sum_a1[in_f])
+        for out_f in range(output_feature):      
+            sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])     
+
+        sub_sum = sub_sum.type(torch.cuda.LongTensor)     
+
+        q_M, shift = self.M0, self.shift
+
+        cur = multiply_M(sub_sum, q_M, shift)     
+        
+        total = shifting(cur, shift, self.z3)
+
+        return total
 
 
 class FakeLinear(nn.Linear):

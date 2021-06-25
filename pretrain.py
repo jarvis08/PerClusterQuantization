@@ -15,7 +15,7 @@ def get_pretraining_model(arch, dataset):
     elif arch == 'resnet':
         if dataset == 'imagenet':
             return resnet18()
-        if dataset == 'imagenet':
+        else:
             return resnet20()
 
 
@@ -41,7 +41,7 @@ def _pretrain(args):
         train_epoch(train_loader, model, criterion, optimizer, e)
         opt_scheduler.step()
 
-        prec = validate(test_loader, model, criterion, False)
+        prec = validate(test_loader, model, criterion)
 
         is_best = prec > best_prec
         best_prec = max(prec, best_prec)
