@@ -7,7 +7,6 @@ from quantization.quantization_utils import *
 class QuantizedMaxPool2d(nn.MaxPool2d):
     def __init__(self, kernel_size, stride=1, padding=0, quant_only=False):
         super(QuantizedMaxPool2d, self).__init__(kernel_size, stride, padding, quant_only)   
-
         self.layer_type = 'QuantizedMaxPool2d'     
         self.kernel_size = kernel_size
         self.stride = stride

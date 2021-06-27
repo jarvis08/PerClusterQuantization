@@ -32,7 +32,6 @@ class QuantizedLinear(nn.Linear):
             for out_f in range(output_feature):
                 sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add(self.bias[out_f])
         N = x.shape[1]
-        nz1z2 = N * self.z1 * self.z2
 
         sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
         sum_a2 = torch.zeros(output_feature, dtype=torch.int32)
@@ -41,21 +40,21 @@ class QuantizedLinear(nn.Linear):
         for in_f in range(input_feature):
             sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
 
+        nz1z2 = N * self.z1 * self.z2
         sub_sum = sum_q1q2.add(nz1z2)
         for in_f in range(input_feature):
             sub_sum[in_f, :] = torch.sub(sub_sum[in_f, :], sum_a1[in_f])
         for out_f in range(output_feature):      
             sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
 
-        sub_sum = sub_sum.type(torch.cuda.LongTensor)
-        multiplied = multiply_M(sub_sum, self.M0)
+        multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
         if self.bit == 4:
-            total = torch.clamp(total, 0, 15).type(torch.cuda.FloatTensor)
+            total = torch.clamp(total, 0, 15)
         else: 
-            total = torch.clamp(total, -128, 127).type(torch.cuda.FloatTensor)
-        return total
+            total = torch.clamp(total, -128, 127)
+        return total.type(torch.cuda.FloatTensor)
 
 
 class FakeLinear(nn.Linear):

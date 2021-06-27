@@ -40,7 +40,6 @@ class QuantizedConv2d(nn.Conv2d):
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
         sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
 
-        nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         for output_ch in range(0, filter_batch):
             sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
         for o_col in range(0,output_col):
@@ -49,21 +48,21 @@ class QuantizedConv2d(nn.Conv2d):
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
                 sum_a1[:, o_col, o_row] = self.z2 * torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
                
+        nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sub_sum = sum_q1q2.add(nz1z2)
         for i_batch in range(0, input_batch):
             for out_c in range(0, filter_batch):
                 sub_sum[i_batch, out_c] = torch.sub(sub_sum[i_batch, out_c], sum_a1[i_batch])
                 sub_sum[i_batch, out_c] = torch.sub(sub_sum[i_batch, out_c], sum_a2[out_c])
 
-        sub_sum = sub_sum.type(torch.cuda.LongTensor)
-        multiplied = multiply_M(sub_sum, self.M0)
+        multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
         if self.bit == 4:
-            total = torch.clamp(total, 0, 15).type(torch.cuda.FloatTensor)
+            total = torch.clamp(total, 0, 15)
         else: 
-            total = torch.clamp(total, -128, 127).type(torch.cuda.FloatTensor)
-        return total
+            total = torch.clamp(total, -128, 127)
+        return total.type(torch.cuda.FloatTensor)
 
 
 class FakeConv2d(nn.Conv2d):

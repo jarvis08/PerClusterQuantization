@@ -28,21 +28,43 @@ def quantize_matrix(x, scale, zero_point):
     return torch.round(x.div(scale).add(zero_point))
 
 
-def quantize_M(M):
+def quantize_shortcut_M(M):
     assert M > 0
-    assert M < 1.0
+
     shift = 0
     while M < 0.5:
         M *= 2
         shift += 1
-    # while M > 1:
-    #     M /= 2
-    #     shift -= 1
+    while M > 1:
+        M /= 2
+        shift -= 1
+
     q_M = torch.tensor(torch.round(M * (1 << 31)), dtype=torch.int64, device='cuda:0').clone().detach()
     assert (q_M <= (1 << 31))
     if q_M == (1 << 31):
         q_M /= 2
         shift -= 1
+
+    max_int = 9223372036854775807
+    assert q_M <= max_int
+    return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(torch.tensor(shift, dtype=torch.int32), requires_grad=False)
+
+
+def quantize_M(M):
+    assert M > 0
+    assert M < 1.0
+
+    shift = 0
+    while M < 0.5:
+        M *= 2
+        shift += 1
+
+    q_M = torch.tensor(torch.round(M * (1 << 31)), dtype=torch.int64, device='cuda:0').clone().detach()
+    assert (q_M <= (1 << 31))
+    if q_M == (1 << 31):
+        q_M /= 2
+        shift -= 1
+
     assert shift >= 0
     max_int = 9223372036854775807
     assert q_M <= max_int
@@ -62,7 +84,7 @@ def multiply_M(sub_sum, q_M):
 
 
 def shifting(cur, shift):
-    # assert shift >= 0
+    assert shift >= 0
     assert shift <= 31
     mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
     zero = torch.tensor(0, dtype=torch.int32, device='cuda:0')

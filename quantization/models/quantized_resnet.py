@@ -41,47 +41,13 @@ class QuantizedBasicBlock(nn.Module):
 
     def forward(self, x):
         identity = x
+
         out = self.conv1(x)
-        # print("CONV")
-        # print(out.cpu()[0][0][0][0])
-        # print(out.cpu()[0][0][0][1])
-        # print(out.cpu()[0][0][0][2])
-        # print(out.cpu()[0][0][0][3])
-        # print(out.cpu()[0][-1][-1][-4])
-        # print(out.cpu()[0][-1][-1][-3])
-        # print(out.cpu()[0][-1][-1][-2])
-        # print(out.cpu()[0][-1][-1][-1])
         out = self.conv2(out)
-        # print("CONV")
-        # print(out.cpu()[0][0][0][0])
-        # print(out.cpu()[0][0][0][1])
-        # print(out.cpu()[0][0][0][2])
-        # print(out.cpu()[0][0][0][3])
-        # print(out.cpu()[0][-1][-1][-4])
-        # print(out.cpu()[0][-1][-1][-3])
-        # print(out.cpu()[0][-1][-1][-2])
-        # print(out.cpu()[0][-1][-1][-1])
+
         if self.downsample is not None:
             identity = self.downsample(x)
-            # print("Downsample")
-            # print(identity.cpu()[0][0][0][0])
-            # print(identity.cpu()[0][0][0][1])
-            # print(identity.cpu()[0][0][0][2])
-            # print(identity.cpu()[0][0][0][3])
-            # print(identity.cpu()[0][-1][-1][-4])
-            # print(identity.cpu()[0][-1][-1][-3])
-            # print(identity.cpu()[0][-1][-1][-2])
-            # print(identity.cpu()[0][-1][-1][-1])
         out = self.shortcut(identity, out)
-        # print("Shortcut")
-        # print(out.cpu()[0][0][0][0])
-        # print(out.cpu()[0][0][0][1])
-        # print(out.cpu()[0][0][0][2])
-        # print(out.cpu()[0][0][0][3])
-        # print(out.cpu()[0][-1][-1][-4])
-        # print(out.cpu()[0][-1][-1][-3])
-        # print(out.cpu()[0][-1][-1][-2])
-        # print(out.cpu()[0][-1][-1][-1])
         return out
 
 
@@ -196,15 +162,6 @@ class QuantizedResNet20(nn.Module):
     def forward(self, x):
         x = quantize_matrix(x, self.scale, self.zero_point)
         x = self.first_conv(x)
-        # print("CONV")
-        # print(x.cpu()[0][0][0][0])
-        # print(x.cpu()[0][0][0][1])
-        # print(x.cpu()[0][0][0][2])
-        # print(x.cpu()[0][0][0][3])
-        # print(x.cpu()[0][-1][-1][-4])
-        # print(x.cpu()[0][-1][-1][-3])
-        # print(x.cpu()[0][-1][-1][-2])
-        # print(x.cpu()[0][-1][-1][-1])
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -234,8 +191,8 @@ def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
     m.z_prev = nn.Parameter(z_prev, requires_grad=False)
     m.s3 = nn.Parameter(s3, requires_grad=False)
     m.z3 = nn.Parameter(z3, requires_grad=False)
-    # m.M0_bypass, m.shift_bypass = quantize_M(s_bypass / s3)
-    # m.M0_prev, m.shift_prev = quantize_M(s_prev / s3)
+    m.M0_bypass, m.shift_bypass = quantize_shortcut_M(s_bypass / s3)
+    m.M0_prev, m.shift_prev = quantize_shortcut_M(s_prev / s3)
     return m
 
 
