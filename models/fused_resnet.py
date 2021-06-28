@@ -62,8 +62,6 @@ class FusedBasicBlock(nn.Module):
                 self.act_range[0] = torch.min(out).item()
                 self.act_range[1] = torch.max(out).item()
                 self.ema_init = True
-        else:
-            out = self.fake_quantize_activation(out)
         return out
 
     def ema(self, x):
