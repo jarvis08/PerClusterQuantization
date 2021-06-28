@@ -1,5 +1,11 @@
 # Per Cluster Quantization
 
+## Environment & Requirements
+
+- OS: Ubuntu 18.04 / 20.04
+- CUDA version: 10.2
+- PyTorch version: 1.8.1
+
 ## 1. Pre-training
 
 ```
