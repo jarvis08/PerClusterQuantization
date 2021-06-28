@@ -9,7 +9,6 @@ from .quantization_utils import *
 class FusedAlexNet(nn.Module):
     def __init__(self, num_classes: int = 1000, smooth: float = 0.995, bit: int = 32) -> None:
         super(FusedAlexNet, self).__init__()
-        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -77,7 +76,6 @@ class FusedAlexNet(nn.Module):
 class FusedAlexNetSmall(nn.Module):
     def __init__(self, num_classes: int = 10, smooth: float = 0.995, bit: int = 32) -> None:
         super(FusedAlexNetSmall, self).__init__()
-        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)

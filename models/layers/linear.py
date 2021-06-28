@@ -81,7 +81,6 @@ class FusedLinear(nn.Module):
     def __init__(self, in_features, out_features, bias=True, bit=32, smooth=0.995, relu=True):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
-        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.ema_init = False

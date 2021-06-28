@@ -30,7 +30,6 @@ class FusedBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.ema_init = False
@@ -92,7 +91,6 @@ class FusedResNet(nn.Module):
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None, bit=32, smooth=0.995):
         super(FusedResNet, self).__init__()
-        self.quantized = False
         self.bit = bit
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
@@ -217,7 +215,6 @@ class FusedResNet(nn.Module):
 class FusedResNet20(nn.Module):
     def __init__(self, block, layers, num_classes=10, bit=32, smooth=0.995):
         super(FusedResNet20, self).__init__()
-        self.quantized = False
         self.bit = bit
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)

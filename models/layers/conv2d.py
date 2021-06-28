@@ -89,7 +89,6 @@ class FusedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, bn=False, relu=True, smooth=0.995, bit=32):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
-        self.quantized = False
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.ema_init = False
