@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from quantization.quantization_utils import *
+from ..quantization_utils import *
 
 
 class QuantizedMaxPool2d(nn.MaxPool2d):

@@ -2,52 +2,17 @@ import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
 from models import *
-from quantization import *
 from utils import *
 
 
 def get_model(args):
     initializer = None
     if args.quantized:
-        if args.arch == 'alexnet':
-            if args.dataset == 'imagenet':
-                initializer = quantized_alexnet
-            else:
-                initializer = quantized_alexnet_small
-        elif args.arch == 'resnet':
-            if args.dataset == 'imagenet':
-                initializer = quantized_resnet18
-            else:
-                initializer = quantized_resnet20
+        model = args.tools.quantized_model_initializer(bit=args.bit)
     elif args.fused:
-        if args.arch == 'alexnet':
-            if args.dataset == 'imagenet':
-                initializer = fused_alexnet
-            else:
-                initializer = fused_alexnet_small
-        elif args.arch == 'resnet':
-            if args.dataset == 'imagenet':
-                initializer = fused_resnet18
-            else:
-                initializer = fused_resnet20
+        model = args.tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
     else:
-        if args.arch == 'alexnet':
-            if args.dataset == 'imagenet':
-                initializer = alexnet
-            else:
-                initializer = alexnet_small
-        elif args.arch == 'resnet':
-            if args.dataset == 'imagenet':
-                initializer = resnet18
-            else:
-                initializer = resnet20
-
-    if args.fused:
-        model = initializer(bit=args.bit, smooth=args.smooth)
-    elif args.quantized:
-        model = initializer(bit=args.bit)
-    else:
-        model = initializer()
+        model = args.tools.pretrained_model_initializer()
     checkpoint = torch.load(args.path)
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model

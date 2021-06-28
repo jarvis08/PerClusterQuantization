@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
-from quantization.quantization_utils import *
+from ..quantization_utils import *
 
 
 class QuantizedLinear(nn.Linear):

@@ -1,8 +1,9 @@
 import argparse
+
+from models import *
 from pretrain import _pretrain
 from finetune import _finetune
 from evaluate import _evaluate
-
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
@@ -23,15 +24,60 @@ parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with d
 args = parser.parse_args()
 print(vars(args))
 
+
+def set_func_for_target_arch(arch):
+    tools = QuantizationTool()
+    if 'AlexNet' in arch:
+        setattr(tools, 'fuser', set_fused_alexnet)
+        setattr(tools, 'quantizer', quantize_alexnet)
+        if 'Small' in arch:
+            setattr(tools, 'pretrained_model_initializer', alexnet_small)
+            setattr(tools, 'fused_model_initializer', fused_alexnet_small)
+            setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
+        else:
+            setattr(tools, 'pretrained_model_initializer', alexnet)
+            setattr(tools, 'fused_model_initializer', fused_alexnet)
+            setattr(tools, 'quantized_model_initializer', quantized_alexnet)
+
+    elif 'ResNet' in arch:
+        setattr(tools, 'fuser', set_fused_resnet)
+        setattr(tools, 'quantizer', quantize_resnet)
+        if '18' in arch:
+            setattr(tools, 'pretrained_model_initializer', resnet18)
+            setattr(tools, 'fused_model_initializer', fused_resnet18)
+            setattr(tools, 'quantized_model_initializer', quantized_resnet18)
+        else:
+            setattr(tools, 'pretrained_model_initializer', resnet20)
+            setattr(tools, 'fused_model_initializer', fused_resnet20)
+            setattr(tools, 'quantized_model_initializer', quantized_resnet20)
+    return tools
+
+
+def specify_target_arch(arch, dataset):
+    arch = None
+    if arch == 'alexnet':
+        if dataset == 'imagenet':
+            arch = 'AlexNet'
+        else:
+            arch = 'AlexNetSmall'
+
+    elif arch == 'resnet':
+        if dataset == 'imagenet':
+            arch = 'ResNet18'
+        else:
+            arch = 'ResNet20'
+    return arch, set_func_for_target_arch(arch)
+
+
 if __name__=='__main__':
-    # use_gpu = torch.cuda.is_available()
-    # assert use_gpu, "Code works on GPU"
     assert args.arch in ['alexnet', 'resnet', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 32], 'Not supported target bit'
 
+    args.arch, tools = specify_target_arch(args.arch, args.dataset)
     if args.mode == 'pre':
-        _pretrain(args)
+        _pretrain(args, tools)
     elif args.mode == 'fine':
-        _finetune(args)
+        _finetune(args, tools)
     else:
-        _evaluate(args)
+        _evaluate(args, tools)
+

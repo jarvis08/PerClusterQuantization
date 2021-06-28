@@ -158,19 +158,23 @@ def get_test_loader(dataset, normalizer, batch_size):
     return test_loader
 
 
+def add_path(prev_path, to_add):
+    path = os.path.join(prev_path, to_add)
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
+
+
 def set_save_dir(args, quantize=False):
     save_dir = 'result'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    if quantize:
-        save_dir = os.path.join(save_dir, 'quantized')
-    else:
-        save_dir = os.path.join(save_dir, args.mode)
+    save_dir = os.path.join(save_dir, args.mode)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    save_dir = os.path.join(save_dir, args.arch)
+    save_dir = os.path.join(save_dir, args.arch + '_' + str(args.bit) + 'bit')
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 

@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 from typing import Any
-from ..layers.conv2d import *
-from ..layers.linear import *
-from ..quantization_utils import *
+from .layers.conv2d import *
+from .layers.linear import *
+from .quantization_utils import *
 
 
 class FusedAlexNet(nn.Module):

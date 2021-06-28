@@ -1,5 +1,5 @@
 import torch.nn as nn
-from quantization.quantization_utils import *
+from ..quantization_utils import *
 
 
 class QuantizedShortcut(nn.Module):

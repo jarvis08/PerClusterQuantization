@@ -1,27 +1,14 @@
+import torch
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
 from models import *
-from quantization import *
 from utils import *
 
 
-def get_pretraining_model(arch, dataset):
-    if arch == 'alexnet':
-        if dataset == 'imagenet':
-            return alexnet()
-        else:
-            return alexnet_small()
-    elif arch == 'resnet':
-        if dataset == 'imagenet':
-            return resnet18()
-        else:
-            return resnet20()
-
-
-def _pretrain(args):
-    save_dir = set_save_dir(args)
-    model = get_pretraining_model(args.arch, args.dataset)
+def _pretrain(args, tools):
+    save_path = set_save_dir(args)
+    model = tools.pretrained_model_initializer()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:
@@ -51,4 +38,4 @@ def _pretrain(args):
             'state_dict': model.state_dict(),
             'best_prec': best_prec,
             'optimizer': optimizer.state_dict(),
-        }, is_best, save_dir)
+        }, is_best, save_path)

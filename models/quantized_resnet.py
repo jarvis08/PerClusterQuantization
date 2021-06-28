@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from quantization.layers import *
-from quantization.quantization_utils import *
+from .layers import *
+from .quantization_utils import *
 
 
 def quantized_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bit=8):
@@ -214,14 +214,14 @@ def quantize_block(_fp, _int):
     return _int
 
 
-def quantize_resnet(fp_model, int_model, arch):
+def quantize_resnet(fp_model, int_model):
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
     int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
     int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
     int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
-    if arch in ['resnet18']:
+    if int_model.num_classes == 1000:
         int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model

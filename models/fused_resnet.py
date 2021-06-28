@@ -1,11 +1,9 @@
 import torch
 import torch.nn as nn
 
-from quantization.layers.conv2d import *
-from quantization.layers.linear import *
-from quantization.quantization_utils import *
-
-# import pandas as pd
+from .layers.conv2d import *
+from .layers.linear import *
+from .quantization_utils import *
 
 
 def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bit=32, smooth=0.995, bn=False, relu=False):
@@ -315,7 +313,7 @@ def fused_resnet20(bit=32, smooth=0.999):
     return FusedResNet20(FusedBasicBlock, [3, 3, 3], bit=bit, smooth=smooth)
 
 
-def set_fused_resnet(fused, pre, arch):
+def set_fused_resnet(fused, pre):
     """
         Copy from pre model's params to fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
@@ -344,7 +342,7 @@ def set_fused_resnet(fused, pre, arch):
         block[i].conv2.copy_from_pretrained(pre.layer3[i].conv2, pre.layer3[i].bn2)
 
     # Block 4
-    if arch in ['resnet18']:
+    if fused.num_classes == 1000:
         block = fused.layer4
         block[0].downsample.copy_from_pretrained(pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
         for i in range(len(block)):
@@ -357,7 +355,7 @@ def set_fused_resnet(fused, pre, arch):
     return fused
 
 
-def fuse_resnet(model, arch):
+def fold_resnet(model):
     # First layer
     model.first_conv.fuse_conv_and_bn()
 
@@ -382,7 +380,7 @@ def fuse_resnet(model, arch):
         fp_block[i].conv2.fuse_conv_and_bn()
 
     # Block 4
-    if arch in ['resnet18']:
+    if model.num_classes == 1000:
         fp_block = model.layer4
         fp_block[0].downsample.fuse_conv_and_bn()
         for i in range(len(fp_block)):

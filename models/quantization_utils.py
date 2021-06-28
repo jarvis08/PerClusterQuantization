@@ -12,6 +12,15 @@ class SkipBN(nn.Module):
         return x
 
 
+class QuantizationTool(object):
+    def __init__(self):
+        self.fuser = None
+        self.quantizer = None
+        self.pretrained_model_initializer = None
+        self.fused_model_initializer = None
+        self.quantized_model_initializer = None
+
+
 def calc_qparams(_min, _max, q_max):
     assert q_max == 15 or q_max == 255, print("Not Supported int type!\nPlz use uint4 or int8")
     if q_max == 15:
@@ -207,15 +216,15 @@ def save_params(model, path):
                 weight.tofile(f)
 
 
-def save_fused_network_in_darknet_form(model, arch):
+def save_fused_network_in_darknet_form(model, args):
     path = './result/darknet'
     if not os.path.exists(path):
         os.makedirs(path)
-    path = os.path.join(path, '{}.fused.torch.'.format(arch))
+    path = os.path.join(path, '{}.fused.torch.int{}'.format(args.arch, args.bit))
 
     model.cpu()
     save_params(model, path + 'weights')
-    if arch == "resnet":
+    if 'ResNet' in args.arch:
         save_fused_resnet_qparams(model, path + 'qparams')
-    elif arch == "alexnet":
+    elif 'AlexNet' in args.arch:
         save_fused_alexnet_qparams(model, path + 'qparams')
