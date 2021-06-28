@@ -154,6 +154,7 @@ class ResNet(nn.Module):
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
+        self.num_blocks = 4
 
         self.inplanes = 64
         self.dilation = 1
@@ -249,6 +250,7 @@ class ResNet20(nn.Module):
         super(ResNet20, self).__init__()
         self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16
+        self.num_blocks = 3
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = self._norm_layer(self.inplanes)

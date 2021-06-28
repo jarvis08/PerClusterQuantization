@@ -64,6 +64,7 @@ class QuantizedResNet18(nn.Module):
         self.smooth = smooth
         self.q_max = 2 ** self.bit - 1
 
+        self.num_blocks = 4
         self.inplanes = 64
         self.dilation = 1
         if replace_stride_with_dilation is None:
@@ -139,6 +140,7 @@ class QuantizedResNet20(nn.Module):
 
         self.inplanes = 16
         self.dilation = 1
+        self.num_blocks = 3
 
         self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=True, bit=self.bit)
         self.layer1 = self._make_layer(block, 16, layers[0])
@@ -221,7 +223,7 @@ def quantize_resnet(fp_model, int_model):
     int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
     int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
     int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
-    if int_model.num_classes == 1000:
+    if int_model.num_blocks == 4:
         int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model

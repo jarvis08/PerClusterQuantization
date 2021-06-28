@@ -5,21 +5,20 @@ from models import *
 from utils import *
 
 
-def get_model(args):
-    initializer = None
+def get_model(args, tools):
     if args.quantized:
-        model = args.tools.quantized_model_initializer(bit=args.bit)
+        model = tools.quantized_model_initializer(bit=args.bit)
     elif args.fused:
-        model = args.tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
+        model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
     else:
-        model = args.tools.pretrained_model_initializer()
+        model = tools.pretrained_model_initializer()
     checkpoint = torch.load(args.path)
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
 
 
-def _evaluate(args):
-    model = get_model(args)
+def _evaluate(args, tools):
+    model = get_model(args, tools)
     if not args.quantized:
         if args.dataset == 'imagenet':
             summary(model, (3, 224, 224))

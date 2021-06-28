@@ -106,6 +106,7 @@ class FusedResNet(nn.Module):
         self._norm_layer = norm_layer
         self.inplanes = 64
         self.dilation = 1
+        self.num_blocks = 4
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
             # the 2x2 stride with a dilated convolution instead
@@ -228,6 +229,7 @@ class FusedResNet20(nn.Module):
         self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16
         self.dilation = 1
+        self.num_blocks = 3
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False, bit=self.bit, bn=True, relu=True)
         self.layer1 = self._make_layer(block, 16, layers[0])
@@ -342,7 +344,7 @@ def set_fused_resnet(fused, pre):
         block[i].conv2.copy_from_pretrained(pre.layer3[i].conv2, pre.layer3[i].bn2)
 
     # Block 4
-    if fused.num_classes == 1000:
+    if fused.num_blocks == 4:
         block = fused.layer4
         block[0].downsample.copy_from_pretrained(pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
         for i in range(len(block)):
@@ -380,7 +382,7 @@ def fold_resnet(model):
         fp_block[i].conv2.fuse_conv_and_bn()
 
     # Block 4
-    if model.num_classes == 1000:
+    if model.num_blocks == 4:
         fp_block = model.layer4
         fp_block[0].downsample.fuse_conv_and_bn()
         for i in range(len(fp_block)):

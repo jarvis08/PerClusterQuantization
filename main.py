@@ -54,7 +54,6 @@ def set_func_for_target_arch(arch):
 
 
 def specify_target_arch(arch, dataset):
-    arch = None
     if arch == 'alexnet':
         if dataset == 'imagenet':
             arch = 'AlexNet'
