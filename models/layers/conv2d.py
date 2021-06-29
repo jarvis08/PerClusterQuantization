@@ -10,7 +10,6 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
         self.bit = bit
-        self.q_max = 2 ** self.bit - 1
         self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)

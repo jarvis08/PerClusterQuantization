@@ -10,7 +10,6 @@ class QuantizedLinear(nn.Linear):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
         self.bit = bit
-        self.q_max = 2 ** self.bit - 1
         self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
