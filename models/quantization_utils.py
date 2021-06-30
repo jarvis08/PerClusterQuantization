@@ -33,6 +33,18 @@ def calc_qparams(_min, _max, q_max):
         return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, -128, 127), requires_grad=False)
 
 
+def ema(x, accumulated, smooth):
+    _min = torch.min(x).item()
+    _max = torch.max(x).item()
+    rst_min = accumulated[0] * smooth + _min * (1 - smooth)
+    rst_max = accumulated[1] * smooth + _max * (1 - smooth)
+    return rst_min, rst_max
+
+
+def fake_quantize(x, s, z):
+    return torch.round(x.div(s).add(z)).sub(z).mul(s)
+
+
 def quantize_matrix(x, scale, zero_point):
     return torch.round(x.div(scale).add(zero_point))
 

@@ -19,7 +19,7 @@ def quantized_conv1x1(in_planes, out_planes, stride=1, bit=8):
 class QuantizedBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, bit=8, smooth=0.995):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, bit=8):
         super(QuantizedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -32,7 +32,6 @@ class QuantizedBasicBlock(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.ema_init = False
-        self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, bit=bit)
@@ -53,15 +52,13 @@ class QuantizedBasicBlock(nn.Module):
 
 class QuantizedResNet18(nn.Module):
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 bit=8, smooth=0.995):
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None, bit=8):
         super(QuantizedResNet18, self).__init__()
         self.bit = bit
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.ema_init = False
-        self.smooth = smooth
         self.q_max = 2 ** self.bit - 1
 
         self.num_blocks = 4
@@ -127,7 +124,7 @@ class QuantizedResNet18(nn.Module):
 
 
 class QuantizedResNet20(nn.Module):
-    def __init__(self, block, layers, num_classes=10, bit=8, smooth=0.995):
+    def __init__(self, block, layers, num_classes=10, bit=8):
         super(QuantizedResNet20, self).__init__()
         self.quantized = False
         self.bit = bit
@@ -135,7 +132,6 @@ class QuantizedResNet20(nn.Module):
         self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.ema_init = False
-        self.smooth = smooth
         self.q_max = 2 ** self.bit - 1
 
         self.inplanes = 16
@@ -178,8 +174,8 @@ class QuantizedResNet20(nn.Module):
                 m.show_params()
 
 
-def quantized_resnet18(bit=8, num_classes=1000, **kwargs):
-    return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], bit=bit, num_classes=num_classes, **kwargs)
+def quantized_resnet18(bit=8, **kwargs):
+    return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], bit=bit, **kwargs)
 
 
 def quantized_resnet20(bit=8):

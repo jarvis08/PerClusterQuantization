@@ -12,8 +12,6 @@ class FusedAlexNet(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.ema_init = False
         self.smooth = smooth
 
@@ -37,8 +35,9 @@ class FusedAlexNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             if self.ema_init:
-                self.ema(x)
-                x = self.fake_quantize_input(x)
+                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
+                s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                x = fake_quantize(x, s, z)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -48,17 +47,6 @@ class FusedAlexNet(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return x
-
-    def ema(self, x):
-        _min = torch.min(x).item()
-        _max = torch.max(x).item()
-        self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
-        self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
-
-    def fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
         return x
 
     def set_quantization_params(self):
@@ -79,8 +67,6 @@ class FusedAlexNetSmall(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.scale = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.ema_init = False
         self.smooth = smooth
 
@@ -104,8 +90,9 @@ class FusedAlexNetSmall(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             if self.ema_init:
-                self.ema(x)
-                x = self.fake_quantize_input(x)
+                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
+                s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                x = fake_quantize(x, s, z)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -115,17 +102,6 @@ class FusedAlexNetSmall(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return x
-
-    def ema(self, x):
-        _min = torch.min(x).item()
-        _max = torch.max(x).item()
-        self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
-        self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
-
-    def fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
         return x
 
     def set_quantization_params(self):
