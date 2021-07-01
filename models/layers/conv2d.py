@@ -41,18 +41,19 @@ class QuantizedConv2d(nn.Conv2d):
 
         for output_ch in range(0, filter_batch):
             sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
+        
         for o_col in range(0,output_col):
             for o_row in range(0, output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                sum_a1[:, o_col, o_row] = self.z2 * torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
-               
+                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sub_sum = sum_q1q2.add(nz1z2)
+
         for i_batch in range(0, input_batch):
-            for out_c in range(0, filter_batch):
-                sub_sum[i_batch, out_c] = torch.sub(sub_sum[i_batch, out_c], sum_a1[i_batch])
-                sub_sum[i_batch, out_c] = torch.sub(sub_sum[i_batch, out_c], sum_a2[out_c])
+            sub_sum[i_batch, :] = torch.sub(sub_sum[i_batch, :], sum_a1[i_batch])
+        for out_c in range(0, filter_batch):
+            sub_sum[:, out_c] = torch.sub(sub_sum[:, out_c], sum_a2[out_c])
 
         multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
         total = shifting(multiplied, self.shift.item())

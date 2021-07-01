@@ -51,14 +51,14 @@ class FusedAlexNet(nn.Module):
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        prev_s, prev_z = self.features[0].set_conv_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.features[2].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[4].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[5].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[6].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[0].set_fc_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[1].set_fc_qparams(prev_s, prev_z)
-        _, _ = self.classifier[2].set_fc_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[0].set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.features[2].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[4].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[5].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[6].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.classifier[0].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.classifier[1].set_qparams(prev_s, prev_z)
+        _, _ = self.classifier[2].set_qparams(prev_s, prev_z)
 
 
 class FusedAlexNetSmall(nn.Module):
@@ -106,14 +106,14 @@ class FusedAlexNetSmall(nn.Module):
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        prev_s, prev_z = self.features[0].set_conv_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.features[2].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[4].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[5].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[6].set_conv_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[0].set_fc_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[1].set_fc_qparams(prev_s, prev_z)
-        _, _ = self.classifier[2].set_fc_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[0].set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.features[2].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[4].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[5].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.features[6].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.classifier[0].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.classifier[1].set_qparams(prev_s, prev_z)
+        _, _ = self.classifier[2].set_qparams(prev_s, prev_z)
 
 
 def fused_alexnet(smooth: float = 0.999, bit: int = 32, **kwargs: Any) -> FusedAlexNet:
