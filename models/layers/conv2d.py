@@ -112,14 +112,6 @@ class PCQConv2d(nn.Module):
                 done += n
         return x
 
-    def copy_from_pretrained(self, conv, bn):
-        # Copy weights from pretrained FP model
-        self.conv.weight.data = torch.nn.Parameter(conv.weight.data)
-        if bn:
-            self.bn = bn
-        else:
-            self.conv.bias.data = torch.nn.Parameter(conv.bias.data)
-
     def fuse_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, "Do not fuse layers while training."
@@ -181,14 +173,6 @@ class FusedConv2d(nn.Module):
                 self.act_range[1] = torch.max(x).item()
                 self.ema_init = True
         return x
-
-    def copy_from_pretrained(self, conv, bn):
-        # Copy weights from pretrained FP model
-        self.conv.weight.data = torch.nn.Parameter(conv.weight.data)
-        if bn:
-            self.bn = bn
-        else:
-            self.conv.bias.data = torch.nn.Parameter(conv.bias.data)
 
     def fuse_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params

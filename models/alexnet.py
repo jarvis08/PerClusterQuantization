@@ -77,7 +77,7 @@ class AlexNetSmall(nn.Module):
         return x
 
 
-def alexnet(dataset: str = 'imagenet', pretrained: bool = False, progress: bool = True, **kwargs: Any) -> AlexNet:
+def alexnet(**kwargs: Any) -> AlexNet:
     r"""AlexNet model architecture from the
     `"One weird trick..." <https://arxiv.org/abs/1404.5997>`_ paper.
 
@@ -85,7 +85,7 @@ def alexnet(dataset: str = 'imagenet', pretrained: bool = False, progress: bool 
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return AlexNet(dataset=dataset, **kwargs)
+    return AlexNet(**kwargs)
 
 
 def alexnet_small(**kwargs: Any) -> AlexNetSmall:

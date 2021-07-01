@@ -99,11 +99,6 @@ class PCQLinear(nn.Module):
                 done += n
         return x
 
-    def copy_from_pretrained(self, fc):
-        # Copy weights from pretrained FP model
-        self.fc.weight.data = torch.nn.Parameter(fc.weight.data)
-        self.fc.bias.data = torch.nn.Parameter(fc.bias.data)
-
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
@@ -152,22 +147,6 @@ class FusedLinear(nn.Module):
                 self.act_range[1] = torch.max(x).item()
                 self.ema_init = True
         return x
-
-    def ema(self, x):
-        _min = torch.min(x).item()
-        _max = torch.max(x).item()
-        self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
-        self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-
-    def fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-        x = torch.round(x.div(s).add(z)).sub(z).mul(s)
-        return x
-
-    def copy_from_pretrained(self, fc):
-        # Copy weights from pretrained FP model
-        self.fc.weight.data = torch.nn.Parameter(fc.weight.data)
-        self.fc.bias.data = torch.nn.Parameter(fc.bias.data)
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)

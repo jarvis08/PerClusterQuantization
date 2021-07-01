@@ -283,39 +283,38 @@ def set_fused_resnet(fused, pre):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     # First layer
-    fused.first_conv.copy_from_pretrained(pre.conv1, pre.bn1)
+    fused.first_conv = copy_from_pretrained(pre.conv1, fused.first_conv, pre.bn1)
 
     # Block 1
     block = fused.layer1
     for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer1[i].conv1, pre.layer1[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer1[i].conv2, pre.layer1[i].bn2)
+        block[i].conv1 = copy_from_pretrained(pre.layer1[i].conv1, block[i].conv1, pre.layer1[i].bn1)
+        block[i].conv2 = copy_from_pretrained(pre.layer1[i].conv2, block[i].conv2, pre.layer1[i].bn2)
 
     # Block 2
     block = fused.layer2
-    block[0].downsample.copy_from_pretrained(pre.layer2[0].downsample[0], pre.layer2[0].downsample[1])
+    block[0].downsample = copy_from_pretrained(pre.layer2[0].downsample[0], block[0].downsample, pre.layer2[0].downsample[1])
     for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer2[i].conv1, pre.layer2[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer2[i].conv2, pre.layer2[i].bn2)
+        block[i].conv1 = copy_from_pretrained(pre.layer2[i].conv1, block[i].conv1, pre.layer2[i].bn1)
+        block[i].conv2 = copy_from_pretrained(pre.layer2[i].conv2, block[i].conv2, pre.layer2[i].bn2)
 
     # Block 3
     block = fused.layer3
-    block[0].downsample.copy_from_pretrained(pre.layer3[0].downsample[0], pre.layer3[0].downsample[1])
+    block[0].downsample = copy_from_pretrained(pre.layer3[0].downsample[0], block[0].downsample, pre.layer3[0].downsample[1])
     for i in range(len(block)):
-        block[i].conv1.copy_from_pretrained(pre.layer3[i].conv1, pre.layer3[i].bn1)
-        block[i].conv2.copy_from_pretrained(pre.layer3[i].conv2, pre.layer3[i].bn2)
+        block[i].conv1 = copy_from_pretrained(pre.layer3[i].conv1, block[i].conv1, pre.layer3[i].bn1)
+        block[i].conv2 = copy_from_pretrained(pre.layer3[i].conv2, block[i].conv2, pre.layer3[i].bn2)
 
     # Block 4
     if fused.num_blocks == 4:
         block = fused.layer4
-        block[0].downsample.copy_from_pretrained(pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
+        block[0].downsample = copy_from_pretrained(pre.layer4[0].downsample[0], block[0].downsample, pre.layer4[0].downsample[1])
         for i in range(len(block)):
-            block[i].conv1.copy_from_pretrained(pre.layer4[i].conv1, pre.layer4[i].bn1)
-            block[i].conv2.copy_from_pretrained(pre.layer4[i].conv2, pre.layer4[i].bn2)
+            block[i].conv1 = copy_from_pretrained(pre.layer4[i].conv1, block[i].conv1, pre.layer4[i].bn1)
+            block[i].conv2 = copy_from_pretrained(pre.layer4[i].conv2, block[i].conv2, pre.layer4[i].bn2)
 
     # Classifier
-    fused.fc.fc.weight = torch.nn.Parameter(pre.fc.weight)
-    fused.fc.fc.bias = torch.nn.Parameter(pre.fc.bias)
+    fused.fc = copy_from_pretrained(pre.fc, fused.fc, False)
     return fused
 
 

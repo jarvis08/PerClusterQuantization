@@ -129,16 +129,13 @@ def set_fused_alexnet(fused, pre):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
-    fused.features[0].copy_from_pretrained(pre.features[0], False)
-    fused.features[2].copy_from_pretrained(pre.features[3], False)
-    fused.features[4].copy_from_pretrained(pre.features[6], False)
-    fused.features[5].copy_from_pretrained(pre.features[8], False)
-    fused.features[6].copy_from_pretrained(pre.features[10], False)
+    fused.features[0] = copy_from_pretrained(pre.features[0], fused.features[0], False)
+    fused.features[2] = copy_from_pretrained(pre.features[3], fused.features[2], False)
+    fused.features[4] = copy_from_pretrained(pre.features[6], fused.features[4], False)
+    fused.features[5] = copy_from_pretrained(pre.features[8], fused.features[5], False)
+    fused.features[6] = copy_from_pretrained(pre.features[10], fused.features[6], False)
 
-    fused.classifier[0].fc.weight = torch.nn.Parameter(pre.classifier[1].weight)
-    fused.classifier[0].fc.bias = torch.nn.Parameter(pre.classifier[1].bias)
-    fused.classifier[1].fc.weight = torch.nn.Parameter(pre.classifier[4].weight)
-    fused.classifier[1].fc.bias = torch.nn.Parameter(pre.classifier[4].bias)
-    fused.classifier[2].fc.weight = torch.nn.Parameter(pre.classifier[6].weight)
-    fused.classifier[2].fc.bias = torch.nn.Parameter(pre.classifier[6].bias)
+    fused.classifier[0] = copy_from_pretrained(pre.classifier[1], fused.classifier[0], False)
+    fused.classifier[1] = copy_from_pretrained(pre.classifier[4], fused.classifier[1], False)
+    fused.classifier[2] = copy_from_pretrained(pre.classifier[6], fused.classifier[2], False)
     return fused

@@ -148,6 +148,20 @@ def quantize(_fp, _int):
     return _int
 
 
+def copy_from_pretrained(_from, _to, bn):
+    # Copy weights from pretrained FP model
+    if 'Conv' in _to.layer_type:
+        _to.conv.weight.data = torch.nn.Parameter(_from.weight)
+        if bn:
+            _to.bn = bn
+        else:
+            _to.conv.bias.data = torch.nn.Parameter(_from.bias)
+    else:
+        _to.fc.weight.data = torch.nn.Parameter(_from.weight)
+        _to.fc.bias.data = torch.nn.Parameter(_from.bias)
+    return _to
+
+
 def transform(param):
     return param.flatten().numpy().astype('float32')
 
