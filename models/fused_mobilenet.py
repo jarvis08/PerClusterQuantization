@@ -10,9 +10,7 @@ from torch import Tensor
 from torch.nn import functional as F
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from torchvision.models.utils import load_state_dict_from_url
-from torchvision.models.mobilenetv2 import _make_divisible, ConvBNActivation
-from .mobilenet import InvertedResidualConfig, InvertedResidual, _mobilenet_v3_conf, SqueezeExcitation
+from torchvision.models.mobilenetv2 import _make_divisible
 
 
 class FusedSqueezeExcitation(nn.Module):
@@ -95,6 +93,7 @@ class InvertedResidual(nn.Module):
         if self.use_res_connect:
             result += input
         return result
+
 
 class FusedMobileNet(nn.Module):
     def __init__(
@@ -211,6 +210,7 @@ class FusedMobileNet(nn.Module):
         prev_s, prev_z = self.classifier[0].set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.classifier[2].set_qparams(prev_s, prev_z)
 
+
 def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dilated: bool = False, **kwargs: Any):
     reduce_divider = 2 if reduced_tail else 1
     dilation = 2 if dilated else 1
@@ -233,13 +233,14 @@ def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dila
         bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider, 96 // reduce_divider, True, "HS", 1, dilation),
     ]
     last_channel = adjust_channels(1024 // reduce_divider)  # C5
-
     return inverted_residual_setting, last_channel
+
 
 def fused_mobilenet(smooth: float = 0.999, bit: int = 32, num_classes: int = 1000, **kwargs: Any) -> FusedMobileNet:
     inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
     return FusedMobileNet(smooth=smooth, bit=bit, num_classes=num_classes, inverted_residual_setting=inverted_residual_setting,
                           last_channel=last_channel, **kwargs)
+
 
 def set_fused_mobilenet(fused, pre):
     """
@@ -247,7 +248,7 @@ def set_fused_mobilenet(fused, pre):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     # First layer
-    fused.features[0].copy_from_pretrained(pre.features[0][0], pre.features[0][1])
+    fused.features[0] = copy_from_pretrained(pre.features[0][0], fused.features[0], pre.features[0][1])
 
     # InvertedResidual
     for feature_idx in range(1, len(fused.features)):
@@ -256,23 +257,21 @@ def set_fused_mobilenet(fused, pre):
                 fused_module = fused.features[feature_idx].block[block_idx]
                 pre_module = pre.features[feature_idx].block[block_idx]
                 if isinstance(pre_module, ConvBNActivation):
-                    fused_module.copy_from_pretrained(pre_module[0], pre_module[1])
+                    fused_module = copy_from_pretrained(pre_module[0], fused_module, pre_module[1])
                 else:  # SqueezeExcitation
-                    fused_module.fc1.copy_from_pretrained(pre_module.fc1, None)
-                    fused_module.fc2.copy_from_pretrained(pre_module.fc2, None)
+                    fused_module.fc1 = copy_from_pretrained(pre_module.fc1, fused_module.fc1, None)
+                    fused_module.fc2 = copy_from_pretrained(pre_module.fc2, fused_module.fc2, None)
         else:
             break
 
     # Last conv
-    fused.features[-1].copy_from_pretrained(pre.features[feature_idx][0], pre.features[feature_idx][1])
+    fused.features[-1] = copy_from_pretrained(pre.features[-1][0], fused.features[-1], pre.features[-1][1])
 
     # Fully Connected
-    fused.classifier[0].fc.weight = torch.nn.Parameter(pre.classifier[0].weight)
-    fused.classifier[0].fc.bias = torch.nn.Parameter(pre.classifier[0].bias)
-    fused.classifier[2].fc.weight = torch.nn.Parameter(pre.classifier[3].weight)
-    fused.classifier[2].fc.bias = torch.nn.Parameter(pre.classifier[3].bias)
-
+    fused.classifier[0] = copy_from_pretrained(pre.classifier[0], fused.classifier[0], None)
+    fused.classifier[2] = copy_from_pretrained(pre.classifier[3], fused.classifier[2], None)
     return fused
+
 
 def fold_mobilenet(model):
     # first layer

@@ -8,12 +8,19 @@ from utils import *
 
 
 def get_model(args, tools):
+    model = None
     if args.quantized:
         model = tools.quantized_model_initializer(bit=args.bit)
     elif args.fused:
         model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
     else:
-        model = tools.pretrained_model_initializer()
+        if args.dataset == 'imagenet':
+            if args.arch == 'mobilenet':
+                return vision_models.mobilenet_v3_small(pretrained=True)
+            elif args.arch == 'resnet':
+                exit()
+        else:
+            model = tools.pretrained_model_initializer()
     checkpoint = torch.load(args.path)
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
