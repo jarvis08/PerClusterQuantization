@@ -1,6 +1,8 @@
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
+import torchvision.models as vision_models
+
 from models import *
 from utils import *
 
@@ -19,6 +21,7 @@ def get_model(args, tools):
 
 def _evaluate(args, tools):
     model = get_model(args, tools)
+
     if not args.quantized:
         if args.dataset == 'imagenet':
             summary(model, (3, 224, 224))
@@ -33,5 +36,5 @@ def _evaluate(args, tools):
         validate_darknet_dataset(darknet_loader, model, criterion)
     else:
         normalizer = get_normalizer(args.dataset)
-        test_loader = get_test_loader(args.dataset, normalizer, args.batch)
+        test_loader = get_test_loader(args, normalizer)
         validate(test_loader, model, criterion)

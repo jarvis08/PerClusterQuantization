@@ -141,4 +141,5 @@ def set_fused_alexnet(fused, pre):
     fused.classifier[1].fc.bias = torch.nn.Parameter(pre.classifier[4].bias)
     fused.classifier[2].fc.weight = torch.nn.Parameter(pre.classifier[6].weight)
     fused.classifier[2].fc.bias = torch.nn.Parameter(pre.classifier[6].bias)
+
     return fused

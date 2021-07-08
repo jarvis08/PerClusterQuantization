@@ -56,6 +56,8 @@ def train_epoch(train_loader, model, criterion, optimizer, epoch):
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
+            # if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
+            #     break
             t.set_description("Epoch {}".format(epoch))
 
             input, target = input.cuda(), target.cuda()
@@ -120,11 +122,16 @@ def get_normalizer(dataset):
         return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 
-def get_train_loader(dataset, normalizer, batch_size):
-    train_loader = None
-    if dataset == 'imagenet':
-        print("ImageNet pretraining not developed yet")
-        exit()
+def get_train_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_train_path, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer,
+                                                        ]))
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -136,15 +143,20 @@ def get_train_loader(dataset, normalizer, batch_size):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
     return train_loader
 
 
-def get_test_loader(dataset, normalizer, batch_size):
-    test_loader = None
-    if dataset == 'imagenet':
-        print("ImageNet pretraining not developed yet")
-        exit()
+def get_test_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_test_path, 'test'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer,
+                                                        ]))
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=2)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -154,7 +166,7 @@ def get_test_loader(dataset, normalizer, batch_size):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=2)
     return test_loader
 
 

@@ -9,6 +9,8 @@ parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--path', default='', type=str, help="Pretrained model's path")
+parser.add_argument('--img_train_path', default='', type=str, help="ImageNet training dataset path")
+parser.add_argument('--img_test_path', default='', type=str, help="ImageNet testing dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
@@ -50,6 +52,13 @@ def set_func_for_target_arch(arch):
             setattr(tools, 'pretrained_model_initializer', resnet20)
             setattr(tools, 'fused_model_initializer', fused_resnet20)
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
+
+    elif 'mobilenet' in arch:
+        setattr(tools, 'fuser', set_fused_mobilenet)
+        # setattr(tools, 'quantizer', quantize_mobilenet)
+        setattr(tools, 'pretrained_model_initializer', mobilenet)
+        setattr(tools, 'fused_model_initializer', fused_mobilenet)
+        # setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
     return tools
 
 
@@ -65,6 +74,13 @@ def specify_target_arch(arch, dataset):
             arch = 'ResNet18'
         else:
             arch = 'ResNet20'
+
+    elif arch == 'mobilenet':
+        if dataset == 'imagenet':
+            arch = 'mobilenet'
+        else:
+            arch = 'mobilenet_small'
+
     return arch, set_func_for_target_arch(arch)
 
 

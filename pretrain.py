@@ -2,6 +2,7 @@ import torch
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
+
 from models import *
 from utils import *
 
@@ -20,8 +21,8 @@ def _pretrain(args, tools):
     cudnn.benchmark = True
 
     normalizer = get_normalizer(args.dataset)
-    train_loader = get_train_loader(args.dataset, normalizer, args.batch)
-    test_loader = get_test_loader(args.dataset, normalizer, args.batch)
+    train_loader = get_train_loader(args, normalizer)
+    test_loader = get_test_loader(args, normalizer)
 
     best_prec = 0
     for e in range(1, args.epoch + 1):
