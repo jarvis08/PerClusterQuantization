@@ -145,7 +145,7 @@ def get_normalizer(dataset):
 
 def get_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_train_path, 'train'),
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
@@ -170,7 +170,7 @@ def get_train_loader(args, normalizer):
 
 def get_test_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_test_path, 'test'),
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'test'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),

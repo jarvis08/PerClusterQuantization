@@ -136,12 +136,12 @@ def set_fused_alexnet(fused, pre):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
-    fused.conv1 = copy_from_pretrained(pre.features[0], fused.conv1, False)
-    fused.conv2 = copy_from_pretrained(pre.features[3], fused.conv2, False)
-    fused.conv3 = copy_from_pretrained(pre.features[6], fused.conv3, False)
-    fused.conv4 = copy_from_pretrained(pre.features[8], fused.conv4, False)
-    fused.conv5 = copy_from_pretrained(pre.features[10], fused.conv5, False)
-    fused.fc1 = copy_from_pretrained(pre.classifier[1], fused.fc1, False)
-    fused.fc2 = copy_from_pretrained(pre.classifier[4], fused.fc2, False)
-    fused.fc3 = copy_from_pretrained(pre.classifier[6], fused.fc3, False)
+    fused.conv1 = copy_from_pretrained(fused.conv1, pre.features[0], False)
+    fused.conv2 = copy_from_pretrained(fused.conv2, pre.features[3], False)
+    fused.conv3 = copy_from_pretrained(fused.conv3, pre.features[6], False)
+    fused.conv4 = copy_from_pretrained(fused.conv4, pre.features[8], False)
+    fused.conv5 = copy_from_pretrained(fused.conv5, pre.features[10], False)
+    fused.fc1 = copy_from_pretrained(fused.fc1, pre.classifier[1], False)
+    fused.fc2 = copy_from_pretrained(fused.fc2, pre.classifier[4], False)
+    fused.fc3 = copy_from_pretrained(fused.fc3, pre.classifier[6], False)
     return fused

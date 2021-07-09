@@ -248,7 +248,7 @@ def set_fused_mobilenet(fused, pre):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     # First layer
-    fused.features[0] = copy_from_pretrained(pre.features[0][0], fused.features[0], pre.features[0][1])
+    fused.features[0] = copy_from_pretrained(fused.features[0], pre.features[0][0], pre.features[0][1])
 
     # InvertedResidual
     for feature_idx in range(1, len(fused.features)):
@@ -257,19 +257,19 @@ def set_fused_mobilenet(fused, pre):
                 fused_module = fused.features[feature_idx].block[block_idx]
                 pre_module = pre.features[feature_idx].block[block_idx]
                 if isinstance(pre_module, ConvBNActivation):
-                    fused_module = copy_from_pretrained(pre_module[0], fused_module, pre_module[1])
+                    fused_module = copy_from_pretrained(fused_module, pre_module[0], pre_module[1])
                 else:  # SqueezeExcitation
-                    fused_module.fc1 = copy_from_pretrained(pre_module.fc1, fused_module.fc1, None)
-                    fused_module.fc2 = copy_from_pretrained(pre_module.fc2, fused_module.fc2, None)
+                    fused_module.fc1 = copy_from_pretrained(fused_module.fc1, pre_module.fc1, None)
+                    fused_module.fc2 = copy_from_pretrained(fused_module.fc2, pre_module.fc2, None)
         else:
             break
 
     # Last conv
-    fused.features[-1] = copy_from_pretrained(pre.features[-1][0], fused.features[-1], pre.features[-1][1])
+    fused.features[-1] = copy_from_pretrained(fused.features[-1], pre.features[-1][0], pre.features[-1][1])
 
     # Fully Connected
-    fused.classifier[0] = copy_from_pretrained(pre.classifier[0], fused.classifier[0], None)
-    fused.classifier[2] = copy_from_pretrained(pre.classifier[3], fused.classifier[2], None)
+    fused.classifier[0] = copy_from_pretrained(fused.classifier[0], pre.classifier[0], None)
+    fused.classifier[2] = copy_from_pretrained(fused.classifier[2], pre.classifier[3], None)
     return fused
 
 
