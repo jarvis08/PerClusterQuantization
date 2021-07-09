@@ -8,28 +8,29 @@ from evaluate import _evaluate
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
-<<<<<<< HEAD
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
-=======
-parser.add_argument('--path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--img_train_path', default='', type=str, help="ImageNet training dataset path")
-parser.add_argument('--img_test_path', default='', type=str, help="ImageNet testing dataset path")
->>>>>>> e28e197bde26ed49374160fe5ccdb9a7a7f48030
+
+parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
+
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
-parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
-parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
+
 parser.add_argument('--fused', default=False, type=bool, help="Evaluate fine-tuned, fused model")
 parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quantized model")
-parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
+
+parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
+parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
+
 parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
 parser.add_argument('--kmeans_epoch', default=100, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
+
+parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 
 args = parser.parse_args()
 print(vars(args))
