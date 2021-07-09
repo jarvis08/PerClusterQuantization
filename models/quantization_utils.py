@@ -154,7 +154,7 @@ def quantize(_fp, _int):
     return _int
 
 
-def copy_from_pretrained(_from, _to, bn):
+def copy_from_pretrained(_to, _from, bn):
     # Copy weights from pretrained FP model
     if 'Conv' in _to.layer_type:
         _to.conv.weight.data = torch.nn.Parameter(_from.weight)
