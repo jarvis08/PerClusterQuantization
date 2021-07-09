@@ -96,4 +96,3 @@ def _finetune(args, tools):
     path = add_path(save_path, 'quantized')
     f_path = os.path.join(path, 'checkpoint.pth')
     torch.save({'state_dict': quantized_model.state_dict()}, f_path)
-

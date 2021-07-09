@@ -103,6 +103,7 @@ def specify_target_arch(arch, dataset, num_clusters):
     model_initializers = set_func_for_target_arch(arch, is_pcq)
     return arch, model_initializers
 
+
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 32], 'Not supported target bit'
