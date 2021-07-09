@@ -6,15 +6,15 @@ from .layers.linear import *
 from .quantization_utils import *
 
 
-def pcq_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bn=False, relu=False, bit=32, smooth=0.995, num_clusters=10):
+def pcq_conv3x3(in_planes, out_planes, bias=False, stride=1, dilation=1, bn=False, relu=False, bit=32, smooth=0.995, num_clusters=10):
     """3x3 convolution with padding"""
     return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                       padding=dilation, groups=groups, dilation=dilation, bn=bn, relu=relu, bit=bit, smooth=smooth, num_clusters=num_clusters)
+                       padding=dilation, bias=bias, bn=bn, relu=relu, bit=bit, smooth=smooth, num_clusters=num_clusters)
 
 
-def pcq_conv1x1(in_planes, out_planes, stride=1, bn=False, relu=False, bit=32, smooth=0.995, num_clusters=10):
+def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, bn=False, relu=False, bit=32, smooth=0.995, num_clusters=10):
     """1x1 convolution"""
-    return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bn=bn, relu=relu, bit=bit, smooth=smooth, num_clusters=num_clusters)
+    return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias, bn=bn, relu=relu, bit=bit, smooth=smooth, num_clusters=num_clusters)
 
 
 class PCQBasicBlock(nn.Module):
@@ -42,27 +42,26 @@ class PCQBasicBlock(nn.Module):
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.conv2 = pcq_conv3x3(planes, planes, bn=True, relu=False,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
-    def forward(self, x, cluster_info):
-        identity = x
+    def forward(self, x):
+        identity = x[0]
+        cluster_info = x[1]
 
-        out = self.conv1(x)
-        out = self.conv2(out)
+        out = self.conv1(x[0], cluster_info)
+        out = self.conv2(out, cluster_info)
 
         if self.downsample is not None:
-            identity = self.downsample(x)
+            identity = self.downsample(x[0], cluster_info)
 
         out += identity
         out = self.relu(out)
 
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
-                if c == -1:
-                    break
+            for i in range(cluster_info.shape[0]):
+                c = cluster_info[i][0].item()
+                n = cluster_info[i][1].item()
                 if self.ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
@@ -72,7 +71,7 @@ class PCQBasicBlock(nn.Module):
                     self.act_range[c][1] = torch.max(out).item()
                     self.ema_init[c] = True
                 done += n
-        return out
+        return out, cluster_info
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -88,9 +87,8 @@ class PCQBasicBlock(nn.Module):
 
 
 class PCQResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, norm_layer=None,
-                 bit=32, smooth=0.999, num_clusters=10):
+    def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64,
+                 replace_stride_with_dilation=None, norm_layer=None, bit=8, smooth=0.999, num_clusters=10):
         super(PCQResNet, self).__init__()
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
@@ -114,14 +112,14 @@ class PCQResNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bn=True, relu=True, bit=bit, smooth=smooth, num_clusters=num_clusters)
+        self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False, bn=True, relu=True, bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = PCQLinear(512 * block.expansion, num_classes, relu=False, bit=bit, smooth=smooth, num_clusters=num_clusters)
+        self.fc = PCQLinear(512 * block.expansion, num_classes, bias=True, relu=False, bit=bit, smooth=smooth, num_clusters=num_clusters)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -139,7 +137,7 @@ class PCQResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, bn=True, relu=False,
+            downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False, bn=True, relu=False,
                                      bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters)
 
         layers = []
@@ -153,14 +151,12 @@ class PCQResNet(nn.Module):
                                 bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters))
         return nn.Sequential(*layers)
 
-    def forward(self, x, cluster_info):
+    def forward(self, x, cluster_info=None):
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
-                if c == -1:
-                    break
+            for i in range(cluster_info.shape[0]):
+                c = cluster_info[i][0].item()
+                n = cluster_info[i][1].item()
                 if self.ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
@@ -174,10 +170,10 @@ class PCQResNet(nn.Module):
         x = self.first_conv(x, cluster_info)
         x = self.maxpool(x)
 
-        x = self.layer1(x, cluster_info)
-        x = self.layer2(x, cluster_info)
-        x = self.layer3(x, cluster_info)
-        x = self.layer4(x, cluster_info)
+        x, _ = self.layer1((x, cluster_info))
+        x, _ = self.layer2((x, cluster_info))
+        x, _ = self.layer3((x, cluster_info))
+        x, _ = self.layer4((x, cluster_info))
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
@@ -191,9 +187,9 @@ class PCQResNet(nn.Module):
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.zero_pint = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.scale, self.zero_point = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)
@@ -207,7 +203,7 @@ class PCQResNet(nn.Module):
 
 
 class PCQResNet20(nn.Module):
-    def __init__(self, block, layers, num_classes=10, bit=32, smooth=0.999, num_clusters=10):
+    def __init__(self, block, layers, num_classes=10, bit=8, smooth=0.999, num_clusters=10):
         super(PCQResNet20, self).__init__()
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
@@ -242,17 +238,14 @@ class PCQResNet20(nn.Module):
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes,
                                 bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters))
-
         return nn.Sequential(*layers)
 
-    def forward(self, x, cluster_info):
+    def forward(self, x, cluster_info=None):
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
-                if c == -1:
-                    break
+            for i in range(cluster_info.shape[0]):
+                c = cluster_info[i][0].item()
+                n = cluster_info[i][1].item()
                 if self.ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
@@ -264,11 +257,11 @@ class PCQResNet20(nn.Module):
                 done += n
 
         x = self.first_conv(x, cluster_info)
-        x = self.layer1(x, cluster_info)
-        x = self.layer2(x, cluster_info)
-        x = self.layer3(x, cluster_info)
+        x, _ = self.layer1((x, cluster_info))
+        x, _ = self.layer2((x, cluster_info))
+        x, _ = self.layer3((x, cluster_info))
         x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
+        x = torch.flatten(x, 1)
         x = self.fc(x, cluster_info)
         return x
 
@@ -279,9 +272,9 @@ class PCQResNet20(nn.Module):
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.zero_pint = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.scale, self.zero_point = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)

@@ -14,7 +14,7 @@ def _pretrain(args, tools):
     else:
         summary(model, (3, 32, 32))
     model.cuda()
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     cudnn.benchmark = True
@@ -25,10 +25,10 @@ def _pretrain(args, tools):
 
     best_prec = 0
     for e in range(1, args.epoch + 1):
-        train_epoch(train_loader, model, criterion, optimizer, e)
+        train_epoch(model, train_loader, criterion, optimizer, e)
         opt_scheduler.step()
 
-        prec = validate(test_loader, model, criterion)
+        prec = validate(model, test_loader, criterion)
 
         is_best = prec > best_prec
         best_prec = max(prec, best_prec)

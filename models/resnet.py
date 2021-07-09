@@ -293,7 +293,7 @@ class ResNet20(nn.Module):
         x = self.layer3(x)
 
         x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
+        x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
 

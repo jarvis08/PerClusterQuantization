@@ -16,22 +16,16 @@ class PCQAlexNet(nn.Module):
         self.smooth = smooth
         self.num_clusters = num_clusters
 
-        self.features = nn.Sequential(
-            PCQConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
-            PCQConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
-            PCQConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            PCQConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
-        )
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.classifier = nn.Sequential(
-            PCQLinear(256 * 6 * 6, 4096, smooth=smooth, bit=bit, relu=True),
-            PCQLinear(4096, 4096, smooth=smooth, bit=bit, relu=True),
-            PCQLinear(4096, num_classes, smooth=smooth, bit=bit, relu=False),
-        )
+        self.conv1 = PCQConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, bn=False, relu=True)
+        self.conv2 = PCQConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, bn=False, relu=True)
+        self.conv3 = PCQConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, bn=False, relu=True)
+        self.conv4 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, bn=False, relu=True)
+        self.conv5 = PCQConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, bn=False, relu=True)
+        self.fc1 = PCQLinear(256 * 6 * 6, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=True)
+        self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=True)
+        self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=False)
 
     def forward(self, x: torch.Tensor, cluster_info: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -51,22 +45,31 @@ class PCQAlexNet(nn.Module):
                     self.ema_init[c] = True
                 done += n
 
-        x = self.features(x, cluster_info)
-        x = self.avgpool(x, cluster_info)
+        x = self.conv1(x, cluster_info)
+        x = self.maxpool(x)
+        x = self.conv2(x, cluster_info)
+        x = self.maxpool(x)
+        x = self.conv3(x, cluster_info)
+        x = self.conv4(x, cluster_info)
+        x = self.conv5(x, cluster_info)
+        x = self.maxpool(x)
+        x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.classifier(x, cluster_info)
+        x = self.fc1(x, cluster_info)
+        x = self.fc2(x, cluster_info)
+        x = self.fc3(x, cluster_info)
         return x
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        prev_s, prev_z = self.features[0].set_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.features[2].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[4].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[5].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[6].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[0].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[1].set_qparams(prev_s, prev_z)
-        _, _ = self.classifier[2].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv4.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
+        _, _ = self.fc3.set_qparams(prev_s, prev_z)
 
 
 class PCQAlexNetSmall(nn.Module):
@@ -74,50 +77,53 @@ class PCQAlexNetSmall(nn.Module):
         super(PCQAlexNetSmall, self).__init__()
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
-        self.in_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
+        self.in_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
         self.ema_init = np.zeros(num_clusters, dtype=bool)
         self.smooth = smooth
         self.num_clusters = num_clusters
 
-        self.features = nn.Sequential(
-            PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
-            PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
-            PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, bn=False, relu=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
-        )
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Sequential(
-            PCQLinear(256, 4096, smooth=smooth, bit=bit, relu=True),
-            PCQLinear(4096, 4096, smooth=smooth, bit=bit, relu=True),
-            PCQLinear(4096, num_classes, smooth=smooth, bit=bit, relu=False),
-        )
+        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
+        self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
+        self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
+        self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
+        self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
+        self.fc1 = PCQLinear(256, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=True)
+        self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=True)
+        self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, num_clusters=num_clusters, bit=bit, relu=False)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor = None) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
+            for i in range(cluster_info.shape[0]):
+                c = cluster_info[i][0].item()
+                n = cluster_info[i][1].item()
                 if c == -1:
                     break
                 if self.ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                    x[done:done + n] = fake_quantize(x[done:done + n], s, z)
+                    x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z)
                 else:
-                    self.in_range[c][0] = torch.min(x).item()
-                    self.in_range[c][1] = torch.max(x).item()
+                    self.in_range[c][0] = torch.min(x[done:done + n]).item()
+                    self.in_range[c][1] = torch.max(x[done:done + n]).item()
                     self.ema_init[c] = True
                 done += n
 
-        x = self.features(x, cluster_info)
-        x = self.avgpool(x, cluster_info)
+        x = self.conv1(x, cluster_info)
+        x = self.maxpool(x)
+        x = self.conv2(x, cluster_info)
+        x = self.maxpool(x)
+        x = self.conv3(x, cluster_info)
+        x = self.conv4(x, cluster_info)
+        x = self.conv5(x, cluster_info)
+        x = self.maxpool(x)
+        x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.classifier(x, cluster_info)
+        x = self.fc1(x, cluster_info)
+        x = self.fc2(x, cluster_info)
+        x = self.fc3(x, cluster_info)
         return x
 
     def set_quantization_params(self):
@@ -125,14 +131,14 @@ class PCQAlexNetSmall(nn.Module):
         self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
             self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-        prev_s, prev_z = self.features[0].set_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.features[2].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[4].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[5].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.features[6].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[0].set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.classifier[1].set_qparams(prev_s, prev_z)
-        _, _ = self.classifier[2].set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv4.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
+        _, _ = self.fc3.set_qparams(prev_s, prev_z)
 
 
 def pcq_alexnet(smooth: float = 0.999, bit: int = 32, num_clusters: int = 10, **kwargs: Any) -> PCQAlexNet:

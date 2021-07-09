@@ -49,7 +49,7 @@ def save_checkpoint(state, is_best, path):
         shutil.copyfile(filepath, os.path.join(path, 'model_best.pth.tar'))
 
 
-def train_epoch(train_loader, model, criterion, optimizer, epoch):
+def train_epoch(model, train_loader, criterion, optimizer, epoch):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -72,7 +72,7 @@ def train_epoch(train_loader, model, criterion, optimizer, epoch):
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def validate(test_loader, model, criterion):
+def validate(model, test_loader, criterion):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -93,7 +93,7 @@ def validate(test_loader, model, criterion):
     return top1.avg
 
 
-def validate_darknet_dataset(test_loader, model, criterion):
+def validate_darknet_dataset(model, test_loader, criterion):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -111,6 +111,18 @@ def validate_darknet_dataset(test_loader, model, criterion):
             top1.update(prec.item(), input.size(0))
         print("Acc : {}".format(top1.avg))
     return top1.avg
+
+
+def load_dnn_model(args, tools):
+    if args.quantized:
+        model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+    elif args.fused:
+        model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
+    else:
+        model = tools.pretrained_model_initializer()
+    checkpoint = torch.load(args.dnn_path)
+    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    return model
 
 
 def get_normalizer(dataset):
@@ -163,6 +175,30 @@ def add_path(prev_path, to_add):
     if not os.path.exists(path):
         os.makedirs(path)
     return path
+
+
+def set_kmeans_dir(args):
+    save_dir = 'result'
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    save_dir = os.path.join(save_dir, 'kmeans')
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    save_dir = os.path.join(save_dir, args.dataset)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    now = datetime.now().strftime("%m-%d-%H%M")
+    save_dir = os.path.join(save_dir, now)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    with open(os.path.join(save_dir, "params.json"), 'w') as f:
+        kmeans_args = {'k': args.cluster, 'num_partitions': args.partition, 'epoch': args.kmeans_epoch, 'batch': args.batch}
+        json.dump(kmeans_args, f, indent=4)
+    return save_dir
 
 
 def set_save_dir(args, quantize=False):

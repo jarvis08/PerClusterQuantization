@@ -33,11 +33,11 @@ def calc_qparams(_min, _max, q_max):
         return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, -128, 127), requires_grad=False)
 
 
-def ema(x, accumulated, smooth):
+def ema(x, averaged, smooth):
     _min = torch.min(x).item()
     _max = torch.max(x).item()
-    rst_min = accumulated[0] * smooth + _min * (1 - smooth)
-    rst_max = accumulated[1] * smooth + _max * (1 - smooth)
+    rst_min = averaged[0] * smooth + _min * (1 - smooth)
+    rst_max = averaged[1] * smooth + _max * (1 - smooth)
     return rst_min, rst_max
 
 
@@ -120,16 +120,6 @@ def shifting(cur, shift):
     return total
 
 
-def quantize_and_transfer_params(_fp, _int):
-    if _int.layer_type == 'QuantizedConv2d':
-        _int.weight.data = torch.round(torch.nn.Parameter(_fp.conv.weight.data).div(_int.s2).add(_int.z2))
-        _int.bias.data = torch.round(torch.nn.Parameter(_fp.conv.bias.data).div(_int.s1 * _int.s2))
-    elif _int.layer_type == 'QuantizedLinear':
-        _int.weight.data = torch.round(torch.nn.Parameter(_fp.fc.weight.data).div(_int.s2).add(_int.z2))
-        _int.bias.data = torch.round(torch.nn.Parameter(_fp.fc.bias.data).div(_int.s1 * _int.s2))
-    return _int
-
-
 def transfer_qparams(_fp, _int):
     _int.s1 = torch.nn.Parameter(_fp.s1, requires_grad=False)
     _int.s2 = torch.nn.Parameter(_fp.s2, requires_grad=False)
@@ -139,6 +129,22 @@ def transfer_qparams(_fp, _int):
     _int.z3 = torch.nn.Parameter(_fp.z3, requires_grad=False)
     _int.M0 = torch.nn.Parameter(_fp.M0, requires_grad=False)
     _int.shift = torch.nn.Parameter(_fp.shift, requires_grad=False)
+    return _int
+
+
+def quantize_and_transfer_params(_fp, _int):
+    assert _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear'], "Not supported quantized layer"
+    if _int.layer_type == 'QuantizedConv2d':
+        fp_layer = _fp.conv
+    else:
+        fp_layer = _fp.fc
+
+    _int.weight.data = quantize_matrix(fp_layer.weight.data, _int.s2, _int.z2)
+    if _int.num_clusters > 1:
+        for c in range(_int.num_clusters):
+            _int.quantized_bias[c] = quantize_matrix(fp_layer.bias.data, _int.s1[c] * _int.s2, 0)
+    else:
+        _int.quantized_bias[0] = quantize_matrix(fp_layer.bias.data, _int.s1 * _int.s2, 0)
     return _int
 
 
@@ -167,7 +173,7 @@ def transform(param):
 
 
 def save_qparams(m, f):
-    assert m.layer_type in ['FusedConv2d', 'FusedLinear'],\
+    assert m.layer_type in ['FusedConv2d', 'FusedLinear', 'PCQConv2d', 'PCQLinear'],\
         "Can't parse Q-params from {}".format(type(m))
     print("S1: {} | Z1: {}".format(m.s1, m.z1))
     print("S2: {} | Z2: {}".format(m.s2, m.z2))
@@ -210,13 +216,8 @@ def save_block_qparams(block, f):
 def save_fused_alexnet_qparams(model, path):
     with open(path, 'w') as f:
         for name, m in model.named_children():
-            if 'features' in name:
-                for i in [0, 2, 4, 5, 6]:
-                    save_qparams(m[i], f)
-
-            elif 'classifier' in name:
-                for i in [0, 1, 2]:
-                    save_qparams(m[i], f)
+            if 'conv' in name or 'fc' in name:
+                save_qparams(m, f)
 
 
 def save_fused_resnet_qparams(model, path):

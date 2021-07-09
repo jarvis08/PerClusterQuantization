@@ -6,26 +6,86 @@ from ..quantization_utils import *
 
 
 class QuantizedLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, bit=8):
+    def __init__(self, in_features, out_features, bias=False, bit=8, num_clusters=1):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
         self.bit = bit
-        self.s1 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.num_clusters = num_clusters
+        self.quantized_bias = nn.Parameter(torch.zeros((num_clusters, out_features)), requires_grad=False)
+        t_init = list(range(num_clusters)) if num_clusters > 1 else 0
+        self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.s3 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.z1 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.s3 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
-        self.z3 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
-        self.M0 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
-
-    def forward(self, x):
+    def forward(self, x, cluster_info):
         sum_q1q2 = F.linear(x, self.weight, None)
-        return self.totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+        if cluster_info is not None:
+            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
+        else:
+            return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
-    def totalsum(self, x, sum_q1q2):
+    def pcq_totalsum(self, x, sum_q1q2, cluster_info):
+        input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
+        N = x.shape[1]
+        done = 0
+        for i in range(cluster_info.shape[0]):
+            c = cluster_info[i][0].item()
+            n = cluster_info[i][1].item()
+            for out_f in range(output_feature):
+                sum_q1q2[done:done+n, out_f] = sum_q1q2[done:done+n, out_f].add(self.quantized_bias[c][out_f])
+            done += n
+
+        sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
+        sum_a2 = torch.zeros((cluster_info.shape[0], output_feature), dtype=torch.int32)
+
+        for i in range(cluster_info.shape[0]):
+            c = cluster_info[i][0].item()
+            for out_f in range(output_feature):
+                sum_a2[i, out_f] = torch.sum(self.weight[out_f, :]).mul(self.z1[c])
+
+        for in_f in range(input_feature):
+            sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
+
+        done = 0
+        for i in range(cluster_info.shape[0]):
+            c = cluster_info[i][0].item()
+            n = cluster_info[i][1].item()
+            nz1z2 = N * self.z1[c] * self.z2
+            sum_q1q2[done:done + n] = sum_q1q2[done:done + n].add(nz1z2)
+            done += n
+
+        for in_f in range(input_feature):
+            sum_q1q2[in_f, :] = torch.sub(sum_q1q2[in_f, :], sum_a1[in_f])
+
+        done = 0
+        for i in range(cluster_info.shape[0]):
+            n = cluster_info[i][1].item()
+            for out_f in range(output_feature):
+                sum_q1q2[done:done + n, out_f] = torch.sub(sum_q1q2[done:done + n, out_f], sum_a2[i, out_f])
+            done += n
+
+        done = 0
+        total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
+        for i in range(cluster_info.shape[0]):
+            c = cluster_info[i][0].item()
+            n = cluster_info[i][1].item()
+            multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
+            total[done:done + n] = shifting(multiplied, self.shift[c].item())
+            total[done:done + n] = total[done:done + n].add(self.z3[c])
+            done += n
+
+        if self.bit == 4:
+            total = torch.clamp(total, 0, 15)
+        else: 
+            total = torch.clamp(total, -128, 127)
+        return total.type(torch.cuda.FloatTensor)
+
+    def general_totalsum(self, x, sum_q1q2):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
         if self.bias is not None:
             for out_f in range(output_feature):
@@ -43,7 +103,7 @@ class QuantizedLinear(nn.Linear):
         sub_sum = sum_q1q2.add(nz1z2)
         for in_f in range(input_feature):
             sub_sum[in_f, :] = torch.sub(sub_sum[in_f, :], sum_a1[in_f])
-        for out_f in range(output_feature):      
+        for out_f in range(output_feature):
             sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
 
         multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
@@ -51,7 +111,7 @@ class QuantizedLinear(nn.Linear):
         total = total.add(self.z3)
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
-        else: 
+        else:
             total = torch.clamp(total, -128, 127)
         return total.type(torch.cuda.FloatTensor)
 
@@ -60,22 +120,23 @@ class PCQLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
-    def __init__(self, in_features, out_features, bias=True, relu=True, bit=8, smooth=0.995, num_clusters=10):
+    def __init__(self, in_features, out_features, bias=True, relu=True, bit=8, smooth=0.999, num_clusters=10):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.smooth = smooth
         self.ema_init = np.zeros(num_clusters, dtype=bool)
-        self.act_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
+        self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
         self.num_clusters = num_clusters
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        self.relu = nn.ReLU(inplace=True) if relu else None
+        self.relu = nn.ReLU(inplace=False) if relu else None
 
-    def forward(self, x, cluster_info):
-        s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-        self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
+    def forward(self, x, cluster_info=None):
+        if self.training:
+            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
+            self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
 
         x = self.fc(x)
         if self.relu:
@@ -83,25 +144,24 @@ class PCQLinear(nn.Module):
 
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
-                if c == -1:
-                    break
+            for i in range(cluster_info.shape[0]):
+                c = cluster_info[i][0].item()
+                n = cluster_info[i][1].item()
                 if self.ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    x[done:done + n] = fake_quantize(x[done:done + n], s, z)
+                    x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z)
                 else:
-                    self.act_range[c][0] = torch.min(x).item()
-                    self.act_range[c][1] = torch.max(x).item()
+                    self.act_range[c][0] = torch.min(x[done:done + n]).item()
+                    self.act_range[c][1] = torch.max(x[done:done + n]).item()
                     self.ema_init[c] = True
                 done += n
         return x
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
-        self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
+
+        self.s2, self.z2 = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
 
         self.s3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
         self.z3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
@@ -117,7 +177,7 @@ class FusedLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_features, out_features, bias=True, bit=32, smooth=0.995, relu=True):
+    def __init__(self, in_features, out_features, bias=True, bit=32, smooth=0.999, relu=True):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
         self.bit = bit
