@@ -158,10 +158,11 @@ class PCQConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True, bn=False, relu=True,
-                 bit=8, smooth=0.999, num_clusters=10):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True,
+                 norm_layer=None, relu=True, bit=8, smooth=0.999, num_clusters=10):
         super(PCQConv2d, self).__init__()
         self.layer_type = 'PCQConv2d'
+        self.out_channels = out_channels
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.smooth = smooth
@@ -169,10 +170,9 @@ class PCQConv2d(nn.Module):
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
         self.num_clusters = num_clusters
 
-        self.out_channels = out_channels
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               bias=bias)
-        self.bn = nn.BatchNorm2d(out_channels) if bn else None
+        self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self.relu = nn.ReLU(inplace=False) if relu else None
 
     def forward(self, x, cluster_info):
@@ -181,8 +181,8 @@ class PCQConv2d(nn.Module):
             self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
 
         x = self.conv(x)
-        if self.bn:
-            x = self.bn(x)
+        if self._norm_layer:
+            x = self._norm_layer(x)
         if self.relu:
             x = self.relu(x)
 
@@ -205,13 +205,14 @@ class PCQConv2d(nn.Module):
     def fuse_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, "Do not fuse layers while training."
-        alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean, self.bn.running_var, self.bn.eps
+        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
+                                      self._norm_layer.running_var, self._norm_layer.eps
         n_channel = self.conv.weight.shape[0]
-        self.conv.bias = torch.nn.Parameter(beta)
+        self.conv.bias = nn.Parameter(beta)
         for c in range(n_channel):
             self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
             self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-        self.bn = SkipBN()
+        self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
@@ -233,7 +234,7 @@ class FusedConv2d(nn.Module):
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False,
-                 bn=False, relu=True, h_swish=False, identity=False, is_mobile=False, norm_layer= None, smooth=0.995, bit=32):
+                 relu=True, norm_layer=None, smooth=0.995, bit=32):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.bit = bit
@@ -242,39 +243,21 @@ class FusedConv2d(nn.Module):
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.groups = groups
-        self.norm_layer = norm_layer
-        self.bn = None
-
-        if is_mobile:
-            padding = (kernel_size - 1) // 2 * dilation
-            if self.norm_layer:
-                self.bn = self.norm_layer
-            else:
-                self.bn = nn.BatchNorm2d
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias)
-
-        if bn:
-            self.bn = nn.BatchNorm2d(out_channels)
-
+        self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self.relu = nn.ReLU(inplace=True) if relu else None
-        self.h_swish = nn.Hardswish(inplace=True) if h_swish else None
-        self.identity = nn.Identity() if identity else None
 
     def forward(self, x):
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
         x = self.conv(x)
-        if self.bn:
-            x = self.bn(x)
+        if self._norm_layer:
+            x = self._norm_layer(x)
         if self.relu:
             x = self.relu(x)
-        if self.h_swish:
-            x = self.h_swish(x)
-        if self.identity:
-            x = self.identity(x)
 
         if self.training:
             if self.ema_init:
@@ -290,16 +273,17 @@ class FusedConv2d(nn.Module):
     def fuse_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, 'Do not fuse layers while training.'
-        alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean, self.bn.running_var, self.bn.eps
+        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
+                                      self._norm_layer.running_var, self._norm_layer.eps
         n_channel = self.conv.weight.shape[0]
-        self.conv.bias = torch.nn.Parameter(beta)
+        self.conv.bias = nn.Parameter(beta)
         for c in range(n_channel):
             self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
             self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-        self.bn = SkipBN()
+        self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1):
-        self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
+        self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)

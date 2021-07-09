@@ -17,11 +17,11 @@ class FusedAlexNet(nn.Module):
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.conv1 = FusedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bn=False, relu=True, bit=bit, smooth=smooth)
-        self.conv2 = FusedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, bn=False, relu=True, bit=bit, smooth=smooth)
-        self.conv3 = FusedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, bn=False, relu=True, bit=bit, smooth=smooth)
-        self.conv4 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bn=False, relu=True, bit=bit, smooth=smooth)
-        self.conv5 = FusedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, bn=False, relu=True, bit=bit, smooth=smooth)
+        self.conv1 = FusedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, relu=True, bit=bit, smooth=smooth)
+        self.conv2 = FusedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, relu=True, bit=bit, smooth=smooth)
+        self.conv3 = FusedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, relu=True, bit=bit, smooth=smooth)
+        self.conv4 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, relu=True, bit=bit, smooth=smooth)
+        self.conv5 = FusedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, relu=True, bit=bit, smooth=smooth)
         self.fc1 = FusedLinear(256 * 6 * 6, 4096, smooth=smooth, bit=bit, bias=True, relu=True)
         self.fc2 = FusedLinear(4096, 4096, smooth=smooth, bit=bit, bias=True, relu=True)
         self.fc3 = FusedLinear(4096, num_classes, smooth=smooth, bit=bit, bias=True, relu=False)
@@ -70,17 +70,16 @@ class FusedAlexNetSmall(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        #self.in_range = nn.Parameter(torch.tensor(0), requires_grad=False)
         self.ema_init = False
         self.smooth = smooth
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bn=False, relu=True, smooth=smooth, bit=bit)
-        self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bn=False, relu=True, smooth=smooth, bit=bit)
-        self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bn=False, relu=True, smooth=smooth, bit=bit)
-        self.conv4 = FusedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bn=False, relu=True, smooth=smooth, bit=bit)
-        self.conv5 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bn=False, relu=True, smooth=smooth, bit=bit)
+        self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, relu=True, smooth=smooth, bit=bit)
+        self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, relu=True, smooth=smooth, bit=bit)
+        self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, relu=True, smooth=smooth, bit=bit)
+        self.conv4 = FusedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, relu=True, smooth=smooth, bit=bit)
+        self.conv5 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, relu=True, smooth=smooth, bit=bit)
         self.fc1 = FusedLinear(256, 4096, bias=True, relu=True, smooth=smooth, bit=bit)
         self.fc2 = FusedLinear(4096, 4096, bias=True, relu=True, smooth=smooth, bit=bit)
         self.fc3 = FusedLinear(4096, num_classes, bias=True, relu=False, smooth=smooth, bit=bit)
@@ -136,12 +135,12 @@ def set_fused_alexnet(fused, pre):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
-    fused.conv1 = copy_from_pretrained(fused.conv1, pre.features[0], False)
-    fused.conv2 = copy_from_pretrained(fused.conv2, pre.features[3], False)
-    fused.conv3 = copy_from_pretrained(fused.conv3, pre.features[6], False)
-    fused.conv4 = copy_from_pretrained(fused.conv4, pre.features[8], False)
-    fused.conv5 = copy_from_pretrained(fused.conv5, pre.features[10], False)
-    fused.fc1 = copy_from_pretrained(fused.fc1, pre.classifier[1], False)
-    fused.fc2 = copy_from_pretrained(fused.fc2, pre.classifier[4], False)
-    fused.fc3 = copy_from_pretrained(fused.fc3, pre.classifier[6], False)
+    fused.conv1 = copy_from_pretrained(fused.conv1, pre.features[0])
+    fused.conv2 = copy_from_pretrained(fused.conv2, pre.features[3])
+    fused.conv3 = copy_from_pretrained(fused.conv3, pre.features[6])
+    fused.conv4 = copy_from_pretrained(fused.conv4, pre.features[8])
+    fused.conv5 = copy_from_pretrained(fused.conv5, pre.features[10])
+    fused.fc1 = copy_from_pretrained(fused.fc1, pre.classifier[1])
+    fused.fc2 = copy_from_pretrained(fused.fc2, pre.classifier[4])
+    fused.fc3 = copy_from_pretrained(fused.fc3, pre.classifier[6])
     return fused

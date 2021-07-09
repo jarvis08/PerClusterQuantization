@@ -6,22 +6,24 @@ from .layers.linear import *
 from .quantization_utils import *
 
 
-def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, bn=False, relu=False, bit=8, smooth=0.999):
+def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, norm_layer=None, relu=False, bit=8, smooth=0.999):
     """3x3 convolution with padding"""
     return FusedConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                       padding=dilation, groups=groups, dilation=dilation, bias=bias, bit=bit, smooth=smooth, bn=bn, relu=relu)
+                       padding=dilation, groups=groups, dilation=dilation, bias=bias,
+                       bit=bit, smooth=smooth, norm_layer=norm_layer, relu=relu)
 
 
-def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, bn=False, relu=False, bit=8, smooth=0.999):
+def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, relu=False, bit=8, smooth=0.999):
     """1x1 convolution"""
-    return FusedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias, bn=bn, relu=relu, bit=bit, smooth=smooth)
+    return FusedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
+                       norm_layer=norm_layer, relu=relu, bit=bit, smooth=smooth)
 
 
 class FusedBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 bit=8, smooth=0.999):
+                 norm_layer=None, bit=8, smooth=0.999):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -30,15 +32,19 @@ class FusedBasicBlock(nn.Module):
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.downsample = downsample
         self.stride = stride
-
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        self._norm_layer = norm_layer
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.ema_init = False
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.conv1 = fused_conv3x3(inplanes, planes, stride, bias=False, bn=True, relu=True, bit=bit, smooth=smooth)
-        self.conv2 = fused_conv3x3(planes, planes, bias=False, bn=True, relu=False, bit=bit, smooth=smooth)
+        self.conv1 = fused_conv3x3(inplanes, planes, stride, bias=False,
+                                   norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
+        self.conv2 = fused_conv3x3(planes, planes, bias=False,
+                                   norm_layer=self._norm_layer, relu=False, bit=bit, smooth=smooth)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -100,7 +106,7 @@ class FusedResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                      bn=True, relu=True, bit=bit, smooth=smooth)
+                                      norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -126,7 +132,6 @@ class FusedResNet(nn.Module):
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
-        norm_layer = self._norm_layer
         downsample = None
         previous_dilation = self.dilation
         if dilate:
@@ -134,15 +139,15 @@ class FusedResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                       bn=True, relu=False, bit=self.bit, smooth=self.smooth)
+                                       norm_layer=self._norm_layer, relu=False, bit=self.bit, smooth=self.smooth)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer, bit=self.bit, smooth=self.smooth))
+                            self.base_width, previous_dilation, norm_layer=self._norm_layer, bit=self.bit, smooth=self.smooth))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation, norm_layer=norm_layer,
+                                base_width=self.base_width, dilation=self.dilation, norm_layer=self._norm_layer,
                                 bit=self.bit, smooth=self.smooth))
         return nn.Sequential(*layers)
 
@@ -204,7 +209,7 @@ class FusedResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                      bias=False, bn=True, relu=True, bit=bit, smooth=smooth)
+                                      bias=False, norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
@@ -215,12 +220,12 @@ class FusedResNet20(nn.Module):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                       bn=True, relu=False, bit=self.bit, smooth=self.smooth)
+                                       norm_layer=self._norm_layer, relu=False, bit=self.bit, smooth=self.smooth)
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, bit=self.bit, smooth=self.smooth))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, bit=self.bit, smooth=self.smooth))
+            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, bit=self.bit, smooth=self.smooth))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -307,7 +312,7 @@ def set_fused_resnet(fused, pre):
             block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer4[i].conv2, pre.layer4[i].bn2)
 
     # Classifier
-    fused.fc = copy_from_pretrained(fused.fc, pre.fc, False)
+    fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
 
 

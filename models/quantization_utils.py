@@ -4,14 +4,6 @@ import numpy as np
 import os
 
 
-class SkipBN(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x
-
-
 class QuantizationTool(object):
     def __init__(self):
         self.fuser = None
@@ -154,12 +146,12 @@ def quantize(_fp, _int):
     return _int
 
 
-def copy_from_pretrained(_to, _from, bn):
+def copy_from_pretrained(_to, _from, norm_layer=None):
     # Copy weights from pretrained FP model
     if 'Conv' in _to.layer_type:
         _to.conv.weight.data = torch.nn.Parameter(_from.weight)
-        if bn:
-            _to.bn = bn
+        if norm_layer:
+            _to._norm_layer = norm_layer
         else:
             _to.conv.bias.data = torch.nn.Parameter(_from.bias)
     else:
