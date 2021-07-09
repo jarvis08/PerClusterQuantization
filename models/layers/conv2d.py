@@ -3,6 +3,8 @@ import torch
 import torch.nn.functional as F
 
 from ..quantization_utils import *
+from functools import partial
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
 class QuantizedConv2d(nn.Conv2d):
@@ -51,7 +53,8 @@ class QuantizedConv2d(nn.Conv2d):
 
     def pcq_totalsum(self, x, sum_q1q2, cluster_info):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[
+            2], self.weight.shape[3]
         stride = self.stride[0]
 
         done = 0
@@ -155,7 +158,8 @@ class PCQConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True, bn=False, relu=True, bit=8, smooth=0.999, num_clusters=10):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True, bn=False, relu=True,
+                 bit=8, smooth=0.999, num_clusters=10):
         super(PCQConv2d, self).__init__()
         self.layer_type = 'PCQConv2d'
         self.bit = bit
@@ -166,11 +170,12 @@ class PCQConv2d(nn.Module):
         self.num_clusters = num_clusters
 
         self.out_channels = out_channels
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
+                              bias=bias)
         self.bn = nn.BatchNorm2d(out_channels) if bn else None
         self.relu = nn.ReLU(inplace=False) if relu else None
 
-    def forward(self, x, cluster_info=None):
+    def forward(self, x, cluster_info):
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
@@ -227,7 +232,8 @@ class FusedConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, bn=False, relu=True, smooth=0.999, bit=32):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False,
+                 bn=False, relu=True, h_swish=False, identity=False, is_mobile=False, norm_layer= None, smooth=0.995, bit=32):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.bit = bit
@@ -235,19 +241,40 @@ class FusedConv2d(nn.Module):
         self.ema_init = False
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.groups = groups
+        self.norm_layer = norm_layer
+        self.bn = None
 
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
-        self.bn = nn.BatchNorm2d(out_channels) if bn else None
+        if is_mobile:
+            padding = (kernel_size - 1) // 2 * dilation
+            if self.norm_layer:
+                self.bn = self.norm_layer
+            else:
+                self.bn = nn.BatchNorm2d
+
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
+                              groups=self.groups, bias=bias)
+
+        if bn:
+            self.bn = nn.BatchNorm2d(out_channels)
+
         self.relu = nn.ReLU(inplace=True) if relu else None
+        self.h_swish = nn.Hardswish(inplace=True) if h_swish else None
+        self.identity = nn.Identity() if identity else None
 
     def forward(self, x):
-        s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-        self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
+        if self.training:
+            s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
+            self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
         x = self.conv(x)
         if self.bn:
             x = self.bn(x)
         if self.relu:
             x = self.relu(x)
+        if self.h_swish:
+            x = self.h_swish(x)
+        if self.identity:
+            x = self.identity(x)
 
         if self.training:
             if self.ema_init:

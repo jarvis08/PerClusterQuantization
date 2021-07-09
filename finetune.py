@@ -53,8 +53,8 @@ def _finetune(args, tools):
     cudnn.benchmark = True
     
     normalizer = get_normalizer(args.dataset)
-    train_loader = get_train_loader(args.dataset, normalizer, args.batch)
-    test_loader = get_test_loader(args.dataset, normalizer, args.batch)
+    train_loader = get_train_loader(args, normalizer)
+    test_loader = get_test_loader(args, normalizer)
 
     kmeans_model = None
     if args.cluster > 1:
@@ -86,6 +86,8 @@ def _finetune(args, tools):
 
     if 'ResNet' in args.arch:
         model = fold_resnet(model)
+    if 'mobilenet' in args.arch:
+        model = fold_mobilenet(model)
     model.set_quantization_params()
     # save_fused_network_in_darknet_form(model, args)
 

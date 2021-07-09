@@ -177,7 +177,7 @@ class FusedLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_features, out_features, bias=True, bit=32, smooth=0.999, relu=True):
+    def __init__(self, in_features, out_features, bias=True, h_swish=False, bit=32, smooth=0.995, relu=True):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
         self.bit = bit
@@ -187,15 +187,19 @@ class FusedLinear(nn.Module):
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
+        self.h_swish = nn.Hardswish(inplace=True) if h_swish else None
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
-        s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-        self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
+        if self.training:
+            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
+            self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
 
         x = self.fc(x)
         if self.relu:
             x = self.relu(x)
+        if self.h_swish:
+            x = self.h_swish(x)
 
         if self.training:
             if self.ema_init:

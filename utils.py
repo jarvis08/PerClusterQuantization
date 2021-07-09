@@ -1,5 +1,6 @@
 import torch
 import torchvision
+import torchvision.models as vision_models
 import torchvision.transforms as transforms
 import numpy as np
 import os
@@ -56,6 +57,8 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch):
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
+            # if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
+            #     break
             t.set_description("Epoch {}".format(epoch))
 
             input, target = input.cuda(), target.cuda()
@@ -114,12 +117,20 @@ def validate_darknet_dataset(model, test_loader, criterion):
 
 
 def load_dnn_model(args, tools):
+    model = None
     if args.quantized:
         model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
     elif args.fused:
         model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
     else:
-        model = tools.pretrained_model_initializer()
+        if args.dataset == 'imagenet':
+            if args.arch == 'mobilenet':
+                return vision_models.mobilenet_v3_small(pretrained=True)
+            elif args.arch == 'resnet':
+                exit()
+        else:
+            model = tools.pretrained_model_initializer()
+
     checkpoint = torch.load(args.dnn_path)
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
@@ -132,11 +143,16 @@ def get_normalizer(dataset):
         return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 
-def get_train_loader(dataset, normalizer, batch_size):
-    train_loader = None
-    if dataset == 'imagenet':
-        print("ImageNet pretraining not developed yet")
-        exit()
+def get_train_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_train_path, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer,
+                                                        ]))
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -148,15 +164,20 @@ def get_train_loader(dataset, normalizer, batch_size):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
     return train_loader
 
 
-def get_test_loader(dataset, normalizer, batch_size):
-    test_loader = None
-    if dataset == 'imagenet':
-        print("ImageNet pretraining not developed yet")
-        exit()
+def get_test_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_test_path, 'test'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer,
+                                                        ]))
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=2)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -166,7 +187,7 @@ def get_test_loader(dataset, normalizer, batch_size):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=2)
     return test_loader
 
 

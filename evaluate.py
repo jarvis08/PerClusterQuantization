@@ -2,8 +2,8 @@ from torch import nn
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
+from models import *
 from utils import *
-from models.kmeans import *
 from tqdm import tqdm
 
 
@@ -50,5 +50,5 @@ def _evaluate(args, tools):
         pcq_validate(model, test_loader, criterion, kmeans_model, args.partition)
     else:
         normalizer = get_normalizer(args.dataset)
-        test_loader = get_test_loader(args.dataset, normalizer, args.batch)
-        validate(model, test_loader, criterion)
+        test_loader = get_test_loader(args, normalizer)
+        validate(test_loader, model, criterion)

@@ -8,7 +8,13 @@ from evaluate import _evaluate
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
+<<<<<<< HEAD
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
+=======
+parser.add_argument('--path', default='', type=str, help="Pretrained model's path")
+parser.add_argument('--img_train_path', default='', type=str, help="ImageNet training dataset path")
+parser.add_argument('--img_test_path', default='', type=str, help="ImageNet testing dataset path")
+>>>>>>> e28e197bde26ed49374160fe5ccdb9a7a7f48030
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
@@ -66,6 +72,13 @@ def set_func_for_target_arch(arch, is_pcq):
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet20)
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
+
+    elif 'mobilenet' in arch:
+        setattr(tools, 'fuser', set_fused_mobilenet)
+        # setattr(tools, 'quantizer', quantize_mobilenet)
+        setattr(tools, 'pretrained_model_initializer', mobilenet)
+        setattr(tools, 'fused_model_initializer', fused_mobilenet)
+        # setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
     return tools
 
 
@@ -81,10 +94,13 @@ def specify_target_arch(arch, dataset, num_clusters):
             arch = 'ResNet18'
         else:
             arch = 'ResNet20'
+
+    elif arch == 'mobilenet':
+        arch = 'mobilenet'
+
     is_pcq = True if num_clusters > 1 else False
     model_initializers = set_func_for_target_arch(arch, is_pcq)
     return arch, model_initializers
-
 
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'densenet', 'mobilenet'], 'Not supported architecture'
