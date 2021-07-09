@@ -124,9 +124,9 @@ def load_dnn_model(args, tools):
         model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
     else:
         if args.dataset == 'imagenet':
-            if args.arch == 'mobilenet':
+            if args.arch == 'MobileNetV3':
                 return vision_models.mobilenet_v3_small(pretrained=True)
-            elif args.arch == 'resnet':
+            elif args.arch == 'ResNet18':
                 exit()
         else:
             model = tools.pretrained_model_initializer()

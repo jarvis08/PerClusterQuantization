@@ -74,7 +74,7 @@ def set_func_for_target_arch(arch, is_pcq):
                 setattr(tools, 'fused_model_initializer', fused_resnet20)
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
 
-    elif 'mobilenet' in arch:
+    elif arch == 'MobileNetV3':
         setattr(tools, 'fuser', set_fused_mobilenet)
         # setattr(tools, 'quantizer', quantize_mobilenet)
         setattr(tools, 'pretrained_model_initializer', mobilenet)
@@ -97,7 +97,7 @@ def specify_target_arch(arch, dataset, num_clusters):
             arch = 'ResNet20'
 
     elif arch == 'mobilenet':
-        arch = 'mobilenet'
+        arch = 'MobileNetV3'
 
     is_pcq = True if num_clusters > 1 else False
     model_initializers = set_func_for_target_arch(arch, is_pcq)

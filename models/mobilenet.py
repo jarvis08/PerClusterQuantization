@@ -195,7 +195,7 @@ def _mobilenet_v3_conf(arch: str, width_mult: float = 1.0, reduced_tail: bool = 
     bneck_conf = partial(InvertedResidualConfig, width_mult=width_mult)
     adjust_channels = partial(InvertedResidualConfig.adjust_channels, width_mult=width_mult)
 
-    if arch == "mobilenet":
+    if arch == "MobileNetV3":
         inverted_residual_setting = [
             bneck_conf(16, 3, 16, 16, True, "RE", 2, 1),  # C1
             bneck_conf(16, 3, 72, 24, False, "RE", 2, 1),  # C2
