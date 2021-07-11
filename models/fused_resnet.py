@@ -45,7 +45,7 @@ class FusedBasicBlock(nn.Module):
                                    norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
         self.conv2 = fused_conv3x3(planes, planes, bias=False,
                                    norm_layer=self._norm_layer, relu=False, bit=bit, smooth=smooth)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU6(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -63,7 +63,8 @@ class FusedBasicBlock(nn.Module):
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(out, s, z)
+                with torch.no_grad():
+                    out.copy_(fake_quantize(out, s.cuda(), z.cuda(), self.q_max))
             else:
                 self.act_range[0] = torch.min(out).item()
                 self.act_range[1] = torch.max(out).item()
@@ -156,7 +157,8 @@ class FusedResNet(nn.Module):
             if self.ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                with torch.no_grad():
+                    x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -233,7 +235,8 @@ class FusedResNet20(nn.Module):
             if self.ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                with torch.no_grad():
+                    x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()

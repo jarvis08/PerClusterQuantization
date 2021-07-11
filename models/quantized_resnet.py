@@ -110,10 +110,10 @@ class QuantizedResNet18(nn.Module):
             for i in range(cluster_info.shape[0]):
                 c = cluster_info[i][0].item()
                 n = cluster_info[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c])
+                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.first_conv(x, cluster_info)
         x = self.maxpool(x, cluster_info)
@@ -136,6 +136,7 @@ class QuantizedResNet20(nn.Module):
     def __init__(self, block, layers, num_classes=10, bit=8, num_clusters=1):
         super(QuantizedResNet20, self).__init__()
         self.bit = bit
+        self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -172,10 +173,10 @@ class QuantizedResNet20(nn.Module):
             for i in range(cluster_info.shape[0]):
                 c = cluster_info[i][0].item()
                 n = cluster_info[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c])
+                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.first_conv(x, cluster_info)
         x, _ = self.layer1((x, cluster_info))
@@ -210,11 +211,11 @@ def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
 
     if m.num_clusters > 1:
         for c in range(m.num_clusters):
-            m.M0_bypass[c], m.shift_bypass[c] = quantize_shortcut_M(s_bypass[c] / s3[c])
-            m.M0_prev[c], m.shift_prev[c] = quantize_shortcut_M(s_prev[c] / s3[c])
+            m.M0_bypass[c], m.shift_bypass[c] = quantize_M(s_bypass[c] / s3[c])
+            m.M0_prev[c], m.shift_prev[c] = quantize_M(s_prev[c] / s3[c])
     else:
-        m.M0_bypass, m.shift_bypass = quantize_shortcut_M(s_bypass / s3)
-        m.M0_prev, m.shift_prev = quantize_shortcut_M(s_prev / s3)
+        m.M0_bypass, m.shift_bypass = quantize_M(s_bypass / s3)
+        m.M0_prev, m.shift_prev = quantize_M(s_prev / s3)
     return m
 
 
