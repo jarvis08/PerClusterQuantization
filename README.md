@@ -24,7 +24,7 @@ $ python main.py --mode eval --arch resnet --dnn_path result/pre/ResNet20_32bit/
 $ python main.py --mode eval --arch alexnet --dnn_path result/pre/AlexNetSmall_32bit/[Date]/model_best.pth.tar
 ```
 
-## 2. Per Cluster Quantization
+## 2. [Ours] Per Cluster Quantization
 
 ### 2-1. Fine-tuning
 
@@ -57,7 +57,7 @@ python main.py --mode eval --arch alexnet --quantized True --bit 4  --cluster 10
 
 ```
 
-## 3. Goolge's Quantization Aware Training
+## 3. [Goolge] Quantization Aware Training
 
 ### 3-1. Fine-tuning
 
