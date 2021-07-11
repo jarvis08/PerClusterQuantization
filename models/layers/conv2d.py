@@ -12,6 +12,7 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
         self.bit = bit
+        self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         self.quantized_bias = nn.Parameter(torch.zeros((num_clusters, out_channels)), requires_grad=False)
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
@@ -173,12 +174,13 @@ class PCQConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               bias=bias)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
-        self.relu = nn.ReLU(inplace=False) if relu else None
+        self.relu = nn.ReLU6(inplace=False) if relu else None
 
     def forward(self, x, cluster_info):
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
+            with torch.no_grad():
+                self.conv.weight.copy_(fake_quantize(self.conv.weight.detach(), s, z, self.q_max))
 
         x = self.conv(x)
         if self._norm_layer:
@@ -194,7 +196,8 @@ class PCQConv2d(nn.Module):
                 if self.ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z)
+                    with torch.no_grad():
+                        x[done:done + n].copy_(fake_quantize(x[done:done + n].detach(), s, z, self.q_max))
                 else:
                     self.act_range[c][0] = torch.min(x[done:done + n]).item()
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -247,12 +250,14 @@ class FusedConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
-        self.relu = nn.ReLU(inplace=True) if relu else None
+        self.relu = nn.ReLU6(inplace=False) if relu else None
 
     def forward(self, x):
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z)
+            with torch.no_grad():
+                self.conv.weight.copy_(fake_quantize(self.conv.weight.detach(), s, z, self.q_max))
+
         x = self.conv(x)
         if self._norm_layer:
             x = self._norm_layer(x)
@@ -261,9 +266,10 @@ class FusedConv2d(nn.Module):
 
         if self.training:
             if self.ema_init:
-                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                self.act_range[0], self.act_range[1] = ema(x.detach(), self.act_range, self.smooth)
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                with torch.no_grad():
+                    x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()

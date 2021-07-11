@@ -10,6 +10,7 @@ class QuantizedLinear(nn.Linear):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
         self.bit = bit
+        self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         self.quantized_bias = nn.Parameter(torch.zeros((num_clusters, out_features)), requires_grad=False)
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
@@ -131,12 +132,13 @@ class PCQLinear(nn.Module):
         self.num_clusters = num_clusters
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        self.relu = nn.ReLU(inplace=False) if relu else None
+        self.relu = nn.ReLU6(inplace=False) if relu else None
 
     def forward(self, x, cluster_info=None):
         if self.training:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
+            with torch.no_grad():
+                self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
 
         x = self.fc(x)
         if self.relu:
@@ -150,7 +152,8 @@ class PCQLinear(nn.Module):
                 if self.ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z)
+                    with torch.no_grad():
+                        x[done:done + n].copy_(fake_quantize(x[done:done + n].detach(), s, z, self.q_max))
                 else:
                     self.act_range[c][0] = torch.min(x[done:done + n]).item()
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -188,12 +191,13 @@ class FusedLinear(nn.Module):
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self.h_swish = nn.Hardswish(inplace=True) if h_swish else None
-        self.relu = nn.ReLU(inplace=True) if relu else None
+        self.relu = nn.ReLU6(inplace=False) if relu else None
 
     def forward(self, x):
         if self.training:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
+            with torch.no_grad():
+                self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
 
         x = self.fc(x)
         if self.relu:
@@ -205,7 +209,8 @@ class FusedLinear(nn.Module):
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                with torch.no_grad():
+                    x.copy_(fake_quantize(x.detach(), s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
