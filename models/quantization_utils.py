@@ -1,7 +1,8 @@
+import os
 import torch
 import torch.nn as nn
 import numpy as np
-import os
+from copy import deepcopy
 
 
 class QuantizationTool(object):
@@ -14,15 +15,13 @@ class QuantizationTool(object):
 
 
 def calc_qparams(_min, _max, q_max):
-    assert q_max == 15 or q_max == 255, print("Not Supported int type!\nPlz use uint4 or int8")
-    if q_max == 15:
-        s = _max.sub(_min).div(q_max)
-        z = - torch.round(_min.div(s))
-        return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, 0, q_max), requires_grad=False)
-    elif q_max == 255:
-        s = _max.sub(_min).div(q_max)
-        z = -128 - torch.round(_min.div(s))
-        return nn.Parameter(s, requires_grad=False), nn.Parameter(torch.clamp(z, -128, 127), requires_grad=False)
+    s = (_max - _min) / q_max
+    if q_max == 255:
+        z = -128 - torch.round(_min / s)
+        return s, torch.clamp(z, -128, 127)
+    else:
+        z = - torch.round(_min / s)
+        return s, torch.clamp(z, 0, q_max)
 
 
 def ema(x, averaged, smooth):
@@ -33,15 +32,27 @@ def ema(x, averaged, smooth):
     return rst_min, rst_max
 
 
-def fake_quantize(x, s, z):
-    return torch.round(x.div(s).add(z)).sub(z).mul(s)
+def fake_quantize(x, scale, zero_point, q_max):
+    if q_max == 255:
+        return (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
+    else:
+        return (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
 
 
-def quantize_matrix(x, scale, zero_point):
-    return torch.round(x.div(scale).add(zero_point))
+def quantize_matrix(x, scale, zero_point, q_max=None):
+    if q_max is None:
+        return torch.round(x / scale + zero_point)  # sth like bias
+    elif q_max == 255:
+        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+    else:
+        return torch.clamp(torch.round(x / scale + zero_point), 0, q_max)
 
 
-def quantize_shortcut_M(M):
+def dequantize_matrix(x, scale, zero_point):
+    return (x - zero_point) * scale
+
+
+def quantize_M(M):
     assert M > 0
 
     shift = 0
@@ -52,36 +63,17 @@ def quantize_shortcut_M(M):
         M /= 2
         shift -= 1
 
-    q_M = torch.tensor(torch.round(M * (1 << 31)), dtype=torch.int64, device='cuda:0').clone().detach()
+    q_M = torch.round(M.clone().detach() * (1 << 31)).cuda()
     assert (q_M <= (1 << 31))
     if q_M == (1 << 31):
         q_M /= 2
         shift -= 1
 
-    max_int = 9223372036854775807
+    q_M = q_M.type(torch.cuda.IntTensor)
+    shift = torch.tensor(shift, dtype=torch.int32).cuda()
+    max_int = 2147483647
     assert q_M <= max_int
-    return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(torch.tensor(shift, dtype=torch.int32), requires_grad=False)
-
-
-def quantize_M(M):
-    assert M > 0
-    assert M < 1.0
-
-    shift = 0
-    while M < 0.5:
-        M *= 2
-        shift += 1
-
-    q_M = torch.tensor(torch.round(M * (1 << 31)), dtype=torch.int64, device='cuda:0').clone().detach()
-    assert (q_M <= (1 << 31))
-    if q_M == (1 << 31):
-        q_M /= 2
-        shift -= 1
-
-    assert shift >= 0
-    max_int = 9223372036854775807
-    assert q_M <= max_int
-    return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(torch.tensor(shift, dtype=torch.int32), requires_grad=False)
+    return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(shift, requires_grad=False)
 
 
 def multiply_M(sub_sum, q_M):
@@ -131,12 +123,12 @@ def quantize_and_transfer_params(_fp, _int):
     else:
         fp_layer = _fp.fc
 
-    _int.weight.data = quantize_matrix(fp_layer.weight.data, _int.s2, _int.z2)
+    _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
     if _int.num_clusters > 1:
         for c in range(_int.num_clusters):
-            _int.quantized_bias[c] = quantize_matrix(fp_layer.bias.data, _int.s1[c] * _int.s2, 0)
+            _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0))
     else:
-        _int.quantized_bias[0] = quantize_matrix(fp_layer.bias.data, _int.s1 * _int.s2, 0)
+        _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0))
     return _int
 
 
@@ -148,15 +140,16 @@ def quantize(_fp, _int):
 
 def copy_from_pretrained(_to, _from, norm_layer=None):
     # Copy weights from pretrained FP model
-    if 'Conv' in _to.layer_type:
-        _to.conv.weight.data = torch.nn.Parameter(_from.weight)
-        if norm_layer:
-            _to._norm_layer = norm_layer
+    with torch.no_grad():
+        if 'Conv' in _to.layer_type:
+            _to.conv.weight.copy_(_from.weight)
+            if norm_layer:
+                _to._norm_layer = deepcopy(norm_layer)
+            else:
+                _to.conv.bias.copy_(_from.bias)
         else:
-            _to.conv.bias.data = torch.nn.Parameter(_from.bias)
-    else:
-        _to.fc.weight.data = torch.nn.Parameter(_from.weight)
-        _to.fc.bias.data = torch.nn.Parameter(_from.bias)
+            _to.fc.weight.copy_(_from.weight)
+            _to.fc.bias.copy_(_from.bias)
     return _to
 
 
