@@ -1,8 +1,10 @@
 result/*
 data/*
+runs/*
+
 tags
 .idea
-__pycache__/
-runs/*
+*.pyc
+__pycache__
 .vscode
 .*.swp
