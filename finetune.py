@@ -1,6 +1,7 @@
 import torch
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
+from torch.utils.tensorboard import SummaryWriter
 
 from utils import *
 from models import *
@@ -46,7 +47,6 @@ def _finetune(args, tools):
     else:
         summary(model, (3, 32, 32))
     model.cuda()
-
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -66,7 +66,7 @@ def _finetune(args, tools):
 
     best_prec = 0
     for e in range(1, args.epoch + 1):
-        if args.cluster > 1:
+        if kmeans_model:
             pcq_epoch(model, train_loader, criterion, optimizer, kmeans_model, args.partition, e)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e)
