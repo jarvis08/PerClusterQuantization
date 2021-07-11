@@ -4,7 +4,7 @@
 
 - OS: Ubuntu 18.04
 - CUDA version: 10.2 / 11.1
-- PyTorch version: 1.8.1
+- PyTorch version: 1.8.1 / 1.9.0
 
 ```
 $ pip install scikit-learn
