@@ -57,8 +57,8 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch):
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
-            # if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
-            #     break
+            if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
+                break
             t.set_description("Epoch {}".format(epoch))
 
             input, target = input.cuda(), target.cuda()
@@ -145,14 +145,14 @@ def get_normalizer(dataset):
 
 def get_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_train_path, 'train'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
                                                             normalizer,
                                                         ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -170,7 +170,7 @@ def get_train_loader(args, normalizer):
 
 def get_test_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'test'),
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_test_path, 'test'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),

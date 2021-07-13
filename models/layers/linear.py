@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from ..quantization_utils import *
+from .activation import *
 
 
 class QuantizedLinear(nn.Linear):
@@ -21,6 +22,7 @@ class QuantizedLinear(nn.Linear):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.lookup_table = nn.Parameter(torch.zeros(self.q_max), requires_grad=False)
 
     def forward(self, x, cluster_info):
         sum_q1q2 = F.linear(x, self.weight, None)
@@ -177,7 +179,7 @@ class FusedLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_features, out_features, bias=True, h_swish=False, bit=32, smooth=0.995, relu=True):
+    def __init__(self, in_features, out_features, bias=True, activation_layer=None, bit=32, smooth=0.995):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
         self.bit = bit
@@ -187,8 +189,7 @@ class FusedLinear(nn.Module):
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        self.h_swish = nn.Hardswish(inplace=True) if h_swish else None
-        self.relu = nn.ReLU(inplace=True) if relu else None
+        self.activation_layer = activation_layer(inplace=True) if activation_layer else None
 
     def forward(self, x):
         if self.training:
@@ -196,10 +197,8 @@ class FusedLinear(nn.Module):
             self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z)
 
         x = self.fc(x)
-        if self.relu:
-            x = self.relu(x)
-        if self.h_swish:
-            x = self.h_swish(x)
+        if self.activation_layer:
+            x = self.activation_layer(x)
 
         if self.training:
             if self.ema_init:

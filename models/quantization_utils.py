@@ -41,6 +41,10 @@ def quantize_matrix(x, scale, zero_point):
     return torch.round(x.div(scale).add(zero_point))
 
 
+def dequantize_matrix(x, scale, zero_point):
+    return x.sub(zero_point).mul(scale)
+
+
 def quantize_shortcut_M(M):
     assert M > 0
 
@@ -137,6 +141,7 @@ def quantize_and_transfer_params(_fp, _int):
             _int.quantized_bias[c] = quantize_matrix(fp_layer.bias.data, _int.s1[c] * _int.s2, 0)
     else:
         _int.quantized_bias[0] = quantize_matrix(fp_layer.bias.data, _int.s1 * _int.s2, 0)
+
     return _int
 
 
@@ -247,3 +252,4 @@ def save_fused_network_in_darknet_form(model, args):
         save_fused_resnet_qparams(model, path + 'qparams')
     elif 'AlexNet' in args.arch:
         save_fused_alexnet_qparams(model, path + 'qparams')
+
