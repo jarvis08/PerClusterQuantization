@@ -25,6 +25,7 @@ parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quan
 
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
+parser.add_argument('--fq', default=0, type=int, help='Epoch to wait for Fake Quantization')
 
 parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')

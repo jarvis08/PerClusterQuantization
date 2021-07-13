@@ -84,11 +84,11 @@ class PCQAlexNetSmall(nn.Module):
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
-        self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
-        self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
-        self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
-        self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, bn=False, relu=True)
+        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, relu=True)
+        self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, relu=True)
+        self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, relu=True)
+        self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, relu=True)
+        self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, relu=True)
         self.fc1 = PCQLinear(256, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=True)
         self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, relu=True)
         self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, num_clusters=num_clusters, bit=bit, relu=False)
@@ -104,7 +104,7 @@ class PCQAlexNetSmall(nn.Module):
                 if self.ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                    x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z)
+                    x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x[done:done + n]).item()
                     self.in_range[c][1] = torch.max(x[done:done + n]).item()

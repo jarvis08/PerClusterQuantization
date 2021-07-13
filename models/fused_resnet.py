@@ -37,15 +37,16 @@ class FusedBasicBlock(nn.Module):
         self._norm_layer = norm_layer
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
-        self.ema_init = False
         self.smooth = smooth
+        self.ema_init = False
+        self.fq = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.conv1 = fused_conv3x3(inplanes, planes, stride, bias=False,
                                    norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
         self.conv2 = fused_conv3x3(planes, planes, bias=False,
                                    norm_layer=self._norm_layer, relu=False, bit=bit, smooth=smooth)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU6(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -62,13 +63,22 @@ class FusedBasicBlock(nn.Module):
         if self.training:
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(out, s, z)
+                if self.fq:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                    with torch.no_grad():
+                        out.copy_(fake_quantize(out, s.cuda(), z.cuda(), self.q_max))
             else:
                 self.act_range[0] = torch.min(out).item()
                 self.act_range[1] = torch.max(out).item()
                 self.ema_init = True
         return out
+
+    def set_block_fq(self):
+        self.fq = True
+        if self.downsample:
+            self.downsample.set_fq()
+        self.conv1.set_fq()
+        self.conv2.set_fq()
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -156,7 +166,8 @@ class FusedResNet(nn.Module):
             if self.ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                with torch.no_grad():
+                    x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -183,14 +194,14 @@ class FusedResNet(nn.Module):
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer4[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer4[1].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer1)):
+            prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer2)):
+            prev_s, prev_z = self.layer2[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer3)):
+            prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer4)):
+            prev_s, prev_z = self.layer4[i].set_block_qparams(prev_s, prev_z)
         _, _ = self.fc.set_qparams(prev_s, prev_z)
 
 
@@ -199,8 +210,9 @@ class FusedResNet20(nn.Module):
         super(FusedResNet20, self).__init__()
         self.bit = bit
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.ema_init = False
         self.smooth = smooth
+        self.ema_init = False
+        self.fq = False
         self.q_max = 2 ** self.bit - 1
 
         self._norm_layer = nn.BatchNorm2d
@@ -232,8 +244,10 @@ class FusedResNet20(nn.Module):
         if self.training:
             if self.ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                if self.fq:
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                    with torch.no_grad():
+                        x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -252,18 +266,26 @@ class FusedResNet20(nn.Module):
             if isinstance(m, nn.Conv2d):
                 m.show_params()
 
+    def start_fake_quantization(self):
+        self.fq = True
+        self.first_conv.set_fq()
+        for i in range(len(self.layer1)):
+            self.layer1[i].set_block_fq()
+        for i in range(len(self.layer2)):
+            self.layer2[i].set_block_fq()
+        for i in range(len(self.layer3)):
+            self.layer3[i].set_block_fq()
+        self.fc.set_fq()
+
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[2].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[2].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[2].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer1)):
+            prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer2)):
+            prev_s, prev_z = self.layer2[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer3)):
+            prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
         _, _ = self.fc.set_qparams(prev_s, prev_z)
 
 

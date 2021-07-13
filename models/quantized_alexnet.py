@@ -11,6 +11,7 @@ class QuantizedAlexNet(nn.Module):
     def __init__(self, num_classes: int = 1000, bit: int = 8, num_clusters: int = 1) -> None:
         super(QuantizedAlexNet, self).__init__()
         self.bit = bit
+        self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -33,10 +34,10 @@ class QuantizedAlexNet(nn.Module):
             for i in range(cluster_info.shape[0]):
                 c = cluster_info[i][0].item()
                 n = cluster_info[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c])
+                x[done:done + n].copy_(quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max))
                 done += n
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.conv1(x, cluster_info)
         x = self.maxpool(x)
@@ -58,6 +59,7 @@ class QuantizedAlexNetSmall(nn.Module):
     def __init__(self, num_classes: int = 10, bit: int = 32, num_clusters: int = 1) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
         self.bit = bit
+        self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -80,10 +82,10 @@ class QuantizedAlexNetSmall(nn.Module):
             for i in range(cluster_info.shape[0]):
                 c = cluster_info[i][0].item()
                 n = cluster_info[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c])
+                x[done:done + n].copy_(quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max))
                 done += n
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.conv1(x, cluster_info)
         x = self.maxpool(x, cluster_info)
