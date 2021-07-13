@@ -185,8 +185,9 @@ class FusedLinear(nn.Module):
         self.layer_type = 'FusedLinear'
         self.bit = bit
         self.q_max = 2 ** bit - 1
-        self.ema_init = False
         self.smooth = smooth
+        self.ema_init = False
+        self.fq = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
@@ -194,7 +195,7 @@ class FusedLinear(nn.Module):
         self.relu = nn.ReLU6(inplace=False) if relu else None
 
     def forward(self, x):
-        if self.training:
+        if self.training and self.fq:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
             with torch.no_grad():
                 self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
@@ -208,14 +209,18 @@ class FusedLinear(nn.Module):
         if self.training:
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                with torch.no_grad():
-                    x.copy_(fake_quantize(x.detach(), s, z, self.q_max))
+                if self.fq:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                    with torch.no_grad():
+                        x.copy_(fake_quantize(x.detach(), s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
                 self.ema_init = True
         return x
+
+    def set_fq(self):
+        self.fq = True
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)

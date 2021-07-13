@@ -242,8 +242,9 @@ class FusedConv2d(nn.Module):
         self.layer_type = 'FusedConv2d'
         self.bit = bit
         self.q_max = 2 ** bit - 1
-        self.ema_init = False
         self.smooth = smooth
+        self.ema_init = False
+        self.fq = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.groups = groups
 
@@ -253,7 +254,7 @@ class FusedConv2d(nn.Module):
         self.relu = nn.ReLU6(inplace=False) if relu else None
 
     def forward(self, x):
-        if self.training:
+        if self.training and self.fq:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             with torch.no_grad():
                 self.conv.weight.copy_(fake_quantize(self.conv.weight.detach(), s, z, self.q_max))
@@ -267,14 +268,18 @@ class FusedConv2d(nn.Module):
         if self.training:
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(x.detach(), self.act_range, self.smooth)
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                with torch.no_grad():
-                    x.copy_(fake_quantize(x, s, z, self.q_max))
+                if self.fq:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                    with torch.no_grad():
+                        x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
                 self.ema_init = True
         return x
+
+    def set_fq(self):
+        self.fq = True
 
     def fuse_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params

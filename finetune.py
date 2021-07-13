@@ -66,6 +66,9 @@ def _finetune(args, tools):
 
     best_prec = 0
     for e in range(1, args.epoch + 1):
+        if e > args.fq:
+            model.start_fake_quantization()
+
         if kmeans_model:
             pcq_epoch(model, train_loader, criterion, optimizer, kmeans_model, args.partition, e)
         else:
