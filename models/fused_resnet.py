@@ -6,17 +6,17 @@ from .layers.linear import *
 from .quantization_utils import *
 
 
-def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, norm_layer=None, relu=False, bit=8, smooth=0.999):
+def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, norm_layer=None, activation=None, bit=8, smooth=0.999):
     """3x3 convolution with padding"""
     return FusedConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                        padding=dilation, groups=groups, dilation=dilation, bias=bias,
-                       bit=bit, smooth=smooth, norm_layer=norm_layer, relu=relu)
+                       norm_layer=norm_layer, activation=activation, bit=bit, smooth=smooth)
 
 
-def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, relu=False, bit=8, smooth=0.999):
+def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None, bit=8, smooth=0.999):
     """1x1 convolution"""
     return FusedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                       norm_layer=norm_layer, relu=relu, bit=bit, smooth=smooth)
+                       norm_layer=norm_layer, activation=activation, bit=bit, smooth=smooth)
 
 
 class FusedBasicBlock(nn.Module):
@@ -38,14 +38,13 @@ class FusedBasicBlock(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.smooth = smooth
-        self.ema_init = False
-        self.fq = False
+        self.flag_ema_init = False
+        self.flag_fake_quantization = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.conv1 = fused_conv3x3(inplanes, planes, stride, bias=False,
-                                   norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
-        self.conv2 = fused_conv3x3(planes, planes, bias=False,
-                                   norm_layer=self._norm_layer, relu=False, bit=bit, smooth=smooth)
+        self.conv1 = fused_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer,
+                                   activation=nn.ReLU6, bit=bit, smooth=smooth)
+        self.conv2 = fused_conv3x3(planes, planes, norm_layer=self._norm_layer, bit=bit, smooth=smooth)
         self.relu = nn.ReLU6(inplace=False)
 
     def forward(self, x):
@@ -61,24 +60,24 @@ class FusedBasicBlock(nn.Module):
         out = self.relu(out)
 
         if self.training:
-            if self.ema_init:
+            if self.flag_ema_init:
                 self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-                if self.fq:
+                if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                     with torch.no_grad():
                         out.copy_(fake_quantize(out, s.cuda(), z.cuda(), self.q_max))
             else:
                 self.act_range[0] = torch.min(out).item()
                 self.act_range[1] = torch.max(out).item()
-                self.ema_init = True
+                self.flag_ema_init = True
         return out
 
-    def set_block_fq(self):
-        self.fq = True
+    def set_block_fq_flag(self):
+        self.flag_fake_quantization = True
         if self.downsample:
-            self.downsample.set_fq()
-        self.conv1.set_fq()
-        self.conv2.set_fq()
+            self.downsample.set_fake_quantization_flag()
+        self.conv1.set_fake_quantization_flag()
+        self.conv2.set_fake_quantization_flag()
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -96,7 +95,8 @@ class FusedResNet(nn.Module):
         super(FusedResNet, self).__init__()
         self.bit = bit
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.ema_init = False
+        self.flag_ema_init = False
+        self.flag_fake_quantization = False
         self.smooth = smooth
         self.q_max = 2 ** self.bit - 1
 
@@ -116,14 +116,14 @@ class FusedResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                      norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
+                                      norm_layer=self._norm_layer, activation=nn.ReLU6, bit=bit, smooth=smooth)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = FusedLinear(512 * block.expansion, num_classes, bias=True, relu=False, bit=bit, smooth=smooth)
+        self.fc = FusedLinear(512 * block.expansion, num_classes, bias=True, bit=bit, smooth=smooth)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -149,7 +149,7 @@ class FusedResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                       norm_layer=self._norm_layer, relu=False, bit=self.bit, smooth=self.smooth)
+                                       norm_layer=self._norm_layer, bit=self.bit, smooth=self.smooth)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
@@ -163,7 +163,7 @@ class FusedResNet(nn.Module):
 
     def forward(self, x):
         if self.training:
-            if self.ema_init:
+            if self.flag_ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                 with torch.no_grad():
@@ -171,7 +171,7 @@ class FusedResNet(nn.Module):
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.ema_init = True
+                self.flag_ema_init = True
 
         x = self.first_conv(x)
         x = self.maxpool(x)
@@ -190,6 +190,19 @@ class FusedResNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
+
+    def start_fake_quantization(self):
+        self.flag_fake_quantization = True
+        self.first_conv.set_fake_quantization_flag()
+        for i in range(len(self.layer1)):
+            self.layer1[i].set_block_fq_flag()
+        for i in range(len(self.layer2)):
+            self.layer2[i].set_block_fq_flag()
+        for i in range(len(self.layer3)):
+            self.layer3[i].set_block_fq_flag()
+        for i in range(len(self.layer4)):
+            self.layer4[i].set_block_fq_flag()
+        self.fc.set_fake_quantization_flag()
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -211,8 +224,8 @@ class FusedResNet20(nn.Module):
         self.bit = bit
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.smooth = smooth
-        self.ema_init = False
-        self.fq = False
+        self.flag_ema_init = False
+        self.flag_fake_quantization = False
         self.q_max = 2 ** self.bit - 1
 
         self._norm_layer = nn.BatchNorm2d
@@ -221,20 +234,21 @@ class FusedResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                      bias=False, norm_layer=self._norm_layer, relu=True, bit=bit, smooth=smooth)
+                                      bias=False, norm_layer=self._norm_layer, activation=nn.ReLU6, bit=bit, smooth=smooth)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = FusedLinear(64 * block.expansion, num_classes, relu=False, bit=bit, smooth=smooth)
+        self.fc = FusedLinear(64 * block.expansion, num_classes, bit=bit, smooth=smooth)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                       norm_layer=self._norm_layer, relu=False, bit=self.bit, smooth=self.smooth)
+                                       norm_layer=self._norm_layer, bit=self.bit, smooth=self.smooth)
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, bit=self.bit, smooth=self.smooth))
+        layers.append(block(self.inplanes, planes, stride, downsample, norm_layer=self._norm_layer,
+                            bit=self.bit, smooth=self.smooth))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, bit=self.bit, smooth=self.smooth))
@@ -242,16 +256,17 @@ class FusedResNet20(nn.Module):
 
     def forward(self, x):
         if self.training:
-            if self.ema_init:
+            if self.flag_ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.fq:
+                if self.flag_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     with torch.no_grad():
                         x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.ema_init = True
+                self.flag_ema_init = True
+
         x = self.first_conv(x)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -267,15 +282,15 @@ class FusedResNet20(nn.Module):
                 m.show_params()
 
     def start_fake_quantization(self):
-        self.fq = True
-        self.first_conv.set_fq()
+        self.flag_fake_quantization = True
+        self.first_conv.set_fake_quantization_flag()
         for i in range(len(self.layer1)):
-            self.layer1[i].set_block_fq()
+            self.layer1[i].set_block_fq_flag()
         for i in range(len(self.layer2)):
-            self.layer2[i].set_block_fq()
+            self.layer2[i].set_block_fq_flag()
         for i in range(len(self.layer3)):
-            self.layer3[i].set_block_fq()
-        self.fc.set_fq()
+            self.layer3[i].set_block_fq_flag()
+        self.fc.set_fake_quantization_flag()
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
