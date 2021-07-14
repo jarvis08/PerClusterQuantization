@@ -3,12 +3,13 @@ import torch
 import torch.nn.functional as F
 
 from ..quantization_utils import *
+from .activation import *
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
 class QuantizedConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False, bit=8, num_clusters=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation_layer=None, dilation=1, groups=1, bias=False, bit=8, num_clusters=1):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
         self.bit = bit
@@ -24,11 +25,16 @@ class QuantizedConv2d(nn.Conv2d):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.activation_layer = activation_layer
+        self.lookup_table = nn.Parameter(torch.zeros(self.q_max), requires_grad=False)
 
     def forward(self, x, cluster_info):
         if cluster_info is not None:
             return self.pcq(x, cluster_info)
         else:
+            if self.activation_layer:
+                x = self.general(x)
+                return QuantizedActivation(self.activation_layer, bit=self.bit)(x)
             return self.general(x)
 
     def pcq(self, x, cluster_info):

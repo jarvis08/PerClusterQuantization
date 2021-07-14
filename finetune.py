@@ -95,6 +95,7 @@ def _finetune(args, tools):
     # save_fused_network_in_darknet_form(model, args)
 
     quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+    # quantized_model = make_lookup_table_Hardswish(model, quantized_model)
     quantized_model = tools.quantizer(model, quantized_model)
     path = add_path(save_path, 'quantized')
     f_path = os.path.join(path, 'checkpoint.pth')

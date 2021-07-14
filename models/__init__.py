@@ -15,6 +15,6 @@ from .pcq_resnet import *
 
 from .quantized_alexnet import *
 from .quantized_resnet import *
-# from .quantized_mobilenet import *
+from .quantized_mobilenet import *
 
 from .quantization_utils import *

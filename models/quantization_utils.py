@@ -240,3 +240,4 @@ def save_fused_network_in_darknet_form(model, args):
         save_fused_resnet_qparams(model, path + 'qparams')
     elif 'AlexNet' in args.arch:
         save_fused_alexnet_qparams(model, path + 'qparams')
+

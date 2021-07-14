@@ -36,6 +36,7 @@ def _evaluate(args, tools):
             summary(model, (3, 224, 224))
         else:
             summary(model, (3, 32, 32))
+
     model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
     cudnn.benchmark = True

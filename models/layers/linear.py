@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from ..quantization_utils import *
+from .activation import *
 
 
 class QuantizedLinear(nn.Linear):
@@ -22,6 +23,7 @@ class QuantizedLinear(nn.Linear):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.lookup_table = nn.Parameter(torch.zeros(self.q_max), requires_grad=False)
 
     def forward(self, x, cluster_info):
         sum_q1q2 = F.linear(x, self.weight, None)
