@@ -1,7 +1,7 @@
 import torch
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 
 from utils import *
 from models import *
@@ -40,9 +40,8 @@ def get_finetuning_model(args, tools):
 
 
 def _finetune(args, tools):
-    save_path = set_save_dir(args)
+    # save_path = set_save_dir(args)
     model = get_finetuning_model(args, tools)
-
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:

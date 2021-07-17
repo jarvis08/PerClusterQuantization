@@ -12,30 +12,32 @@ class FusedAlexNet(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.ema_init = False
+        self.flag_ema_init = False
+        self.flag_fake_quantization = False
         self.smooth = smooth
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.conv1 = FusedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, relu=True, bit=bit, smooth=smooth)
-        self.conv2 = FusedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, relu=True, bit=bit, smooth=smooth)
-        self.conv3 = FusedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, relu=True, bit=bit, smooth=smooth)
-        self.conv4 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, relu=True, bit=bit, smooth=smooth)
-        self.conv5 = FusedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, relu=True, bit=bit, smooth=smooth)
-        self.fc1 = FusedLinear(256 * 6 * 6, 4096, smooth=smooth, bit=bit, bias=True, relu=True)
-        self.fc2 = FusedLinear(4096, 4096, smooth=smooth, bit=bit, bias=True, relu=True)
-        self.fc3 = FusedLinear(4096, num_classes, smooth=smooth, bit=bit, bias=True, relu=False)
+        self.conv1 = FusedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, activation=nn.ReLU6, bit=bit, smooth=smooth)
+        self.conv2 = FusedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, activation=nn.ReLU6, bit=bit, smooth=smooth)
+        self.conv3 = FusedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, activation=nn.ReLU6, bit=bit, smooth=smooth)
+        self.conv4 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, activation=nn.ReLU6, bit=bit, smooth=smooth)
+        self.conv5 = FusedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, activation=nn.ReLU6, bit=bit, smooth=smooth)
+        self.fc1 = FusedLinear(256 * 6 * 6, 4096, smooth=smooth, bit=bit, bias=True, activation=nn.ReLU6)
+        self.fc2 = FusedLinear(4096, 4096, smooth=smooth, bit=bit, bias=True, activation=nn.ReLU6)
+        self.fc3 = FusedLinear(4096, num_classes, smooth=smooth, bit=bit, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            if self.ema_init:
+            if self.flag_ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z, self.q_max)
+                if self.flag_fake_quantization:
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                    x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.ema_init = True
+                self.flag_ema_init = True
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -51,6 +53,17 @@ class FusedAlexNet(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         return x
+
+    def start_fake_quantization(self):
+        self.flag_fake_quantization = True
+        self.conv1.set_fake_quantization_flag()
+        self.conv2.set_fake_quantization_flag()
+        self.conv3.set_fake_quantization_flag()
+        self.conv4.set_fake_quantization_flag()
+        self.conv5.set_fake_quantization_flag()
+        self.fc1.set_fake_quantization_flag()
+        self.fc2.set_fake_quantization_flag()
+        self.fc3.set_fake_quantization_flag()
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -70,30 +83,32 @@ class FusedAlexNetSmall(nn.Module):
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.ema_init = False
+        self.flag_ema_init = False
+        self.flag_fake_quantization = False
         self.smooth = smooth
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.conv4 = FusedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.conv5 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.fc1 = FusedLinear(256, 4096, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.fc2 = FusedLinear(4096, 4096, bias=True, relu=True, smooth=smooth, bit=bit)
-        self.fc3 = FusedLinear(4096, num_classes, bias=True, relu=False, smooth=smooth, bit=bit)
+        self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.conv4 = FusedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.conv5 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
+        self.fc3 = FusedLinear(4096, num_classes, bias=True, smooth=smooth, bit=bit)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            if self.ema_init:
+            if self.flag_ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z, self.q_max)
+                if self.flag_fake_quantization:
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                    x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.ema_init = True
+                self.flag_ema_init = True
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -109,6 +124,17 @@ class FusedAlexNetSmall(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         return x
+
+    def start_fake_quantization(self):
+        self.flag_fake_quantization = True
+        self.conv1.set_fake_quantization_flag()
+        self.conv2.set_fake_quantization_flag()
+        self.conv3.set_fake_quantization_flag()
+        self.conv4.set_fake_quantization_flag()
+        self.conv5.set_fake_quantization_flag()
+        self.fc1.set_fake_quantization_flag()
+        self.fc2.set_fake_quantization_flag()
+        self.fc3.set_fake_quantization_flag()
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
