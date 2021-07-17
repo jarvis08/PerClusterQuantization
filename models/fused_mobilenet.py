@@ -21,6 +21,7 @@ class FusedSqueezeExcitation(nn.Module):
         self.smooth = smooth
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
+        self.fq = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
         self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation_layer=nn.ReLU, smooth=smooth, bit=bit)
@@ -32,7 +33,6 @@ class FusedSqueezeExcitation(nn.Module):
         scale = self.fc1(scale)
         scale = self.fc2(scale)
         scale = self.QAct(scale)
-        # return F.hardsigmoid(scale, inplace=inplace)
         return scale
 
     def forward(self, input: Tensor) -> Tensor:
@@ -41,13 +41,28 @@ class FusedSqueezeExcitation(nn.Module):
         if self.training:
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                if self.fq:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                    with torch.no_grad():
+                        x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
                 self.ema_init = True
         return x
+
+    def set_squeeze_fq(self):
+        self.fq = True
+        self.fc1.set_fq()
+        self.fc2.set_fq()
+        self.QAct.set_fq()
+
+    def set_squeeze_qparams(self, s1, z1):
+        prev_s, prev_z = self.fc1.set_qparams(s1, z1)
+        prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
+        _, _ = self.QAct.set_qparams(prev_s, prev_z)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        return self.s3, self.z3
 
 
 class InvertedResidual(nn.Module):
@@ -63,6 +78,7 @@ class InvertedResidual(nn.Module):
         self.ema_init = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
+        self.fq = False
 
         layers: List[nn.Module] = []
         activation_layer = nn.ReLU if not cnf.use_hs else None
@@ -76,7 +92,6 @@ class InvertedResidual(nn.Module):
             
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
-        # groups = input_channel -> input_channel / input_channel = 1 -> operates on single channel
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                   padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
                                   norm_layer=norm_layer, activation_layer=activation_layer, smooth=smooth, bit=bit))
@@ -101,13 +116,33 @@ class InvertedResidual(nn.Module):
         if self.training:
             if self.ema_init:
                 self.act_range[0], self.act_range[1] = ema(result, self.act_range, self.smooth)
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                result = fake_quantize(result, s, z)
+                if self.fq:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                    with torch.no_grad():
+                        result.copy_(fake_quantize(result, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(result).item()
                 self.act_range[1] = torch.max(result).item()
                 self.ema_init = True
         return result
+
+    def set_block_fq(self):
+        self.fq = True
+        for i in range(len(self.block)):
+            if isinstance(self.block[i], FusedSqueezeExcitation):
+                self.block[i].set_squeeze_fq()
+            else:
+                self.block[i].set_fq()
+
+    def set_block_qparams(self, s1, z1):
+        prev_s, prev_z = self.block[0].set_qparams(s1, z1)
+        for i in range(1, len(self.block)):
+            if isinstance(self.block[i], FusedSqueezeExcitation):
+                prev_s, prev_z = self.block[i].set_squeeze_qparams(prev_s, prev_z)
+            else:
+                prev_s, prev_z = self.block[i].set_qparams(prev_s, prev_z)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        return self.s3, self.z3
 
 
 class FusedMobileNet(nn.Module):
@@ -129,6 +164,7 @@ class FusedMobileNet(nn.Module):
         self.ema_init = False
         self.smooth = smooth
         self.q_max = 2 ** self.bit - 1
+        self.fq = False
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -166,7 +202,6 @@ class FusedMobileNet(nn.Module):
         self.classifier = nn.Sequential(
             FusedLinear(lastconv_output_channels, last_channel, bit=bit, smooth=smooth),
             QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit),
-            nn.Dropout(p=0.2, inplace=True),
             FusedLinear(last_channel, num_classes, bit=bit, smooth=smooth)
         )
 
@@ -186,8 +221,10 @@ class FusedMobileNet(nn.Module):
         if self.training:
             if self.ema_init:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                x = fake_quantize(x, s, z)
+                if self.fq:
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                    with torch.no_grad():
+                        x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -210,26 +247,33 @@ class FusedMobileNet(nn.Module):
             if isinstance(m, nn.Conv2d):
                 m.show_params()
 
+    def start_fake_quantization(self):
+        self.fq = True
+        self.features[0].set_fq()
+        self.features[1].set_fq()
+        for feature_idx in range(2, len(self.features)-2):
+            self.features[feature_idx].set_block_fq()
+
+        self.features[-2].set_fq()
+        self.features[-1].set_fq()
+
+        for idx in range(len(self.classifier)):
+            self.classifier[idx].set_fq()
+
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.features[0].set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.features[1].set_qparams(prev_s, prev_z)
 
         for feature_idx in range(2, len(self.features)-2):
-            for block_idx in range(len(self.features[feature_idx].block)):
-                fused_module = self.features[feature_idx].block[block_idx]
-                if isinstance(fused_module, FusedSqueezeExcitation):
-                    prev_s, prev_z = fused_module.fc1.set_qparams(prev_s, prev_z)
-                    prev_s, prev_z = fused_module.fc2.set_qparams(prev_s, prev_z)
-                else:
-                    prev_s, prev_z = fused_module.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.features[feature_idx].set_block_qparams(prev_s, prev_z)
 
         prev_s, prev_z = self.features[-2].set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features[-1].set_qparams(prev_s, prev_z)
 
         prev_s, prev_z = self.classifier[0].set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.classifier[1].set_qparams(prev_s, prev_z)
-        _, _ = self.classifier[3].set_qparams(prev_s, prev_z)
+        _, _ = self.classifier[2].set_qparams(prev_s, prev_z)
 
 
 def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dilated: bool = False, **kwargs: Any):
@@ -293,7 +337,7 @@ def set_fused_mobilenet(fused, pre):
 
     # Fully Connected
     fused.classifier[0] = copy_from_pretrained(fused.classifier[0], pre.classifier[0], None)
-    fused.classifier[3] = copy_from_pretrained(fused.classifier[3], pre.classifier[3], None)
+    fused.classifier[2] = copy_from_pretrained(fused.classifier[2], pre.classifier[3], None)
     return fused
 
 
@@ -302,20 +346,17 @@ def fold_mobilenet(model):
     model.features[0].fuse_conv_and_bn()
 
     # InvertedResidual
-    for feature_idx in range(1, len(model.features)):
-        if isinstance(model.features[feature_idx], InvertedResidual):
-            for block_idx in range(len(model.features[feature_idx].block)):
-                fused_module = model.features[feature_idx].block[block_idx]
-                if isinstance(fused_module, FusedConv2d):
-                    fused_module.fuse_conv_and_bn()
-                elif isinstance(fused_module, FusedSqueezeExcitation):
-                    fused_module.fc1.fuse_conv_and_bn()
-                    fused_module.fc2.fuse_conv_and_bn()
-        else:
-            break
+    for feature_idx in range(2, len(model.features)-2):
+        for block_idx in range(len(model.features[feature_idx].block)):
+            fused_module = model.features[feature_idx].block[block_idx]
+            if isinstance(fused_module, FusedConv2d):
+                fused_module.fuse_conv_and_bn()
+            elif isinstance(fused_module, FusedSqueezeExcitation):
+                fused_module.fc1.fuse_conv_and_bn()
+                fused_module.fc2.fuse_conv_and_bn()
 
     # Last conv
     model.features[-2].fuse_conv_and_bn()
 
     return model
-
+    

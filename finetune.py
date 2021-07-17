@@ -42,6 +42,7 @@ def get_finetuning_model(args, tools):
 def _finetune(args, tools):
     save_path = set_save_dir(args)
     model = get_finetuning_model(args, tools)
+
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:
@@ -51,7 +52,7 @@ def _finetune(args, tools):
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     cudnn.benchmark = True
-    
+
     normalizer = get_normalizer(args.dataset)
     train_loader = get_train_loader(args, normalizer)
     test_loader = get_test_loader(args, normalizer)
@@ -80,6 +81,7 @@ def _finetune(args, tools):
         is_best = prec > best_prec
         best_prec = max(prec, best_prec)
         print('best acc: {:1f}'.format(best_prec))
+        
         save_checkpoint({
             'epoch': e,
             'state_dict': model.state_dict(),
@@ -95,7 +97,6 @@ def _finetune(args, tools):
     # save_fused_network_in_darknet_form(model, args)
 
     quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
-    # quantized_model = make_lookup_table_Hardswish(model, quantized_model)
     quantized_model = tools.quantizer(model, quantized_model)
     path = add_path(save_path, 'quantized')
     f_path = os.path.join(path, 'checkpoint.pth')

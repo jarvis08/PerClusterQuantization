@@ -10,9 +10,7 @@ parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eva
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 
-# parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
-parser.add_argument('--img_train_path', default='', type=str, help="ImageNet dataset path")
-parser.add_argument('--img_test_path', default='', type=str, help="ImageNet dataset path")
+parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
