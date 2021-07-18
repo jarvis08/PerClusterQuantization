@@ -82,12 +82,12 @@ class InvertedResidual(nn.Module):
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
         layers: List[nn.Module] = []
-        activation_layer = nn.ReLU if not cnf.use_hs else None
+        activation = nn.ReLU if not cnf.use_hs else None
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
             layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
-                                      norm_layer=norm_layer, activation=activation_layer, smooth=smooth, bit=bit))
+                                      norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
             
@@ -95,7 +95,7 @@ class InvertedResidual(nn.Module):
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                   padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
-                                  norm_layer=norm_layer, activation=activation_layer, smooth=smooth, bit=bit))
+                                  norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit))
         if cnf.use_hs:
             layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
         
