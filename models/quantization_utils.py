@@ -128,7 +128,8 @@ def quantize_and_transfer_params(_fp, _int):
         for c in range(_int.num_clusters):
             _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0))
     else:
-        _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0))
+        if fp_layer.bias is not None:
+            _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0))
     return _int
 
 

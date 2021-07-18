@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
 class QuantizedConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation_layer=None, dilation=1, groups=1, bias=False, bit=8, num_clusters=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation=None, dilation=1, groups=1, bias=False, bit=8, num_clusters=1):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
         self.bit = bit
@@ -25,17 +25,19 @@ class QuantizedConv2d(nn.Conv2d):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.activation_layer = activation_layer
-        self.lookup_table = nn.Parameter(torch.zeros(self.q_max), requires_grad=False)
+        self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.activation = activation
 
-    def forward(self, x, cluster_info):
+    def forward(self, x):
+        _x = x[0]
+        cluster_info = x[1]
         if cluster_info is not None:
-            return self.pcq(x, cluster_info)
+            return self.pcq(_x, cluster_info)
         else:
-            if self.activation_layer:
-                x = self.general(x)
-                return QuantizedActivation(self.activation_layer, bit=self.bit)(x)
-            return self.general(x)
+            return self.general(_x)
 
     def pcq(self, x, cluster_info):
         if self.padding[0] > 0 or self.padding[1] > 0:
@@ -152,8 +154,20 @@ class QuantizedConv2d(nn.Conv2d):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
 
         multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
+        print("s1 s2 s3 ",self.s1, self.s2, self.s3, self.s1*self.s2/self.s3)
+        print("M0 and shift ", self.M0, self.shift)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
+
+        if self.activation:
+            hs_total = total + self.hardswish_3
+            hs_total = torch.clamp(hs_total, self.z3, self.hardswish_6)
+            hs_total = hs_total / self.hardswish_6
+            if self.activation == 'Hardswish':
+                total = total * hs_total
+            else:
+                total = hs_total
+
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
         else:
@@ -266,7 +280,7 @@ class FusedConv2d(nn.Module):
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if self.training and self.fq:
+        if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             with torch.no_grad():
                 self.conv.weight.copy_(fake_quantize(self.conv.weight.detach(), s, z, self.q_max))

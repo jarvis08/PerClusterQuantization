@@ -43,7 +43,7 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def save_checkpoint(state, is_best, path):
+def save_checkpoint(state, is_best, path, e):
     filepath = os.path.join(path, 'checkpoint.pth')
     torch.save(state, filepath)
     if is_best:
@@ -57,8 +57,6 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch):
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
-            #if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
-            #    break
             t.set_description("Epoch {}".format(epoch))
 
             input, target = input.cuda(), target.cuda()
@@ -145,7 +143,7 @@ def get_normalizer(dataset):
 
 def get_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_train_path, 'train'),
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
@@ -170,7 +168,7 @@ def get_train_loader(args, normalizer):
 
 def get_test_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.img_test_path, 'test'),
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'test'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
