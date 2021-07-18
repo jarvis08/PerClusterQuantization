@@ -14,30 +14,30 @@ class QActivation(nn.Module):
         self.layer_type = 'QActivation'
         self.bit = bit
         self.q_max = 2 ** bit - 1
-        self.ema_init = False
+        self.flag_ema_init = False
+        self.flag_fake_quantization = True
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self._activation = activation(inplace=False)
-        self.fq = False
 
     def forward(self, x):
         x = self._activation(x)
 
         if self.training:
-            if self.ema_init:
+            if self.flag_ema_init:
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-                if self.fq:
+                if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                     with torch.no_grad():
                         x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
-                self.ema_init = True
+                self.flag_ema_init = True
         return x
 
-    def set_fq(self):
-        self.fq = True
+    def set_fake_quantization_flag(self):
+        self.flag_fake_quantization = True
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)

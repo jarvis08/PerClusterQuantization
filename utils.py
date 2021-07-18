@@ -168,7 +168,7 @@ def get_train_loader(args, normalizer):
 
 def get_test_loader(args, normalizer):
     if args.dataset == 'imagenet':
-        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'test'),
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'val'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
