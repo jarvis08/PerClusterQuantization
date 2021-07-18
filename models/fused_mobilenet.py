@@ -24,7 +24,7 @@ class FusedSqueezeExcitation(nn.Module):
         self.fq = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation_layer=nn.ReLU, smooth=smooth, bit=bit)
+        self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation=nn.ReLU, smooth=smooth, bit=bit)
         self.fc2 = FusedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, smooth=smooth, bit=bit)
         self.QAct = QActivation(activation=nn.Hardsigmoid, bit=bit, smooth=smooth)
 
@@ -81,12 +81,12 @@ class InvertedResidual(nn.Module):
         self.fq = False
 
         layers: List[nn.Module] = []
-        activation_layer = nn.ReLU if not cnf.use_hs else None
+        activation = nn.ReLU if not cnf.use_hs else None
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
             layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
-                                      norm_layer=norm_layer, activation_layer=activation_layer, smooth=smooth, bit=bit))
+                                      norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
             
@@ -94,7 +94,7 @@ class InvertedResidual(nn.Module):
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                   padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
-                                  norm_layer=norm_layer, activation_layer=activation_layer, smooth=smooth, bit=bit))
+                                  norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit))
         if cnf.use_hs:
             layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
         
