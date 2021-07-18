@@ -57,8 +57,8 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch):
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
-            if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
-                break
+            #if i >= len(train_loader.sampler) / (train_loader.batch_size * 4):
+            #    break
             t.set_description("Epoch {}".format(epoch))
 
             input, target = input.cuda(), target.cuda()
