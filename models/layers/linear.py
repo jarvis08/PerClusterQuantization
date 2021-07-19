@@ -9,7 +9,7 @@ from .activation import *
 
 
 class QuantizedLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=False, bit=8, num_clusters=1):
+    def __init__(self, in_features, out_features, bias=False, activation=None, bit=8, num_clusters=1):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
         self.bit = bit
@@ -25,14 +25,20 @@ class QuantizedLinear(nn.Linear):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.lookup_table = nn.Parameter(torch.zeros(self.q_max), requires_grad=False)
+        self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.activation = activation
 
-    def forward(self, x, cluster_info):
-        sum_q1q2 = F.linear(x, self.weight, None)
+    def forward(self, x):
+        _x = x[0]
+        cluster_info = x[1]
+        sum_q1q2 = F.linear(_x, self.weight, None)
         if cluster_info is not None:
-            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
+            return self.pcq_totalsum(_x, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
         else:
-            return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            return self.general_totalsum(_x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2, cluster_info):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
@@ -114,6 +120,16 @@ class QuantizedLinear(nn.Linear):
         multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
+
+        if self.activation:
+            hs_total = total + self.hardswish_3
+            hs_total = torch.clamp(hs_total, self.z3, self.hardswish_6)
+            hs_total = hs_total / self.hardswish_6
+            if self.activation == 'Hardswish':
+                total = total * hs_total
+            else:
+                total = hs_total
+
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
         else:
@@ -209,9 +225,10 @@ class FusedLinear(nn.Module):
 
     def forward(self, x):
         if self.training and not self.quant_noise:
-            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            with torch.no_grad():
-                self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
+            if self.training:
+                s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
+                with torch.no_grad():
+                    self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
 
         x = self.fc(x)
         if self._activation:

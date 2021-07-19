@@ -77,7 +77,6 @@ class InvertedResidual(nn.Module):
 
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
-        # groups = input_channel -> input_channel / input_channel = 1 -> operates on single channel
         layers.append(ConvBNActivation(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                        stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
                                        norm_layer=norm_layer, activation_layer=activation_layer))
@@ -187,7 +186,7 @@ class MobileNetV3(nn.Module):
         return self._forward_impl(x)
 
 
-def _mobilenet_v3_conf(arch: str, width_mult: float = 1.0, reduced_tail: bool = False, dilated: bool = False,
+def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dilated: bool = False,
                        **kwargs: Any):
     reduce_divider = 2 if reduced_tail else 1
     dilation = 2 if dilated else 1
@@ -195,23 +194,20 @@ def _mobilenet_v3_conf(arch: str, width_mult: float = 1.0, reduced_tail: bool = 
     bneck_conf = partial(InvertedResidualConfig, width_mult=width_mult)
     adjust_channels = partial(InvertedResidualConfig.adjust_channels, width_mult=width_mult)
 
-    if arch == "MobileNetV3":
-        inverted_residual_setting = [
-            bneck_conf(16, 3, 16, 16, True, "RE", 2, 1),  # C1
-            bneck_conf(16, 3, 72, 24, False, "RE", 2, 1),  # C2
-            bneck_conf(24, 3, 88, 24, False, "RE", 1, 1),
-            bneck_conf(24, 5, 96, 40, True, "HS", 2, 1),  # C3
-            bneck_conf(40, 5, 240, 40, True, "HS", 1, 1),
-            bneck_conf(40, 5, 240, 40, True, "HS", 1, 1),
-            bneck_conf(40, 5, 120, 48, True, "HS", 1, 1),
-            bneck_conf(48, 5, 144, 48, True, "HS", 1, 1),
-            bneck_conf(48, 5, 288, 96 // reduce_divider, True, "HS", 2, dilation),  # C4
-            bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider, 96 // reduce_divider, True, "HS", 1, dilation),
-            bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider, 96 // reduce_divider, True, "HS", 1, dilation),
-        ]
-        last_channel = adjust_channels(1024 // reduce_divider)  # C5
-    else:
-        raise ValueError("Unsupported model type {}".format(arch))
+    inverted_residual_setting = [
+        bneck_conf(16, 3, 16, 16, True, "RE", 2, 1),  # C1
+        bneck_conf(16, 3, 72, 24, False, "RE", 2, 1),  # C2
+        bneck_conf(24, 3, 88, 24, False, "RE", 1, 1),
+        bneck_conf(24, 5, 96, 40, True, "HS", 2, 1),  # C3
+        bneck_conf(40, 5, 240, 40, True, "HS", 1, 1),
+        bneck_conf(40, 5, 240, 40, True, "HS", 1, 1),
+        bneck_conf(40, 5, 120, 48, True, "HS", 1, 1),
+        bneck_conf(48, 5, 144, 48, True, "HS", 1, 1),
+        bneck_conf(48, 5, 288, 96 // reduce_divider, True, "HS", 2, dilation),  # C4
+        bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider, 96 // reduce_divider, True, "HS", 1, dilation),
+        bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider, 96 // reduce_divider, True, "HS", 1, dilation),
+    ]
+    last_channel = adjust_channels(1024 // reduce_divider)  # C5
 
     return inverted_residual_setting, last_channel
 
