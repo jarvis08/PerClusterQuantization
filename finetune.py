@@ -8,6 +8,35 @@ from models import *
 from tqdm import tqdm
 
 
+def get_train_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer,
+                                                        ]))
+        if args.horovod:
+            sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
+        else:
+            sampler = torch.utils.data.RandomSampler(train_dataset)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10, sampler=sampler)
+    else:
+        train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+    return train_loader
+
+
 def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions, epoch):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -40,22 +69,29 @@ def get_finetuning_model(args, tools):
 
 
 def _finetune(args, tools):
-    save_path = set_save_dir(args)
+    if args.horovod:
+        import horovod.torch as hvd
+        hvd.init()
+        torch.set_num_threads(1)
+        torch.cuda.set_device(hvd.local_rank())
+
+    normalizer = get_normalizer(args.dataset)
+    train_loader = get_train_loader(args, normalizer)
+    test_loader = get_test_loader(args, normalizer)
+
     model = get_finetuning_model(args, tools)
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:
         summary(model, (3, 32, 32))
-    model.cuda()
+
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    if args.horovod:
+        optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     cudnn.benchmark = True
-
-    normalizer = get_normalizer(args.dataset)
-    train_loader = get_train_loader(args, normalizer)
-    test_loader = get_test_loader(args, normalizer)
 
     kmeans_model = None
     if args.cluster > 1:
@@ -65,10 +101,11 @@ def _finetune(args, tools):
         else:
             kmeans_model = load_kmeans_model(args.kmeans_path)
 
+    save_path = set_save_dir(args)
     best_prec = 0
     for e in range(1, args.epoch + 1):
-        #        if e > args.fq:
-         #   model.start_fake_quantization()
+        if e > args.fq:
+           model.start_fake_quantization()
 
         if kmeans_model:
             pcq_epoch(model, train_loader, criterion, optimizer, kmeans_model, args.partition, e)
@@ -89,21 +126,21 @@ def _finetune(args, tools):
             'optimizer': optimizer.state_dict(),
         }, is_best, save_path)
 
-        if e == 1:
-            model.set_quantization_params()
-            quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
-            quantized_model = tools.quantizer(model, quantized_model)
-            path = add_path(save_path, 'quantized')
-            f_path = os.path.join(path, 'checkpoint{}.pth'.format(e))
-            torch.save({'state_dict': quantized_model.state_dict()}, f_path)
+        #if e == 1:
+        #    model.set_quantization_params()
+        #    quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+        #    quantized_model = tools.quantizer(model, quantized_model)
+        #    path = add_path(save_path, 'quantized')
+        #    f_path = os.path.join(path, 'checkpoint{}.pth'.format(e))
+        #    torch.save({'state_dict': quantized_model.state_dict()}, f_path)
 
-        if e < 20 and e%5 == 0:
-            model.set_quantization_params()
-            quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
-            quantized_model = tools.quantizer(model, quantized_model)
-            path = add_path(save_path, 'quantized')
-            f_path = os.path.join(path, 'checkpoint{}.pth'.format(e))
-            torch.save({'state_dict': quantized_model.state_dict()}, f_path)
+        #if e < 20 and e % 5 == 0:
+        #    model.set_quantization_params()
+        #    quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+        #    quantized_model = tools.quantizer(model, quantized_model)
+        #    path = add_path(save_path, 'quantized')
+        #    f_path = os.path.join(path, 'checkpoint{}.pth'.format(e))
+        #    torch.save({'state_dict': quantized_model.state_dict()}, f_path)
 
     if 'ResNet' in args.arch:
         model = fold_resnet(model)

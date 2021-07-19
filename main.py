@@ -35,8 +35,11 @@ parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant
 parser.add_argument('--q_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
 
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
+parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 
 args = parser.parse_args()
+if args.imagenet:
+    args.dataset = 'imagenet'
 print(vars(args))
 
 
@@ -111,6 +114,10 @@ def specify_target_arch(arch, dataset, num_clusters):
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 32], 'Not supported target bit'
+
+    #if args.cuda:
+    #    torch.set_default_tensor_type("torch.cuda.FloatTensor")
+    #device = torch.tensor(0).device
 
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
     if args.mode == 'pre':
