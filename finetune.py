@@ -8,7 +8,7 @@ from models import *
 from tqdm import tqdm
 
 
-def get_train_loader(args, normalizer):
+def get_train_loader(args, normalizer, hvd=None):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                         transform=transforms.Compose([
@@ -21,7 +21,8 @@ def get_train_loader(args, normalizer):
             sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
         else:
             sampler = torch.utils.data.RandomSampler(train_dataset)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10, sampler=sampler)
+
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10, sampler=sampler)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -69,14 +70,17 @@ def get_finetuning_model(args, tools):
 
 
 def _finetune(args, tools):
+    normalizer = get_normalizer(args.dataset)
+
     if args.horovod:
         import horovod.torch as hvd
         hvd.init()
         torch.set_num_threads(1)
         torch.cuda.set_device(hvd.local_rank())
+        train_loader = get_train_loader(args, normalizer, hvd)
+    else:
+        train_loader = get_train_loader(args, normalizer)
 
-    normalizer = get_normalizer(args.dataset)
-    train_loader = get_train_loader(args, normalizer)
     test_loader = get_test_loader(args, normalizer)
 
     model = get_finetuning_model(args, tools)
@@ -100,6 +104,9 @@ def _finetune(args, tools):
             kmeans_model = train_kmeans(args, train_loader)
         else:
             kmeans_model = load_kmeans_model(args.kmeans_path)
+
+    if args.horovod:
+        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
     save_path = set_save_dir(args)
     best_prec = 0
