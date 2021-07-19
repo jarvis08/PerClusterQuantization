@@ -73,7 +73,7 @@ class InvertedResidual(nn.Module):
                                       norm_layer=norm_layer, activation_layer=activation_layer, smooth=smooth, bit=bit))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
-            
+
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         # groups = input_channel -> input_channel / input_channel = 1 -> operates on single channel
@@ -82,7 +82,7 @@ class InvertedResidual(nn.Module):
                                   norm_layer=norm_layer, activation_layer=activation_layer, smooth=smooth, bit=bit))
         if cnf.use_hs:
             layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
-        
+
         if cnf.use_se:
             layers.append(FusedSqueezeExcitation(cnf.expanded_channels, bit=bit, smooth=smooth))
 
