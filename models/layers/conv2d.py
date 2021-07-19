@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 
+from ..quant_noise import _quant_noise
 from ..quantization_utils import *
 from .activation import *
 from functools import partial
@@ -249,7 +250,7 @@ class FusedConv2d(nn.Module):
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False,
-                 norm_layer=None, activation=None, smooth=0.995, bit=32):
+                 norm_layer=None, activation=None, smooth=0.995, bit=32, quant_noise=False, q_prob=0.1):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.bit = bit
@@ -259,14 +260,19 @@ class FusedConv2d(nn.Module):
         self.flag_fake_quantization = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.groups = groups
-
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
+        
+        self.quant_noise = quant_noise
+        if quant_noise:
+            self.q_prob = q_prob
+            self.conv = _quant_noise(nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, groups=self.groups, bias=bias), self.q_prob, 1, q_max=self.q_max)
+        else:
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if self.training and self.fq:
+        if self.training and not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             with torch.no_grad():
                 self.conv.weight.copy_(fake_quantize(self.conv.weight.detach(), s, z, self.q_max))

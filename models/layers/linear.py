@@ -2,6 +2,8 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
+
+from ..quant_noise import _quant_noise
 from ..quantization_utils import *
 from .activation import *
 
@@ -187,7 +189,7 @@ class FusedLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_features, out_features, bias=True, activation=None, bit=32, smooth=0.995):
+    def __init__(self, in_features, out_features, bias=True, activation=None, bit=32, smooth=0.995, quant_noise=False, q_prob=0.1):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
         self.bit = bit
@@ -196,12 +198,17 @@ class FusedLinear(nn.Module):
         self.flag_ema_init = False
         self.flag_fake_quantization = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-
-        self.fc = nn.Linear(in_features, out_features, bias=bias)
+        
+        self.quant_noise = quant_noise
+        if quant_noise:
+            self.q_prob = q_prob
+            self.fc = _quant_noise(nn.Linear(in_features=in_features, out_features=out_features, bias=bias), self.q_prob, 1, q_max=self.q_max)
+        else:
+            self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if self.training and self.fq:
+        if self.training and not self.quant_noise:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
             with torch.no_grad():
                 self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))

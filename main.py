@@ -33,6 +33,9 @@ parser.add_argument('--partition', default=4, type=int, help="Number of partitio
 parser.add_argument('--kmeans_epoch', default=100, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
 
+parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
+parser.add_argument('--q_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
+
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 
 args = parser.parse_args()

@@ -10,11 +10,11 @@ from utils import *
 def _pretrain(args, tools):
     save_path = set_save_dir(args)
     model = tools.pretrained_model_initializer()
+    model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:
         summary(model, (3, 32, 32))
-    model.cuda()
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)

@@ -34,19 +34,19 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
 
 def get_finetuning_model(args, tools):
     pretrained_model = load_dnn_model(args, tools)
-    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
+    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth, quant_noise=args.quant_noise, q_prob=args.q_prob)
     fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
 
 def _finetune(args, tools):
-    # save_path = set_save_dir(args)
+    save_path = set_save_dir(args)
     model = get_finetuning_model(args, tools)
-    # if args.dataset == 'imagenet':
-    #     summary(model, (3, 224, 224))
-    # else:
-    #     summary(model, (3, 32, 32))
-    model.cuda()
+    model.cuda() 
+    if args.dataset == 'imagenet':
+        summary(model, (3, 224, 224))
+    else:
+        summary(model, (3, 32, 32))
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -66,8 +66,8 @@ def _finetune(args, tools):
 
     best_prec = 0
     for e in range(1, args.epoch + 1):
-        if e > args.fq:
-            model.start_fake_quantization()
+        #        if e > args.fq:
+         #   model.start_fake_quantization()
 
         if kmeans_model:
             pcq_epoch(model, train_loader, criterion, optimizer, kmeans_model, args.partition, e)
@@ -86,6 +86,22 @@ def _finetune(args, tools):
             'best_prec': best_prec,
             'optimizer': optimizer.state_dict(),
         }, is_best, save_path)
+
+        if e == 1:
+            model.set_quantization_params()
+            quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+            quantized_model = tools.quantizer(model, quantized_model)
+            path = add_path(save_path, 'quantized')
+            f_path = os.path.join(path, 'checkpoint{}.pth'.format(e))
+            torch.save({'state_dict': quantized_model.state_dict()}, f_path)
+
+        if e < 20 and e%5 == 0:
+            model.set_quantization_params()
+            quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+            quantized_model = tools.quantizer(model, quantized_model)
+            path = add_path(save_path, 'quantized')
+            f_path = os.path.join(path, 'checkpoint{}.pth'.format(e))
+            torch.save({'state_dict': quantized_model.state_dict()}, f_path)
 
     if 'ResNet' in args.arch:
         model = fold_resnet(model)

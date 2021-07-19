@@ -31,13 +31,13 @@ def pcq_validate(model, test_loader, criterion, kmeans, num_partitions):
 
 def _evaluate(args, tools):
     model = load_dnn_model(args, tools)
+    model.cuda()
     if not args.quantized:
         if args.dataset == 'imagenet':
             summary(model, (3, 224, 224))
         else:
             summary(model, (3, 32, 32))
 
-    model.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
     cudnn.benchmark = True
 
