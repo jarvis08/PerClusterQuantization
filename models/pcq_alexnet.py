@@ -40,26 +40,27 @@ class PCQAlexNet(nn.Module):
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n], s, z)
+                        with torch.no_grad():
+                            x[done:done + n] = fake_quantize(x[done:done + n], s, z)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1((x, cluster_info))
         x = self.maxpool(x)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2((x, cluster_info))
         x = self.maxpool(x)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3((x, cluster_info))
+        x = self.conv4((x, cluster_info))
+        x = self.conv5((x, cluster_info))
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1((x, cluster_info))
+        x = self.fc2((x, cluster_info))
+        x = self.fc3((x, cluster_info))
         return x
 
     def start_fake_quantization(self):
@@ -119,26 +120,27 @@ class PCQAlexNetSmall(nn.Module):
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z, self.q_max)
+                        with torch.no_grad():
+                            x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x[done:done + n]).item()
                     self.in_range[c][1] = torch.max(x[done:done + n]).item()
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1((x, cluster_info))
         x = self.maxpool(x)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2((x, cluster_info))
         x = self.maxpool(x)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3((x, cluster_info))
+        x = self.conv4((x, cluster_info))
+        x = self.conv5((x, cluster_info))
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1((x, cluster_info))
+        x = self.fc2((x, cluster_info))
+        x = self.fc3((x, cluster_info))
         return x
 
     def start_fake_quantization(self):
