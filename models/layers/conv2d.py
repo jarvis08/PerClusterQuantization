@@ -155,8 +155,6 @@ class QuantizedConv2d(nn.Conv2d):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
 
         multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-        print("s1 s2 s3 ",self.s1, self.s2, self.s3, self.s1*self.s2/self.s3)
-        print("M0 and shift ", self.M0, self.shift)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
@@ -202,7 +200,8 @@ class PCQConv2d(nn.Module):
     def forward(self, x, cluster_info):
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            self.conv.weight.data = fake_quantize(self.conv.weight.data.detach(), s, z, self.q_max)
+            with torch.no_grad():
+                self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z, self.q_max)
 
         x = self.conv(x)
         if self._norm_layer:
@@ -219,7 +218,8 @@ class PCQConv2d(nn.Module):
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n].detach(), s, z, self.q_max)
+                        with torch.no_grad():
+                            x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.act_range[c][0] = torch.min(x[done:done + n]).item()
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -286,7 +286,8 @@ class FusedConv2d(nn.Module):
     def forward(self, x):
         if self.training and not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            self.conv.weight.data = fake_quantize(self.conv.weight.data.detach(), s, z, self.q_max)
+            with torch.no_grad():
+                self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z, self.q_max)
 
         x = self.conv(x)
         if self._norm_layer:
@@ -299,7 +300,8 @@ class FusedConv2d(nn.Module):
                 self.act_range[0], self.act_range[1] = ema(x.detach(), self.act_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                    x = fake_quantize(x.detach(), s, z, self.q_max)
+                    with torch.no_grad():
+                        x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
