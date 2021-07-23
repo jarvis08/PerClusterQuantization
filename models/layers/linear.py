@@ -158,8 +158,7 @@ class PCQLinear(nn.Module):
     def forward(self, x, cluster_info=None):
         if self.training:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            with torch.no_grad():
-                self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
+            self.fc.weight.data = fake_quantize(self.fc.weight.data.detach(), s, z, self.q_max)
 
         x = self.fc(x)
         if self._activation:
@@ -174,8 +173,7 @@ class PCQLinear(nn.Module):
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        with torch.no_grad():
-                            x[done:done + n].copy_(fake_quantize(x[done:done + n].detach(), s, z, self.q_max))
+                        x[done:done + n] = fake_quantize(x[done:done + n].detach(), s, z, self.q_max)
                 else:
                     self.act_range[c][0] = torch.min(x[done:done + n]).item()
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -225,10 +223,8 @@ class FusedLinear(nn.Module):
 
     def forward(self, x):
         if self.training and not self.quant_noise:
-            if self.training:
-                s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-                with torch.no_grad():
-                    self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
+            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
+            self.fc.weight.data = fake_quantize(self.fc.weight.data.detach(), s, z, self.q_max)
 
         x = self.fc(x)
         if self._activation:
@@ -239,8 +235,7 @@ class FusedLinear(nn.Module):
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                    with torch.no_grad():
-                        x.copy_(fake_quantize(x.detach(), s, z, self.q_max))
+                    x = fake_quantize(x.detach(), s, z, self.q_max)
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
