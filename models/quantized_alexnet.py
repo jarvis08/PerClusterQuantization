@@ -82,24 +82,24 @@ class QuantizedAlexNetSmall(nn.Module):
             for i in range(cluster_info.shape[0]):
                 c = cluster_info[i][0].item()
                 n = cluster_info[i][1].item()
-                x[done:done + n].copy_(quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max))
+                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1((x, cluster_info))
         x = self.maxpool(x, cluster_info)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2((x, cluster_info))
         x = self.maxpool(x, cluster_info)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3((x, cluster_info))
+        x = self.conv4((x, cluster_info))
+        x = self.conv5((x, cluster_info))
         x = self.maxpool(x, cluster_info)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1((x, cluster_info))
+        x = self.fc2((x, cluster_info))
+        x = self.fc3((x, cluster_info))
         return x
 
 
