@@ -2,10 +2,10 @@ import torch.nn as nn
 from ..quantization_utils import *
 
 
-class QuantizedShortcut(nn.Module):
+class QuantizedAdd(nn.Module):
     def __init__(self, bit=8, num_clusters=1):
-        super(QuantizedShortcut, self).__init__()
-        self.layer_type = 'QuantizedShortcut'
+        super(QuantizedAdd, self).__init__()
+        self.layer_type = 'QuantizedAdd'
         self.num_clusters = num_clusters
         self.bit = bit
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0

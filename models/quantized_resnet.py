@@ -35,17 +35,17 @@ class QuantizedBasicBlock(nn.Module):
 
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, bias=False, bit=bit, num_clusters=num_clusters)
         self.conv2 = quantized_conv3x3(planes, planes, bias=False, bit=bit, num_clusters=num_clusters)
-        self.shortcut = QuantizedShortcut(bit=bit, num_clusters=num_clusters)
+        self.shortcut = QuantizedAdd(bit=bit, num_clusters=num_clusters)
 
     def forward(self, x):
         identity = x[0]
         cluster_info = x[1]
 
-        out = self.conv1(x[0], cluster_info)
-        out = self.conv2(out, cluster_info)
+        out = self.conv1((x[0], cluster_info))
+        out = self.conv2((out, cluster_info))
 
         if self.downsample is not None:
-            identity = self.downsample(x[0], cluster_info)
+            identity = self.downsample((x[0], cluster_info))
 
         out = self.shortcut(identity, out, cluster_info)
         return out, cluster_info
@@ -178,13 +178,13 @@ class QuantizedResNet20(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.first_conv(x, cluster_info)
+        x = self.first_conv((x, cluster_info))
         x, _ = self.layer1((x, cluster_info))
         x, _ = self.layer2((x, cluster_info))
         x, _ = self.layer3((x, cluster_info))
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x, cluster_info)
+        x = self.fc((x, cluster_info))
         return x
 
     def show_params(self):

@@ -7,28 +7,6 @@ from utils import *
 from tqdm import tqdm
 
 
-def pcq_validate(model, test_loader, criterion, kmeans, num_partitions):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-
-    model.eval()
-    with torch.no_grad():
-        with tqdm(test_loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
-                t.set_description("Validate")
-
-                input, target, cluster = get_pcq_batch(kmeans, input, target, num_partitions)
-                input, target, cluster = input.cuda(), target.cuda(), cluster.cuda()
-                output = model(input, cluster_info=cluster)
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
-
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
-    return top1.avg
-
-
 def _evaluate(args, tools):
     model = load_dnn_model(args, tools)
     model.cuda()

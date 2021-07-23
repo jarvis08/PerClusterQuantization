@@ -15,6 +15,7 @@ parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
+parser.add_argument('--val_batch', default=256, type=int, help='Validation batch size')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
 
@@ -36,8 +37,10 @@ parser.add_argument('--q_prob', default=0.1, type=float, help='quant noise proba
 
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
+parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
 args = parser.parse_args()
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
 print(vars(args))
@@ -46,6 +49,7 @@ print(vars(args))
 def set_func_for_target_arch(arch, is_pcq):
     tools = QuantizationTool()
     if 'AlexNet' in arch:
+        setattr(tools, 'folder', None)
         setattr(tools, 'fuser', set_fused_alexnet)
         setattr(tools, 'quantizer', quantize_alexnet)
         if 'Small' in arch:
@@ -64,6 +68,7 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
+        setattr(tools, 'folder', fold_resnet)
         setattr(tools, 'fuser', set_fused_resnet)
         setattr(tools, 'quantizer', quantize_resnet)
         if '18' in arch:
@@ -82,6 +87,7 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
 
     elif arch == 'MobileNetV3':
+        setattr(tools, 'folder', fold_mobilenet)
         setattr(tools, 'fuser', set_fused_mobilenet)
         setattr(tools, 'quantizer', quantize_mobilenet)
         setattr(tools, 'pretrained_model_initializer', mobilenet)
@@ -114,10 +120,6 @@ def specify_target_arch(arch, dataset, num_clusters):
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 32], 'Not supported target bit'
-
-    #if args.cuda:
-    #    torch.set_default_tensor_type("torch.cuda.FloatTensor")
-    #device = torch.tensor(0).device
 
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
     if args.mode == 'pre':

@@ -1,5 +1,5 @@
 from .linear import *
 from .conv2d import *
-from .shortcut import *
+from .misc import *
 from .maxpool2d import *
 from .activation import *
