@@ -36,8 +36,7 @@ class FusedAlexNet(nn.Module):
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                    with torch.no_grad():
-                        x = fake_quantize(x, s, z, self.q_max)
+                    x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
@@ -111,8 +110,7 @@ class FusedAlexNetSmall(nn.Module):
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                    with torch.no_grad():
-                        x = fake_quantize(x, s, z, self.q_max)
+                    x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
