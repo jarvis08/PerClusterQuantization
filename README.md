@@ -12,6 +12,10 @@ $ pip install tqdm
 $ pip install torch-summary
 ```
 
+To use Horovod for multi-gpu in finetuning, install horovod and use `--horovod True` argument.
+
+`$ HOROVOD_WITH_PYTORCH=1 pip install horovod[pytorch]`
+
 ## 1. Pre-training
 
 ```
