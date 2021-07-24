@@ -58,7 +58,7 @@ def save_checkpoint(state, is_best, path):
     filepath = os.path.join(path, 'checkpoint.pth')
     torch.save(state, filepath)
     if is_best:
-        shutil.copyfile(filepath, os.path.join(path, 'model_best.pth.tar'))
+        shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
 
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):

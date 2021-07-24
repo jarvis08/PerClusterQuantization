@@ -116,7 +116,6 @@ def _finetune(args, tools):
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
-    best_score_fp = 0
     best_score_int = 0
     for e in range(1, args.epoch + 1):
         if e > args.fq:
@@ -128,13 +127,13 @@ def _finetune(args, tools):
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
 
-        val_score = validate(model, test_loader, criterion, logger)
+        fp_score = validate(model, test_loader, criterion, logger)
         state = {
             'epoch': e,
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
         }
-        save_checkpoint(state, (val_score > best_score_fp), save_path_fp)
+        save_checkpoint(state, False, save_path_fp)
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
@@ -154,6 +153,15 @@ def _finetune(args, tools):
                 val_score = validate(quantized_model, test_loader, criterion, logger)
 
             if val_score > best_score_int:
+                # Save best model's FP model
+                with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
+                    tmp = vars(args)
+                    tmp['best_epoch'] = e
+                    tmp['best_score'] = fp_score
+                    json.dump(tmp, f, indent=4)
+                shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.path'), os.path.join(save_path_fp, 'best.pth'))
+
+                # Save best model's INT model
                 best_score_int = val_score
                 with open(os.path.join(save_path_int, "params.json"), 'w') as f:
                     tmp = vars(args)
