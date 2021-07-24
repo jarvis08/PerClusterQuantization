@@ -126,19 +126,19 @@ class PCQAlexNetSmall(nn.Module):
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1((x, cluster_info))
+        x = self.conv1(x, cluster_info)
         x = self.maxpool(x)
-        x = self.conv2((x, cluster_info))
+        x = self.conv2(x, cluster_info)
         x = self.maxpool(x)
-        x = self.conv3((x, cluster_info))
-        x = self.conv4((x, cluster_info))
-        x = self.conv5((x, cluster_info))
+        x = self.conv3(x, cluster_info)
+        x = self.conv4(x, cluster_info)
+        x = self.conv5(x, cluster_info)
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1((x, cluster_info))
-        x = self.fc2((x, cluster_info))
-        x = self.fc3((x, cluster_info))
+        x = self.fc1(x, cluster_info)
+        x = self.fc2(x, cluster_info)
+        x = self.fc3(x, cluster_info)
         return x
 
     def start_fake_quantization(self):
