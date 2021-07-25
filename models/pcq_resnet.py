@@ -219,10 +219,14 @@ class PCQResNet(nn.Module):
     def set_cluster_information_of_batch(self, info):
         self.batch_cluster = info
         self.first_conv.batch_cluster = info
-        self.layer1.set_block_cluster_info(info)
-        self.layer2.set_block_cluster_info(info)
-        self.layer3.set_block_cluster_info(info)
-        self.layer4.set_block_cluster_info(info)
+        for i in range(len(self.layer1)):
+            self.layer1[i].set_block_cluster_info(info)
+        for i in range(len(self.layer2)):
+            self.layer2[i].set_block_cluster_info(info)
+        for i in range(len(self.layer3)):
+            self.layer3[i].set_block_cluster_info(info)
+        for i in range(len(self.layer4)):
+            self.layer4[i].set_block_cluster_info(info)
         self.fc.batch_cluster = info
 
     def start_fake_quantization(self):
@@ -332,9 +336,12 @@ class PCQResNet20(nn.Module):
     def set_cluster_information_of_batch(self, info):
         self.batch_cluster = info
         self.first_conv.batch_cluster = info
-        self.layer1.set_block_cluster_info(info)
-        self.layer2.set_block_cluster_info(info)
-        self.layer3.set_block_cluster_info(info)
+        for i in range(len(self.layer1)):
+            self.layer1[i].set_block_cluster_info(info)
+        for i in range(len(self.layer2)):
+            self.layer2[i].set_block_cluster_info(info)
+        for i in range(len(self.layer3)):
+            self.layer3[i].set_block_cluster_info(info)
         self.fc.batch_cluster = info
 
     def start_fake_quantization(self):
