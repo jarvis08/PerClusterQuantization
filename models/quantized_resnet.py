@@ -57,6 +57,7 @@ class QuantizedBasicBlock(nn.Module):
             self.downsample.batch_cluster = info
         self.conv1.batch_cluster = info
         self.conv2.batch_cluster = info
+        self.shortcut.batch_cluster = info
 
 
 class QuantizedResNet18(nn.Module):
