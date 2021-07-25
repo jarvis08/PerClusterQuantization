@@ -48,11 +48,13 @@ class PCQBasicBlock(nn.Module):
         self.num_clusters = num_clusters
         self.batch_cluster = None
 
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
+        #self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
-        self.relu = nn.ReLU6(inplace=False)
+        #self.relu = nn.ReLU6(inplace=False)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -140,7 +142,8 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                    bias=False, norm_layer=self._norm_layer, activation=nn.ReLU6,
+                                    bias=False, norm_layer=self._norm_layer, activation=nn.ReLU,
+                                    #bias=False, norm_layer=self._norm_layer, activation=nn.ReLU6,
                                     bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -150,13 +153,6 @@ class PCQResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = PCQLinear(512 * block.expansion, num_classes, bias=True,
                             bit=bit, smooth=smooth, num_clusters=num_clusters)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
