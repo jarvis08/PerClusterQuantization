@@ -6,7 +6,6 @@ class QuantizedAdd(nn.Module):
     def __init__(self, bit=8, num_clusters=1):
         super(QuantizedAdd, self).__init__()
         self.layer_type = 'QuantizedAdd'
-        self.num_clusters = num_clusters
         self.bit = bit
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
         self.s_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -22,18 +21,21 @@ class QuantizedAdd(nn.Module):
         self.s3 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-    def forward(self, bypass, prev, cluster_info):
-        if cluster_info is not None:
-            return self.pcq_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor), cluster_info)
+        self.num_clusters = num_clusters
+        self.batch_cluster = None
+
+    def forward(self, bypass, prev):
+        if self.batch_cluster is not None:
+            return self.pcq_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor))
         else:
             return self.general_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor))
 
-    def pcq_bypass(self, bypass, prev, cluster_info):
+    def pcq_bypass(self, bypass, prev):
         done = 0
         out = torch.zeros(bypass.shape, dtype=torch.int32).cuda()
-        for i in range(cluster_info.shape[0]):
-            c = cluster_info[i][0].item()
-            n = cluster_info[i][1].item()
+        for i in range(self.batch_cluster.shape[0]):
+            c = self.batch_cluster[i][0].item()
+            n = self.batch_cluster[i][1].item()
             if self.shift_bypass[c] < 0:
                 x1 = multiply_M((bypass[done:done + n].sub(self.z_bypass[c]) << - self.shift_bypass[c]), self.M0_bypass[c])
                 x1 = shifting(x1, 0)

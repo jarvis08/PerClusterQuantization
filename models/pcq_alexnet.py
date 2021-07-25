@@ -15,7 +15,9 @@ class PCQAlexNet(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.smooth = smooth
+
         self.num_clusters = num_clusters
+        self.batch_cluster = None
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -28,12 +30,12 @@ class PCQAlexNet(nn.Module):
         self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU6)
         self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, bit=bit, num_clusters=num_clusters)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0]
+                n = self.batch_cluster[i][1]
                 if c == -1:
                     break
                 if self.flag_ema_init[c]:
@@ -47,20 +49,31 @@ class PCQAlexNet(nn.Module):
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1((x, cluster_info))
+        x = self.conv1(x)
         x = self.maxpool(x)
-        x = self.conv2((x, cluster_info))
+        x = self.conv2(x)
         x = self.maxpool(x)
-        x = self.conv3((x, cluster_info))
-        x = self.conv4((x, cluster_info))
-        x = self.conv5((x, cluster_info))
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1((x, cluster_info))
-        x = self.fc2((x, cluster_info))
-        x = self.fc3((x, cluster_info))
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
         return x
+
+    def set_cluster_information_of_batch(self, info):
+        self.batch_cluster = info
+        self.conv1.batch_cluster = info
+        self.conv2.batch_cluster = info
+        self.conv3.batch_cluster = info
+        self.conv4.batch_cluster = info
+        self.conv5.batch_cluster = info
+        self.fc1.batch_cluster = info
+        self.fc2.batch_cluster = info
+        self.fc3.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
@@ -94,7 +107,9 @@ class PCQAlexNetSmall(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.smooth = smooth
+
         self.num_clusters = num_clusters
+        self.batch_cluster = None
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -107,12 +122,12 @@ class PCQAlexNetSmall(nn.Module):
         self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU6)
         self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, num_clusters=num_clusters, bit=bit)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 if c == -1:
                     break
                 if self.flag_ema_init[c]:
@@ -126,20 +141,31 @@ class PCQAlexNetSmall(nn.Module):
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1(x)
         x = self.maxpool(x)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2(x)
         x = self.maxpool(x)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
         return x
+
+    def set_cluster_information_of_batch(self, info):
+        self.batch_cluster = info
+        self.conv1.batch_cluster = info
+        self.conv2.batch_cluster = info
+        self.conv3.batch_cluster = info
+        self.conv4.batch_cluster = info
+        self.conv5.batch_cluster = info
+        self.fc1.batch_cluster = info
+        self.fc2.batch_cluster = info
+        self.fc3.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True

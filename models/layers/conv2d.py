@@ -32,28 +32,28 @@ class QuantizedConv2d(nn.Conv2d):
         self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.activation = activation
 
-    def forward(self, x):
-        _x = x[0]
-        cluster_info = x[1]
-        if cluster_info is not None:
-            return self.pcq(_x, cluster_info)
-        else:
-            return self.general(_x)
+        self.batch_cluster = None
 
-    def pcq(self, x, cluster_info):
+    def forward(self, x):
+        if self.batch_cluster is not None:
+            return self.pcq(x)
+        else:
+            return self.general(x)
+
+    def pcq(self, x):
         if self.padding[0] > 0 or self.padding[1] > 0:
             done = 0
             padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding[0] * 2, x.shape[3] + self.padding[1] * 2)).cuda()
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 padded[done:done + n] = F.pad(x[done:done + n], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1[c].item())
                 done += n
             sum_q1q2 = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
-            return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
+            return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
         else:
             sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
-            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
+            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def general(self, x):
         if self.padding[0] > 0 or self.padding[1] > 0:
@@ -61,16 +61,16 @@ class QuantizedConv2d(nn.Conv2d):
         sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
         return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
-    def pcq_totalsum(self, x, sum_q1q2, cluster_info):
+    def pcq_totalsum(self, x, sum_q1q2):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
         filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[
             2], self.weight.shape[3]
         stride = self.stride[0]
 
         done = 0
-        for i in range(cluster_info.shape[0]):
-            c = cluster_info[i][0].item()
-            n = cluster_info[i][1].item()
+        for i in range(self.batch_cluster.shape[0]):
+            c = self.batch_cluster[i][0].item()
+            n = self.batch_cluster[i][1].item()
             for output_ch in range(filter_batch):
                 sum_q1q2[done:done + n, output_ch, :, :] = sum_q1q2[done:done + n, output_ch, :, :].add(self.quantized_bias[c][output_ch])
             done += n
@@ -78,10 +78,10 @@ class QuantizedConv2d(nn.Conv2d):
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros((cluster_info.shape[0], filter_batch), dtype=torch.int32).cuda()
+        sum_a2 = torch.zeros((self.batch_cluster.shape[0], filter_batch), dtype=torch.int32).cuda()
 
-        for i in range(cluster_info.shape[0]):
-            c = cluster_info[i][0].item()
+        for i in range(self.batch_cluster.shape[0]):
+            c = self.batch_cluster[i][0].item()
             for output_ch in range(0, filter_batch):
                 sum_a2[i, output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1[c])
 
@@ -92,9 +92,9 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
 
         done = 0
-        for i in range(cluster_info.shape[0]):
-            c = cluster_info[i][0].item()
-            n = cluster_info[i][1].item()
+        for i in range(self.batch_cluster.shape[0]):
+            c = self.batch_cluster[i][0].item()
+            n = self.batch_cluster[i][1].item()
             nz1z2 = input_ch * filter_col * filter_row * self.z1[c] * self.z2
             sum_q1q2[done:done + n] = sum_q1q2[done:done + n].add(nz1z2)
             done += n
@@ -103,17 +103,17 @@ class QuantizedConv2d(nn.Conv2d):
             sum_q1q2[i_batch] = torch.sub(sum_q1q2[i_batch], sum_a1[i_batch])
 
         done = 0
-        for i in range(cluster_info.shape[0]):
-            n = cluster_info[i][1].item()
+        for i in range(self.batch_cluster.shape[0]):
+            n = self.batch_cluster[i][1].item()
             for out_c in range(filter_batch):
                 sum_q1q2[done:done + n, out_c] = torch.sub(sum_q1q2[done:done + n:, out_c], sum_a2[i, out_c])
             done += n
 
         done = 0
         total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
-        for i in range(cluster_info.shape[0]):
-            c = cluster_info[i][0].item()
-            n = cluster_info[i][1].item()
+        for i in range(self.batch_cluster.shape[0]):
+            c = self.batch_cluster[i][0].item()
+            n = self.batch_cluster[i][1].item()
             multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
             total[done:done + n] = shifting(multiplied, self.shift[c].item())
             total[done:done + n] = total[done:done + n].add(self.z3[c])
@@ -190,14 +190,16 @@ class PCQConv2d(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
+
         self.num_clusters = num_clusters
+        self.batch_cluster = None
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
 
-    def forward(self, x, cluster_info):
+    def forward(self, x):
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z, self.q_max)
@@ -210,9 +212,9 @@ class PCQConv2d(nn.Module):
 
         if self.training:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 if self.flag_ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:

@@ -17,6 +17,8 @@ class QuantizedAlexNet(nn.Module):
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
+        self.batch_cluster = None
+
         self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
         self.conv1 = QuantizedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bit=bit)
@@ -28,7 +30,7 @@ class QuantizedAlexNet(nn.Module):
         self.fc2 = QuantizedLinear(4096, 4096, bit=bit)
         self.fc3 = QuantizedLinear(4096, num_classes, bit=bit)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if cluster_info is not None:
             done = 0
             for i in range(cluster_info.shape[0]):
@@ -39,20 +41,32 @@ class QuantizedAlexNet(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1(x)
         x = self.maxpool(x)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2(x)
         x = self.maxpool(x)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
         return x
+
+    def set_cluster_information_of_batch(info):
+        self.batch_cluster = info
+        self.maxpool.batch_cluster = info
+        self.conv1.batch_cluster = info
+        self.conv2.batch_cluster = info
+        self.conv3.batch_cluster = info
+        self.conv4.batch_cluster = info
+        self.conv5.batch_cluster = info
+        self.fc1.batch_cluster = info
+        self.fc2.batch_cluster = info
+        self.fc3.batch_cluster = info
 
 
 class QuantizedAlexNetSmall(nn.Module):
@@ -65,6 +79,8 @@ class QuantizedAlexNetSmall(nn.Module):
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
+        self.batch_cluster = None
+
         self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=False, bit=bit, num_clusters=num_clusters)
@@ -76,7 +92,7 @@ class QuantizedAlexNetSmall(nn.Module):
         self.fc2 = QuantizedLinear(4096, 4096, bit=bit, num_clusters=num_clusters)
         self.fc3 = QuantizedLinear(4096, num_classes, bit=bit, num_clusters=num_clusters)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if cluster_info is not None:
             done = 0
             for i in range(cluster_info.shape[0]):
@@ -87,20 +103,32 @@ class QuantizedAlexNetSmall(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.conv1((x, cluster_info))
-        x = self.maxpool(x, cluster_info)
-        x = self.conv2((x, cluster_info))
-        x = self.maxpool(x, cluster_info)
-        x = self.conv3((x, cluster_info))
-        x = self.conv4((x, cluster_info))
-        x = self.conv5((x, cluster_info))
-        x = self.maxpool(x, cluster_info)
+        x = self.conv1(x)
+        x = self.maxpool(x)
+        x = self.conv2(x)
+        x = self.maxpool(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
+        x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1((x, cluster_info))
-        x = self.fc2((x, cluster_info))
-        x = self.fc3((x, cluster_info))
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
         return x
+
+    def set_cluster_information_of_batch(info):
+        self.batch_cluster = info
+        self.maxpool.batch_cluster = info
+        self.conv1.batch_cluster = info
+        self.conv2.batch_cluster = info
+        self.conv3.batch_cluster = info
+        self.conv4.batch_cluster = info
+        self.conv5.batch_cluster = info
+        self.fc1.batch_cluster = info
+        self.fc2.batch_cluster = info
+        self.fc3.batch_cluster = info
 
 
 def quantized_alexnet(bit: int = 32, num_clusters: int = 1, **kwargs: Any) -> QuantizedAlexNet:
