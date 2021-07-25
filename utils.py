@@ -122,8 +122,10 @@ def pcq_validate(model, test_loader, criterion, kmeans, num_partitions, logger=N
                 t.set_description("Validate")
 
                 input, target, cluster = get_pcq_batch(kmeans, input, target, num_partitions)
-                input, target, cluster = input.cuda(), target.cuda(), cluster.cuda()
-                output = model(input, cluster_info=cluster)
+                model.set_cluster_information_of_batch(cluster.cuda())
+
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
