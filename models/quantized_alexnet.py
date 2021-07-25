@@ -56,7 +56,7 @@ class QuantizedAlexNet(nn.Module):
         x = self.fc3(x)
         return x
 
-    def set_cluster_information_of_batch(info):
+    def set_cluster_information_of_batch(self, info):
         self.batch_cluster = info
         self.maxpool.batch_cluster = info
         self.conv1.batch_cluster = info
@@ -118,7 +118,7 @@ class QuantizedAlexNetSmall(nn.Module):
         x = self.fc3(x)
         return x
 
-    def set_cluster_information_of_batch(info):
+    def set_cluster_information_of_batch(self, info):
         self.batch_cluster = info
         self.maxpool.batch_cluster = info
         self.conv1.batch_cluster = info
