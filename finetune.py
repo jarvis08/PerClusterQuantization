@@ -161,7 +161,7 @@ def _finetune(args, tools):
                     tmp['best_epoch'] = e
                     tmp['best_score'] = fp_score
                     json.dump(tmp, f, indent=4)
-                shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.path'), os.path.join(save_path_fp, 'best.pth'))
+                shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
 
                 # Save best model's INT model
                 best_score_int = val_score
