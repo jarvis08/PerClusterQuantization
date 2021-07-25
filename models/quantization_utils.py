@@ -123,13 +123,14 @@ def quantize_and_transfer_params(_fp, _int):
     else:
         fp_layer = _fp.fc
 
-    _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
-    if _int.num_clusters > 1:
-        for c in range(_int.num_clusters):
-            _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0))
-    else:
-        if fp_layer.bias is not None:
-            _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0))
+    with torch.no_grad():
+        _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.q_max))
+        if _int.num_clusters > 1:
+            for c in range(_int.num_clusters):
+                _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(), _int.s1[c] * _int.s2, 0))
+        else:
+            if fp_layer.bias is not None:
+                _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(), _int.s1 * _int.s2, 0))
     return _int
 
 
