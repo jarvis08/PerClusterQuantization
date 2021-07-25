@@ -78,7 +78,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
             top1.update(prec.item(), input.size(0))
 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
             loss.backward()
