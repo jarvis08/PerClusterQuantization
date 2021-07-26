@@ -70,7 +70,7 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
 
 def get_finetuning_model(args, tools):
     pretrained_model = load_dnn_model(args, tools)
-    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
+    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth, num_clusters=args.cluster, quant_noise=args.quant_noise, q_prob=args.q_prob)
     # fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth,
     #                                             quant_noise=args.quant_noise, q_prob=args.q_prob)
     fused_model = tools.fuser(fused_model, pretrained_model)
@@ -94,8 +94,8 @@ def _finetune(args, tools):
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
-    else:
-        summary(model, (3, 32, 32))
+    #else:
+        # summary(model, (3, 32, 32))
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -135,7 +135,10 @@ def _finetune(args, tools):
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
         }
-        save_checkpoint(state, False, save_path_fp)
+        if e == 1 or e%5 == 0:
+            save_checkpoint(state, False, save_path_fp, e)
+        
+
 
         # Test quantized model, and save if performs the best
         if e > args.fq:

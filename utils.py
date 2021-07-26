@@ -54,8 +54,8 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def save_checkpoint(state, is_best, path):
-    filepath = os.path.join(path, 'checkpoint.pth')
+def save_checkpoint(state, is_best, path, e):
+    filepath = os.path.join(path, 'checkpoint.pth'.format(e))
     torch.save(state, filepath)
     if is_best:
         shutil.copyfile(filepath, os.path.join(path, 'best.pth'))

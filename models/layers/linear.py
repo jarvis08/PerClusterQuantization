@@ -144,7 +144,7 @@ class PCQLinear(nn.Module):
     """
     batch_cluster = None
 
-    def __init__(self, in_features, out_features, bias=True, activation=None, bit=8, smooth=0.999, num_clusters=10):
+    def __init__(self, in_features, out_features, bias=True, activation=None, bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
         self.bit = bit
@@ -155,11 +155,16 @@ class PCQLinear(nn.Module):
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
         self.num_clusters = num_clusters
 
+        self.quant_noise = quant_noise
+        self.q_prob =q_prob
         self.fc = nn.Linear(in_features, out_features, bias=bias)
+        if self.quant_noise:
+            _quant_noise(self.fc, self.q_prob, 1, self.q_max)
+
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if self.training:
+        if self.training and not self.quant_noise:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
             self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z, self.q_max)
 
