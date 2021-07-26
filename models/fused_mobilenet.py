@@ -55,9 +55,9 @@ class FusedSqueezeExcitation(nn.Module):
 
     def set_squeeze_fq(self):
         self.flag_fake_quantization = True
-        self.fc1.set_fake_quantization_flag()
-        self.fc2.set_fake_quantization_flag()
-        self.QAct.set_fake_quantization_flag()
+        self.fc1.flag_fake_quantization = True
+        self.fc2.flag_fake_quantization = True
+        self.QAct.flag_fake_quantization = True
 
     def set_squeeze_qparams(self, s1, z1):
         prev_s, prev_z = self.fc1.set_qparams(s1, z1)
@@ -91,7 +91,7 @@ class InvertedResidual(nn.Module):
                                       norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
-            
+
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
@@ -99,7 +99,7 @@ class InvertedResidual(nn.Module):
                                   norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
         if cnf.use_hs:
             layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
-        
+
         if cnf.use_se:
             layers.append(FusedSqueezeExcitation(cnf.expanded_channels, bit=bit, smooth=smooth))
 
@@ -134,7 +134,7 @@ class InvertedResidual(nn.Module):
             if isinstance(self.block[i], FusedSqueezeExcitation):
                 self.block[i].set_squeeze_fq()
             else:
-                self.block[i].set_fake_quantization_flag()
+                self.block[i].flag_fake_quantization = True
 
     def set_block_qparams(self, s1, z1):
         prev_s, prev_z = self.block[0].set_qparams(s1, z1)
@@ -250,16 +250,16 @@ class FusedMobileNet(nn.Module):
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.features[0].set_fake_quantization_flag()
-        self.features[1].set_fake_quantization_flag()
+        self.features[0].flag_fake_quantization = True
+        self.features[1].flag_fake_quantization = True
         for feature_idx in range(2, len(self.features)-2):
             self.features[feature_idx].set_block_fq()
 
-        self.features[-2].set_fake_quantization_flag()
-        self.features[-1].set_fake_quantization_flag()
+        self.features[-2].flag_fake_quantization = True
+        self.features[-1].flag_fake_quantization = True
 
         for idx in range(len(self.classifier)):
-            self.classifier[idx].set_fake_quantization_flag()
+            self.classifier[idx].flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -344,7 +344,7 @@ def set_fused_mobilenet(fused, pre):
 
 def fold_mobilenet(model):
     # first layer
-    model.features[0].fuse_conv_and_bn()
+    model.features[0].fold_conv_and_bn()
 
     # InvertedResidual
     for feature_idx in range(2, len(model.features)-2):
@@ -354,7 +354,7 @@ def fold_mobilenet(model):
                 fused_module.fuse_conv_and_bn()
 
     # Last conv
-    model.features[-2].fuse_conv_and_bn()
+    model.features[-2].fold_conv_and_bn()
 
     return model
     

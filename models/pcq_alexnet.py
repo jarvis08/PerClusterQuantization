@@ -7,6 +7,8 @@ from .quantization_utils import *
 
 
 class PCQAlexNet(nn.Module):
+    batch_cluster = None
+
     def __init__(self, num_classes: int = 1000, smooth: float = 0.995, bit: int = 32, num_clusters: int = 10) -> None:
         super(PCQAlexNet, self).__init__()
         self.bit = bit
@@ -15,6 +17,7 @@ class PCQAlexNet(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.smooth = smooth
+
         self.num_clusters = num_clusters
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
@@ -28,12 +31,12 @@ class PCQAlexNet(nn.Module):
         self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU6)
         self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, bit=bit, num_clusters=num_clusters)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(self.num_clusters):
-                c = cluster_info[i][0]
-                n = cluster_info[i][1]
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0]
+                n = self.batch_cluster[i][1]
                 if c == -1:
                     break
                 if self.flag_ema_init[c]:
@@ -47,31 +50,37 @@ class PCQAlexNet(nn.Module):
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1(x)
         x = self.maxpool(x)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2(x)
         x = self.maxpool(x)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
         return x
+
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        PCQConv2d.batch_cluster = info
+        PCQLinear.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.conv1.set_fake_quantization_flag()
-        self.conv2.set_fake_quantization_flag()
-        self.conv3.set_fake_quantization_flag()
-        self.conv4.set_fake_quantization_flag()
-        self.conv5.set_fake_quantization_flag()
-        self.fc1.set_fake_quantization_flag()
-        self.fc2.set_fake_quantization_flag()
-        self.fc3.set_fake_quantization_flag()
+        self.conv1.flag_fake_quantization = True
+        self.conv2.flag_fake_quantization = True
+        self.conv3.flag_fake_quantization = True
+        self.conv4.flag_fake_quantization = True
+        self.conv5.flag_fake_quantization = True
+        self.fc1.flag_fake_quantization = True
+        self.fc2.flag_fake_quantization = True
+        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -86,6 +95,8 @@ class PCQAlexNet(nn.Module):
 
 
 class PCQAlexNetSmall(nn.Module):
+    batch_cluster = None
+
     def __init__(self, num_classes: int = 10, smooth: float = 0.995, bit: int = 32, num_clusters: int = 10) -> None:
         super(PCQAlexNetSmall, self).__init__()
         self.bit = bit
@@ -94,6 +105,7 @@ class PCQAlexNetSmall(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.smooth = smooth
+
         self.num_clusters = num_clusters
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
@@ -107,50 +119,56 @@ class PCQAlexNetSmall(nn.Module):
         self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU6)
         self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, num_clusters=num_clusters, bit=bit)
 
-    def forward(self, x: torch.Tensor, cluster_info: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 if c == -1:
                     break
                 if self.flag_ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n].clone().detach(), s, z, self.q_max)
+                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x[done:done + n]).item()
                     self.in_range[c][1] = torch.max(x[done:done + n]).item()
                     self.flag_ema_init[c] = True
                 done += n
 
-        x = self.conv1(x, cluster_info)
+        x = self.conv1(x)
         x = self.maxpool(x)
-        x = self.conv2(x, cluster_info)
+        x = self.conv2(x)
         x = self.maxpool(x)
-        x = self.conv3(x, cluster_info)
-        x = self.conv4(x, cluster_info)
-        x = self.conv5(x, cluster_info)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
         x = self.maxpool(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x, cluster_info)
-        x = self.fc2(x, cluster_info)
-        x = self.fc3(x, cluster_info)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
         return x
+
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        PCQConv2d.batch_cluster = info
+        PCQLinear.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.conv1.set_fake_quantization_flag()
-        self.conv2.set_fake_quantization_flag()
-        self.conv3.set_fake_quantization_flag()
-        self.conv4.set_fake_quantization_flag()
-        self.conv5.set_fake_quantization_flag()
-        self.fc1.set_fake_quantization_flag()
-        self.fc2.set_fake_quantization_flag()
-        self.fc3.set_fake_quantization_flag()
+        self.conv1.flag_fake_quantization = True
+        self.conv2.flag_fake_quantization = True
+        self.conv3.flag_fake_quantization = True
+        self.conv4.flag_fake_quantization = True
+        self.conv5.flag_fake_quantization = True
+        self.fc1.flag_fake_quantization = True
+        self.fc2.flag_fake_quantization = True
+        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)

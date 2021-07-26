@@ -18,6 +18,7 @@ def quantized_conv1x1(in_planes, out_planes, stride=1, bias=False, bit=8, num_cl
 
 class QuantizedBasicBlock(nn.Module):
     expansion = 1
+    batch_cluster = None
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
                  bit=8, num_clusters=1):
@@ -31,27 +32,30 @@ class QuantizedBasicBlock(nn.Module):
         self.stride = stride
 
         self.bit = bit
+
         self.num_clusters = num_clusters
+        self.batch_cluster = None
 
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, bias=False, bit=bit, num_clusters=num_clusters)
         self.conv2 = quantized_conv3x3(planes, planes, bias=False, bit=bit, num_clusters=num_clusters)
-        self.shortcut = QuantizedShortcut(bit=bit, num_clusters=num_clusters)
+        self.shortcut = QuantizedAdd(bit=bit, num_clusters=num_clusters)
 
     def forward(self, x):
-        identity = x[0]
-        cluster_info = x[1]
+        identity = x
 
-        out = self.conv1(x[0], cluster_info)
-        out = self.conv2(out, cluster_info)
+        out = self.conv1(x)
+        out = self.conv2(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x[0], cluster_info)
+            identity = self.downsample(x)
 
-        out = self.shortcut(identity, out, cluster_info)
-        return out, cluster_info
+        out = self.shortcut(identity, out)
+        return out
 
 
 class QuantizedResNet18(nn.Module):
+    batch_cluster = None
+
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None, bit=8, num_clusters=1):
         super(QuantizedResNet18, self).__init__()
@@ -104,35 +108,42 @@ class QuantizedResNet18(nn.Module):
                                 bit=self.bit, num_clusters=self.num_clusters))
         return nn.Sequential(*layers)
 
-    def forward(self, x, cluster_info=None):
-        if cluster_info is not None:
+    def forward(self, x):
+        if self.batch_cluster is not None:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.first_conv(x, cluster_info)
-        x = self.maxpool(x, cluster_info)
-        x, _ = self.layer1((x, cluster_info))
-        x, _ = self.layer2((x, cluster_info))
-        x, _ = self.layer3((x, cluster_info))
-        x, _ = self.layer4((x, cluster_info))
+        x = self.first_conv(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x, cluster_info)
+        x = self.fc(x)
         return x
 
-    def show_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.show_params()
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        QuantizedBasicBlock.batch_cluster = info
+        # QuantizedBottleneck.batch_cluster = info
+        QuantizedConv2d.batch_cluster = info
+        QuantizedLinear.batch_cluster = info
+        QuantizedMaxPool2d.batch_cluster = info
+        QuantizedAdd.batch_cluster = info
 
 
 class QuantizedResNet20(nn.Module):
+    batch_cluster = None
+
     def __init__(self, block, layers, num_classes=10, bit=8, num_clusters=1):
         super(QuantizedResNet20, self).__init__()
         self.bit = bit
@@ -167,30 +178,39 @@ class QuantizedResNet20(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x, cluster_info=None):
-        if cluster_info is not None:
+    def forward(self, x):
+        if self.batch_cluster is not None:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.first_conv(x, cluster_info)
-        x, _ = self.layer1((x, cluster_info))
-        x, _ = self.layer2((x, cluster_info))
-        x, _ = self.layer3((x, cluster_info))
+        x = self.first_conv(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x, cluster_info)
+        x = self.fc(x)
         return x
 
     def show_params(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
+
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        QuantizedBasicBlock.batch_cluster = info
+        QuantizedConv2d.batch_cluster = info
+        QuantizedLinear.batch_cluster = info
+        QuantizedMaxPool2d.batch_cluster = info
+        QuantizedAdd.batch_cluster = info
 
 
 def quantized_resnet18(bit=8, num_clusters=1, **kwargs):

@@ -2,12 +2,23 @@ import torch
 import torchvision
 import torchvision.models as vision_models
 import torchvision.transforms as transforms
+
 import numpy as np
+from tqdm import tqdm
+
 import os
 import shutil
 from datetime import datetime
 import json
-from tqdm import tqdm
+import logging
+
+from models.kmeans import get_pcq_batch
+
+
+def set_logger(path):
+    logging.basicConfig(filename=os.path.join(path, "train.log"), level=logging.DEBUG)
+    logger = logging.getLogger()
+    return logger
 
 
 class AverageMeter(object):
@@ -43,14 +54,14 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def save_checkpoint(state, is_best, path, e):
-    filepath = os.path.join(path, 'checkpoint{}.pth'.format(e))
+def save_checkpoint(state, is_best, path):
+    filepath = os.path.join(path, 'checkpoint.pth')
     torch.save(state, filepath)
     if is_best:
-        shutil.copyfile(filepath, os.path.join(path, 'model_best.pth.tar'))
+        shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
 
 
-def train_epoch(model, train_loader, criterion, optimizer, epoch):
+def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -66,6 +77,9 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch):
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -73,7 +87,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch):
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def validate(model, test_loader, criterion):
+def validate(model, test_loader, criterion, logger=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -92,6 +106,35 @@ def validate(model, test_loader, criterion):
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
 
+    if logger:
+        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    return top1.avg
+
+
+def pcq_validate(model, test_loader, criterion, kmeans, num_partitions, logger=None):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    model.eval()
+    with torch.no_grad():
+        with tqdm(test_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Validate")
+
+                input, target, cluster = get_pcq_batch(kmeans, input, target, num_partitions)
+                model.set_cluster_information_of_batch(cluster.cuda())
+
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
+
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+    if logger:
+        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
     return top1.avg
 
 
@@ -120,7 +163,7 @@ def load_dnn_model(args, tools):
     if args.quantized:
         model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
     elif args.fused:
-        model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
+        model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth, quant_noise=args.quant_noise, q_prob=args.q_prob)
     else:
         if args.dataset == 'imagenet':
             if args.arch == 'MobileNetV3':
@@ -186,7 +229,7 @@ def get_test_loader(args, normalizer):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=2)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.val_batch, shuffle=False, num_workers=2)
     return test_loader
 
 
@@ -198,50 +241,26 @@ def add_path(prev_path, to_add):
 
 
 def set_kmeans_dir(args):
-    save_dir = 'result'
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    save_dir = os.path.join(save_dir, 'kmeans')
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    save_dir = os.path.join(save_dir, args.dataset)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    now = datetime.now().strftime("%m-%d-%H%M")
-    save_dir = os.path.join(save_dir, now)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    with open(os.path.join(save_dir, "params.json"), 'w') as f:
-        kmeans_args = {'k': args.cluster, 'num_partitions': args.partition, 'epoch': args.kmeans_epoch, 'batch': args.batch}
+    path = add_path('', 'result')
+    path = add_path(path, 'kmeans')
+    path = add_path(path, args.dataset)
+    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
+    path = add_path(path, 'kmeans')
+    with open(os.path.join(path, "params.json"), 'w') as f:
+        kmeans_args = {'k': args.cluster, 'num_partitions': args.partition,
+                       'epoch': args.kmeans_epoch, 'batch': args.batch}
         json.dump(kmeans_args, f, indent=4)
-    return save_dir
+    return path
 
 
-def set_save_dir(args, quantize=False):
-    save_dir = 'result'
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    save_dir = os.path.join(save_dir, args.mode)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    save_dir = os.path.join(save_dir, args.arch + '_' + str(args.bit) + 'bit')
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    now = datetime.now().strftime("%m-%d-%H%M")
-    save_dir = os.path.join(save_dir, now)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    with open(os.path.join(save_dir, "params.json"), 'w') as f:
+def set_save_dir(args):
+    path = add_path('', 'result')
+    path = add_path(path, args.mode)
+    path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
+    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
+    with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
-    return save_dir
+    return path
 
 
 def load_preprocessed_cifar10_from_darknet():

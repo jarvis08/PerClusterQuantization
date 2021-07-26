@@ -74,7 +74,7 @@ class InvertedResidual(nn.Module):
         self.block = nn.Sequential(*layers)
         # shortcut
         if self.use_res_connect:
-            self.shortcut = QuantizedShortcut(bit=bit, num_clusters=num_clusters)
+            self.shortcut = QuantizedAdd(bit=bit, num_clusters=num_clusters)
         self.out_channels = cnf.out_channels
         self._is_cn = cnf.stride > 1
 

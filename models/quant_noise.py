@@ -6,10 +6,10 @@
 import torch
 import torch.nn as nn
 
-from models import calc_qparams, fake_quantize
+# from .models import fake_quantize, calc_qparams
+from .quantization_utils import fake_quantize, calc_qparams
 
-
-def quant_noise(module, p, block_size, q_max):
+def _quant_noise(module, p, block_size, q_max):
     """
     Wraps modules and applies quantization noise to the weights for
     subsequent quantization with Iterative Product Quantization as
@@ -144,9 +144,16 @@ def quant_noise(module, p, block_size, q_max):
                     mask.bernoulli_(p)
                     mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
 
+                    # adding custom
+                    mask = (
+                        mask.unsqueeze(2)
+                            .unsqueeze(3)
+                            .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
+                    )
+
                     mask.cuda()
-                    quantized_weight = weight * mask
-                    unquantized_weight = weight * (torch.ones(mask.shape) - mask)
+                    quantized_weight = weight.cuda() * mask
+                    unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
 
                 else:
                     mask = torch.zeros(weight.size(0), weight.size(1), device=weight.device)
@@ -156,7 +163,6 @@ def quant_noise(module, p, block_size, q_max):
                         .unsqueeze(3)
                         .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
                     ).cuda()
-
                     # mask.cuda()
 
                     quantized_weight = weight.cuda() * mask
