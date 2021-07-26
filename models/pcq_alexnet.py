@@ -7,6 +7,8 @@ from .quantization_utils import *
 
 
 class PCQAlexNet(nn.Module):
+    batch_cluster = None
+
     def __init__(self, num_classes: int = 1000, smooth: float = 0.995, bit: int = 32, num_clusters: int = 10) -> None:
         super(PCQAlexNet, self).__init__()
         self.bit = bit
@@ -17,7 +19,6 @@ class PCQAlexNet(nn.Module):
         self.smooth = smooth
 
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -64,16 +65,11 @@ class PCQAlexNet(nn.Module):
         x = self.fc3(x)
         return x
 
-    def set_cluster_information_of_batch(self, info):
-        self.batch_cluster = info
-        self.conv1.batch_cluster = info
-        self.conv2.batch_cluster = info
-        self.conv3.batch_cluster = info
-        self.conv4.batch_cluster = info
-        self.conv5.batch_cluster = info
-        self.fc1.batch_cluster = info
-        self.fc2.batch_cluster = info
-        self.fc3.batch_cluster = info
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        PCQConv2d.batch_cluster = info
+        PCQLinear.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
@@ -99,6 +95,8 @@ class PCQAlexNet(nn.Module):
 
 
 class PCQAlexNetSmall(nn.Module):
+    batch_cluster = None
+
     def __init__(self, num_classes: int = 10, smooth: float = 0.995, bit: int = 32, num_clusters: int = 10) -> None:
         super(PCQAlexNetSmall, self).__init__()
         self.bit = bit
@@ -109,7 +107,6 @@ class PCQAlexNetSmall(nn.Module):
         self.smooth = smooth
 
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -156,16 +153,11 @@ class PCQAlexNetSmall(nn.Module):
         x = self.fc3(x)
         return x
 
-    def set_cluster_information_of_batch(self, info):
-        self.batch_cluster = info
-        self.conv1.batch_cluster = info
-        self.conv2.batch_cluster = info
-        self.conv3.batch_cluster = info
-        self.conv4.batch_cluster = info
-        self.conv5.batch_cluster = info
-        self.fc1.batch_cluster = info
-        self.fc2.batch_cluster = info
-        self.fc3.batch_cluster = info
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        PCQConv2d.batch_cluster = info
+        PCQLinear.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True

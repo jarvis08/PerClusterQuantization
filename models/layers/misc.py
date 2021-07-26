@@ -3,6 +3,8 @@ from ..quantization_utils import *
 
 
 class QuantizedAdd(nn.Module):
+    batch_cluster = None
+
     def __init__(self, bit=8, num_clusters=1):
         super(QuantizedAdd, self).__init__()
         self.layer_type = 'QuantizedAdd'
@@ -22,9 +24,29 @@ class QuantizedAdd(nn.Module):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
     def forward(self, bypass, prev):
+        """
+        print(self.s_bypass, self.z_bypass, self.M0_bypass, self.shift_bypass)
+        print(self.s_prev, self.z_prev, self.M0_prev, self.shift_prev)
+        print(self.s3, self.z3)
+
+        s_bypass: tensor([0.3055, 0.3989, 0.3090, 0.3779, 0.3845, 0.3871, 0.3393, 0.3533, 0.3569, 0.3536], device='cuda:0')
+        z_bypass: tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device='cuda:0', dtype=torch.int32)
+        M0_bypass: tensor([1642439424, 2141534848, 1661240832, 2028621440, 2064485120, 2078014080,
+        				   1821662464, 1896790528, 1916008704, 1898526208], device='cuda:0', dtype=torch.int32)
+        shift_bypass: tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device='cuda:0', dtype=torch.int32)
+        
+        s_prev: tensor([0.7295, 1.0316, 0.7124, 0.9565, 0.8385, 0.9024, 0.8156, 0.8553, 0.7992, 0.8327]
+        z_prev: tensor([8, 8, 8, 8, 8, 8, 8, 8, 8, 8], device='cuda:0', dtype=torch.int32)
+        M0_prev: tensor([1961123456, 1384570624, 1914815488, 1283744384, 1125567360, 1211163392,
+                           1094875136, 1147960576, 2145643008, 1117711104], device='cuda:0', dtype=torch.int32)
+        shift_bypass: tensor([-1, -2, -1, -2, -2, -2, -2, -2, -1, -2], device='cuda:0', dtype=torch.int32)
+
+        s3: tensor([0.3994, 0.4000, 0.3995, 0.4000, 0.4000, 0.4000, 0.3999, 0.4000, 0.4000, 0.4000], device='cuda:0')
+        z3: tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device='cuda:0', dtype=torch.int32)
+        exit()
+        """
         if self.batch_cluster is not None:
             return self.pcq_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor))
         else:

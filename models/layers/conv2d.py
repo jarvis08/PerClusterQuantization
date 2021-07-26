@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
 class QuantizedConv2d(nn.Conv2d):
+    batch_cluster = None
+
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation=None, dilation=1, groups=1, bias=False, bit=8, num_clusters=1):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
@@ -44,8 +46,6 @@ class QuantizedConv2d(nn.Conv2d):
         self.z_activation = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
 
         self.activation = activation
-
-        self.batch_cluster = None
 
     def forward(self, x):
         if self.batch_cluster is not None:
@@ -191,6 +191,8 @@ class PCQConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
+    batch_cluster = None
+
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, bias=False,
                  norm_layer=None, activation=None, bit=8, smooth=0.999, num_clusters=10):
         super(PCQConv2d, self).__init__()
@@ -203,9 +205,7 @@ class PCQConv2d(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
-
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)

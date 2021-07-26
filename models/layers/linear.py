@@ -9,6 +9,8 @@ from .activation import *
 
 
 class QuantizedLinear(nn.Linear):
+    batch_cluster = None
+
     def __init__(self, in_features, out_features, bias=False, activation=None, bit=8, num_clusters=1):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
@@ -29,9 +31,8 @@ class QuantizedLinear(nn.Linear):
         self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.activation = activation
 
-        self.batch_cluster = None
+        self.activation = activation
 
     def forward(self, x):
         sum_q1q2 = F.linear(x, self.weight, None)
@@ -141,6 +142,8 @@ class PCQLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
+    batch_cluster = None
+
     def __init__(self, in_features, out_features, bias=True, activation=None, bit=8, smooth=0.999, num_clusters=10):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
@@ -150,9 +153,7 @@ class PCQLinear(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
-
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None

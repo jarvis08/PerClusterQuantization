@@ -23,6 +23,7 @@ def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, ac
 
 class PCQBasicBlock(nn.Module):
     expansion = 1
+    batch_cluster = None
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
                  norm_layer=None, bit=32, smooth=0.995, num_clusters=10):
@@ -44,16 +45,12 @@ class PCQBasicBlock(nn.Module):
         self.flag_fake_quantization = False
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.smooth = smooth
-
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
-        #self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
         self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
-        #self.relu = nn.ReLU6(inplace=False)
         self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
@@ -84,13 +81,6 @@ class PCQBasicBlock(nn.Module):
                     self.flag_ema_init[c] = True
                 done += n
         return out
-
-    def set_block_cluster_info(self, info):
-        self.batch_cluster = info
-        if self.downsample:
-            self.downsample.batch_cluster = info
-        self.conv1.batch_cluster = info
-        self.conv2.batch_cluster = info
 
     def set_block_fq_flag(self):
         self.flag_fake_quantization = True
@@ -212,18 +202,13 @@ class PCQResNet(nn.Module):
             if isinstance(m, nn.Conv2d):
                 m.show_params()
 
-    def set_cluster_information_of_batch(self, info):
-        self.batch_cluster = info
-        self.first_conv.batch_cluster = info
-        for i in range(len(self.layer1)):
-            self.layer1[i].set_block_cluster_info(info)
-        for i in range(len(self.layer2)):
-            self.layer2[i].set_block_cluster_info(info)
-        for i in range(len(self.layer3)):
-            self.layer3[i].set_block_cluster_info(info)
-        for i in range(len(self.layer4)):
-            self.layer4[i].set_block_cluster_info(info)
-        self.fc.batch_cluster = info
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        PCQBasicBlock.batch_cluster = info
+        # PCQBottleneck.batch_cluster = info
+        PCQConv2d.batch_cluster = info
+        PCQLinear.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
@@ -256,6 +241,8 @@ class PCQResNet(nn.Module):
 
 
 class PCQResNet20(nn.Module):
+    batch_cluster = None
+
     def __init__(self, block, layers, norm_layer=None, num_classes=10, bit=8, smooth=0.999, num_clusters=10):
         super(PCQResNet20, self).__init__()
         self.bit = bit
@@ -266,7 +253,6 @@ class PCQResNet20(nn.Module):
         self.smooth = smooth
 
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -329,20 +315,13 @@ class PCQResNet20(nn.Module):
             if isinstance(m, nn.Conv2d):
                 m.show_params()
 
-    def set_cluster_information_of_batch(self, info):
-        self.batch_cluster = info
-        self.first_conv.batch_cluster = info
-        for i in range(len(self.layer1)):
-            self.layer1[i].set_block_cluster_info(info)
-        for i in range(len(self.layer2)):
-            self.layer2[i].set_block_cluster_info(info)
-        for i in range(len(self.layer3)):
-            self.layer3[i].set_block_cluster_info(info)
-        self.fc.batch_cluster = info
-
-        # PCQConv2d.batch_cluster = info
-        # PCQLinear.batch_cluster = info
-        # PCQBasicBlock.batch_cluster = info
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        PCQBasicBlock.batch_cluster = info
+        # PCQBottleneck.batch_cluster = info
+        PCQConv2d.batch_cluster = info
+        PCQLinear.batch_cluster = info
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
