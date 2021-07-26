@@ -199,7 +199,7 @@ class PCQConv2d(nn.Module):
     batch_cluster = None
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, bias=False,
-                 norm_layer=None, activation=None, bit=8, smooth=0.999, num_clusters=10):
+                 norm_layer=None, activation=None, bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1):
         super(PCQConv2d, self).__init__()
         self.layer_type = 'PCQConv2d'
         self.out_channels = out_channels
@@ -212,13 +212,18 @@ class PCQConv2d(nn.Module):
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
         self.num_clusters = num_clusters
 
+        self.quant_noise = quant_noise
+        self.q_prob = q_prob
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)
+        if self.quant_noise:
+            self.conv = _quant_noise(self.conv, self.q_prob, 1, self.q_max)
+
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if self.training:
+        if self.training and not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z, self.q_max)
 
