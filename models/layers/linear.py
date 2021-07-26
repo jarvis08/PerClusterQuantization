@@ -159,7 +159,7 @@ class PCQLinear(nn.Module):
         self.q_prob =q_prob
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         if self.quant_noise:
-            _quant_noise(self.fc, self.q_prob, 1, self.q_max)
+            self.fc = _quant_noise(self.fc, self.q_prob, 1, self.q_max)
 
         self._activation = activation(inplace=False) if activation else None
 
