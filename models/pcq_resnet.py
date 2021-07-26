@@ -340,6 +340,10 @@ class PCQResNet20(nn.Module):
             self.layer3[i].set_block_cluster_info(info)
         self.fc.batch_cluster = info
 
+        # PCQConv2d.batch_cluster = info
+        # PCQLinear.batch_cluster = info
+        # PCQBasicBlock.batch_cluster = info
+
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
         self.first_conv.set_fake_quantization_flag()

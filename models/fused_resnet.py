@@ -365,33 +365,33 @@ def set_fused_resnet(fused, pre):
 
 def fold_resnet(model):
     # First layer
-    model.first_conv.fuse_conv_and_bn()
+    model.first_conv.fold_conv_and_bn()
 
     # Block 1
     fp_block = model.layer1
     for i in range(len(fp_block)):
-        fp_block[i].conv1.fuse_conv_and_bn()
-        fp_block[i].conv2.fuse_conv_and_bn()
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
 
     # Block 2
     fp_block = model.layer2
-    fp_block[0].downsample.fuse_conv_and_bn()
+    fp_block[0].downsample.fold_conv_and_bn()
     for i in range(len(fp_block)):
-        fp_block[i].conv1.fuse_conv_and_bn()
-        fp_block[i].conv2.fuse_conv_and_bn()
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
 
     # Block 3
     fp_block = model.layer3
-    fp_block[0].downsample.fuse_conv_and_bn()
+    fp_block[0].downsample.fold_conv_and_bn()
     for i in range(len(fp_block)):
-        fp_block[i].conv1.fuse_conv_and_bn()
-        fp_block[i].conv2.fuse_conv_and_bn()
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
 
     # Block 4
     if model.num_blocks == 4:
         fp_block = model.layer4
-        fp_block[0].downsample.fuse_conv_and_bn()
+        fp_block[0].downsample.fold_conv_and_bn()
         for i in range(len(fp_block)):
-            fp_block[i].conv1.fuse_conv_and_bn()
-            fp_block[i].conv2.fuse_conv_and_bn()
+            fp_block[i].conv1.fold_conv_and_bn()
+            fp_block[i].conv2.fold_conv_and_bn()
     return model

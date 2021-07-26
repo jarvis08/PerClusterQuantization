@@ -344,20 +344,20 @@ def set_fused_mobilenet(fused, pre):
 
 def fold_mobilenet(model):
     # first layer
-    model.features[0].fuse_conv_and_bn()
+    model.features[0].fold_conv_and_bn()
 
     # InvertedResidual
     for feature_idx in range(2, len(model.features)-2):
         for block_idx in range(len(model.features[feature_idx].block)):
             fused_module = model.features[feature_idx].block[block_idx]
             if isinstance(fused_module, FusedConv2d):
-                fused_module.fuse_conv_and_bn()
+                fused_module.fold_conv_and_bn()
             elif isinstance(fused_module, FusedSqueezeExcitation):
-                fused_module.fc1.fuse_conv_and_bn()
-                fused_module.fc2.fuse_conv_and_bn()
+                fused_module.fc1.fold_conv_and_bn()
+                fused_module.fc2.fold_conv_and_bn()
 
     # Last conv
-    model.features[-2].fuse_conv_and_bn()
+    model.features[-2].fold_conv_and_bn()
 
     return model
     

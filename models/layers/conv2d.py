@@ -17,19 +17,32 @@ class QuantizedConv2d(nn.Conv2d):
         self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         self.quantized_bias = nn.Parameter(torch.zeros((num_clusters, out_channels)), requires_grad=False)
-        t_init = list(range(num_clusters)) if num_clusters > 1 else 0
-        self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-        self.s3 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
-        self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #t_init = list(range(num_clusters)) if num_clusters > 1 else 0
+        #self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        #self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        #self.s3 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        #self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        #self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        #self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        #self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.s1 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.float32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.float32), requires_grad=False)
+        self.s3 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.z3 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.hardswish_6 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.hardswish_3 = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+        self.s_activation = nn.Parameter(torch.zeros(num_clusters, dtype=torch.float32), requires_grad=False)
+        self.z_activation = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
+
         self.activation = activation
 
         self.batch_cluster = None
@@ -230,7 +243,7 @@ class PCQConv2d(nn.Module):
     def set_fake_quantization_flag(self):
         self.flag_fake_quantization = True
 
-    def fuse_conv_and_bn(self):
+    def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, "Do not fuse layers while training."
         alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
@@ -309,7 +322,7 @@ class FusedConv2d(nn.Module):
     def set_fake_quantization_flag(self):
         self.flag_fake_quantization = True
 
-    def fuse_conv_and_bn(self):
+    def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, 'Do not fuse layers while training.'
         alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
