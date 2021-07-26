@@ -69,11 +69,11 @@ class QuantizedConv2d(nn.Conv2d):
             sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
             return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
-    def general(self, x, cluster_info):
+    def general(self, x):
         if self.padding[0] > 0 or self.padding[1] > 0:
             x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1.item())
         sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
-        return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor)), cluster_info
+        return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
@@ -168,13 +168,17 @@ class QuantizedConv2d(nn.Conv2d):
         for out_c in range(0, filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
 
-        multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-        total = shifting(multiplied, self.shift.item())
+        if self.shift < 0:
+            multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
+        else:
+            multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.activation:
+        if self.activation is not None:
             hs_total = total + self.hardswish_3
-            hs_total = torch.clamp(hs_total, self.z3, self.hardswish_6)
+            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
             hs_total = hs_total / self.hardswish_6
             if self.activation == 'Hardswish':
                 total = total * hs_total

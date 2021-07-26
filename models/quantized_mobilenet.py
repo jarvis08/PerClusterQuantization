@@ -11,32 +11,36 @@ import torch.nn.quantized.functional
 
 
 class QuantizedSqueezeExcitation(nn.Module):
+    batch_cluster = None
+
     # Implemented as described at Figure 4 of the MobileNetV3 paper
     def __init__(self, input_channels: int, squeeze_factor: int = 4, smooth: float = 0.999, bit: int = 32, num_clusters=1):
         super().__init__()
         self.bit = bit
         self.num_clusters =num_clusters
+        self.batch_cluster = None
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
         self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, bit=bit, num_clusters=num_clusters)
         self.fc2 = QuantizedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, activation='Hardsigmoid', bit=bit,
                                     num_clusters=num_clusters)
 
-    def _scale(self, x: Tensor, cluster_info=None) -> Tensor:
+    def _scale(self, x: Tensor) -> Tensor:
         scale = F.adaptive_avg_pool2d(x, 1)
-        scale = self.fc1((scale, cluster_info))
-        scale = self.fc2((scale, cluster_info))
+        scale = self.fc1(scale)
+        scale = self.fc2(scale)
         return scale
 
     def forward(self, x: Tensor) -> Tensor:
-        _x = x[0]
-        cluster_info = x[1]
+        identity = x
 
-        scale = self._scale(_x, cluster_info)
-        out = scale * _x
-        return (out, cluster_info)
+        scale = self._scale(x)
+        out = scale * identity
+        return out
 
 
 class InvertedResidual(nn.Module):
+    batch_cluster = None
+
     # Implemented as described at section 5 of MobileNetV3 paper
     def __init__(self, cnf: InvertedResidualConfig, num_clusters: int = 1, bit: int = 8):
         super().__init__()
@@ -46,6 +50,7 @@ class InvertedResidual(nn.Module):
         self.bit = bit 
         self.q_max = 2 ** self.bit - 1
         self.num_clusters = num_clusters
+        self.batch_cluster = None
 
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
         self.activation = 'Hardswish' if cnf.use_hs else None
@@ -79,15 +84,17 @@ class InvertedResidual(nn.Module):
         self._is_cn = cnf.stride > 1
 
     def forward(self, x: Tensor) -> Tensor:
-        _x = x[0]
-        cluster_info = x[1]
-        out = self.block((_x, cluster_info))
+        identity = x
+
+        out = self.block(x)
         if self.use_res_connect:
-            out = self.shortcut(_x, out, cluster_info)
-        return (out, cluster_info)
+            out = self.shortcut(identity, out)
+        return out
 
 
 class QuantizedMobileNet(nn.Module):
+    batch_cluster = None
+
     def __init__(
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
@@ -139,33 +146,42 @@ class QuantizedMobileNet(nn.Module):
             QuantizedLinear(last_channel, num_classes, bit=bit, num_clusters=num_clusters)
         )
 
-    def _forward_impl(self, x: Tensor, cluster_info=None) -> Tensor:
-        if cluster_info is not None:
+    def _forward_impl(self, x: Tensor) -> Tensor:
+        if self.batch_cluster is not None:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
+            for i in range(self.batch_cluster.shape[0]):
+                c = self.batch_cluster[i][0].item()
+                n = self.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        x = self.features((x, cluster_info))
+        x = self.features(x)
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
 
-        x = self.classifier((x, cluster_info))
+        x = self.classifier(x)
 
         return x
 
-    def forward(self, x: Tensor, cluster_info=None) -> Tensor:
-        return self._forward_impl(x, cluster_info)
+    def forward(self, x: Tensor) -> Tensor:
+        return self._forward_impl(x)
 
     def show_params(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
+
+    @classmethod
+    def set_cluster_information_of_batch(cls, info):
+        cls.batch_cluster = info
+        InvertedResidual.batch_cluster = info
+        QuantizedSqueezeExcitation.batch_cluster = info
+        QuantizedConv2d.batch_cluster = info
+        QuantizedLinear.batch_cluster = info
+        QuantizedAdd.batch_cluster = info
 
 
 def quantized_mobilenet(bit: int = 8, num_classes: int = 1000, num_clusters=1, **kwargs: Any) -> QuantizedMobileNet:

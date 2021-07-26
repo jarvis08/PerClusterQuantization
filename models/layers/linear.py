@@ -97,7 +97,7 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, -128, 127)
         return total.type(torch.cuda.FloatTensor)
 
-    def general_totalsum(self, x, sum_q1q2, cluster_info):
+    def general_totalsum(self, x, sum_q1q2):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
         if self.bias is not None:
             for out_f in range(output_feature):
@@ -118,13 +118,17 @@ class QuantizedLinear(nn.Linear):
         for out_f in range(output_feature):
             sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
 
-        multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
-        total = shifting(multiplied, self.shift.item())
+        if self.shift < 0:
+            multiplied = multiply_M((sub_sum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
+        else:
+            multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.activation:
+        if self.activation is not None:
             hs_total = total + self.hardswish_3
-            hs_total = torch.clamp(hs_total, self.z3, self.hardswish_6)
+            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
             hs_total = hs_total / self.hardswish_6
             if self.activation == 'Hardswish':
                 total = total * hs_total
@@ -135,7 +139,7 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, 0, 15)
         else:
             total = torch.clamp(total, -128, 127)
-        return total.type(torch.cuda.FloatTensor), cluster_info
+        return total.type(torch.cuda.FloatTensor)
 
 
 class PCQLinear(nn.Module):
