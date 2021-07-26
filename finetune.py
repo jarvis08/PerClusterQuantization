@@ -70,7 +70,7 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
 
 def get_finetuning_model(args, tools):
     pretrained_model = load_dnn_model(args, tools)
-    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth)
+    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth, num_clusters=args.cluster)
     # fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth,
     #                                             quant_noise=args.quant_noise, q_prob=args.q_prob)
     fused_model = tools.fuser(fused_model, pretrained_model)
