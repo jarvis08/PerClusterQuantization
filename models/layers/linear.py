@@ -161,13 +161,18 @@ class PCQLinear(nn.Module):
     def forward(self, x):
         if self.training:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z, self.q_max)
+            # self.fc.weight.data = fake_quantize(self.fc.weight.data, s, z, self.q_max)
+            weight = fake_quantize(self.fc.weight.data, s, z, self.q_max)
+        else:
+            weight = self.fc.weight
 
-        x = self.fc(x)
+        x = F.linear(x, weight=weight, bias=self.fc.bias)
+        # x = self.fc(x)
         if self._activation:
             x = self._activation(x)
 
         if self.training:
+            x_fq = torch.zeros(x.shape).cuda()
             done = 0
             for i in range(self.batch_cluster.shape[0]):
                 c = self.batch_cluster[i][0].item()
@@ -176,12 +181,14 @@ class PCQLinear(nn.Module):
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                        x_fq[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.act_range[c][0] = torch.min(x[done:done + n]).item()
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
                     self.flag_ema_init[c] = True
                 done += n
+            if self.flag_fake_quantization:
+                return x_fq
         return x
 
     def set_qparams(self, s1, z1):

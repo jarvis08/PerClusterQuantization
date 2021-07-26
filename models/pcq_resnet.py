@@ -285,7 +285,9 @@ class PCQResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        x_fq = None
         if self.training:
+            x_fq = torch.zeros(x.shape).cuda()
             done = 0
             for i in range(self.batch_cluster.shape[0]):
                 c = self.batch_cluster[i][0].item()
@@ -294,14 +296,17 @@ class PCQResNet20(nn.Module):
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                        x_fq[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                        # x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
                     self.flag_ema_init[c] = True
                 done += n
-
-        x = self.first_conv(x)
+        if self.flag_fake_quantization and self.training:
+            x = self.first_conv(x_fq)
+        else:
+            x = self.first_conv(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)

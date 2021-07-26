@@ -92,10 +92,10 @@ def _finetune(args, tools):
 
     model = get_finetuning_model(args, tools)
     model.cuda()
-    if args.dataset == 'imagenet':
-        summary(model, (3, 224, 224))
-    else:
-        summary(model, (3, 32, 32))
+    # if args.dataset == 'imagenet':
+    #     summary(model, (3, 224, 224))
+    # else:
+    #     summary(model, (3, 32, 32))
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
