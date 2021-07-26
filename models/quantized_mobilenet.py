@@ -17,7 +17,7 @@ class QuantizedSqueezeExcitation(nn.Module):
     def __init__(self, input_channels: int, squeeze_factor: int = 4, smooth: float = 0.999, bit: int = 32, num_clusters=1):
         super().__init__()
         self.bit = bit
-        self.num_clusters =num_clusters
+        self.num_clusters = num_clusters
         self.batch_cluster = None
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
         self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, bit=bit, num_clusters=num_clusters)
@@ -220,6 +220,7 @@ def set_mul_qparams(_int, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
             _int.M0[c], _int.shift[c] = quantize_M(s_bypass[c] * s_prev[c] / _int.s3[c])
     else:
         _int.M0, _int.shift = quantize_M(s_bypass * s_prev / _int.s3)
+    return _int
 
 def set_activation(_fp, _int):
     if _int.num_clusters > 1:
@@ -240,9 +241,6 @@ def quantize_mobilenet(fp_model, int_model):
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.features[0] = quantize(fp_model.features[0], int_model.features[0])
     set_activation(fp_model.features[1], int_model.features[0])
-    print()
-    print("Qactivation\t", fp_model.features[1].s3, fp_model.features[1].z3)
-    print()
 
     fp_feature_idx = 2
     for int_feature_idx in range(1, len(int_model.features)-1):
@@ -250,9 +248,6 @@ def quantize_mobilenet(fp_model, int_model):
         for block_idx in range(len(int_model.features[int_feature_idx].block)):
             if isinstance(fp_model.features[fp_feature_idx].block[fp_block_idx], QActivation):
                 set_activation(fp_model.features[fp_feature_idx].block[fp_block_idx], int_model.features[int_feature_idx].block[block_idx-1])
-                print()
-                print("Qactivation\t", fp_model.features[fp_feature_idx].block[fp_block_idx].s3, fp_model.features[fp_feature_idx].block[fp_block_idx].z3)
-                print()
                 fp_block_idx += 1
             fp_module = fp_model.features[fp_feature_idx].block[fp_block_idx]
             int_module = int_model.features[int_feature_idx].block[block_idx]
@@ -262,9 +257,6 @@ def quantize_mobilenet(fp_model, int_model):
                 int_module.fc1 = quantize(fp_module.fc1, int_module.fc1)
                 int_module.fc2 = quantize(fp_module.fc2, int_module.fc2)
                 set_activation(fp_module.QAct, int_module.fc2)
-                print()
-                print("Qactivation\t", fp_module.QAct.s3, fp_module.QAct.z3)
-                print()
                 int_module.mul = set_mul_qparams(int_module.mul, fp_module.QAct.s3, fp_module.QAct.z3, fp_module.s1,
                                                  fp_module.z1, fp_module.s3, fp_module.z3)
             fp_block_idx += 1

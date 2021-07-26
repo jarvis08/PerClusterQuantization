@@ -179,11 +179,10 @@ class QuantizedConv2d(nn.Conv2d):
         if self.activation is not None:
             hs_total = total + self.hardswish_3
             hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
-            hs_total = hs_total / self.hardswish_6
             if self.activation == 'Hardswish':
-                total = total * hs_total
+                total = total * hs_total / self.hardswish_6.item()
             else:
-                total = hs_total
+                total = hs_total / self.hardswish_6.item()
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)

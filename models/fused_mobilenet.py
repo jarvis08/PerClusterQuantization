@@ -19,7 +19,6 @@ class FusedSqueezeExcitation(nn.Module):
         super().__init__()
         self.flag_ema_init = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.scale_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.smooth = smooth
         self.bit = bit
         self.q_max = 2 ** self.bit - 1

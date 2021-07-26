@@ -35,61 +35,27 @@ class QuantizedMul(nn.Module):
             return self.general_mul(bypass, prev)
 
     def general_mul(self, bypass, prev):
-        print(prev.shape)
-        print(bypass.shape)
-        print((bypass*prev).shape)
-        # mul_q1q2 = torch.mul(bypass, prev).type(torch.cuda.IntTensor)
-        return
+        # prev    [128, 16, 56, 56]
+        # bypass  [128, 16,  1,  1]
+        mul_q1q2 = torch.mul(prev, bypass).type(torch.cuda.IntTensor)
+        z1z2 = self.z_bypass * self.z_prev
+        z2q1 = torch.mul(prev, self.z_bypass)
+        z1q2 = torch.mul(bypass, self.z_prev)
+        mul_q1q2 = torch.sub(mul_q1q2, z2q1)
+        mul_q1q2 = torch.sub(mul_q1q2, z1q2)
 
-    # def general_totalsum(self, x, sum_q1q2):
-    #     input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-    #     filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[
-    #         2], self.weight.shape[3]
-    #     stride = self.stride[0]
-    #
-    #     for output_ch in range(filter_batch):
-    #         sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
-    #
-    #     output_col = sum_q1q2.shape[2]
-    #     output_row = sum_q1q2.shape[3]
-    #     sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-    #     sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
-    #
-    #     for output_ch in range(0, filter_batch):
-    #         sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
-    #
-    #     for o_col in range(0, output_col):
-    #         for o_row in range(0, output_row):
-    #             col_st, col_end = o_col * stride, o_col * stride + filter_col
-    #             row_st, row_end = o_row * stride, o_row * stride + filter_row
-    #             sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
-    #     nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
-    #     sum_q1q2 = sum_q1q2.add(nz1z2)
-    #
-    #     for i_batch in range(0, input_batch):
-    #         sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
-    #     for out_c in range(0, filter_batch):
-    #         sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
-    #
-    #     if self.shift < 0:
-    #         multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
-    #         total = shifting(multiplied, 0)
-    #     else:
-    #         multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-    #         total = shifting(multiplied, self.shift.item())
-    #     total = total.add(self.z3)
-    #
-    #     if self.activation is not None:
-    #         hs_total = total + self.hardswish_3
-    #         hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
-    #         hs_total = hs_total / self.hardswish_6
-    #         if self.activation == 'Hardswish':
-    #             total = total * hs_total
-    #         else:
-    #             total = hs_total
-    #
-    #     if self.bit == 4:
-    #         total = torch.clamp(total, 0, 15)
-    #     else:
-    #         total = torch.clamp(total, -128, 127)
-    #     return total.type(torch.cuda.FloatTensor)
+        if self.shift < 0:
+            multiplied = multiply_M((mul_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
+        else:
+            multiplied = multiply_M(mul_q1q2.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
+
+        total = total.add(z1z2)
+
+        if self.bit == 4:
+            out = torch.clamp(total, 0, 15)
+        else:
+            out = torch.clamp(total, -128, 127)
+        return out.type(torch.cuda.FloatTensor)
+
