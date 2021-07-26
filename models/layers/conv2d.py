@@ -52,6 +52,10 @@ class QuantizedConv2d(nn.Conv2d):
         if self.batch_cluster is not None:
             return self.pcq(x)
         else:
+            print()
+            print("Input\t", torch.min(x).item(), torch.max(x).item())
+            print("Scale\t", self.s1.item(), self.s2.item(), self.s3.item(), (self.s1*self.s2/self.s3).item())
+            print("Conv2d\t", self.shift.item(), self.M0.item())
             return self.general(x)
 
     def pcq(self, x):
@@ -173,6 +177,7 @@ class QuantizedConv2d(nn.Conv2d):
             total = shifting(multiplied, 0)
         else:
             multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
+            print(self.shift.item())
             total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 

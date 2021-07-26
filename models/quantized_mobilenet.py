@@ -23,18 +23,19 @@ class QuantizedSqueezeExcitation(nn.Module):
         self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, bit=bit, num_clusters=num_clusters)
         self.fc2 = QuantizedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, activation='Hardsigmoid', bit=bit,
                                     num_clusters=num_clusters)
+        self.mul = QuantizedMul(bit=bit, num_clusters=num_clusters)
 
     def _scale(self, x: Tensor) -> Tensor:
+        identity = x
         scale = F.adaptive_avg_pool2d(x, 1)
         scale = self.fc1(scale)
         scale = self.fc2(scale)
+        scale = self.mul(scale, identity)
         return scale
 
     def forward(self, x: Tensor) -> Tensor:
-        identity = x
-
-        scale = self._scale(x)
-        out = scale * identity
+        out = self._scale(x)
+        # out = scale * identity
         return out
 
 
@@ -206,6 +207,19 @@ def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
         m.M0_prev, m.shift_prev = quantize_M(s_prev / s3)
     return m
 
+def set_mul_qparams(_int, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
+    _int.s_bypass = nn.Parameter(s_bypass, requires_grad=False)
+    _int.z_bypass = nn.Parameter(z_bypass, requires_grad=False)
+    _int.s_prev = nn.Parameter(s_prev, requires_grad=False)
+    _int.z_prev = nn.Parameter(z_prev, requires_grad=False)
+    _int.s3 = nn.Parameter(s3, requires_grad=False)
+    _int.z3 = nn.Parameter(z3, requires_grad=False)
+
+    if _int.num_clusters > 1:
+        for c in range(_int.num_clusters):
+            _int.M0[c], _int.shift[c] = quantize_M(s_bypass[c] * s_prev[c] / _int.s3[c])
+    else:
+        _int.M0, _int.shift = quantize_M(s_bypass * s_prev / _int.s3)
 
 def set_activation(_fp, _int):
     if _int.num_clusters > 1:
@@ -226,6 +240,9 @@ def quantize_mobilenet(fp_model, int_model):
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.features[0] = quantize(fp_model.features[0], int_model.features[0])
     set_activation(fp_model.features[1], int_model.features[0])
+    print()
+    print("Qactivation\t", fp_model.features[1].s3, fp_model.features[1].z3)
+    print()
 
     fp_feature_idx = 2
     for int_feature_idx in range(1, len(int_model.features)-1):
@@ -233,6 +250,9 @@ def quantize_mobilenet(fp_model, int_model):
         for block_idx in range(len(int_model.features[int_feature_idx].block)):
             if isinstance(fp_model.features[fp_feature_idx].block[fp_block_idx], QActivation):
                 set_activation(fp_model.features[fp_feature_idx].block[fp_block_idx], int_model.features[int_feature_idx].block[block_idx-1])
+                print()
+                print("Qactivation\t", fp_model.features[fp_feature_idx].block[fp_block_idx].s3, fp_model.features[fp_feature_idx].block[fp_block_idx].z3)
+                print()
                 fp_block_idx += 1
             fp_module = fp_model.features[fp_feature_idx].block[fp_block_idx]
             int_module = int_model.features[int_feature_idx].block[block_idx]
@@ -242,6 +262,11 @@ def quantize_mobilenet(fp_model, int_model):
                 int_module.fc1 = quantize(fp_module.fc1, int_module.fc1)
                 int_module.fc2 = quantize(fp_module.fc2, int_module.fc2)
                 set_activation(fp_module.QAct, int_module.fc2)
+                print()
+                print("Qactivation\t", fp_module.QAct.s3, fp_module.QAct.z3)
+                print()
+                int_module.mul = set_mul_qparams(int_module.mul, fp_module.QAct.s3, fp_module.QAct.z3, fp_module.s1,
+                                                 fp_module.z1, fp_module.s3, fp_module.z3)
             fp_block_idx += 1
         if  int_model.features[int_feature_idx].use_res_connect:
             int_model.features[int_feature_idx].shortcut = set_shortcut_qparams(int_model.features[int_feature_idx].shortcut,

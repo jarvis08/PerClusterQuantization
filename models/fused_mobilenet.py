@@ -60,6 +60,7 @@ class FusedSqueezeExcitation(nn.Module):
         self.QAct.flag_fake_quantization = True
 
     def set_squeeze_qparams(self, s1, z1):
+        self.s1, self.z1 = s1, z1
         prev_s, prev_z = self.fc1.set_qparams(s1, z1)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
         _, _ = self.QAct.set_qparams(prev_s, prev_z)
@@ -351,10 +352,9 @@ def fold_mobilenet(model):
         for block_idx in range(len(model.features[feature_idx].block)):
             fused_module = model.features[feature_idx].block[block_idx]
             if isinstance(fused_module, FusedConv2d):
-                fused_module.fuse_conv_and_bn()
+                fused_module.fold_conv_and_bn()
 
     # Last conv
     model.features[-2].fold_conv_and_bn()
 
     return model
-    

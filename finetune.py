@@ -136,8 +136,6 @@ def _finetune(args, tools):
         }
         if e == 1 or e%5 == 0:
             save_checkpoint(state, False, save_path_fp, e)
-        
-
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
