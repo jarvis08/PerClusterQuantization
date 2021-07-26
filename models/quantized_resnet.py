@@ -153,8 +153,6 @@ class QuantizedResNet20(nn.Module):
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.batch_cluster = None
-
         self.inplanes = 16
         self.dilation = 1
         self.num_blocks = 3
