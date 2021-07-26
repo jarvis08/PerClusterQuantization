@@ -47,11 +47,11 @@ class PCQBasicBlock(nn.Module):
         self.smooth = smooth
         self.num_clusters = num_clusters
 
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU,
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU6(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -132,8 +132,7 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                    bias=False, norm_layer=self._norm_layer, activation=nn.ReLU,
-                                    #bias=False, norm_layer=self._norm_layer, activation=nn.ReLU6,
+                                    bias=False, norm_layer=self._norm_layer, activation=nn.ReLU6,
                                     bit=bit, smooth=smooth, num_clusters=num_clusters)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -285,9 +284,7 @@ class PCQResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x_fq = None
         if self.training:
-            x_fq = torch.zeros(x.shape).cuda()
             done = 0
             for i in range(self.batch_cluster.shape[0]):
                 c = self.batch_cluster[i][0].item()
@@ -296,17 +293,14 @@ class PCQResNet20(nn.Module):
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x_fq[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
-                        # x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
                     self.flag_ema_init[c] = True
                 done += n
-        if self.flag_fake_quantization and self.training:
-            x = self.first_conv(x_fq)
-        else:
-            x = self.first_conv(x)
+
+        x = self.first_conv(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
