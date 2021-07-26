@@ -18,6 +18,17 @@ To use Horovod for multi-gpu in finetuning, install horovod and use `--horovod T
 
 ## 1. Pre-training
 
+[CIFAR-10] Pretrained models that we used to finetune can be downloaded with
+[link](https://drive.google.com/file/d/1suFPJgDT_Ne9pQ2gwKkTMzquOIeqXn55/view?usp=sharing).
+The shared pretrained models are below.
+
+- DNN models
+  - AlexNet
+  - ResNet20
+- K-means models
+  - Model of 8 clusters
+  - Model of 10 clusters
+
 ```
 # Pre-traininig model with CIFAR-10
 $ python main.py --mode pre --arch resnet
