@@ -28,8 +28,7 @@ class QActivation(nn.Module):
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                    with torch.no_grad():
-                        x.copy_(fake_quantize(x, s, z, self.q_max))
+                    x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
