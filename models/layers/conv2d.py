@@ -240,9 +240,6 @@ class PCQConv2d(nn.Module):
                 done += n
         return x
 
-    def set_fake_quantization_flag(self):
-        self.flag_fake_quantization = True
-
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, "Do not fuse layers while training."
@@ -318,9 +315,6 @@ class FusedConv2d(nn.Module):
                 self.act_range[1] = torch.max(x).item()
                 self.flag_ema_init = True
         return x
-
-    def set_fake_quantization_flag(self):
-        self.flag_fake_quantization = True
 
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params

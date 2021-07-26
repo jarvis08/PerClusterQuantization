@@ -35,9 +35,6 @@ class QActivation(nn.Module):
                 self.flag_ema_init = True
         return x
 
-    def set_fake_quantization_flag(self):
-        self.flag_fake_quantization = True
-
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)

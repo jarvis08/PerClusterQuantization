@@ -184,9 +184,6 @@ class PCQLinear(nn.Module):
                 done += n
         return x
 
-    def set_fake_quantization_flag(self):
-        self.flag_fake_quantization = True
-
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
 
@@ -244,9 +241,6 @@ class FusedLinear(nn.Module):
                 self.act_range[1] = torch.max(x).item()
                 self.flag_ema_init = True
         return x
-
-    def set_fake_quantization_flag(self):
-        self.flag_fake_quantization = True
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)

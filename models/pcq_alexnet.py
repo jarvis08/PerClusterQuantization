@@ -73,14 +73,14 @@ class PCQAlexNet(nn.Module):
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.conv1.set_fake_quantization_flag()
-        self.conv2.set_fake_quantization_flag()
-        self.conv3.set_fake_quantization_flag()
-        self.conv4.set_fake_quantization_flag()
-        self.conv5.set_fake_quantization_flag()
-        self.fc1.set_fake_quantization_flag()
-        self.fc2.set_fake_quantization_flag()
-        self.fc3.set_fake_quantization_flag()
+        self.conv1.flag_fake_quantization = True
+        self.conv2.flag_fake_quantization = True
+        self.conv3.flag_fake_quantization = True
+        self.conv4.flag_fake_quantization = True
+        self.conv5.flag_fake_quantization = True
+        self.fc1.flag_fake_quantization = True
+        self.fc2.flag_fake_quantization = True
+        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -161,14 +161,14 @@ class PCQAlexNetSmall(nn.Module):
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.conv1.set_fake_quantization_flag()
-        self.conv2.set_fake_quantization_flag()
-        self.conv3.set_fake_quantization_flag()
-        self.conv4.set_fake_quantization_flag()
-        self.conv5.set_fake_quantization_flag()
-        self.fc1.set_fake_quantization_flag()
-        self.fc2.set_fake_quantization_flag()
-        self.fc3.set_fake_quantization_flag()
+        self.conv1.flag_fake_quantization = True
+        self.conv2.flag_fake_quantization = True
+        self.conv3.flag_fake_quantization = True
+        self.conv4.flag_fake_quantization = True
+        self.conv5.flag_fake_quantization = True
+        self.fc1.flag_fake_quantization = True
+        self.fc2.flag_fake_quantization = True
+        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)

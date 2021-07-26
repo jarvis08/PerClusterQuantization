@@ -80,9 +80,9 @@ class FusedBasicBlock(nn.Module):
     def set_block_fq_flag(self):
         self.flag_fake_quantization = True
         if self.downsample:
-            self.downsample.set_fake_quantization_flag()
-        self.conv1.set_fake_quantization_flag()
-        self.conv2.set_fake_quantization_flag()
+            self.downsample.flag_fake_quantization = True
+        self.conv1.flag_fake_quantization = True
+        self.conv2.flag_fake_quantization = True
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -201,7 +201,7 @@ class FusedResNet(nn.Module):
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.first_conv.set_fake_quantization_flag()
+        self.first_conv.flag_fake_quantization = True
         for i in range(len(self.layer1)):
             self.layer1[i].set_block_fq_flag()
         for i in range(len(self.layer2)):
@@ -210,7 +210,7 @@ class FusedResNet(nn.Module):
             self.layer3[i].set_block_fq_flag()
         for i in range(len(self.layer4)):
             self.layer4[i].set_block_fq_flag()
-        self.fc.set_fake_quantization_flag()
+        self.fc.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -293,14 +293,14 @@ class FusedResNet20(nn.Module):
 
     def start_fake_quantization(self):
         self.flag_fake_quantization = True
-        self.first_conv.set_fake_quantization_flag()
+        self.first_conv.flag_fake_quantization = True
         for i in range(len(self.layer1)):
             self.layer1[i].set_block_fq_flag()
         for i in range(len(self.layer2)):
             self.layer2[i].set_block_fq_flag()
         for i in range(len(self.layer3)):
             self.layer3[i].set_block_fq_flag()
-        self.fc.set_fake_quantization_flag()
+        self.fc.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
