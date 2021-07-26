@@ -44,7 +44,7 @@ def accuracy(output, target, topk=(1,)):
 
 
 def save_checkpoint(state, is_best, path, e):
-    filepath = os.path.join(path, 'checkpoint.pth')
+    filepath = os.path.join(path, 'checkpoint{}.pth'.format(e))
     torch.save(state, filepath)
     if is_best:
         shutil.copyfile(filepath, os.path.join(path, 'model_best.pth.tar'))
@@ -91,6 +91,7 @@ def validate(model, test_loader, criterion):
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+
     return top1.avg
 
 
@@ -175,7 +176,7 @@ def get_test_loader(args, normalizer):
                                                             transforms.ToTensor(),
                                                             normalizer,
                                                         ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=2)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=10)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',

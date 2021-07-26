@@ -15,19 +15,25 @@ class QuantizedSqueezeExcitation(nn.Module):
     def __init__(self, input_channels: int, squeeze_factor: int = 4, smooth: float = 0.999, bit: int = 32, num_clusters=1):
         super().__init__()
         self.bit = bit
+        self.num_clusters =num_clusters
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, bit=bit)
-        self.fc2 = QuantizedConv2d(squeeze_channels, input_channels, kernel_size=1, activation='Hardsigmoid', bias=True, bit=bit)
+        self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, bit=bit, num_clusters=num_clusters)
+        self.fc2 = QuantizedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, activation='Hardsigmoid', bit=bit,
+                                    num_clusters=num_clusters)
 
-    def _scale(self, input: Tensor, cluster_info=None) -> Tensor:
-        scale = F.adaptive_avg_pool2d(input, 1)
+    def _scale(self, x: Tensor, cluster_info=None) -> Tensor:
+        scale = F.adaptive_avg_pool2d(x, 1)
         scale = self.fc1((scale, cluster_info))
         scale = self.fc2((scale, cluster_info))
         return scale
 
-    def forward(self, x: Tensor, cluster_info=None) -> Tensor:
-        scale = self._scale(x, cluster_info)
-        return scale * input
+    def forward(self, x: Tensor) -> Tensor:
+        _x = x[0]
+        cluster_info = x[1]
+
+        scale = self._scale(_x, cluster_info)
+        out = scale * _x
+        return (out, cluster_info)
 
 
 class InvertedResidual(nn.Module):
@@ -39,28 +45,31 @@ class InvertedResidual(nn.Module):
 
         self.bit = bit 
         self.q_max = 2 ** self.bit - 1
+        self.num_clusters = num_clusters
 
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
+        self.activation = 'Hardswish' if cnf.use_hs else None
 
         layers: List[nn.Module] = []
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
-            layers.append(QuantizedConv2d(cnf.input_channels, cnf.expanded_channels, activation='Hardswish' if cnf.use_hs else None,
-                                          kernel_size=1, bit=bit))
+            layers.append(QuantizedConv2d(cnf.input_channels, cnf.expanded_channels, activation=self.activation,
+                                          kernel_size=1, bit=bit, num_clusters=num_clusters))
 
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         # groups = input_channel -> input_channel / input_channel = 1 -> operates on single channel
         layers.append(QuantizedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                       padding=(cnf.kernel - 1) // 2 * cnf.dilation, stride=stride, dilation=cnf.dilation,
-                                      activation='Hardswish' if cnf.use_hs else None, groups=cnf.expanded_channels, bit=bit))
+                                      activation=self.activation, groups=cnf.expanded_channels, bit=bit,
+                                      num_clusters=num_clusters))
 
         if cnf.use_se:
-            layers.append(QuantizedSqueezeExcitation(cnf.expanded_channels, bit=bit))
+            layers.append(QuantizedSqueezeExcitation(cnf.expanded_channels, bit=bit, num_clusters=num_clusters))
 
         # project
-        layers.append(QuantizedConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1, bit=bit))
+        layers.append(QuantizedConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1, bit=bit, num_clusters=num_clusters))
 
         self.block = nn.Sequential(*layers)
         # shortcut
@@ -69,11 +78,13 @@ class InvertedResidual(nn.Module):
         self.out_channels = cnf.out_channels
         self._is_cn = cnf.stride > 1
 
-    def forward(self, x: Tensor, cluster_info=None) -> Tensor:
-        result = self.block((x, cluster_info))
+    def forward(self, x: Tensor) -> Tensor:
+        _x = x[0]
+        cluster_info = x[1]
+        out = self.block((_x, cluster_info))
         if self.use_res_connect:
-            result = self.shortcut(x[0], result, x[1])
-        return result
+            out = self.shortcut(_x, out, cluster_info)
+        return (out, cluster_info)
 
 
 class QuantizedMobileNet(nn.Module):
@@ -89,7 +100,7 @@ class QuantizedMobileNet(nn.Module):
     ) -> None:
         super().__init__()
         self.bit = bit
-
+        self.q_max = 2 ** self.bit - 1
         self.num_clusters = num_clusters
         t_init = list(range(num_clusters)) if num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -109,26 +120,36 @@ class QuantizedMobileNet(nn.Module):
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
         layers.append(QuantizedConv2d(3, firstconv_output_channels, kernel_size=3, padding=1, stride=2,
-                                      activation='Hardswish', bit=bit))
+                                      activation='Hardswish', bit=bit, num_clusters=num_clusters))
 
         # building inverted residual blocks
         for cnf in inverted_residual_setting:
-            layers.append(block(cnf, bit=self.bit))
+            layers.append(block(cnf, bit=self.bit, num_clusters=num_clusters))
 
         # building last several layers
         lastconv_input_channels = inverted_residual_setting[-1].out_channels
         lastconv_output_channels = 6 * lastconv_input_channels
         layers.append(QuantizedConv2d(lastconv_input_channels, lastconv_output_channels, kernel_size=1,
-                                      activation='Hardswish', bit=bit))
+                                      activation='Hardswish', bit=bit, num_clusters=num_clusters))
 
         self.features = nn.Sequential(*layers)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            QuantizedLinear(lastconv_output_channels, last_channel, activation='Hardswish', bit=bit),
-            QuantizedLinear(last_channel, num_classes, bit=bit)
+            QuantizedLinear(lastconv_output_channels, last_channel, activation='Hardswish', bit=bit, num_clusters=num_clusters),
+            QuantizedLinear(last_channel, num_classes, bit=bit, num_clusters=num_clusters)
         )
 
     def _forward_impl(self, x: Tensor, cluster_info=None) -> Tensor:
+        if cluster_info is not None:
+            done = 0
+            for i in range(cluster_info.shape[0]):
+                c = cluster_info[i][0].item()
+                n = cluster_info[i][1].item()
+                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
+                done += n
+        else:
+            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
+
         x = self.features((x, cluster_info))
 
         x = self.avgpool(x)
@@ -147,10 +168,10 @@ class QuantizedMobileNet(nn.Module):
                 m.show_params()
 
 
-def quantized_mobilenet(bit: int = 8, num_classes: int = 1000, **kwargs: Any) -> QuantizedMobileNet:
+def quantized_mobilenet(bit: int = 8, num_classes: int = 1000, num_clusters=1, **kwargs: Any) -> QuantizedMobileNet:
     inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
     return QuantizedMobileNet(bit=bit, num_classes=num_classes, inverted_residual_setting=inverted_residual_setting,
-                          last_channel=last_channel, **kwargs)
+                          last_channel=last_channel, num_clusters=num_clusters, **kwargs)
 
 def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
     m.s_bypass = nn.Parameter(s_bypass, requires_grad=False)
@@ -171,14 +192,15 @@ def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
 
 
 def set_activation(_fp, _int):
-    _int.s_activation = torch.nn.Parameter(_fp.s3, requires_grad=False)
-    _int.z_activation = torch.nn.Parameter(_fp.z3, requires_grad=False)
-
     if _int.num_clusters > 1:
         for i in range(_int.num_clusters):
-            _int.hardswish_6[i].copy_(torch.round(6 / _int.hardswish_6[i]._fp.s3 + _int.hardswish_6[i].z_activation))
-            _int.hardswish_3[i].copy_(torch.round(3 / _int.hardswish_3[i]._fp.s3 + _int.hardswish_3[i].z_activation))
+            _int.s_activation[i] = torch.nn.Parameter(_fp.s3[i], requires_grad=False)
+            _int.z_activation[i] = torch.nn.Parameter(_fp.z3[i], requires_grad=False)
+            _int.hardswish_6[i].copy_(torch.round(6 / _int.s_activation[i] + _int.z_activation[i]))
+            _int.hardswish_3[i].copy_(torch.round(3 / _int.s_activation[i] + _int.z_activation[i]))
     else:
+        _int.s_activation = torch.nn.Parameter(_fp.s3, requires_grad=False)
+        _int.z_activation = torch.nn.Parameter(_fp.z3, requires_grad=False)
         _int.hardswish_6.copy_(nn.Parameter(torch.round(6 / _int.s_activation + _int.z_activation)))
         _int.hardswish_3.copy_(nn.Parameter(torch.round(3 / _int.s_activation + _int.z_activation)))
 

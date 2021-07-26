@@ -19,13 +19,14 @@ class FusedSqueezeExcitation(nn.Module):
         super().__init__()
         self.flag_ema_init = False
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.scale_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.smooth = smooth
         self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.flag_fake_quantization = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation=nn.ReLU, smooth=smooth, bit=bit)
+        self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
         self.fc2 = FusedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, smooth=smooth, bit=bit)
         self.QAct = QActivation(activation=nn.Hardsigmoid, bit=bit, smooth=smooth)
 
@@ -82,12 +83,12 @@ class InvertedResidual(nn.Module):
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
         layers: List[nn.Module] = []
-        activation = nn.ReLU if not cnf.use_hs else None
+        self.activation = nn.ReLU if not cnf.use_hs else None
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
-            layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
-                                      norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit))
+            layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1, 
+                                      norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
             
@@ -95,7 +96,7 @@ class InvertedResidual(nn.Module):
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                   padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
-                                  norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit))
+                                  norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
         if cnf.use_hs:
             layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
         
@@ -237,7 +238,6 @@ class FusedMobileNet(nn.Module):
         x = torch.flatten(x, 1)
 
         x = self.classifier(x)
-
         return x
 
     def forward(self, x: Tensor) -> Tensor:
@@ -352,9 +352,6 @@ def fold_mobilenet(model):
             fused_module = model.features[feature_idx].block[block_idx]
             if isinstance(fused_module, FusedConv2d):
                 fused_module.fuse_conv_and_bn()
-            elif isinstance(fused_module, FusedSqueezeExcitation):
-                fused_module.fc1.fuse_conv_and_bn()
-                fused_module.fc2.fuse_conv_and_bn()
 
     # Last conv
     model.features[-2].fuse_conv_and_bn()

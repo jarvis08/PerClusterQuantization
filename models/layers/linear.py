@@ -36,7 +36,7 @@ class QuantizedLinear(nn.Linear):
         if cluster_info is not None:
             return self.pcq_totalsum(_x, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
         else:
-            return self.general_totalsum(_x, sum_q1q2.type(torch.cuda.IntTensor))
+            return self.general_totalsum(_x, sum_q1q2.type(torch.cuda.IntTensor), None)
 
     def pcq_totalsum(self, x, sum_q1q2, cluster_info):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
@@ -94,7 +94,7 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, -128, 127)
         return total.type(torch.cuda.FloatTensor)
 
-    def general_totalsum(self, x, sum_q1q2):
+    def general_totalsum(self, x, sum_q1q2, cluster_info):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
         if self.bias is not None:
             for out_f in range(output_feature):
@@ -132,7 +132,7 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, 0, 15)
         else:
             total = torch.clamp(total, -128, 127)
-        return total.type(torch.cuda.FloatTensor)
+        return total.type(torch.cuda.FloatTensor), cluster_info
 
 
 class PCQLinear(nn.Module):
@@ -220,7 +220,7 @@ class FusedLinear(nn.Module):
         if self.training:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
             with torch.no_grad():
-                self.fc.weight.copy_(fake_quantize(self.fc.weight.detach(), s, z, self.q_max))
+                self.fc.weight.copy_(fake_quantize(self.fc.weight, s, z, self.q_max))
 
         x = self.fc(x)
         if self._activation:
@@ -228,7 +228,7 @@ class FusedLinear(nn.Module):
 
         if self.training:
             if self.flag_ema_init:
-                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                self.act_range[0], self.act_range[1] = ema(x.detach(), self.act_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                     with torch.no_grad():

@@ -30,6 +30,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.activation = activation
+        
 
     def forward(self, x):
         _x = x[0]
@@ -37,7 +38,7 @@ class QuantizedConv2d(nn.Conv2d):
         if cluster_info is not None:
             return self.pcq(_x, cluster_info)
         else:
-            return self.general(_x)
+            return self.general(_x, None)
 
     def pcq(self, x, cluster_info):
         if self.padding[0] > 0 or self.padding[1] > 0:
@@ -54,11 +55,11 @@ class QuantizedConv2d(nn.Conv2d):
             sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
             return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor), cluster_info)
 
-    def general(self, x):
+    def general(self, x, cluster_info):
         if self.padding[0] > 0 or self.padding[1] > 0:
             x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1.item())
         sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
-        return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+        return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor)), cluster_info
 
     def pcq_totalsum(self, x, sum_q1q2, cluster_info):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
@@ -154,8 +155,6 @@ class QuantizedConv2d(nn.Conv2d):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
 
         multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-        print("s1 s2 s3 ",self.s1, self.s2, self.s3, self.s1*self.s2/self.s3)
-        print("M0 and shift ", self.M0, self.shift)
         total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
@@ -280,10 +279,11 @@ class FusedConv2d(nn.Module):
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
+
         if self.training:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             with torch.no_grad():
-                self.conv.weight.copy_(fake_quantize(self.conv.weight.detach(), s, z, self.q_max))
+                self.conv.weight.copy_(fake_quantize(self.conv.weight, s, z, self.q_max))
 
         x = self.conv(x)
         if self._norm_layer:
@@ -302,6 +302,7 @@ class FusedConv2d(nn.Module):
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
                 self.flag_ema_init = True
+
         return x
 
     def set_fake_quantization_flag(self):

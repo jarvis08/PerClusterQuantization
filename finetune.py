@@ -86,11 +86,11 @@ def _finetune(args, tools):
             'state_dict': model.state_dict(),
             'best_prec': best_prec,
             'optimizer': optimizer.state_dict(),
-        }, is_best, save_path)
+        }, is_best, save_path, e)
 
     if 'ResNet' in args.arch:
         model = fold_resnet(model)
-    if 'mobilenet' in args.arch:
+    if args.arch == 'MobileNetV3':
         model = fold_mobilenet(model)
     model.set_quantization_params()
     # save_fused_network_in_darknet_form(model, args)
