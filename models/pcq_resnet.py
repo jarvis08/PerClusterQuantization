@@ -73,6 +73,9 @@ class PCQBasicBlock(nn.Module):
 
         if self.training:
             done = 0
+            _out = None
+            if self.flag_fake_quantization:
+                _out = torch.zeros(out.shape).cuda()
             for i in range(PCQBasicBlock.batch_cluster.shape[0]):
                 c = PCQBasicBlock.batch_cluster[i][0].item()
                 n = PCQBasicBlock.batch_cluster[i][1].item()
@@ -80,12 +83,14 @@ class PCQBasicBlock(nn.Module):
                     self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max)
+                        _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max)
                 else:
                     self.act_range[c][0] = torch.min(out).item()
                     self.act_range[c][1] = torch.max(out).item()
                     self.flag_ema_init[c] = True
                 done += n
+            if self.flag_fake_quantization:
+                return _out
         return out
 
     def set_block_fq_flag(self):
