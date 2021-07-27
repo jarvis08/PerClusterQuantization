@@ -106,6 +106,8 @@ class PCQBasicBlock(nn.Module):
 
 
 class PCQResNet(nn.Module):
+    batch_cluster = None
+
     def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64,
                  replace_stride_with_dilation=None, norm_layer=None, bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1):
         super(PCQResNet, self).__init__()
@@ -115,9 +117,7 @@ class PCQResNet(nn.Module):
         self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
         self.flag_fake_quantization = False
         self.smooth = smooth
-
         self.num_clusters = num_clusters
-        self.batch_cluster = None
 
         self.quant_noise = quant_noise
         self.q_prob = q_prob
@@ -137,9 +137,9 @@ class PCQResNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                    bias=False, norm_layer=self._norm_layer, activation=nn.ReLU6,
-                                    bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
+                                    norm_layer=self._norm_layer, activation=nn.ReLU6, bit=bit, smooth=smooth,
+                                    num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -201,11 +201,6 @@ class PCQResNet(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
-
-    def show_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.show_params()
 
     @classmethod
     def set_cluster_information_of_batch(cls, info):
@@ -317,16 +312,10 @@ class PCQResNet20(nn.Module):
         x = self.fc(x)
         return x
 
-    def show_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.show_params()
-
     @classmethod
     def set_cluster_information_of_batch(cls, info):
         cls.batch_cluster = info
         PCQBasicBlock.batch_cluster = info
-        # PCQBottleneck.batch_cluster = info
         PCQConv2d.batch_cluster = info
         PCQLinear.batch_cluster = info
 

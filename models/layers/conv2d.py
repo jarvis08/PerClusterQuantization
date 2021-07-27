@@ -5,8 +5,6 @@ import torch.nn.functional as F
 from ..quant_noise import _quant_noise
 from ..quantization_utils import *
 from .activation import *
-from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
 class QuantizedConv2d(nn.Conv2d):
@@ -225,7 +223,6 @@ class PCQConv2d(nn.Module):
         if self.training and not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
             self.conv.weight.data = fake_quantize(self.conv.weight.data, s, z, self.q_max)
-
         x = self.conv(x)
         if self._norm_layer:
             x = self._norm_layer(x)
@@ -233,6 +230,7 @@ class PCQConv2d(nn.Module):
             x = self._activation(x)
 
         if self.training:
+            x_fq = torch.zeros(x.shape).cuda()
             done = 0
             for i in range(self.batch_cluster.shape[0]):
                 c = self.batch_cluster[i][0].item()
@@ -247,6 +245,8 @@ class PCQConv2d(nn.Module):
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
                     self.flag_ema_init[c] = True
                 done += n
+            if self.flag_fake_quantization:
+                return x_fq
         return x
 
     def fold_conv_and_bn(self):

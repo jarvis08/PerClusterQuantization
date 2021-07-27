@@ -16,8 +16,7 @@ def get_train_loader(args, normalizer, hvd=None):
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
-                                                            normalizer,
-                                                        ]))
+                                                            normalizer,]))
         if args.horovod:
             sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
         else:
@@ -33,8 +32,7 @@ def get_train_loader(args, normalizer, hvd=None):
                 transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                normalizer,
-            ]))
+                normalizer]))
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
     return train_loader
 
@@ -93,8 +91,8 @@ def _finetune(args, tools):
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
-    #else:
-        # summary(model, (3, 32, 32))
+    else:
+        summary(model, (3, 32, 32))
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -134,8 +132,7 @@ def _finetune(args, tools):
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
         }
-        if e == 1 or e%5 == 0:
-            save_checkpoint(state, False, save_path_fp, e)
+        save_checkpoint(state, False, save_path_fp)
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
