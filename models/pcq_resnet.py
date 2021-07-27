@@ -54,7 +54,7 @@ class PCQBasicBlock(nn.Module):
                                  bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU6(inplace=False)
 
     def forward(self, x):
         identity = x
