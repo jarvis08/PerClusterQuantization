@@ -46,6 +46,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.z_activation = nn.Parameter(torch.zeros(num_clusters, dtype=torch.int32), requires_grad=False)
 
         self.activation = activation
+        
 
     def forward(self, x):
         if self.batch_cluster is not None:
@@ -167,18 +168,21 @@ class QuantizedConv2d(nn.Conv2d):
         for out_c in range(0, filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
 
-        multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-        total = shifting(multiplied, self.shift.item())
+        if self.shift < 0:
+            multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
+        else:
+            multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.activation:
+        if self.activation is not None:
             hs_total = total + self.hardswish_3
-            hs_total = torch.clamp(hs_total, self.z3, self.hardswish_6)
-            hs_total = hs_total / self.hardswish_6
+            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
             if self.activation == 'Hardswish':
-                total = total * hs_total
+                total = total * hs_total / self.hardswish_6.item()
             else:
-                total = hs_total
+                total = hs_total / self.hardswish_6.item()
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
@@ -319,6 +323,7 @@ class FusedConv2d(nn.Module):
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
                 self.flag_ema_init = True
+
         return x
 
     def fold_conv_and_bn(self):

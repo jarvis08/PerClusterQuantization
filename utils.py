@@ -219,7 +219,7 @@ def get_test_loader(args, normalizer):
                                                             transforms.ToTensor(),
                                                             normalizer,
                                                         ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.val_batch, shuffle=False, num_workers=2)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=10)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',

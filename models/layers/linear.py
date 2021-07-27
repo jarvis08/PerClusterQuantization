@@ -118,13 +118,17 @@ class QuantizedLinear(nn.Linear):
         for out_f in range(output_feature):
             sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
 
-        multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
-        total = shifting(multiplied, self.shift.item())
+        if self.shift < 0:
+            multiplied = multiply_M((sub_sum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
+        else:
+            multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.activation:
+        if self.activation is not None:
             hs_total = total + self.hardswish_3
-            hs_total = torch.clamp(hs_total, self.z3, self.hardswish_6)
+            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
             hs_total = hs_total / self.hardswish_6
             if self.activation == 'Hardswish':
                 total = total * hs_total
@@ -237,7 +241,7 @@ class FusedLinear(nn.Module):
 
         if self.training:
             if self.flag_ema_init:
-                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                self.act_range[0], self.act_range[1] = ema(x.detach(), self.act_range, self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)

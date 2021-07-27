@@ -92,11 +92,12 @@ class InvertedResidual(nn.Module):
         self.out_channels = cnf.out_channels
         self._is_cn = cnf.stride > 1
 
-    def forward(self, input: Tensor) -> Tensor:
-        result = self.block(input)
+    def forward(self, x: Tensor) -> Tensor:
+        input = x
+        x = self.block(x)
         if self.use_res_connect:
-            result += input
-        return result
+            x += input
+        return x
 
 
 class MobileNetV3(nn.Module):
@@ -144,7 +145,6 @@ class MobileNetV3(nn.Module):
         # building inverted residual blocks
         for cnf in inverted_residual_setting:
             layers.append(block(cnf, norm_layer))
-            # print(cnf.input_channels, cnf.expanded_channels, cnf.out_channels)
 
         # building last several layers
         lastconv_input_channels = inverted_residual_setting[-1].out_channels
@@ -213,7 +213,6 @@ def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dila
 
 
 def Mobilenet_v3_model(
-    arch: str,
     inverted_residual_setting: List[InvertedResidualConfig],
     last_channel: int,
     pretrained: bool,
@@ -222,6 +221,7 @@ def Mobilenet_v3_model(
 ):
     model = MobileNetV3(inverted_residual_setting, last_channel, **kwargs)
     # summary(model, (3, 224, 224))
+    arch = "mobilenet"
 
     if pretrained:
         if model_urls.get(arch, None) is None:
@@ -240,11 +240,9 @@ def mobilenet(pretrained: bool = False, progress: bool = True, **kwargs: Any) ->
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    arch = "mobilenet"
-    inverted_residual_setting, last_channel = _mobilenet_v3_conf(arch, **kwargs)
-    return Mobilenet_v3_model(arch, inverted_residual_setting, last_channel, pretrained, progress, **kwargs)
+    # arch = "mobilenet"
+    inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
+    return Mobilenet_v3_model(inverted_residual_setting, last_channel, pretrained, progress, **kwargs)
 
-# def mobilenet_small(**kwargs: Any) -> Mobilenet_small:
-#     return Mobilenet_small(**kwargs)
 if __name__ == '__main__':
     net = mobilenet(True)
