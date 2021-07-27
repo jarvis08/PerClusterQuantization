@@ -54,8 +54,8 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def save_checkpoint(state, is_best, path, e):
-    filepath = os.path.join(path, 'checkpoint.pth'.format(e))
+def save_checkpoint(state, is_best, path):
+    filepath = os.path.join(path, 'checkpoint.pth')
     torch.save(state, filepath)
     if is_best:
         shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
@@ -245,7 +245,6 @@ def set_kmeans_dir(args):
     path = add_path(path, 'kmeans')
     path = add_path(path, args.dataset)
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
-    path = add_path(path, 'kmeans')
     with open(os.path.join(path, "params.json"), 'w') as f:
         kmeans_args = {'k': args.cluster, 'num_partitions': args.partition,
                        'epoch': args.kmeans_epoch, 'batch': args.batch}
