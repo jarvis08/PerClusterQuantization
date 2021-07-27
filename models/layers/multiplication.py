@@ -35,8 +35,6 @@ class QuantizedMul(nn.Module):
             return self.general_mul(bypass, prev)
 
     def general_mul(self, bypass, prev):
-        # prev    [128, 16, 56, 56]
-        # bypass  [128, 16,  1,  1]
         mul_q1q2 = torch.mul(prev, bypass).type(torch.cuda.IntTensor)
         z1z2 = self.z_bypass * self.z_prev
         z2q1 = torch.mul(prev, self.z_bypass)

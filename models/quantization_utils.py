@@ -90,8 +90,9 @@ def multiply_M(sub_sum, q_M):
 
 def shifting(cur, shift):
     assert shift >= 0
-    assert shift <= 31
-    mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
+    # assert shift <= 31
+    # mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
+    mask = torch.tensor((1 << shift) - 1, dtype=torch.int64, device='cuda:0')
     zero = torch.tensor(0, dtype=torch.int32, device='cuda:0')
     one = torch.tensor(1, dtype=torch.int32, device='cuda:0')
 

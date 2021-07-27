@@ -95,8 +95,9 @@ class InvertedResidual(nn.Module):
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
-                                  padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
-                                  norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
+                                  padding=(cnf.kernel-1) // 2 * cnf.dilation, stride=stride, dilation=cnf.dilation,
+                                  groups=cnf.expanded_channels, norm_layer=norm_layer, activation=self.activation,
+                                  smooth=smooth, bit=bit))
         if cnf.use_hs:
             layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
 
@@ -104,7 +105,8 @@ class InvertedResidual(nn.Module):
             layers.append(FusedSqueezeExcitation(cnf.expanded_channels, bit=bit, smooth=smooth))
 
         # project
-        layers.append(FusedConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1, norm_layer=norm_layer, smooth=smooth, bit=bit))
+        layers.append(FusedConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1, norm_layer=norm_layer,
+                                  smooth=smooth, bit=bit))
 
         self.block = nn.Sequential(*layers)
         self.out_channels = cnf.out_channels
@@ -167,6 +169,7 @@ class FusedMobileNet(nn.Module):
         self.flag_fake_quantization = False
         self.smooth = smooth
         self.q_max = 2 ** self.bit - 1
+        self.dilation = dilation
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -184,7 +187,7 @@ class FusedMobileNet(nn.Module):
 
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
-        layers.append(FusedConv2d(3, firstconv_output_channels, kernel_size=3, padding=1, stride=2,
+        layers.append(FusedConv2d(3, firstconv_output_channels, kernel_size=3, padding=self.dilation, stride=2,
                                   norm_layer=norm_layer, smooth=smooth, bit=bit))
         layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
 
