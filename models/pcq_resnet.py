@@ -7,7 +7,7 @@ from .quantization_utils import *
 
 
 def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, norm_layer=None, activation=None,
-                bit=32, smooth=0.995, num_clusters=10, quant_noise=False, q_prob=0.1):
+                bit=8, smooth=0.995, num_clusters=10, quant_noise=False, q_prob=0.1):
     """3x3 convolution with padding"""
     return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=dilation, bias=bias, norm_layer=norm_layer, activation=activation,
@@ -17,8 +17,9 @@ def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, norm_la
 def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None,
                 bit=32, smooth=0.995, num_clusters=10, quant_noise=False, q_prob=0.1):
     """1x1 convolution"""
-    return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias, norm_layer=norm_layer,
-                     activation=activation, bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob)
+    return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
+                     norm_layer=norm_layer, activation=activation, bit=bit, smooth=smooth,
+                     num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob)
 
 
 class PCQBasicBlock(nn.Module):
@@ -50,11 +51,13 @@ class PCQBasicBlock(nn.Module):
         self.quant_noise = quant_noise
         self.q_prob = q_prob
 
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
-                                 bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU,
+                                 bit=bit, smooth=smooth, num_clusters=num_clusters,
+                                 quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
-                                 bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.relu = nn.ReLU6(inplace=False)
+                                 bit=bit, smooth=smooth, num_clusters=num_clusters,
+                                 quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -70,9 +73,9 @@ class PCQBasicBlock(nn.Module):
 
         if self.training:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(PCQBasicBlock.batch_cluster.shape[0]):
+                c = PCQBasicBlock.batch_cluster[i][0].item()
+                n = PCQBasicBlock.batch_cluster[i][1].item()
                 if self.flag_ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:
@@ -138,7 +141,7 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                    norm_layer=self._norm_layer, activation=nn.ReLU6, bit=bit, smooth=smooth,
+                                    norm_layer=self._norm_layer, activation=nn.ReLU, bit=bit, smooth=smooth,
                                     num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -175,9 +178,9 @@ class PCQResNet(nn.Module):
     def forward(self, x):
         if self.training:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(PCQResNet.batch_cluster.shape[0]):
+                c = PCQResNet.batch_cluster[i][0].item()
+                n = PCQResNet.batch_cluster[i][1].item()
                 if self.flag_ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:
@@ -264,7 +267,7 @@ class PCQResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, norm_layer=self._norm_layer,
-                                    activation=nn.ReLU6, bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+                                    activation=nn.ReLU, bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
@@ -289,9 +292,9 @@ class PCQResNet20(nn.Module):
     def forward(self, x):
         if self.training:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(PCQResNet20.batch_cluster.shape[0]):
+                c = PCQResNet20.batch_cluster[i][0].item()
+                n = PCQResNet20.batch_cluster[i][1].item()
                 if self.flag_ema_init[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.flag_fake_quantization:

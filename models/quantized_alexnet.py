@@ -31,11 +31,11 @@ class QuantizedAlexNet(nn.Module):
         self.fc3 = QuantizedLinear(4096, num_classes, bit=bit)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.batch_cluster is not None:
+        if QuantizedAlexNet.batch_cluster is not None:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(QuantizedAlexNet.batch_cluster.shape[0]):
+                c = QuantizedAlexNet.batch_cluster[i][0].item()
+                n = QuantizedAlexNet.batch_cluster[i][1].item()
                 x[done:done + n].copy_(quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max))
                 done += n
         else:
@@ -88,11 +88,11 @@ class QuantizedAlexNetSmall(nn.Module):
         self.fc3 = QuantizedLinear(4096, num_classes, bit=bit, num_clusters=num_clusters)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.batch_cluster is not None:
+        if QuantizedAlexNetSmall.batch_cluster is not None:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(QuantizedAlexNetSmall.batch_cluster.shape[0]):
+                c = QuantizedAlexNetSmall.batch_cluster[i][0].item()
+                n = QuantizedAlexNetSmall.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:

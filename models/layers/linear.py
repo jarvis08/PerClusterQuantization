@@ -36,7 +36,7 @@ class QuantizedLinear(nn.Linear):
 
     def forward(self, x):
         sum_q1q2 = F.linear(x, self.weight, None)
-        if self.batch_cluster is not None:
+        if QuantizedLinear.batch_cluster is not None:
             return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
         else:
             return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
@@ -45,18 +45,18 @@ class QuantizedLinear(nn.Linear):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
         N = x.shape[1]
         done = 0
-        for i in range(self.batch_cluster.shape[0]):
-            c = self.batch_cluster[i][0].item()
-            n = self.batch_cluster[i][1].item()
+        for i in range(QuantizedLinear.batch_cluster.shape[0]):
+            c = QuantizedLinear.batch_cluster[i][0].item()
+            n = QuantizedLinear.batch_cluster[i][1].item()
             for out_f in range(output_feature):
                 sum_q1q2[done:done+n, out_f] = sum_q1q2[done:done+n, out_f].add(self.quantized_bias[c][out_f])
             done += n
 
         sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
-        sum_a2 = torch.zeros((self.batch_cluster.shape[0], output_feature), dtype=torch.int32)
+        sum_a2 = torch.zeros((QuantizedLinear.batch_cluster.shape[0], output_feature), dtype=torch.int32)
 
-        for i in range(self.batch_cluster.shape[0]):
-            c = self.batch_cluster[i][0].item()
+        for i in range(QuantizedLinear.batch_cluster.shape[0]):
+            c = QuantizedLinear.batch_cluster[i][0].item()
             for out_f in range(output_feature):
                 sum_a2[i, out_f] = torch.sum(self.weight[out_f, :]).mul(self.z1[c])
 
@@ -64,9 +64,9 @@ class QuantizedLinear(nn.Linear):
             sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
 
         done = 0
-        for i in range(self.batch_cluster.shape[0]):
-            c = self.batch_cluster[i][0].item()
-            n = self.batch_cluster[i][1].item()
+        for i in range(QuantizedLinear.batch_cluster.shape[0]):
+            c = QuantizedLinear.batch_cluster[i][0].item()
+            n = QuantizedLinear.batch_cluster[i][1].item()
             nz1z2 = N * self.z1[c] * self.z2
             sum_q1q2[done:done + n] = sum_q1q2[done:done + n].add(nz1z2)
             done += n
@@ -75,17 +75,17 @@ class QuantizedLinear(nn.Linear):
             sum_q1q2[in_f, :] = torch.sub(sum_q1q2[in_f, :], sum_a1[in_f])
 
         done = 0
-        for i in range(self.batch_cluster.shape[0]):
-            n = self.batch_cluster[i][1].item()
+        for i in range(QuantizedLinear.batch_cluster.shape[0]):
+            n = QuantizedLinear.batch_cluster[i][1].item()
             for out_f in range(output_feature):
                 sum_q1q2[done:done + n, out_f] = torch.sub(sum_q1q2[done:done + n, out_f], sum_a2[i, out_f])
             done += n
 
         done = 0
         total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
-        for i in range(self.batch_cluster.shape[0]):
-            c = self.batch_cluster[i][0].item()
-            n = self.batch_cluster[i][1].item()
+        for i in range(QuantizedLinear.batch_cluster.shape[0]):
+            c = QuantizedLinear.batch_cluster[i][0].item()
+            n = QuantizedLinear.batch_cluster[i][1].item()
             multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
             total[done:done + n] = shifting(multiplied, self.shift[c].item())
             total[done:done + n] = total[done:done + n].add(self.z3[c])
@@ -176,23 +176,20 @@ class PCQLinear(nn.Module):
             x = self._activation(x)
 
         if self.training:
-            x_fq = torch.zeros(x.shape).cuda()
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(PCQLinear.batch_cluster.shape[0]):
+                c = PCQLinear.batch_cluster[i][0].item()
+                n = PCQLinear.batch_cluster[i][1].item()
                 if self.flag_ema_init[c]:
                     self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                     if self.flag_fake_quantization:
                         s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        x_fq[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.act_range[c][0] = torch.min(x[done:done + n]).item()
                     self.act_range[c][1] = torch.max(x[done:done + n]).item()
                     self.flag_ema_init[c] = True
                 done += n
-            if self.flag_fake_quantization:
-                return x_fq
         return x
 
     def set_qparams(self, s1, z1):

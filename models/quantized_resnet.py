@@ -8,12 +8,14 @@ from .quantization_utils import *
 def quantized_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, bit=8, num_clusters=1):
     """3x3 convolution with padding"""
     return QuantizedConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                       padding=dilation, groups=groups, dilation=dilation, bias=bias, bit=bit, num_clusters=num_clusters)
+                           padding=dilation, groups=groups, dilation=dilation, bias=bias,
+                           bit=bit, num_clusters=num_clusters)
 
 
 def quantized_conv1x1(in_planes, out_planes, stride=1, bias=False, bit=8, num_clusters=1):
     """1x1 convolution"""
-    return QuantizedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias, bit=bit, num_clusters=num_clusters)
+    return QuantizedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
+                           bit=bit, num_clusters=num_clusters)
 
 
 class QuantizedBasicBlock(nn.Module):
@@ -193,15 +195,16 @@ class QuantizedResNet20(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
+
+        x = x.type(torch.cuda.IntTensor)
+        x = x.type(torch.cuda.FloatTensor)
         x = self.avgpool(x)
+        x = x.type(torch.cuda.IntTensor)
+        x = x.type(torch.cuda.FloatTensor)
+
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
-
-    def show_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.show_params()
 
     @classmethod
     def set_cluster_information_of_batch(cls, info):
