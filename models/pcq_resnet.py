@@ -51,13 +51,13 @@ class PCQBasicBlock(nn.Module):
         self.quant_noise = quant_noise
         self.q_prob = q_prob
 
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU,
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters,
                                  quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
                                  bit=bit, smooth=smooth, num_clusters=num_clusters,
                                  quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU6(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -146,7 +146,7 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                    norm_layer=self._norm_layer, activation=nn.ReLU, bit=bit, smooth=smooth,
+                                    norm_layer=self._norm_layer, activation=nn.ReLU6, bit=bit, smooth=smooth,
                                     num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -272,7 +272,7 @@ class PCQResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, norm_layer=self._norm_layer,
-                                    activation=nn.ReLU, bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+                                    activation=nn.ReLU6, bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)

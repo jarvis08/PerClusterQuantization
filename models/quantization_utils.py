@@ -7,12 +7,12 @@ from copy import deepcopy
 
 class STE(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, origin_inputs, wanted_inputs):
-        return wanted_inputs.detach()
+    def forward(ctx, original, modified):
+        return modified.detach()
 
     @staticmethod
-    def backward(ctx, grad_outputs):
-        return grad_outputs, None
+    def backward(ctx, grad):
+        return grad, None
 
 
 class QuantizationTool(object):
