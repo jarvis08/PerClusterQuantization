@@ -54,7 +54,7 @@ class PCQActivation(nn.Module):
         self.q_max = 2 ** bit - 1
         self.num_clusters = num_clusters
         self.flag_ema_init = False
-        self.flag_fake_quantization = True
+        self.flag_fake_quantization = False
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
         self._activation = activation(inplace=False)
