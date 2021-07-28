@@ -176,9 +176,9 @@ class PCQLinear(nn.Module):
             return x
 
         _weight = self.fc.weight
-        if self.training and not self.quant_noise:
+        if not self.quant_noise:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max)
+            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
 
         x = F.linear(x, _weight, self.fc.bias)
         if self._activation:
@@ -197,7 +197,7 @@ class PCQLinear(nn.Module):
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.flag_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(x[done:done + n]).item()
                 self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -251,7 +251,7 @@ class FusedLinear(nn.Module):
         _weight = self.fc.weight.data
         if not self.quant_noise:
             s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max)
+            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
 
         x = F.linear(x, _weight, self.fc.bias)
         if self._activation:

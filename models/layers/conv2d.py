@@ -212,7 +212,7 @@ class PCQConv2d(nn.Module):
 
     def forward(self, x):
         if not self.training:
-            x = self.conv2d(x)
+            x = self.conv(x)
             if self._norm_layer:
                 x = self._norm_layer(x)
             if self._activation:
@@ -220,9 +220,9 @@ class PCQConv2d(nn.Module):
             return x
 
         _weight = self.conv.weight.data
-        if not self.training and not self.quant_noise:
+        if not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max)
+            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
 
         x = F.conv2d(x, _weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._norm_layer:
@@ -305,7 +305,7 @@ class FusedConv2d(nn.Module):
 
     def forward(self, x):
         if not self.training:
-            x = self.conv2d(x)
+            x = self.conv(x)
             if self._norm_layer:
                 x = self._norm_layer(x)
             if self._activation:
@@ -315,7 +315,7 @@ class FusedConv2d(nn.Module):
         _weight = self.conv.weight
         if not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max)
+            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
 
         x = F.conv2d(x, _weight, self.conv.bias, self.conv.stride, self.conv.padding,
                      self.conv.dilation, self.conv.groups)

@@ -44,9 +44,9 @@ def ema(x, averaged, smooth):
 
 def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     if q_max == 255:
-        _x =  (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
+        _x = (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
     else:
-        _x =  (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
+        _x = (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
