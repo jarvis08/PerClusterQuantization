@@ -90,6 +90,7 @@ def _finetune(args, tools):
 
     model = get_finetuning_model(args, tools)
     model.cuda()
+    model.eval()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
     else:
