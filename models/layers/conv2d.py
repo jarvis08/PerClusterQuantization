@@ -205,7 +205,7 @@ class PCQConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)
         if self.quant_noise:
-            self.conv = _quant_noise(self.conv, self.q_prob, 1, self.q_max)
+            self.conv = _quant_noise(self.conv, self.qn_prob, 1, self.q_max)
 
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
@@ -299,7 +299,7 @@ class FusedConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias)
         if self.quant_noise:
-            self.conv = _quant_noise(self.conv, self.q_prob, 1, q_max=self.q_max)
+            self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
 
