@@ -9,29 +9,31 @@ from .quantization_utils import *
 class PCQAlexNet(nn.Module):
     batch_cluster = None
 
-    def __init__(self, num_classes: int = 1000, smooth: float = 0.995, bit: int = 32, num_clusters: int = 10, quant_noise=False, q_prob=0.1) -> None:
+    def __init__(self, arg_dict: dict, num_classes: int = 1000) -> None:
         super(PCQAlexNet, self).__init__()
-        self.bit = bit
+        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.in_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
-        self.smooth = smooth
+        self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.num_clusters = num_clusters
-        self.quant_noise = quant_noise
-        self.q_prob = q_prob
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
+        self.flag_fake_quantization = False
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.conv1 = PCQConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.conv2 = PCQConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.conv3 = PCQConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.conv4 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.conv5 = PCQConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, smooth=smooth, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.fc1 = PCQLinear(256 * 6 * 6, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, bit=bit, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.conv1 = PCQConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv2 = PCQConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv3 = PCQConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv4 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv5 = PCQConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc1 = PCQLinear(256 * 6 * 6, 4096, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -99,29 +101,30 @@ class PCQAlexNet(nn.Module):
 class PCQAlexNetSmall(nn.Module):
     batch_cluster = None
 
-    def __init__(self, num_classes: int = 10, smooth: float = 0.995, bit: int = 32, num_clusters: int = 10, quant_noise=False, q_prob=0.1) -> None:
+    def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(PCQAlexNetSmall, self).__init__()
-        self.bit = bit
+        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.in_range = nn.Parameter(torch.zeros((num_clusters, 2)), requires_grad=False)
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
+        self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
         self.flag_fake_quantization = False
-        self.smooth = smooth
-
-        self.num_clusters = num_clusters
-        self.quant_noise = quant_noise
-        self.q_prob = q_prob
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit, num_clusters=num_clusters, smooth=smooth, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.fc1 = PCQLinear(256, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.fc2 = PCQLinear(4096, 4096, smooth=smooth, bit=bit, num_clusters=num_clusters, activation=nn.ReLU, quant_noise=quant_noise, q_prob=q_prob)
-        self.fc3 = PCQLinear(4096, num_classes, smooth=smooth, num_clusters=num_clusters, bit=bit, quant_noise=quant_noise, q_prob=q_prob)
+        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
+                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc1 = PCQLinear(256, 4096, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -187,9 +190,9 @@ class PCQAlexNetSmall(nn.Module):
         _, _ = self.fc3.set_qparams(prev_s, prev_z)
 
 
-def pcq_alexnet(smooth: float = 0.999, bit: int = 32, num_clusters: int = 10, quant_noise=False, q_prob=0.1, **kwargs: Any) -> PCQAlexNet:
-    return PCQAlexNet(smooth=smooth, bit=bit, num_clusters=num_clusters, **kwargs, quant_noise=quant_noise, q_prob=q_prob)
+def pcq_alexnet(arg_dict: dict, **kwargs: Any) -> PCQAlexNet:
+    return PCQAlexNet(arg_dict, **kwargs)
 
 
-def pcq_alexnet_small(smooth: float = 0.999, bit: int = 32, num_clusters: int = 10, quant_noise=False, q_prob=0.1, **kwargs: Any) -> PCQAlexNetSmall:
-    return PCQAlexNetSmall(smooth=smooth, bit=bit, num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob, **kwargs)
+def pcq_alexnet_small(arg_dict: dict, **kwargs: Any) -> PCQAlexNetSmall:
+    return PCQAlexNetSmall(arg_dict, **kwargs)

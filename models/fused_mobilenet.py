@@ -1,3 +1,5 @@
+from operator import itemgetter
+
 import torch
 import torch.nn as nn
 
@@ -15,19 +17,21 @@ from .mobilenet import SqueezeExcitation, InvertedResidualConfig
 
 class FusedSqueezeExcitation(nn.Module):
     # Implemented as described at Figure 4 of the MobileNetV3 paper
-    def __init__(self, input_channels: int, squeeze_factor: int = 4, smooth: float = 0.999, bit: int = 32):
+    def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
-        self.flag_ema_init = False
-        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.smooth = smooth
-        self.bit = bit
+        self.bit, self.smooth, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+
+        self.flag_ema_init = False
         self.flag_fake_quantization = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation=nn.ReLU6, smooth=smooth, bit=bit)
-        self.fc2 = FusedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, smooth=smooth, bit=bit)
-        self.QAct = QActivation(activation=nn.Hardsigmoid, bit=bit, smooth=smooth)
+        self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
+                               activation=nn.ReLU6, arg_dict=arg_dict)
+        self.fc2 = FusedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, arg_dict=arg_dict)
+        self.QAct = QActivation(activation=nn.Hardsigmoid, arg_dict=arg_dict)
 
     def _scale(self, input: Tensor, inplace: bool) -> Tensor:
         scale = F.adaptive_avg_pool2d(input, 1)
@@ -69,17 +73,17 @@ class FusedSqueezeExcitation(nn.Module):
 
 class InvertedResidual(nn.Module):
     # Implemented as described at section 5 of MobileNetV3 paper
-    def __init__(self, cnf: InvertedResidualConfig, norm_layer: Callable[..., nn.Module], smooth: float = 0.999, bit: int = 32):
+    def __init__(self, cnf: InvertedResidualConfig, norm_layer: Callable[..., nn.Module], arg_dict=None):
         super().__init__()
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
-
-        self.smooth = smooth
-        self.bit = bit
+        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+
         self.flag_ema_init = False
         self.flag_fake_quantization = False
-        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
         layers: List[nn.Module] = []
@@ -88,23 +92,25 @@ class InvertedResidual(nn.Module):
         # expand
         if cnf.expanded_channels != cnf.input_channels:
             layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1, 
-                                      norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
+                                      norm_layer=norm_layer, activation=self.activation, arg_dict=arg_dict))
             if cnf.use_hs:
-                layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
+                layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(FusedConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
-                                  padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
-                                  norm_layer=norm_layer, activation=self.activation, smooth=smooth, bit=bit))
+                                  padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation,
+                                  groups=cnf.expanded_channels, norm_layer=norm_layer,
+                                  activation=self.activation, arg_dict=arg_dict))
         if cnf.use_hs:
-            layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
+            layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         if cnf.use_se:
-            layers.append(FusedSqueezeExcitation(cnf.expanded_channels, bit=bit, smooth=smooth))
+            layers.append(FusedSqueezeExcitation(cnf.expanded_channels, arg_dict=arg_dict))
 
         # project
-        layers.append(FusedConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1, norm_layer=norm_layer, smooth=smooth, bit=bit))
+        layers.append(FusedConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1,
+                                  norm_layer=norm_layer, arg_dict=arg_dict))
 
         self.block = nn.Sequential(*layers)
         self.out_channels = cnf.out_channels
@@ -152,21 +158,21 @@ class FusedMobileNet(nn.Module):
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
+            arg_dict: dict,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
             norm_layer: Optional[Callable[..., nn.Module]] = None,
-            smooth: float = 0.999,
-            bit: int = 32,
             dilation: int = 1,
             **kwargs: Any
     ) -> None:
         super().__init__()
-        self.bit = bit
-        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
-        self.smooth = smooth
+        self.bit, self.smooth, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+
+        self.flag_fake_quantization = False
+        self.flag_ema_init = False
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -185,26 +191,26 @@ class FusedMobileNet(nn.Module):
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
         layers.append(FusedConv2d(3, firstconv_output_channels, kernel_size=3, padding=1, stride=2,
-                                  norm_layer=norm_layer, smooth=smooth, bit=bit))
-        layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
+                                  norm_layer=norm_layer, arg_dict=arg_dict))
+        layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         # building inverted residual blocks
         for cnf in inverted_residual_setting:
-            layers.append(block(cnf, norm_layer, bit=bit, smooth=smooth))
+            layers.append(block(cnf, norm_layer, arg_dict=arg_dict))
 
         # building last several layers
         lastconv_input_channels = inverted_residual_setting[-1].out_channels
         lastconv_output_channels = 6 * lastconv_input_channels
         layers.append(FusedConv2d(lastconv_input_channels, lastconv_output_channels, kernel_size=1,
-                                  norm_layer=norm_layer, smooth=smooth, bit=bit))
-        layers.append(QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit))
+                                  norm_layer=norm_layer, arg_dict=arg_dict))
+        layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         self.features = nn.Sequential(*layers)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            FusedLinear(lastconv_output_channels, last_channel, bit=bit, smooth=smooth),
-            QActivation(activation=nn.Hardswish, smooth=smooth, bit=bit),
-            FusedLinear(last_channel, num_classes, bit=bit, smooth=smooth)
+            FusedLinear(lastconv_output_channels, last_channel, arg_dict=arg_dict),
+            QActivation(activation=nn.Hardswish, arg_dict=arg_dict),
+            FusedLinear(last_channel, num_classes, arg_dict=arg_dict)
         )
 
         for m in self.modules():
@@ -302,10 +308,9 @@ def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dila
     return inverted_residual_setting, last_channel
 
 
-def fused_mobilenet(smooth: float = 0.999, bit: int = 32, num_classes: int = 1000, **kwargs: Any) -> FusedMobileNet:
+def fused_mobilenet(arg_dict: dict, num_classes: int = 1000, **kwargs: Any) -> FusedMobileNet:
     inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
-    return FusedMobileNet(smooth=smooth, bit=bit, num_classes=num_classes, inverted_residual_setting=inverted_residual_setting,
-                          last_channel=last_channel, **kwargs)
+    return FusedMobileNet(inverted_residual_setting, last_channel, arg_dict, **kwargs)
 
 
 def set_fused_mobilenet(fused, pre):

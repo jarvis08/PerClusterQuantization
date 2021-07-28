@@ -42,12 +42,14 @@ def ema(x, averaged, smooth):
     return rst_min, rst_max
 
 
-def fake_quantize(x, scale, zero_point, q_max):
+def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     if q_max == 255:
         _x =  (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
     else:
         _x =  (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
-    return STE.apply(x, _x)
+    if use_ste:
+        return STE.apply(x, _x)
+    return _x
 
 
 def quantize_matrix(x, scale, zero_point, q_max=None):

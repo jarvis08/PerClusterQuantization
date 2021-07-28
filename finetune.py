@@ -37,6 +37,7 @@ def get_train_loader(args, normalizer, hvd=None):
     return train_loader
 
 
+# def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, epoch, logger):
 def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -48,6 +49,7 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
 
             input, target, cluster = get_pcq_batch(kmeans, input, target, num_partitions)
             model.set_cluster_information_of_batch(cluster.cuda())
+            # input, target = kmeans.get_pcq_batch(input, target)
 
             input, target = input.cuda(), target.cuda()
             output = model(input)
@@ -68,8 +70,7 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
 
 def get_finetuning_model(args, tools):
     pretrained_model = load_dnn_model(args, tools)
-    fused_model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth, num_clusters=args.cluster,
-                                                quant_noise=args.quant_noise, q_prob=args.q_prob)
+    fused_model = tools.fused_model_initializer(vars(args))
     fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
@@ -108,6 +109,12 @@ def _finetune(args, tools):
             kmeans_model = train_kmeans(args, train_loader)
         else:
             kmeans_model = load_kmeans_model(args.kmeans_path)
+    # pcq_tools = None
+    # if args.cluster > 1:
+    #     pcq_tools = PCQtools(args)
+    #     if not args.kmeans_path:
+    #         args.kmeans_path = set_kmeans_dir(args)
+    #         pcq_tools.train_kmeans(train_loader)
 
     if args.horovod:
         hvd.broadcast_parameters(model.state_dict(), root_rank=0)

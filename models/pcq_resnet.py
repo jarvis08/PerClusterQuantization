@@ -1,3 +1,4 @@
+from operator import itemgetter 
 import torch
 import torch.nn as nn
 
@@ -6,20 +7,16 @@ from .layers.linear import *
 from .quantization_utils import *
 
 
-def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, norm_layer=None, activation=None,
-                bit=8, smooth=0.995, num_clusters=10, quant_noise=False, q_prob=0.1):
+def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, norm_layer=None, activation=None, arg_dict=None):
     """3x3 convolution with padding"""
     return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=dilation, bias=bias, norm_layer=norm_layer, activation=activation,
-                     bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob)
+                     padding=dilation, bias=bias, norm_layer=norm_layer, activation=activation, arg_dict=arg_dict)
 
 
-def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None,
-                bit=32, smooth=0.995, num_clusters=10, quant_noise=False, q_prob=0.1):
+def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None, arg_dict=None):
     """1x1 convolution"""
     return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                     norm_layer=norm_layer, activation=activation, bit=bit, smooth=smooth,
-                     num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob)
+                     norm_layer=norm_layer, activation=activation, arg_dict=arg_dict)
 
 
 class PCQBasicBlock(nn.Module):
@@ -27,7 +24,7 @@ class PCQBasicBlock(nn.Module):
     batch_cluster = None
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 norm_layer=None, bit=32, smooth=0.995, num_clusters=10, quant_noise=False, q_prob=0.1):
+                 norm_layer=None, arg_dict=None):
         super(PCQBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -40,24 +37,19 @@ class PCQBasicBlock(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.bit = bit
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.num_clusters, self.use_ste, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.act_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
+        self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
         self.flag_fake_quantization = False
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
-        self.smooth = smooth
-        self.num_clusters = num_clusters
 
-        self.quant_noise = quant_noise
-        self.q_prob = q_prob
-
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer, activation=nn.ReLU6,
-                                 bit=bit, smooth=smooth, num_clusters=num_clusters,
-                                 quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer,
-                                 bit=bit, smooth=smooth, num_clusters=num_clusters,
-                                 quant_noise=self.quant_noise, q_prob=self.q_prob)
-        self.relu = nn.ReLU6(inplace=False)
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer,
+                                 activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer, arg_dict=arg_dict)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         identity = x
@@ -71,27 +63,29 @@ class PCQBasicBlock(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if self.training:
-            done = 0
-            _out = None
-            if self.flag_fake_quantization:
-                _out = torch.zeros(out.shape).cuda()
-            for i in range(PCQBasicBlock.batch_cluster.shape[0]):
-                c = PCQBasicBlock.batch_cluster[i][0].item()
-                n = PCQBasicBlock.batch_cluster[i][1].item()
-                if self.flag_ema_init[c]:
-                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-                    if self.flag_fake_quantization:
-                        s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max)
-                else:
-                    self.act_range[c][0] = torch.min(out).item()
-                    self.act_range[c][1] = torch.max(out).item()
-                    self.flag_ema_init[c] = True
-                done += n
-            if self.flag_fake_quantization:
-                return _out
-        return out
+        if not self.training:
+            return out
+
+        if self.flag_fake_quantization and self.use_ste:
+            _out = torch.zeros(out.shape).cuda()
+        else:
+            _out = out
+
+        done = 0
+        for i in range(PCQBasicBlock.batch_cluster.shape[0]):
+            c = PCQBasicBlock.batch_cluster[i][0].item()
+            n = PCQBasicBlock.batch_cluster[i][1].item()
+            if self.flag_ema_init[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
+                if self.flag_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+            else:
+                self.act_range[c][0] = torch.min(out).item()
+                self.act_range[c][1] = torch.max(out).item()
+                self.flag_ema_init[c] = True
+            done += n
+        return _out
 
     def set_block_fq_flag(self):
         self.flag_fake_quantization = True
@@ -116,19 +110,16 @@ class PCQBasicBlock(nn.Module):
 class PCQResNet(nn.Module):
     batch_cluster = None
 
-    def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64,
-                 replace_stride_with_dilation=None, norm_layer=None, bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1):
+    def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
+                 norm_layer=None, arg_dict=None):
         super(PCQResNet, self).__init__()
-        self.bit = bit
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.in_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
+        self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
         self.flag_fake_quantization = False
-        self.smooth = smooth
-        self.num_clusters = num_clusters
-
-        self.quant_noise = quant_noise
-        self.q_prob = q_prob
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -146,16 +137,14 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                    norm_layer=self._norm_layer, activation=nn.ReLU6, bit=bit, smooth=smooth,
-                                    num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+                                    norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = PCQLinear(512 * block.expansion, num_classes, bias=True,
-                            bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.fc = PCQLinear(512 * block.expansion, num_classes, bias=True, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -166,18 +155,15 @@ class PCQResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride,
-                                     bias=False, norm_layer=self._norm_layer,
-                                     bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+                                     bias=False, norm_layer=self._norm_layer, arg_dict=self.arg_dict)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, norm_layer=self._norm_layer,
-                            bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob))
+                            self.base_width, previous_dilation, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups,
-                                base_width=self.base_width, dilation=self.dilation, norm_layer=self._norm_layer,
-                                bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob))
+            layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
+                                dilation=self.dilation, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -251,18 +237,15 @@ class PCQResNet(nn.Module):
 class PCQResNet20(nn.Module):
     batch_cluster = None
 
-    def __init__(self, block, layers, norm_layer=None, num_classes=10, bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1):
+    def __init__(self, block, layers, arg_dict, num_classes=10, norm_layer=None):
         super(PCQResNet20, self).__init__()
-        self.bit = bit
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.in_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
+        self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
         self.flag_fake_quantization = False
-        self.smooth = smooth
-
-        self.num_clusters = num_clusters
-        self.quant_noise =quant_noise
-        self.q_prob = q_prob
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -271,27 +254,24 @@ class PCQResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, norm_layer=self._norm_layer,
-                                    activation=nn.ReLU6, bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1,
+                                    norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = PCQLinear(64 * block.expansion, num_classes,
-                            bit=self.bit, smooth=self.smooth, num_clusters=num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+        self.fc = PCQLinear(64 * block.expansion, num_classes, arg_dict=self.arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, norm_layer=self._norm_layer,
-                                     bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob)
+            downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride,
+                                     norm_layer=self._norm_layer, arg_dict=self.arg_dict)
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, norm_layer=self._norm_layer,
-                            bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob))
+        layers.append(block(self.inplanes, planes, stride, downsample, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer,
-                                bit=self.bit, smooth=self.smooth, num_clusters=self.num_clusters, quant_noise=self.quant_noise, q_prob=self.q_prob))
+            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -356,9 +336,9 @@ class PCQResNet20(nn.Module):
         _, _ = self.fc.set_qparams(prev_s, prev_z)
 
 
-def pcq_resnet18(bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1,**kwargs):
-    return PCQResNet(PCQBasicBlock, [2, 2, 2, 2], bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob,**kwargs)
+def pcq_resnet18(arg_dict, **kwargs):
+    return PCQResNet(PCQBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
 
 
-def pcq_resnet20(bit=8, smooth=0.999, num_clusters=10, quant_noise=False, q_prob=0.1):
-    return PCQResNet20(PCQBasicBlock, [3, 3, 3], bit=bit, smooth=smooth, num_clusters=num_clusters, quant_noise=quant_noise, q_prob=q_prob)
+def pcq_resnet20(arg_dict):
+    return PCQResNet20(PCQBasicBlock, [3, 3, 3], arg_dict)
