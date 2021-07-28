@@ -15,10 +15,23 @@ import logging
 from models.kmeans import get_pcq_batch
 
 
-def set_logger(path):
-    logging.basicConfig(filename=os.path.join(path, "train.log"), level=logging.DEBUG)
-    logger = logging.getLogger()
-    return logger
+class Flag(object):
+    def __init__(self, num_clusters, use_ste):
+        if num_clusters > 1:
+            self.apply_ema = np.zeros(num_clusters, dtype=bool)
+        else:
+            self.apply_ema = False
+        self.apply_fake_quantization = False
+        self.use_ste = use_ste
+
+    def set_fake_quantization(self):
+        self.apply_fake_quantization = True
+
+    def set_ema(self, cluster_num=None):
+        if cluster_num:
+            self.apply_ema[cluster_num] = True
+        else:
+            self.apply_ema = True
 
 
 class AverageMeter(object):
@@ -163,7 +176,7 @@ def load_dnn_model(args, tools):
     if args.quantized:
         model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
     elif args.fused:
-        model = tools.fused_model_initializer(bit=args.bit, smooth=args.smooth, quant_noise=args.quant_noise, q_prob=args.q_prob)
+        model = tools.fused_model_initializer(vars(args))
     else:
         if args.dataset == 'imagenet':
             if args.arch == 'MobileNetV3':
@@ -260,6 +273,12 @@ def set_save_dir(args):
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path
+
+
+def set_logger(path):
+    logging.basicConfig(filename=os.path.join(path, "train.log"), level=logging.DEBUG)
+    logger = logging.getLogger()
+    return logger
 
 
 def load_preprocessed_cifar10_from_darknet():

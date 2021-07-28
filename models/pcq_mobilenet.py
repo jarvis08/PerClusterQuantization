@@ -1,3 +1,5 @@
+from operator import itemgetter
+
 import torch
 import torch.nn as nn
 
@@ -15,22 +17,20 @@ from .mobilenet import SqueezeExcitation, InvertedResidualConfig
 
 class PCQSqueezeExcitation(nn.Module):
     # Implemented as described at Figure 4 of the MobileNetV3 paper
-    def __init__(self, input_channels: int, squeeze_factor: int = 4, smooth: float = 0.999, bit: int = 32, num_clusters=10):
+    def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
-        self.flag_ema_init = False
-        self.act_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
-        self.smooth = smooth
-        self.bit = bit
+        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+
+        self.flag_ema_init = False
         self.flag_fake_quantization = False
-        self.num_clusters= num_clusters
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        self.fc1 = PCQConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, activation=nn.ReLU, smooth=smooth, bit=bit,
-                                num_clusters=num_clusters)
-        self.fc2 = PCQConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, smooth=smooth, bit=bit,
-                                num_clusters=num_clusters)
-        self.QAct = PCQActivation(activation=nn.Hardsigmoid, bit=bit, smooth=smooth, num_clusters=num_clusters)
+        self.fc1 = PCQConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
+                             activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc2 = PCQConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, arg_dict=arg_dict)
+        self.QAct = PCQActivation(activation=nn.Hardsigmoid, arg_dict=arg_dict)
 
     def _scale(self, x, inplace: bool):
         _x = x[0]
@@ -85,18 +85,18 @@ class PCQSqueezeExcitation(nn.Module):
 
 class PCQInvertedResidual(nn.Module):
     # Implemented as described at section 5 of MobileNetV3 paper
-    def __init__(self, cnf: InvertedResidualConfig, norm_layer: Callable[..., nn.Module], smooth: float = 0.999, bit: int = 32, num_clusters=10):
+    def __init__(self, cnf: InvertedResidualConfig, norm_layer: Callable[..., nn.Module], arg_dict=None):
         super().__init__()
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
-
-        self.smooth = smooth
-        self.bit = bit
+        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.num_clusters = num_clusters
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
+        self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
         self.flag_fake_quantization = False
-        self.act_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
+
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
         layers: List[nn.Module] = []
@@ -105,26 +105,25 @@ class PCQInvertedResidual(nn.Module):
         # expand
         if cnf.expanded_channels != cnf.input_channels:
             layers.append(PCQConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
-                                      norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit,
-                                      num_clusters=num_clusters))
+                                      norm_layer=norm_layer, activation=activation, arg_dict=arg_dict))
             if cnf.use_hs:
-                layers.append(PCQActivation(activation=nn.Hardswish, smooth=smooth, bit=bit, num_clusters=num_clusters))
+                layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
             
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(PCQConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
-                                  padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
-                                  norm_layer=norm_layer, activation=activation, smooth=smooth, bit=bit,
-                                  num_clusters=num_clusters))
+                                padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation,
+                                groups=cnf.expanded_channels, norm_layer=norm_layer,
+                                activation=activation, arg_dict=arg_dict))
         if cnf.use_hs:
-            layers.append(PCQActivation(activation=nn.Hardswish, smooth=smooth, bit=bit, num_clusters=num_clusters))
+            layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
         
         if cnf.use_se:
-            layers.append(PCQSqueezeExcitation(cnf.expanded_channels, bit=bit, smooth=smooth, num_clusters=num_clusters))
+            layers.append(PCQSqueezeExcitation(cnf.expanded_channels, arg_dict=arg_dict))
 
         # project
-        layers.append(PCQConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1, norm_layer=norm_layer, smooth=smooth, bit=bit,
-                                num_clusters=num_clusters))
+        layers.append(PCQConv2d(cnf.expanded_channels, cnf.out_channels, kernel_size=1,
+                                norm_layer=norm_layer, arg_dict=arg_dict))
 
         self.block = nn.Sequential(*layers)
         self.out_channels = cnf.out_channels
@@ -182,23 +181,20 @@ class PCQMobileNet(nn.Module):
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
+            arg_dict: dict,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
             norm_layer: Optional[Callable[..., nn.Module]] = None,
-            smooth: float = 0.999,
-            bit: int = 32,
             dilation: int = 1,
-            num_clusters: int = 10,
             **kwargs: Any
     ) -> None:
         super().__init__()
-        self.bit = bit
-        self.in_range = nn.Parameter(torch.zeros(num_clusters, 2), requires_grad=False)
-        self.flag_ema_init = np.zeros(num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
-        self.smooth = smooth
+        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.num_clusters = num_clusters
+        self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
+        self.flag_fake_quantization = False
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -217,26 +213,26 @@ class PCQMobileNet(nn.Module):
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
         layers.append(PCQConv2d(3, firstconv_output_channels, kernel_size=3, padding=1, stride=2,
-                                  norm_layer=norm_layer, smooth=smooth, bit=bit, num_clusters=num_clusters))
-        layers.append(PCQActivation(activation=nn.Hardswish, smooth=smooth, bit=bit, num_clusters=num_clusters))
+                                  norm_layer=norm_layer, arg_dict=arg_dict))
+        layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         # building inverted residual blocks
         for cnf in inverted_residual_setting:
-            layers.append(block(cnf, norm_layer, bit=bit, smooth=smooth, num_clusters=num_clusters))
+            layers.append(block(cnf, norm_layer, arg_dict=arg_dict))
 
         # building last several layers
         lastconv_input_channels = inverted_residual_setting[-1].out_channels
         lastconv_output_channels = 6 * lastconv_input_channels
         layers.append(PCQConv2d(lastconv_input_channels, lastconv_output_channels, kernel_size=1,
-                                  norm_layer=norm_layer, smooth=smooth, bit=bit, num_clusters=num_clusters))
-        layers.append(PCQActivation(activation=nn.Hardswish, smooth=smooth, bit=bit, num_clusters=num_clusters))
+                                norm_layer=norm_layer, arg_dict=arg_dict))
+        layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         self.features = nn.Sequential(*layers)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            PCQLinear(lastconv_output_channels, last_channel, bit=bit, smooth=smooth, num_clusters=num_clusters),
-            PCQActivation(activation=nn.Hardswish, smooth=smooth, bit=bit, num_clusters=num_clusters),
-            PCQLinear(last_channel, num_classes, bit=bit, smooth=smooth, num_clusters=num_clusters)
+            PCQLinear(lastconv_output_channels, last_channel, arg_dict=arg_dict),
+            PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict),
+            PCQLinear(last_channel, num_classes, arg_dict=arg_dict)
         )
 
         for m in self.modules():
@@ -342,10 +338,9 @@ def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dila
     return inverted_residual_setting, last_channel
 
 
-def pcq_mobilenet(smooth: float = 0.999, bit: int = 32, num_classes: int = 1000, num_clusters=10, **kwargs: Any) -> FusedMobileNet:
+def pcq_mobilenet(arg_dict: dict, num_classes: int = 1000, **kwargs: Any) -> PCQMobileNet:
     inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
-    return PCQMobileNet(smooth=smooth, bit=bit, num_classes=num_classes, inverted_residual_setting=inverted_residual_setting,
-                          last_channel=last_channel, num_clusters=num_clusters, **kwargs)
+    return PCQMobileNet(inverted_residual_setting, last_channel, arg_dict, num_classes=num_classes, **kwargs)
 
 
 # def set_fused_mobilenet(fused, pre):

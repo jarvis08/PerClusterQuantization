@@ -7,12 +7,12 @@ from copy import deepcopy
 
 class STE(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, origin_inputs, wanted_inputs):
-        return wanted_inputs.detach()
+    def forward(ctx, original, modified):
+        return modified.detach()
 
     @staticmethod
-    def backward(ctx, grad_outputs):
-        return grad_outputs, None
+    def backward(ctx, grad):
+        return grad, None
 
 
 class QuantizationTool(object):
@@ -42,11 +42,14 @@ def ema(x, averaged, smooth):
     return rst_min, rst_max
 
 
-def fake_quantize(x, scale, zero_point, q_max):
+def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     if q_max == 255:
-        return (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
+        _x = (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
     else:
-        return (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
+        _x = (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
+    if use_ste:
+        return STE.apply(x, _x)
+    return _x
 
 
 def quantize_matrix(x, scale, zero_point, q_max=None):
