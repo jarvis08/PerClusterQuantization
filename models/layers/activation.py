@@ -15,7 +15,7 @@ class QActivation(nn.Module):
         self.bit = bit
         self.q_max = 2 ** bit - 1
         self.flag_ema_init = False
-        self.flag_fake_quantization = True
+        self.flag_fake_quantization = False
         self.smooth = smooth
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self._activation = activation(inplace=False)

@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
+# import time
 
 from ..quant_noise import _quant_noise
 from ..quantization_utils import *
@@ -132,30 +133,38 @@ class QuantizedConv2d(nn.Conv2d):
         filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
+        # start = time.time()
         for output_ch in range(filter_batch):
             sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
-
+        # print("\nAdd bias\t", time.time() - start, "\n")
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
         sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
 
-        for output_ch in range(0, filter_batch):
+        # start = time.time()
+        for output_ch in range(filter_batch):
             sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
-
-        for o_col in range(0, output_col):
-            for o_row in range(0, output_row):
+        # print("\nMul z1\t", time.time() - start, "\n")
+        # start = time.time()
+        for o_col in range(output_col):
+            for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
+                sum_a1[:, :, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
+        # print("\nmul z2\t", time.time() - start, "\n")
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sum_q1q2 = sum_q1q2.add(nz1z2)
 
-        for i_batch in range(0, input_batch):
+        # start = time.time()
+        for i_batch in range(input_batch):
             sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
-        for out_c in range(0, filter_batch):
+        # print("\nsub a1\t", time.time() - start, "\n")
+        start = time.time()
+        for out_c in range(filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
-
+        # print("\sub a2\t", time.time() - start, "\n")
+        # exit()
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
             total = shifting(multiplied, 0)

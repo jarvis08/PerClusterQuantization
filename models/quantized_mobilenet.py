@@ -8,6 +8,7 @@ from .mobilenet import _mobilenet_v3_conf, InvertedResidualConfig
 from .fused_mobilenet import FusedSqueezeExcitation
 from torchvision.models.mobilenetv2 import _make_divisible
 import torch.nn.quantized.functional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 
 class QuantizedSqueezeExcitation(nn.Module):
