@@ -12,26 +12,21 @@ from datetime import datetime
 import json
 import logging
 
-from models.kmeans import get_pcq_batch
 
-
-class Flag(object):
-    def __init__(self, num_clusters, use_ste):
-        if num_clusters > 1:
-            self.apply_ema = np.zeros(num_clusters, dtype=bool)
-        else:
-            self.apply_ema = False
+class RuntimeHelper(object):
+    """
+        apply_fake_quantization : Flag used in layers
+        batch_cluster_info      : Cluster information of current batch
+        kmeans                  : Trined K-Means Algorithm Object
+    """
+    def __init__(self):
         self.apply_fake_quantization = False
-        self.use_ste = use_ste
+        self.batch_cluster = None
+        self.kmeans = None
 
-    def set_fake_quantization(self):
-        self.apply_fake_quantization = True
-
-    def set_ema(self, cluster_num=None):
-        if cluster_num:
-            self.apply_ema[cluster_num] = True
-        else:
-            self.apply_ema = True
+    def get_pcq_batch(self, input, target):
+        input, target, self.batch_cluster = self.kmeans.get_batch(input, target)
+        return input, target
 
 
 class AverageMeter(object):
@@ -124,7 +119,7 @@ def validate(model, test_loader, criterion, logger=None):
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, kmeans, num_partitions, logger=None):
+def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -134,9 +129,7 @@ def pcq_validate(model, test_loader, criterion, kmeans, num_partitions, logger=N
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
 
-                input, target, cluster = get_pcq_batch(kmeans, input, target, num_partitions)
-                model.set_cluster_information_of_batch(cluster.cuda())
-
+                input, target = runtime_helper.get_pcq_batch(input, target)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)

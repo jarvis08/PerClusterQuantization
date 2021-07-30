@@ -37,8 +37,7 @@ def get_train_loader(args, normalizer, hvd=None):
     return train_loader
 
 
-# def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, epoch, logger):
-def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions, epoch, logger):
+def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -47,12 +46,10 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
-            input, target, cluster = get_pcq_batch(kmeans, input, target, num_partitions)
-            model.set_cluster_information_of_batch(cluster.cuda())
-            # input, target = kmeans.get_pcq_batch(input, target)
-
+            input, target = runtime_helper.get_pcq_batch(input, target)
             input, target = input.cuda(), target.cuda()
             output = model(input)
+
             loss = criterion(output, target)
             prec = accuracy(output, target)[0]
             losses.update(loss.item(), input.size(0))
@@ -68,16 +65,18 @@ def pcq_epoch(model, train_loader, criterion, optimizer, kmeans, num_partitions,
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def get_finetuning_model(args, tools):
+def get_finetuning_model(args, tools, runtime_helper):
     pretrained_model = load_dnn_model(args, tools)
-    fused_model = tools.fused_model_initializer(vars(args))
+    arg_dict = deepcopy(vars(args))
+    if runtime_helper:
+        arg_dict['runtime_helper'] = runtime_helper
+    fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
 
 def _finetune(args, tools):
     normalizer = get_normalizer(args.dataset)
-
     if args.horovod:
         import horovod.torch as hvd
         hvd.init()
@@ -88,7 +87,9 @@ def _finetune(args, tools):
         train_loader = get_train_loader(args, normalizer)
     test_loader = get_test_loader(args, normalizer)
 
-    model = get_finetuning_model(args, tools)
+    runtime_helper = RuntimeHelper()
+
+    model = get_finetuning_model(args, tools, runtime_helper)
     model.cuda()
     model.eval()
     if args.dataset == 'imagenet':
@@ -103,19 +104,14 @@ def _finetune(args, tools):
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     cudnn.benchmark = True
 
-    kmeans_model = None
     if args.cluster > 1:
+        kmeans = KMeans(args)
         if not args.kmeans_path:
             args.kmeans_path = set_kmeans_dir(args)
-            kmeans_model = train_kmeans(args, train_loader)
+            kmeans.train_kmeans_model(train_loader)
         else:
-            kmeans_model = load_kmeans_model(args.kmeans_path)
-    # pcq_tools = None
-    # if args.cluster > 1:
-    #     pcq_tools = PCQtools(args)
-    #     if not args.kmeans_path:
-    #         args.kmeans_path = set_kmeans_dir(args)
-    #         pcq_tools.train_kmeans(train_loader)
+            kmeans.load_kmeans_model()
+        runtime_helper.kmeans = kmeans
 
     if args.horovod:
         hvd.broadcast_parameters(model.state_dict(), root_rank=0)
@@ -126,10 +122,10 @@ def _finetune(args, tools):
     best_score_int = 0
     for e in range(1, args.epoch + 1):
         if e > args.fq:
-           model.start_fake_quantization()
+            runtime_helper.apply_fake_quantization = True
 
-        if kmeans_model:
-            pcq_epoch(model, train_loader, criterion, optimizer, kmeans_model, args.partition, e, logger)
+        if args.cluster > 1:
+            pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
@@ -143,7 +139,7 @@ def _finetune(args, tools):
         save_checkpoint(state, False, save_path_fp)
 
         # Test quantized model, and save if performs the best
-        if e > args.fq:
+        if e >= args.fq:
             if tools.folder:
                 folded_model = tools.folder(deepcopy(model))
             else:
@@ -154,8 +150,8 @@ def _finetune(args, tools):
             quantized_model.cuda()
             del folded_model
 
-            if kmeans_model:
-                val_score = pcq_validate(quantized_model, test_loader, criterion, kmeans_model, args.partition, logger)
+            if args.cluster > 1:
+                val_score = pcq_validate(quantized_model, test_loader, criterion, runtime_helper, logger)
             else:
                 val_score = validate(quantized_model, test_loader, criterion, logger)
 
