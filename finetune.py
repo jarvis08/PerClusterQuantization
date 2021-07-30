@@ -72,7 +72,7 @@ def get_finetuning_model(args, tools, runtime_helper):
         arg_dict['runtime_helper'] = runtime_helper
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
-    return fused_model
+    return fused_model, arg_dict
 
 
 def _finetune(args, tools):
@@ -89,7 +89,7 @@ def _finetune(args, tools):
 
     runtime_helper = RuntimeHelper()
 
-    model = get_finetuning_model(args, tools, runtime_helper)
+    model, arg_dict = get_finetuning_model(args, tools, runtime_helper)
     model.cuda()
     model.eval()
     if args.dataset == 'imagenet':
@@ -139,13 +139,13 @@ def _finetune(args, tools):
         save_checkpoint(state, False, save_path_fp)
 
         # Test quantized model, and save if performs the best
-        if e >= args.fq:
+        if e > args.fq:
             if tools.folder:
                 folded_model = tools.folder(deepcopy(model))
             else:
                 folded_model = deepcopy(model)
             folded_model.set_quantization_params()
-            quantized_model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+            quantized_model = tools.quantized_model_initializer(arg_dict)
             quantized_model = tools.quantizer(folded_model, quantized_model)
             quantized_model.cuda()
             del folded_model
