@@ -177,7 +177,7 @@ def _quant_noise(module, p, block_size, q_max):
             # mod.weight.data = s * weight.masked_fill(mask, 0)
 
 
-            quantized_weight = fake_quantize(quantized_weight, s, z, q_max=q_max)
+            quantized_weight = fake_quantize(quantized_weight, s, z, q_max=q_max, use_ste=True)
             mod.weight.data = nn.Parameter(quantized_weight + unquantized_weight)
 
     module.register_forward_pre_hook(_forward_pre_hook)

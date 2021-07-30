@@ -11,13 +11,12 @@ class PCQAlexNet(nn.Module):
 
     def __init__(self, arg_dict: dict, num_classes: int = 1000) -> None:
         super(PCQAlexNet, self).__init__()
-        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -38,20 +37,20 @@ class PCQAlexNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(PCQAlexNet.batch_cluster.shape[0]):
-                c = PCQAlexNet.batch_cluster[i][0]
-                n = PCQAlexNet.batch_cluster[i][1]
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
                 if c == -1:
                     break
-                if self.flag_ema_init[c]:
+                if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.flag_fake_quantization:
+                    if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
-                    self.flag_ema_init[c] = True
+                    self.apply_ema[c] = True
                 done += n
 
         x = self.conv1(x)
@@ -68,23 +67,6 @@ class PCQAlexNet(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         return x
-
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        PCQConv2d.batch_cluster = info
-        PCQLinear.batch_cluster = info
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
-        self.conv3.flag_fake_quantization = True
-        self.conv4.flag_fake_quantization = True
-        self.conv5.flag_fake_quantization = True
-        self.fc1.flag_fake_quantization = True
-        self.fc2.flag_fake_quantization = True
-        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -103,12 +85,12 @@ class PCQAlexNetSmall(nn.Module):
 
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(PCQAlexNetSmall, self).__init__()
-        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -129,18 +111,18 @@ class PCQAlexNetSmall(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             done = 0
-            for i in range(PCQAlexNetSmall.batch_cluster.shape[0]):
-                c = PCQAlexNetSmall.batch_cluster[i][0].item()
-                n = PCQAlexNetSmall.batch_cluster[i][1].item()
-                if self.flag_ema_init[c]:
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
+                if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.flag_fake_quantization:
+                    if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x[done:done + n]).item()
                     self.in_range[c][1] = torch.max(x[done:done + n]).item()
-                    self.flag_ema_init[c] = True
+                    self.apply_ema[c] = True
                 done += n
 
         x = self.conv1(x)
@@ -157,23 +139,6 @@ class PCQAlexNetSmall(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         return x
-
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        PCQConv2d.batch_cluster = info
-        PCQLinear.batch_cluster = info
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
-        self.conv3.flag_fake_quantization = True
-        self.conv4.flag_fake_quantization = True
-        self.conv5.flag_fake_quantization = True
-        self.fc1.flag_fake_quantization = True
-        self.fc2.flag_fake_quantization = True
-        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)

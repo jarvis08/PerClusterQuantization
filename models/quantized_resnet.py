@@ -1,4 +1,5 @@
-import numpy as np
+from operator import itemgetter
+
 import torch
 import torch.nn as nn
 
@@ -6,25 +7,22 @@ from .layers import *
 from .quantization_utils import *
 
 
-def quantized_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, bit=8, num_clusters=1):
+def quantized_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, arg_dict=None):
     """3x3 convolution with padding"""
-    return QuantizedConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                           padding=dilation, groups=groups, dilation=dilation, bias=bias,
-                           bit=bit, num_clusters=num_clusters)
+    return QuantizedConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,
+                           groups=groups, dilation=dilation, bias=bias, arg_dict=arg_dict)
 
 
-def quantized_conv1x1(in_planes, out_planes, stride=1, bias=False, bit=8, num_clusters=1):
+def quantized_conv1x1(in_planes, out_planes, stride=1, bias=False, arg_dict=None):
     """1x1 convolution"""
-    return QuantizedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                           bit=bit, num_clusters=num_clusters)
+    return QuantizedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias, arg_dict=arg_dict)
 
 
 class QuantizedBasicBlock(nn.Module):
     expansion = 1
-    batch_cluster = None
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 bit=8, num_clusters=1, arg_dict:dict = None):
+                 arg_dict:dict = None):
         super(QuantizedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -34,14 +32,11 @@ class QuantizedBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.bit = bit
+        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
 
-        self.num_clusters = num_clusters
-        self.batch_cluster = None
-
-        self.conv1 = quantized_conv3x3(inplanes, planes, stride, bias=False, bit=bit, num_clusters=num_clusters)
-        self.conv2 = quantized_conv3x3(planes, planes, bias=False, bit=bit, num_clusters=num_clusters)
-        self.shortcut = QuantizedAdd(bit=bit, num_clusters=num_clusters)
+        self.conv1 = quantized_conv3x3(inplanes, planes, stride, bias=False, arg_dict=arg_dict)
+        self.conv2 = quantized_conv3x3(planes, planes, bias=False, arg_dict=arg_dict)
+        self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
@@ -61,7 +56,7 @@ class QuantizedBottleneck(nn.Module):
     batch_cluster = None
     def __init__(self, inplane: int, planes: int, stride: int = 1, downsample=None,
                  groups: int = 1, base_width: int = 64, dilation: int = 1,
-                 norm_layer=None, arg_dict:dict=None) -> None:
+                 arg_dict:dict=None) -> None:
         super(QuantizedBottleneck, self).__init__()
 
         self.downsample = downsample
@@ -75,29 +70,37 @@ class QuantizedBottleneck(nn.Module):
 
         width = int(planes * (base_width/64.)) * groups
         self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, stride=stride, bias=False,
-                                       bit=self.bit, num_clusters=self.num_clusters)
+                                       arg_dict=arg_dict)
         self.conv2 = quantized_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                       bias=False, bit=self.bit, num_clusters=self.num_clusters)
+                                       bias=False, arg_dict=arg_dict)
         self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes *self.expansion,
-                                       bias=False, bit=self.bit, num_clusters=self.num_clusters)
+                                       bias=False, arg_dict=arg_dict)
+        self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
-        out = self.conv2(x)
-        out = self.conv3(x)
+        out = self.conv2(out)
+        out = self.conv3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out = self.shortcut(identity, out)
+
+        return out
 
 
 class QuantizedResNet18(nn.Module):
-    batch_cluster = None
-
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, bit=8, num_clusters=1):
+    def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(QuantizedResNet18, self).__init__()
-        self.bit = bit
-        self.num_clusters = num_clusters
-        t_init = list(range(num_clusters)) if num_clusters > 1 else 0
+        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.q_max = 2 ** self.bit - 1
+        self.arg_dict = arg_dict
+
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
@@ -114,14 +117,14 @@ class QuantizedResNet18(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                          bit=bit, num_clusters=num_clusters)
-        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, num_clusters=num_clusters)
+                                          arg_dcit=arg_dict)
+        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dcit=arg_dict)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = QuantizedLinear(512 * block.expansion, num_classes, bias=False, bit=bit, num_clusters=num_clusters)
+        self.fc = QuantizedLinear(512 * block.expansion, num_classes, bias=False, arg_dcit=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -132,24 +135,24 @@ class QuantizedResNet18(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                           bit=self.bit, num_clusters=self.num_clusters)
+                                           arg_dict=self.arg_dict)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, bit=self.bit, num_clusters=self.num_clusters))
+                            self.base_width, previous_dilation, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups,
                                 base_width=self.base_width, dilation=self.dilation,
-                                bit=self.bit, num_clusters=self.num_clusters))
+                                arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.batch_cluster is not None:
+        if self.runtime_helper.batch_cluster is not None:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
@@ -166,26 +169,15 @@ class QuantizedResNet18(nn.Module):
         x = self.fc(x)
         return x
 
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        QuantizedBasicBlock.batch_cluster = info
-        # QuantizedBottleneck.batch_cluster = info
-        QuantizedConv2d.batch_cluster = info
-        QuantizedLinear.batch_cluster = info
-        QuantizedMaxPool2d.batch_cluster = info
-        QuantizedAdd.batch_cluster = info
-
 
 class QuantizedResNet20(nn.Module):
-    batch_cluster = None
-
-    def __init__(self, block, layers, num_classes=10, bit=8, num_clusters=1):
+    def __init__(self, block, layers, arg_dict, num_classes=10):
         super(QuantizedResNet20, self).__init__()
-        self.bit = bit
-        self.q_max = 2 ** bit - 1
-        self.num_clusters = num_clusters
-        t_init = list(range(num_clusters)) if num_clusters > 1 else 0
+        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.q_max = 2 ** self.bit - 1
+        self.arg_dict = arg_dict
+
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
@@ -194,32 +186,32 @@ class QuantizedResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False,
-                                          bit=bit, num_clusters=num_clusters)
+                                          arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = QuantizedLinear(64 * block.expansion, num_classes, bias=False, bit=bit, num_clusters=num_clusters)
+        self.fc = QuantizedLinear(64 * block.expansion, num_classes, bias=False, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                           bit=self.bit, num_clusters=self.num_clusters)
+                                           arg_dict=self.arg_dict)
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, bit=self.bit, num_clusters=self.num_clusters))
+        layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, bit=self.bit, num_clusters=self.num_clusters))
+            layers.append(block(self.inplanes, planes, arg_dict=self.arg_dict))
 
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.batch_cluster is not None:
+        if self.runtime_helper.batch_cluster is not None:
             done = 0
-            for i in range(self.batch_cluster.shape[0]):
-                c = self.batch_cluster[i][0].item()
-                n = self.batch_cluster[i][1].item()
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
@@ -240,23 +232,16 @@ class QuantizedResNet20(nn.Module):
         x = self.fc(x)
         return x
 
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        QuantizedBasicBlock.batch_cluster = info
-        QuantizedConv2d.batch_cluster = info
-        QuantizedLinear.batch_cluster = info
-        QuantizedMaxPool2d.batch_cluster = info
-        QuantizedAdd.batch_cluster = info
+
+def quantized_resnet18(arg_dict, **kwargs):
+    return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
 
 
-def quantized_resnet18(bit=8, num_clusters=1, **kwargs):
-    return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], bit=bit, num_clusters=num_clusters, **kwargs)
+def quantized_resnet20(arg_dict):
+    return QuantizedResNet20(QuantizedBasicBlock, [3, 3, 3], arg_dict)
 
-
-def quantized_resnet20(bit=8, num_clusters=1):
-    return QuantizedResNet20(QuantizedBasicBlock, [3, 3, 3], bit=bit, num_clusters=num_clusters)
-
+def quantized_resnet50(arg_dict, **kwargs):
+    return QuantizedResNet18(QuantizedBottleneck, [3, 4, 6, 3], arg_dict, **kwargs)
 
 def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
     m.s_bypass = nn.Parameter(s_bypass, requires_grad=False)

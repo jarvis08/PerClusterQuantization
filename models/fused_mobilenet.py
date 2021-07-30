@@ -19,13 +19,12 @@ class FusedSqueezeExcitation(nn.Module):
     # Implemented as described at Figure 4 of the MobileNetV3 paper
     def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
-        self.bit, self.smooth, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
+        self.apply_ema = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
         self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
@@ -44,23 +43,17 @@ class FusedSqueezeExcitation(nn.Module):
         scale = self._scale(input, True)
         x = scale * input
         if self.training:
-            if self.flag_ema_init:
+            if self.apply_ema:
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                     with torch.no_grad():
                         x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(x).item()
                 self.act_range[1] = torch.max(x).item()
-                self.flag_ema_init = True
+                self.apply_ema = True
         return x
-
-    def set_squeeze_fq(self):
-        self.flag_fake_quantization = True
-        self.fc1.flag_fake_quantization = True
-        self.fc2.flag_fake_quantization = True
-        self.QAct.flag_fake_quantization = True
 
     def set_squeeze_qparams(self, s1, z1):
         self.s1, self.z1 = s1, z1
@@ -77,12 +70,12 @@ class InvertedResidual(nn.Module):
         super().__init__()
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
-        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper =\
+                itemgetter('bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
+        self.apply_ema = False
 
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
@@ -122,25 +115,17 @@ class InvertedResidual(nn.Module):
             result += input
 
         if self.training:
-            if self.flag_ema_init:
+            if self.apply_ema:
                 self.act_range[0], self.act_range[1] = ema(result, self.act_range, self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                     with torch.no_grad():
                         result.copy_(fake_quantize(result, s, z, self.q_max))
             else:
                 self.act_range[0] = torch.min(result).item()
                 self.act_range[1] = torch.max(result).item()
-                self.flag_ema_init = True
+                self.apply_ema = True
         return result
-
-    def set_block_fq(self):
-        self.flag_fake_quantization = True
-        for i in range(len(self.block)):
-            if isinstance(self.block[i], FusedSqueezeExcitation):
-                self.block[i].set_squeeze_fq()
-            else:
-                self.block[i].flag_fake_quantization = True
 
     def set_block_qparams(self, s1, z1):
         prev_s, prev_z = self.block[0].set_qparams(s1, z1)
@@ -166,13 +151,12 @@ class FusedMobileNet(nn.Module):
             **kwargs: Any
     ) -> None:
         super().__init__()
-        self.bit, self.smooth, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_fake_quantization = False
-        self.flag_ema_init = False
+        self.apply_ema = False
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -213,30 +197,18 @@ class FusedMobileNet(nn.Module):
             FusedLinear(last_channel, num_classes, arg_dict=arg_dict)
         )
 
-        for m in self.modules():
-            if isinstance(m, FusedConv2d):
-                nn.init.kaiming_normal_(m.conv.weight, mode='fan_out')
-                if m.conv.bias is not None:
-                    nn.init.zeros_(m.conv.bias)
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
-            elif isinstance(m, FusedLinear):
-                nn.init.normal_(m.fc.weight, 0, 0.01)
-                nn.init.zeros_(m.fc.bias)
-
     def _forward_impl(self, x: Tensor) -> Tensor:
         if self.training:
-            if self.flag_ema_init:
+            if self.apply_ema:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     with torch.no_grad():
                         x.copy_(fake_quantize(x, s, z, self.q_max))
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.flag_ema_init = True
+                self.apply_ema = True
 
         x = self.features(x)
 
@@ -248,24 +220,6 @@ class FusedMobileNet(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
-
-    def show_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.show_params()
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.features[0].flag_fake_quantization = True
-        self.features[1].flag_fake_quantization = True
-        for feature_idx in range(2, len(self.features)-2):
-            self.features[feature_idx].set_block_fq()
-
-        self.features[-2].flag_fake_quantization = True
-        self.features[-1].flag_fake_quantization = True
-
-        for idx in range(len(self.classifier)):
-            self.classifier[idx].flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)

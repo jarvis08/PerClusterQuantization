@@ -23,10 +23,11 @@ def _evaluate(args, tools):
         darknet_loader = load_preprocessed_cifar10_from_darknet()
         validate_darknet_dataset(model, darknet_loader, criterion)
     elif args.cluster > 1:
-        kmeans_model = load_kmeans_model(args.kmeans_path)
+        kmeans = KMeans(args)
+        kmeans.load_kmeans_model()
         normalizer = get_normalizer(args.dataset)
         test_loader = get_test_loader(args, normalizer)
-        pcq_validate(model, test_loader, criterion, kmeans_model, args.partition)
+        pcq_validate(model, test_loader, criterion, args.partition)
     else:
         normalizer = get_normalizer(args.dataset)
         test_loader = get_test_loader(args, normalizer)

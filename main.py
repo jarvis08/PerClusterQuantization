@@ -88,7 +88,7 @@ def set_func_for_target_arch(arch, is_pcq):
                 setattr(tools, 'fused_model_initializer', pcq_resnet50)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet50)
-            setattr(tools, 'quantized_model_initializer', quantized_resnet18)
+            setattr(tools, 'quantized_model_initializer', quantized_resnet50)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
