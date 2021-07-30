@@ -9,12 +9,11 @@ from .quantization_utils import *
 class FusedAlexNet(nn.Module):
     def __init__(self, arg_dict: dict, num_classes: int = 1000) -> None:
         super(FusedAlexNet, self).__init__()
-        self.bit, self.smooth = itemgetter('bit', 'smooth')(arg_dict)
+        self.bit, self.smooth, self.runtime_helper = itemgetter('bit', 'smooth', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
+        self.apply_ema = False
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -34,15 +33,15 @@ class FusedAlexNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            if self.flag_ema_init:
+            if self.apply_ema:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.flag_ema_init = True
+                self.apply_ema = True
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -59,17 +58,6 @@ class FusedAlexNet(nn.Module):
         x = self.fc3(x)
         return x
 
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
-        self.conv3.flag_fake_quantization = True
-        self.conv4.flag_fake_quantization = True
-        self.conv5.flag_fake_quantization = True
-        self.fc1.flag_fake_quantization = True
-        self.fc2.flag_fake_quantization = True
-        self.fc3.flag_fake_quantization = True
-
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
@@ -85,12 +73,12 @@ class FusedAlexNet(nn.Module):
 class FusedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(FusedAlexNetSmall, self).__init__()
-        self.bit, self.smooth = itemgetter('bit', 'smooth')(arg_dict)
+        self.bit, self.smooth, self.runtime_helper = itemgetter('bit', 'smooth', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
+        self.apply_ema = False
+        self.apply_fake_quantization = False
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -110,15 +98,15 @@ class FusedAlexNetSmall(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            if self.flag_ema_init:
+            if self.apply_ema:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.flag_ema_init = True
+                self.apply_ema = True
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -134,17 +122,6 @@ class FusedAlexNetSmall(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         return x
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
-        self.conv3.flag_fake_quantization = True
-        self.conv4.flag_fake_quantization = True
-        self.conv5.flag_fake_quantization = True
-        self.fc1.flag_fake_quantization = True
-        self.fc2.flag_fake_quantization = True
-        self.fc3.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)

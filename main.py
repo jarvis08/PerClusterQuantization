@@ -23,7 +23,8 @@ parser.add_argument('--fused', default=False, type=bool, help="Evaluate fine-tun
 parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quantized model")
 
 parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through Estimator in Fake Quantization")
-parser.add_argument('--fq', default=0, type=int, help='Epoch to wait for Fake Quantization')
+parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-quantize activations.'
+                                                      ' PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
 
