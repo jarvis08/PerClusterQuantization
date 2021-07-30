@@ -16,18 +16,16 @@ from .mobilenet import InvertedResidualConfig
 
 
 class PCQSqueezeExcitation(nn.Module):
-    batch_cluster = None
     # Implemented as described at Figure 4 of the MobileNetV3 paper
     def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'cluster', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
         self.fc1 = PCQConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
@@ -49,32 +47,26 @@ class PCQSqueezeExcitation(nn.Module):
         if not self.training:
             return out
 
-        if self.flag_fake_quantization and self.use_ste:
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
             _out = torch.zeros(out.shape).cuda()
         else:
             _out = out
 
         done = 0
-        for i in range(PCQSqueezeExcitation.batch_cluster.shape[0]):
-            c = PCQSqueezeExcitation.batch_cluster[i][0].item()
-            n = PCQSqueezeExcitation.batch_cluster[i][1].item()
-            if self.flag_ema_init[c]:
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
                     _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(out).item()
                 self.act_range[c][1] = torch.max(out).item()
-                self.flag_ema_init[c] = True
+                self.apply_ema[c] = True
             done += n
         return _out
-
-    def set_squeeze_fq(self):
-        self.flag_fake_quantization = True
-        self.fc1.flag_fake_quantization = True
-        self.fc2.flag_fake_quantization = True
-        self.QAct.flag_fake_quantization = True
 
     def set_squeeze_qparams(self, s1, z1):
         prev_s, prev_z = self.fc1.set_qparams(s1, z1)
@@ -89,20 +81,18 @@ class PCQSqueezeExcitation(nn.Module):
 
 
 class PCQInvertedResidual(nn.Module):
-    batch_cluster = None
     # Implemented as described at section 5 of MobileNetV3 paper
     def __init__(self, cnf: InvertedResidualConfig, norm_layer: Callable[..., nn.Module], arg_dict=None):
         super().__init__()
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'cluster', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
@@ -145,34 +135,26 @@ class PCQInvertedResidual(nn.Module):
         if not self.training:
             return out
 
-        if self.flag_fake_quantization and self.use_ste:
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
             _out = torch.zeros(out.shape).cuda()
         else:
             _out = out
 
         done = 0
-        for i in range(PCQInvertedResidual.batch_cluster.shape[0]):
-            c = PCQInvertedResidual.batch_cluster[i][0].item()
-            n = PCQInvertedResidual.batch_cluster[i][1].item()
-            if self.flag_ema_init[c]:
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
                     _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(out).item()
                 self.act_range[c][1] = torch.max(out).item()
-                self.flag_ema_init[c] = True
+                self.apply_ema[c] = True
             done += n
         return _out
-
-    def set_block_fq(self):
-        self.flag_fake_quantization = True
-        for i in range(len(self.block)):
-            if isinstance(self.block[i], PCQSqueezeExcitation):
-                self.block[i].set_squeeze_fq()
-            else:
-                self.block[i].flag_fake_quantization = True
 
     def set_block_qparams(self, s1, z1):
         prev_s, prev_z = self.block[0].set_qparams(s1, z1)
@@ -189,12 +171,11 @@ class PCQInvertedResidual(nn.Module):
 
 
 class PCQMobileNet(nn.Module):
-    batch_cluster = None
     def __init__(
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
-            arg_dict: dict,
+            arg_dict: dict = None,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
             norm_layer: Optional[Callable[..., nn.Module]] = None,
@@ -203,14 +184,13 @@ class PCQMobileNet(nn.Module):
     ) -> None:
         super(PCQMobileNet, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.dilation = dilation
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -266,18 +246,18 @@ class PCQMobileNet(nn.Module):
     def _forward_impl(self, x: Tensor) -> Tensor:
         if self.training:
             done = 0
-            for i in range(PCQMobileNet.batch_cluster.shape[0]):
-                c = PCQMobileNet.batch_cluster[i][0].item()
-                n = PCQMobileNet.batch_cluster[i][1].item()
-                if self.flag_ema_init[c]:
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
+                if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.flag_fake_quantization:
+                    if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
-                    self.flag_ema_init[c] = True
+                    self.apply_ema[c] = True
                 done += n
 
         x = self.features(x)
@@ -295,27 +275,6 @@ class PCQMobileNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
-
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        PCQInvertedResidual.batch_cluster = info
-        PCQSqueezeExcitation.batch_cluster = info
-        PCQConv2d.batch_cluster = info
-        PCQLinear.batch_cluster = info
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.features[0].flag_fake_quantization = True
-        self.features[1].flag_fake_quantization = True
-        for feature_idx in range(2, len(self.features)-2):
-            self.features[feature_idx].set_block_fq()
-
-        self.features[-2].flag_fake_quantization = True
-        self.features[-1].flag_fake_quantization = True
-
-        for idx in range(len(self.classifier)):
-            self.classifier[idx].flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)

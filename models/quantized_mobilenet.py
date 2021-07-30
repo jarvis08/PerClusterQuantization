@@ -93,7 +93,7 @@ class QuantizedMobileNet(nn.Module):
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
-            arg_dict: dict,
+            arg_dict,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
             dilation: int = 1,

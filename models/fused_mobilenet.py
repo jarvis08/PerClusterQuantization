@@ -20,7 +20,7 @@ class FusedSqueezeExcitation(nn.Module):
     def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -76,7 +76,7 @@ class InvertedResidual(nn.Module):
             raise ValueError('illegal stride value')
 
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -151,7 +151,7 @@ class FusedMobileNet(nn.Module):
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
-            arg_dict: dict,
+            arg_dict: dict = None,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
             norm_layer: Optional[Callable[..., nn.Module]] = None,

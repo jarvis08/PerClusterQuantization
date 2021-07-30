@@ -167,7 +167,7 @@ def validate_darknet_dataset(model, test_loader, criterion):
 def load_dnn_model(args, tools):
     model = None
     if args.quantized:
-        model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+        model = tools.quantized_model_initializer(vars(args))
     elif args.fused:
         model = tools.fused_model_initializer(vars(args))
     else:

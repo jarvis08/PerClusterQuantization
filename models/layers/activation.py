@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from ..quantization_utils import *
+from ..quant_noise import _quant_noise
 
 
 class PCQActivation(nn.Module):
@@ -21,12 +22,7 @@ class PCQActivation(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-<<<<<<< HEAD
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
-=======
-        self.apply_ema = False
->>>>>>> c2baa17351d08879045101d1df4beceb9c85df32
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self._activation = activation(inplace=False)
 
@@ -73,13 +69,8 @@ class QActivation(nn.Module):
     def __init__(self, activation=None, arg_dict=None):
         super(QActivation, self).__init__()
         self.layer_type = 'QActivation'
-<<<<<<< HEAD
-        self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-=======
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
->>>>>>> c2baa17351d08879045101d1df4beceb9c85df32
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
