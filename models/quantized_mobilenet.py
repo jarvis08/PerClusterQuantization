@@ -21,8 +21,8 @@ class QuantizedSqueezeExcitation(nn.Module):
         self.num_clusters = num_clusters
         self.batch_cluster = None
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True, bit=bit, num_clusters=num_clusters)
-        self.fc2 = QuantizedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, activation='Hardsigmoid', bit=bit,
+        self.fc1 = QuantizedConv2d(input_channels, squeeze_channels, kernel_size=1, bit=bit, num_clusters=num_clusters)
+        self.fc2 = QuantizedConv2d(squeeze_channels, input_channels, kernel_size=1, activation='Hardsigmoid', bit=bit,
                                     num_clusters=num_clusters)
         self.mul = QuantizedMul(bit=bit, num_clusters=num_clusters)
 

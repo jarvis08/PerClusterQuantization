@@ -12,15 +12,16 @@ from torch.nn import functional as F
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from torchvision.models.mobilenetv2 import _make_divisible, ConvBNActivation
-from .mobilenet import SqueezeExcitation, InvertedResidualConfig
+from .mobilenet import InvertedResidualConfig
 
 
 class FusedSqueezeExcitation(nn.Module):
     # Implemented as described at Figure 4 of the MobileNetV3 paper
     def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
-        self.bit, self.smooth, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
@@ -43,17 +44,20 @@ class FusedSqueezeExcitation(nn.Module):
     def forward(self, input: Tensor) -> Tensor:
         scale = self._scale(input, True)
         x = scale * input
-        if self.training:
-            if self.flag_ema_init:
-                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-                if self.flag_fake_quantization:
-                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                    x = fake_quantize(x, s, z, self.q_max)
-            else:
-                self.act_range[0] = torch.min(x).item()
-                self.act_range[1] = torch.max(x).item()
-                self.flag_ema_init = True
-        return x
+        if not self.training:
+            return x
+
+        out = x
+        if self.flag_ema_init:
+            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+            if self.flag_fake_quantization:
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                out = fake_quantize(x, s, z, self.q_max, self.use_ste)
+        else:
+            self.act_range[0] = torch.min(x).item()
+            self.act_range[1] = torch.max(x).item()
+            self.flag_ema_init = True
+        return out
 
     def set_squeeze_fq(self):
         self.flag_fake_quantization = True
@@ -76,7 +80,9 @@ class InvertedResidual(nn.Module):
         super().__init__()
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
-        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
@@ -120,17 +126,20 @@ class InvertedResidual(nn.Module):
         if self.use_res_connect:
             result += input
 
-        if self.training:
-            if self.flag_ema_init:
-                self.act_range[0], self.act_range[1] = ema(result, self.act_range, self.smooth)
-                if self.flag_fake_quantization:
-                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                    result = fake_quantize(result, s, z, self.q_max)
-            else:
-                self.act_range[0] = torch.min(result).item()
-                self.act_range[1] = torch.max(result).item()
-                self.flag_ema_init = True
-        return result
+        if not self.training:
+            return result
+
+        _result = result
+        if self.flag_ema_init:
+            self.act_range[0], self.act_range[1] = ema(result, self.act_range, self.smooth)
+            if self.flag_fake_quantization:
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                _result = fake_quantize(result, s, z, self.q_max, self.use_ste)
+        else:
+            self.act_range[0] = torch.min(result).item()
+            self.act_range[1] = torch.max(result).item()
+            self.flag_ema_init = True
+        return _result
 
     def set_block_fq(self):
         self.flag_fake_quantization = True
