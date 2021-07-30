@@ -33,7 +33,7 @@ def _evaluate(args, tools):
             kmeans = KMeans(args)
             kmeans.load_kmeans_model()
             runtime_helper.kmeans = kmeans
-            pcq_validate(model, test_loader, criterion, kmeans_model, args.partition)
+            pcq_validate(model, test_loader, criterion, runtime_helper)
         else:
             normalizer = get_normalizer(args.dataset)
             test_loader = get_test_loader(args, normalizer)
