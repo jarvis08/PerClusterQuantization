@@ -92,7 +92,7 @@ class KMeans(object):
                 return False
             return True
 
-        model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=128, tol=self.args.kmeans_tol, random_state=0)
+        model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
 
         prev_centers = None
         is_converged = False

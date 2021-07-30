@@ -92,6 +92,7 @@ class FusedResNet(nn.Module):
         super(FusedResNet, self).__init__()
         self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
@@ -191,6 +192,7 @@ class FusedResNet20(nn.Module):
         super(FusedResNet20, self).__init__()
         self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
