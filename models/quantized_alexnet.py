@@ -1,3 +1,5 @@
+from operator import itemgetter
+
 import torch
 import torch.nn as nn
 from typing import Any
@@ -10,33 +12,33 @@ from .quantization_utils import *
 class QuantizedAlexNet(nn.Module):
     batch_cluster = None
 
-    def __init__(self, num_classes: int = 1000, bit: int = 8, num_clusters: int = 1) -> None:
+    def __init__(self, arg_dict, num_classes: int = 1000) -> None:
         super(QuantizedAlexNet, self).__init__()
-        self.bit = bit
-        self.q_max = 2 ** bit - 1
-        self.num_clusters = num_clusters
-        t_init = list(range(num_clusters)) if num_clusters > 1 else 0
+        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.q_max = 2 ** self.bit - 1
+
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0)
+        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dcit)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.conv1 = QuantizedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, bit=bit)
-        self.conv2 = QuantizedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, bit=bit)
-        self.conv3 = QuantizedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, bit=bit)
-        self.conv4 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit)
-        self.conv5 = QuantizedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, bit=bit)
+        self.conv1 = QuantizedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, arg_dict=arg_dcit)
+        self.conv2 = QuantizedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, arg_dict=arg_dcit)
+        self.conv3 = QuantizedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dcit)
+        self.conv4 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dcit)
+        self.conv5 = QuantizedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dcit)
         self.fc1 = QuantizedLinear(256 * 6 * 6, 4096, bit=bit)
         self.fc2 = QuantizedLinear(4096, 4096, bit=bit)
         self.fc3 = QuantizedLinear(4096, num_classes, bit=bit)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if QuantizedAlexNet.batch_cluster is not None:
+        if self.runtime_helper.batch_cluster is not None:
             done = 0
-            for i in range(QuantizedAlexNet.batch_cluster.shape[0]):
-                c = QuantizedAlexNet.batch_cluster[i][0].item()
-                n = QuantizedAlexNet.batch_cluster[i][1].item()
-                x[done:done + n].copy_(quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max))
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
+                x[done:done + n] = quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
@@ -56,43 +58,34 @@ class QuantizedAlexNet(nn.Module):
         x = self.fc3(x)
         return x
 
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        QuantizedConv2d.batch_cluster = info
-        QuantizedLinear.batch_cluster = info
-        QuantizedMaxPool2d.batch_cluster = info
-
 
 class QuantizedAlexNetSmall(nn.Module):
-    batch_cluster = None
-
     def __init__(self, num_classes: int = 10, bit: int = 32, num_clusters: int = 1) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
-        self.bit = bit
-        self.q_max = 2 ** bit - 1
-        self.num_clusters = num_clusters
-        t_init = list(range(num_clusters)) if num_clusters > 1 else 0
+        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.q_max = 2 ** self.bit - 1
+
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0)
+        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dict)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=False, bit=bit, num_clusters=num_clusters)
-        self.conv2 = QuantizedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=False, bit=bit, num_clusters=num_clusters)
-        self.conv3 = QuantizedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=False, bit=bit, num_clusters=num_clusters)
-        self.conv4 = QuantizedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=False, bit=bit, num_clusters=num_clusters)
-        self.conv5 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=False, bit=bit, num_clusters=num_clusters)
-        self.fc1 = QuantizedLinear(256, 4096, bit=bit, num_clusters=num_clusters)
-        self.fc2 = QuantizedLinear(4096, 4096, bit=bit, num_clusters=num_clusters)
-        self.fc3 = QuantizedLinear(4096, num_classes, bit=bit, num_clusters=num_clusters)
+        self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=False, arg_dict=arg_dict)
+        self.conv2 = QuantizedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=False, arg_dict=arg_dict)
+        self.conv3 = QuantizedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
+        self.conv4 = QuantizedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
+        self.conv5 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
+        self.fc1 = QuantizedLinear(256, 4096, arg_dict=arg_dict)
+        self.fc2 = QuantizedLinear(4096, 4096, arg_dict=arg_dict)
+        self.fc3 = QuantizedLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if QuantizedAlexNetSmall.batch_cluster is not None:
+        if self.runtime_helper.batch_cluster is not None:
             done = 0
-            for i in range(QuantizedAlexNetSmall.batch_cluster.shape[0]):
-                c = QuantizedAlexNetSmall.batch_cluster[i][0].item()
-                n = QuantizedAlexNetSmall.batch_cluster[i][1].item()
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
                 x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
                 done += n
         else:
@@ -113,20 +106,13 @@ class QuantizedAlexNetSmall(nn.Module):
         x = self.fc3(x)
         return x
 
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        QuantizedConv2d.batch_cluster = info
-        QuantizedLinear.batch_cluster = info
-        QuantizedMaxPool2d.batch_cluster = info
+
+def quantized_alexnet(arg_dict: dict, **kwargs: Any) -> QuantizedAlexNet:
+    return QuantizedAlexNet(arg_dict, **kwargs)
 
 
-def quantized_alexnet(bit: int = 32, num_clusters: int = 1, **kwargs: Any) -> QuantizedAlexNet:
-    return QuantizedAlexNet(bit=bit, num_clusters=num_clusters, **kwargs)
-
-
-def quantized_alexnet_small(bit: int = 32, num_clusters: int = 1, **kwargs: Any) -> QuantizedAlexNetSmall:
-    return QuantizedAlexNetSmall(bit=bit, num_clusters=num_clusters, **kwargs)
+def quantized_alexnet_small(arg_dict: dict, **kwargs: Any) -> QuantizedAlexNetSmall:
+    return QuantizedAlexNetSmall(arg_dict, **kwargs)
 
 
 def quantize_alexnet(fp_model, int_model):
