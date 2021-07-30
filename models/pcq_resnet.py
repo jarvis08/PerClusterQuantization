@@ -21,7 +21,6 @@ def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, ac
 
 class PCQBasicBlock(nn.Module):
     expansion = 1
-    batch_cluster = None
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
                  norm_layer=None, arg_dict=None):
@@ -38,13 +37,12 @@ class PCQBasicBlock(nn.Module):
         self._norm_layer = norm_layer
 
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer,
                                  activation=nn.ReLU, arg_dict=arg_dict)
@@ -66,33 +64,26 @@ class PCQBasicBlock(nn.Module):
         if not self.training:
             return out
 
-        if self.flag_fake_quantization and self.use_ste:
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
             _out = torch.zeros(out.shape).cuda()
         else:
             _out = out
 
         done = 0
-        for i in range(PCQBasicBlock.batch_cluster.shape[0]):
-            c = PCQBasicBlock.batch_cluster[i][0].item()
-            n = PCQBasicBlock.batch_cluster[i][1].item()
-            if self.flag_ema_init[c]:
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
                     _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(out).item()
                 self.act_range[c][1] = torch.max(out).item()
-                self.flag_ema_init[c] = True
+                self.apply_ema[c] = True
             done += n
         return _out
-
-    def set_block_fq_flag(self):
-        self.flag_fake_quantization = True
-        if self.downsample:
-            self.downsample.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -110,16 +101,15 @@ class PCQBasicBlock(nn.Module):
 class PCQResNet(nn.Module):
     batch_cluster = None
 
-    def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
+    def __init__(self, block, layers, runtime_helper, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None, arg_dict=None):
         super(PCQResNet, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -169,18 +159,18 @@ class PCQResNet(nn.Module):
     def forward(self, x):
         if self.training:
             done = 0
-            for i in range(PCQResNet.batch_cluster.shape[0]):
-                c = PCQResNet.batch_cluster[i][0].item()
-                n = PCQResNet.batch_cluster[i][1].item()
-                if self.flag_ema_init[c]:
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
+                if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.flag_fake_quantization:
+                    if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
-                    self.flag_ema_init[c] = True
+                    self.apply_ema[c] = True
                 done += n
 
         x = self.first_conv(x)
@@ -195,27 +185,6 @@ class PCQResNet(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
-
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        PCQBasicBlock.batch_cluster = info
-        # PCQBottleneck.batch_cluster = info
-        PCQConv2d.batch_cluster = info
-        PCQLinear.batch_cluster = info
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.first_conv.flag_fake_quantization = True
-        for i in range(len(self.layer1)):
-            self.layer1[i].set_block_fq_flag()
-        for i in range(len(self.layer2)):
-            self.layer2[i].set_block_fq_flag()
-        for i in range(len(self.layer3)):
-            self.layer3[i].set_block_fq_flag()
-        for i in range(len(self.layer4)):
-            self.layer4[i].set_block_fq_flag()
-        self.fc.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
@@ -235,17 +204,14 @@ class PCQResNet(nn.Module):
 
 
 class PCQResNet20(nn.Module):
-    batch_cluster = None
-
     def __init__(self, block, layers, arg_dict, num_classes=10, norm_layer=None):
         super(PCQResNet20, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -277,18 +243,18 @@ class PCQResNet20(nn.Module):
     def forward(self, x):
         if self.training:
             done = 0
-            for i in range(PCQResNet20.batch_cluster.shape[0]):
-                c = PCQResNet20.batch_cluster[i][0].item()
-                n = PCQResNet20.batch_cluster[i][1].item()
-                if self.flag_ema_init[c]:
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
+                if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.flag_fake_quantization:
+                    if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
-                    self.flag_ema_init[c] = True
+                    self.apply_ema[c] = True
                 done += n
 
         x = self.first_conv(x)
@@ -299,24 +265,6 @@ class PCQResNet20(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
-
-    @classmethod
-    def set_cluster_information_of_batch(cls, info):
-        cls.batch_cluster = info
-        PCQBasicBlock.batch_cluster = info
-        PCQConv2d.batch_cluster = info
-        PCQLinear.batch_cluster = info
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.first_conv.flag_fake_quantization = True
-        for i in range(len(self.layer1)):
-            self.layer1[i].set_block_fq_flag()
-        for i in range(len(self.layer2)):
-            self.layer2[i].set_block_fq_flag()
-        for i in range(len(self.layer3)):
-            self.layer3[i].set_block_fq_flag()
-        self.fc.flag_fake_quantization = True
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)

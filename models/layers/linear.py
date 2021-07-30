@@ -154,8 +154,8 @@ class PCQLinear(nn.Module):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
         
-        self.bit, self.smooth, self.num_clusters, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
@@ -190,9 +190,9 @@ class PCQLinear(nn.Module):
             out = x
 
         done = 0
-        for i in range(PCQLinear.batch_cluster.shape[0]):
-            c = PCQLinear.batch_cluster[i][0].item()
-            n = PCQLinear.batch_cluster[i][1].item()
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
             if self.flag_ema_init[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.flag_fake_quantization:
