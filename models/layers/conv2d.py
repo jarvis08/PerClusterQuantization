@@ -293,6 +293,7 @@ class FusedConv2d(nn.Module):
 
         # self.flag_ema_init = False
         # self.flag_fake_quantization = False
+        
 
         self.apply_ema = False
 
