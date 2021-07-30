@@ -108,7 +108,7 @@ class PCQInvertedResidual(nn.Module):
                                       norm_layer=norm_layer, activation=activation, arg_dict=arg_dict))
             if cnf.use_hs:
                 layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
-            
+
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(PCQConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
@@ -117,7 +117,7 @@ class PCQInvertedResidual(nn.Module):
                                 activation=activation, arg_dict=arg_dict))
         if cnf.use_hs:
             layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
-        
+
         if cnf.use_se:
             layers.append(PCQSqueezeExcitation(cnf.expanded_channels, arg_dict=arg_dict))
 
@@ -395,4 +395,4 @@ def pcq_mobilenet(arg_dict: dict, num_classes: int = 1000, **kwargs: Any) -> PCQ
 #     model.features[-2].fuse_conv_and_bn()
 
 #     return model
-    
+

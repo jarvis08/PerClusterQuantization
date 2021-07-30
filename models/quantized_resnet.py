@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -23,7 +24,7 @@ class QuantizedBasicBlock(nn.Module):
     batch_cluster = None
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 bit=8, num_clusters=1):
+                 bit=8, num_clusters=1, arg_dict:dict = None):
         super(QuantizedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -53,6 +54,39 @@ class QuantizedBasicBlock(nn.Module):
 
         out = self.shortcut(identity, out)
         return out
+
+
+class QuantizedBottleneck(nn.Module):
+    expansion: int = 4
+    batch_cluster = None
+    def __init__(self, inplane: int, planes: int, stride: int = 1, downsample=None,
+                 groups: int = 1, base_width: int = 64, dilation: int = 1,
+                 norm_layer=None, arg_dict:dict=None) -> None:
+        super(QuantizedBottleneck, self).__init__()
+
+        self.downsample = downsample
+        self.stride = stride
+
+        self.arg_dict = arg_dict
+        self.bit, self.num_clusters = itemgetter('bit', 'num_clusters')(arg_dict)
+        self.q_max = 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+
+
+        width = int(planes * (base_width/64.)) * groups
+        self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, stride=stride, bias=False,
+                                       bit=self.bit, num_clusters=self.num_clusters)
+        self.conv2 = quantized_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
+                                       bias=False, bit=self.bit, num_clusters=self.num_clusters)
+        self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes *self.expansion,
+                                       bias=False, bit=self.bit, num_clusters=self.num_clusters)
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.conv2(x)
+        out = self.conv3(x)
 
 
 class QuantizedResNet18(nn.Module):

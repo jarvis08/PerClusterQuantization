@@ -91,7 +91,7 @@ class InvertedResidual(nn.Module):
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
-            layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1, 
+            layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
                                       norm_layer=norm_layer, activation=self.activation, arg_dict=arg_dict))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))

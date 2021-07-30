@@ -48,7 +48,7 @@ class InvertedResidual(nn.Module):
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
 
-        self.bit = bit 
+        self.bit = bit
         self.q_max = 2 ** self.bit - 1
         self.num_clusters = num_clusters
         self.batch_cluster = None
