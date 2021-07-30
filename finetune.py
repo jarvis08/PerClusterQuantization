@@ -16,7 +16,7 @@ def get_train_loader(args, normalizer, hvd=None):
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
-                                                            normalizer,]))
+                                                            normalizer]))
         if args.horovod:
             sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
         else:

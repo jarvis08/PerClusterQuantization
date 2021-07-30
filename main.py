@@ -1,6 +1,7 @@
 import argparse
 
 from models import *
+from models.resnet import resnet50
 from pretrain import _pretrain
 from finetune import _finetune
 from evaluate import _evaluate
@@ -79,6 +80,14 @@ def set_func_for_target_arch(arch, is_pcq):
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet18)
             setattr(tools, 'quantized_model_initializer', quantized_resnet18)
+        # Test ResNet50
+        elif '50' in arch:
+            setattr(tools, 'pretrained_model_initializer', resnet50)
+            if is_pcq:
+                setattr(tools, 'fused_model_initializer', pcq_resnet50)
+            else:
+                setattr(tools, 'fused_model_initializer', fused_resnet50)
+            setattr(tools, 'quantized_model_initializer', quantized_resnet18)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
@@ -106,7 +115,8 @@ def specify_target_arch(arch, dataset, num_clusters):
 
     elif arch == 'resnet':
         if dataset == 'imagenet':
-            arch = 'ResNet18'
+            # arch = 'ResNet18'
+            arch = 'ResNet50'
         else:
             arch = 'ResNet20'
 

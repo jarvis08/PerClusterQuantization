@@ -182,7 +182,11 @@ def load_dnn_model(args, tools):
             if args.arch == 'MobileNetV3':
                 return vision_models.mobilenet_v3_small(pretrained=True)
             elif args.arch == 'ResNet18':
-                exit()
+                return vision_models.resnet18(pretrained=True)
+            elif args.arch == 'AlexNet':
+                return vision_models.alexnet(pretrained=True)
+            elif args.arch == 'ResNet50':
+                return vision_models.resnet50(pretrained=True)
         else:
             model = tools.pretrained_model_initializer()
 

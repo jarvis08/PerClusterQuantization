@@ -107,6 +107,82 @@ class PCQBasicBlock(nn.Module):
         return self.s3, self.z3
 
 
+
+class PCQBottleneck(nn.Module):
+    expansion: int = 4
+    batch_cluster = None
+
+    def __init__(
+            self, inplanes: int, planes: int, stride: int = 1, downsample = None,
+            groups: int = 1, base_width: int = 64,dilation: int = 1,
+            norm_layer = None, arg_dict = None
+    ) -> None:
+        super(PCQBottleneck, self).__init__()
+
+        self.downsample = downsample
+        self.stride = stride
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        self._norm_layer = norm_layer
+
+        self.arg_dict = arg_dict
+
+        self.bit, self.smooth, self.num_clusters, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.q_max = 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
+
+        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
+        self.flag_fake_quantization = False
+
+        width = int(planes * (base_width / 64.)) * groups
+        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width,
+                                 norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=self.arg_dict)
+        self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation,
+                                 norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=self.arg_dict)
+        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion,
+                                 norm_layer=self._norm_layer, arg_dict=self.arg_dict)
+        self.relu = nn.ReLU(inplace=True)
+
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.conv3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        if not self.training:
+            return out
+
+        if self.flag_fake_quantization and self.use_ste:
+            _out = torch.zeros(out.shape).cuda()
+        else:
+            _out = out
+
+        done = 0
+        for i in range(PCQBottleneck.batch_cluster.shape[0]):
+            c = PCQBottleneck.batch_cluster[i][0].item()
+            n = PCQBottleneck.batch_cluster[i][1].item()
+            if self.flag_ema_init[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
+                if self.flag_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+            else:
+                self.act_range[c][0] = torch.min(out).item()
+                self.act_range[c][1] = torch.max(out).item()
+                self.flag_ema_init[c] = True
+            done += n
+        return _out
+
 class PCQResNet(nn.Module):
     batch_cluster = None
 
@@ -338,6 +414,9 @@ class PCQResNet20(nn.Module):
 
 def pcq_resnet18(arg_dict, **kwargs):
     return PCQResNet(PCQBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
+
+def pcq_resnet50(arg_dict, **kwargs):
+    return PCQResNet(PCQBottleneck, [3, 4, 6, 3], arg_dict, **kwargs)
 
 
 def pcq_resnet20(arg_dict):
