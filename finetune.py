@@ -65,11 +65,8 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def get_finetuning_model(args, tools, runtime_helper):
-    pretrained_model = load_dnn_model(args, tools)
-    arg_dict = deepcopy(vars(args))
-    if runtime_helper:
-        arg_dict['runtime_helper'] = runtime_helper
+def get_finetuning_model(arg_dict, tools):
+    pretrained_model = load_dnn_model(arg_dict, tools)
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model, arg_dict
@@ -88,7 +85,11 @@ def _finetune(args, tools):
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
-    model, arg_dict = get_finetuning_model(args, tools, runtime_helper)
+    arg_dict = deepcopy(vars(args))
+    if runtime_helper:
+        arg_dict['runtime_helper'] = runtime_helper
+    model, arg_dict = get_finetuning_model(arg_dict, tools)
+
     model.cuda()
     model.eval()
     if args.dataset == 'imagenet':
