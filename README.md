@@ -19,7 +19,7 @@ To use Horovod for multi-gpu in finetuning, install horovod and use `--horovod T
 ## 1. Pre-training
 
 [CIFAR-10] Pretrained models that we used to finetune can be downloaded with
-[link](https://drive.google.com/file/d/1suFPJgDT_Ne9pQ2gwKkTMzquOIeqXn55/view?usp=sharing).
+[link](https://drive.google.com/file/d/1-caZGUI3XSSGgm7yiH34QeUJr-BdpkVm/view?usp=sharing).
 The shared pretrained models are below.
 
 - DNN models
@@ -43,9 +43,10 @@ $ python main.py --mode eval --arch alexnet --dnn_path result/pre/AlexNetSmall_3
 
 ### 2-1. Fine-tuning
 
-If K-means clustering model's path wasn't given to `--kmeans_path`, it will train a clustering model and use it automatically.
+If K-means clustering model's path wasn't given to `--kmeans_path`, it will train a clustering model and use it automatically. 
+Trained clustering model will be saved into path `result/kmeans/[Dataset]/[Date]/`.
 
-Trained clustering model will be saved into path `result/kmeans/[Dataset]/[Date]/`
+When using previously trained kmeans model, giving `--kmenas_path`, you have to give the path of directory, not checkpoint file.
 
 ```
 # K-means model's path not given
@@ -54,12 +55,12 @@ python main.py --mode fine --arch alexnet --lr 0.0001 --weight_decay 0.0 --epoch
 
 # With kmeans model
 python main.py --mode fine --arch alexnet --lr 0.0001 --weight_decay 0.0 --epoch 1 --batch 32 --bit 4 --cluster 10\
-           --kmeans_path result/kmeans/[Dataset]/[Date]/checkpoint.pkl\
+           --kmeans_path result/kmeans/[Dataset]/[Date]/ \
            --dnn_path ./result/pre/AlexNetSmall_32bit/07-05-2234/checkpoint.pth
 
 # Evaluation for FP fine-tuned model
 python main.py --mode eval --arch alexnet --fused True --bit 4  --cluster 10\
-           --kmeans_path result/kmeans/cifar/[Date]/checkpoint.pkl\
+           --kmeans_path result/kmeans/cifar/[Date]/ \
            --dnn_path ./result/fine/AlexNetSmall_4bit/[Date]/quantized/checkpoint.pth
 ```
 
