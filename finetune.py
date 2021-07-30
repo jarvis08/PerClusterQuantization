@@ -88,7 +88,6 @@ def _finetune(args, tools):
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
-
     model, arg_dict = get_finetuning_model(args, tools, runtime_helper)
     model.cuda()
     model.eval()

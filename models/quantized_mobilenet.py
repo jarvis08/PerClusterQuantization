@@ -10,6 +10,7 @@ from .mobilenet import _mobilenet_v3_conf, InvertedResidualConfig
 from .fused_mobilenet import FusedSqueezeExcitation
 from torchvision.models.mobilenetv2 import _make_divisible
 import torch.nn.quantized.functional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -92,13 +93,15 @@ class QuantizedMobileNet(nn.Module):
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
-            arg_dict: dict,
+            arg_dict,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
+            dilation: int = 1,
             **kwargs: Any
     ) -> None:
         super().__init__()
         self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.dilation = dilation
         self.q_max = 2 ** self.bit - 1
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -118,7 +121,7 @@ class QuantizedMobileNet(nn.Module):
 
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
-        layers.append(QuantizedConv2d(3, firstconv_output_channels, kernel_size=3, padding=1, stride=2,
+        layers.append(QuantizedConv2d(3, firstconv_output_channels, kernel_size=3, padding=self.dilation, stride=2,
                                       activation='Hardswish', arg_dict=arg_dict))
 
         # building inverted residual blocks
@@ -236,7 +239,7 @@ def quantize_mobilenet(fp_model, int_model):
                 int_module.mul = set_mul_qparams(int_module.mul, fp_module.QAct.s3, fp_module.QAct.z3, fp_module.s1,
                                                  fp_module.z1, fp_module.s3, fp_module.z3)
             fp_block_idx += 1
-        if  int_model.features[int_feature_idx].use_res_connect:
+        if int_model.features[int_feature_idx].use_res_connect:
             int_model.features[int_feature_idx].shortcut = set_shortcut_qparams(int_model.features[int_feature_idx].shortcut,
                                                     int_model.features[int_feature_idx].block[0].s1,
                                                     int_model.features[int_feature_idx].block[0].z1,

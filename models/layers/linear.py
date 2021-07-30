@@ -159,7 +159,6 @@ class PCQLinear(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-        self.runtime_helper.apply_fake_quantization = False
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
@@ -228,8 +227,9 @@ class FusedLinear(nn.Module):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
 
-        self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
