@@ -22,7 +22,6 @@ class KMeans(object):
         data = data.reshape((data.shape[0], channel * width * height))
         n_row = int(width / 2)
         n_col = int(height / (partition / 2))
-
         rst = np.array([])
         for i in range(channel):
             chanel_start = i * (width * height)
@@ -32,7 +31,7 @@ class KMeans(object):
                     part_start = chanel_start + (j * n_col)
                 else:
                     # The rest(half) of an Image
-                    part_start = chanel_start + (width * height / 2) + (j - int(partition / 2)) * n_col
+                    part_start = chanel_start + int(width * height / 2) + (j - int(partition / 2)) * n_col
 
                 part = np.array([])
                 start = part_start
