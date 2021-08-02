@@ -28,19 +28,22 @@ class KMeans(object):
             chanel_start = i * (width * height)
             for j in range(partition):
                 if j < partition / 2:
+                    # The upper half of an Image
                     part_start = chanel_start + (j * n_col)
                 else:
-                    part_start = chanel_start + 512 + (j - int(partition / 2)) * n_col
+                    # The rest(half) of an Image
+                    part_start = chanel_start + (width * height / 2) + (j - int(partition / 2)) * n_col
 
                 part = np.array([])
                 start = part_start
                 for k in range(n_row):
+                    # A row of current part
                     end = start + n_col
                     if not k:
                         part = np.copy(data[:, start:end])
                     else:
                         part = np.concatenate((part, data[:, start:end]), axis=1)
-                    start += 32
+                    start += width
 
                 part_min = np.min(part, axis=1).reshape(part.shape[0], 1)
                 part_max = np.max(part, axis=1).reshape(part.shape[0], 1)
@@ -114,3 +117,15 @@ class KMeans(object):
         joblib.dump(model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
         self.model = model
 
+
+def check_cluster_distribution(kmeans, train_loader):
+    n_data = kmeans.args.batch * len(train_loader)
+    n_data_per_cluster = dict()
+    for c in range(kmeans.args.cluster):
+        n_data_per_cluster[c] = 0
+    for i, (input, target) in enumerate(train_loader):
+        _, _, batch_cluster = kmeans.get_batch(input, target)
+        for c, n in batch_cluster:
+            n_data_per_cluster[c.item()] += n.item()
+    for c in range(kmeans.args.cluster):
+        print("C{}: {}, \t{:.2f}%".format(c, n_data_per_cluster[c], n_data_per_cluster[c] / n_data * 100))
