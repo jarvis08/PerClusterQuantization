@@ -178,6 +178,6 @@ def _finetune(args, tools):
             del quantized_model
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.3f}\n'.format(best_score_int))
+        f.write('{:.2f}\n'.format(best_score_int))
 
     # save_fused_network_in_darknet_form(model, args)
