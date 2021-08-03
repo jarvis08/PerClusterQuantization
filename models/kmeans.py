@@ -14,44 +14,28 @@ class KMeans(object):
         self.args = args
         self.model = None
 
-    @staticmethod
-    def get_partitioned_batch(data, partition):
+    def get_partitioned_batch(self, data):
+        # Under the premise that images are in the form of square matrix
         channel = data.shape[1]
         width = data.shape[2]
         height = data.shape[3]
-        data = data.reshape((data.shape[0], channel * width * height))
-        n_row = int(width / 2)
-        n_col = int(height / (partition / 2))
-        rst = np.array([])
-        for i in range(channel):
-            chanel_start = i * (width * height)
-            for j in range(partition):
-                if j < partition / 2:
-                    # The upper half of an Image
-                    part_start = chanel_start + (j * n_col)
+        n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3)) # Per row or col
+        n_data = int(width / n_part) # Per part
+        rst = None
+        for i in range(n_part):
+            r_start = n_data * i
+            for j in range(n_part):
+                c_start = n_data * j
+                _min = torch.min(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], -1).values
+                _max = torch.max(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], -1).values
+                _min = torch.min(_min, -1, keepdim=True).values
+                _max = torch.max(_max, -1, keepdim=True).values
+                tmp = torch.cat([_min, _max], dim=-1)
+                if rst is None:
+                    rst = tmp
                 else:
-                    # The rest(half) of an Image
-                    part_start = chanel_start + int(width * height / 2) + (j - int(partition / 2)) * n_col
-
-                part = np.array([])
-                start = part_start
-                for k in range(n_row):
-                    # A row of current part
-                    end = start + n_col
-                    if not k:
-                        part = np.copy(data[:, start:end])
-                    else:
-                        part = np.concatenate((part, data[:, start:end]), axis=1)
-                    start += width
-
-                part_min = np.min(part, axis=1).reshape(part.shape[0], 1)
-                part_max = np.max(part, axis=1).reshape(part.shape[0], 1)
-                tmp = np.append(part_min, part_max, axis=1)
-                if not i and not j:
-                    rst = np.copy(tmp)
-                else:
-                    rst = np.append(rst, tmp, axis=1)
-        return rst
+                    rst = torch.cat([rst, tmp], dim=-1)
+        return rst.view(rst.size(0), -1).numpy()
 
     def load_kmeans_model(self):
         # Load k-means model's hparams, and check dependencies
@@ -66,7 +50,7 @@ class KMeans(object):
         self.model = joblib.load(os.path.join(self.args.kmeans_path, 'checkpoint.pkl'))
     
     def get_batch(self, input, target):
-        kmeans_input = self.get_partitioned_batch(input.numpy(), self.args.partition)
+        kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
 
         num_data_per_cluster = []
@@ -101,7 +85,7 @@ class KMeans(object):
         t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc='Epoch', position=0, ncols=90)
         for e in range(self.args.kmeans_epoch):
             for image, _ in train_loader:
-                train_data = self.get_partitioned_batch(image.numpy(), self.args.partition)
+                train_data = self.get_partitioned_batch(image)
                 model = model.partial_fit(train_data)
 
                 if prev_centers is not None:
