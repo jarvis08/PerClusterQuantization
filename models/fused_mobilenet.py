@@ -28,8 +28,6 @@ class FusedSqueezeExcitation(nn.Module):
         self.apply_ema = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
-        # self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
-        #                        activation=nn.ReLU6, arg_dict=arg_dict)
         self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.fc2 = FusedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, arg_dict=arg_dict)
