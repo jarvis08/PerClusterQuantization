@@ -380,15 +380,14 @@ class FusedConv2d(nn.Module):
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, 'Do not fuse layers while training.'
-        if self._norm_layer is not None:
-            alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
-                                          self._norm_layer.running_var, self._norm_layer.eps
-            n_channel = self.conv.weight.shape[0]
-            self.conv.bias = nn.Parameter(beta)
-            for c in range(n_channel):
-                self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-                self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-            self._norm_layer = nn.Identity()
+        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
+                                      self._norm_layer.running_var, self._norm_layer.eps
+        n_channel = self.conv.weight.shape[0]
+        self.conv.bias = nn.Parameter(beta)
+        for c in range(n_channel):
+            self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
+            self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
+        self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
