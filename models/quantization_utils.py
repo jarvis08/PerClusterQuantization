@@ -61,8 +61,36 @@ def quantize_matrix(x, scale, zero_point, q_max=None):
         return torch.clamp(torch.round(x / scale + zero_point), 0, q_max)
 
 
+def quantize_matrix_2d(x, scale, zero_point, batch_cluster, q_max=None):
+    if q_max is None:
+        return torch.round(x / scale + zero_point)  # sth like bias
+    elif q_max == 255:
+        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+    else:
+        s = torch.index_select(scale, 0, batch_cluster).reshape(batch_cluster.shape[0], 1)
+        z = torch.index_select(zero_point, 0, batch_cluster).reshape(batch_cluster.shape[0], 1)
+        return x.div_(s).add_(z).round_().clamp_(0, q_max)
+
+
+def quantize_matrix_4d(x, scale, zero_point, batch_cluster, q_max=None):
+    if q_max is None:
+        return torch.round(x / scale + zero_point)  # sth like bias
+    elif q_max == 255:
+        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+    else:
+        s = torch.index_select(scale, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
+        z = torch.index_select(zero_point, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
+        return x.div_(s).add_(z).round_().clamp_(0, q_max)
+
+
 def dequantize_matrix(x, scale, zero_point):
     return (x - zero_point) * scale
+
+
+def dequantize_matrix_4d(x, scale, zero_point, batch_cluster):
+    s = torch.index_select(scale, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
+    z = torch.index_select(zero_point, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
+    return x.sub_(z).mul_(s)
 
 
 def quantize_M(M):
@@ -108,6 +136,36 @@ def shifting(cur, shift):
     mask = torch.tensor((1 << shift) - 1, dtype=torch.int64, device='cuda:0')
     zero = torch.tensor(0, dtype=torch.int32, device='cuda:0')
     one = torch.tensor(1, dtype=torch.int32, device='cuda:0')
+
+    remainder = (cur & mask).type(torch.cuda.IntTensor)
+    maskiflessthan = torch.where(cur < zero, ~zero, zero)
+    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
+    maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
+
+    total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
+    return total
+
+
+def shifting2d(cur, shift):
+    mask = torch.ones((cur.shape[0],1), dtype=torch.int64, device='cuda:0')
+    mask = (mask << shift) - 1
+    zero = torch.zeros((cur.shape[0],1), dtype=torch.int32, device='cuda:0')
+    one = torch.ones((cur.shape[0],1), dtype=torch.int32, device='cuda:0')
+
+    remainder = (cur & mask).type(torch.cuda.IntTensor)
+    maskiflessthan = torch.where(cur < zero, ~zero, zero)
+    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
+    maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
+
+    total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
+    return total
+
+
+def shifting4d(cur, shift):
+    mask = torch.ones((cur.shape[0],1,1,1), dtype=torch.int64, device='cuda:0')
+    mask = (mask << shift) - 1
+    zero = torch.zeros((cur.shape[0],1,1,1), dtype=torch.int32, device='cuda:0')
+    one = torch.ones((cur.shape[0],1,1,1), dtype=torch.int32, device='cuda:0')
 
     remainder = (cur & mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)

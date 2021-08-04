@@ -34,12 +34,7 @@ class QuantizedAlexNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_helper.batch_cluster is not None:
-            done = 0
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n].detach(), self.scale[c], self.zero_point[c], self.q_max)
-                done += n
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
@@ -82,12 +77,7 @@ class QuantizedAlexNetSmall(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_helper.batch_cluster is not None:
-            done = 0
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
-                done += n
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 

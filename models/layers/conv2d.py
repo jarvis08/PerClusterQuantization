@@ -19,7 +19,7 @@ class QuantizedConv2d(nn.Conv2d):
                 itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels)), requires_grad=False)
+        self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -46,13 +46,11 @@ class QuantizedConv2d(nn.Conv2d):
 
     def pcq(self, x):
         if self.padding[0] > 0 or self.padding[1] > 0:
-            done = 0
+            bc = self.runtime_helper.batch_cluster
+            z1 = torch.index_select(self.z1, 0, bc)
             padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding[0] * 2, x.shape[3] + self.padding[1] * 2)).cuda()
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
-                padded[done:done + n] = F.pad(x[done:done + n], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1[c].item())
-                done += n
+            for i in range(len(self.runtime_helper.batch_cluster)):
+                padded[i] = F.pad(x[i], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=z1[i])
             sum_q1q2 = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
             return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
         else:
@@ -68,28 +66,27 @@ class QuantizedConv2d(nn.Conv2d):
         return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2):
+        bc = self.runtime_helper.batch_cluster
+        bias = torch.index_select(self.quantized_bias, 0, bc)
+        z1 = torch.index_select(self.z1, 0, bc)
+        z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        shift = torch.index_select(self.shift, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[
-            2], self.weight.shape[3]
+        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            for output_ch in range(filter_batch):
-                sum_q1q2[done:done + n, output_ch, :, :] = sum_q1q2[done:done + n, output_ch, :, :].add(self.quantized_bias[c][output_ch])
-            done += n
+        for output_ch in range(filter_batch):
+            sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add_(bias[:, output_ch].reshape(bc.shape[0], 1, 1))
 
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros((self.runtime_helper.batch_cluster.shape[0], filter_batch), dtype=torch.int32).cuda()
+        sum_a2 = torch.zeros((bc.shape[0], filter_batch), dtype=torch.int32).cuda()
 
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            for output_ch in range(0, filter_batch):
-                sum_a2[i, output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1[c])
+        for output_ch in range(0, filter_batch):
+            sum_a2[:, output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(z1)
 
         for o_col in range(0,output_col):
             for o_row in range(0, output_row):
@@ -97,33 +94,18 @@ class QuantizedConv2d(nn.Conv2d):
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
 
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            nz1z2 = input_ch * filter_col * filter_row * self.z1[c] * self.z2
-            sum_q1q2[done:done + n] = sum_q1q2[done:done + n].add(nz1z2)
-            done += n
+        nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
+        sum_q1q2 = sum_q1q2.add(nz1z2.reshape(bc.shape[0], 1, 1, 1))
 
         for i_batch in range(input_batch):
             sum_q1q2[i_batch] = torch.sub(sum_q1q2[i_batch], sum_a1[i_batch])
 
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            for out_c in range(filter_batch):
-                sum_q1q2[done:done + n, out_c] = torch.sub(sum_q1q2[done:done + n:, out_c], sum_a2[i, out_c])
-            done += n
+        for out_c in range(filter_batch):
+            sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[:, out_c].reshape(bc.shape[0], 1, 1))
 
-        done = 0
-        total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
-            total[done:done + n] = shifting(multiplied, self.shift[c].item())
-            total[done:done + n] = total[done:done + n].add(self.z3[c])
-            done += n
+        multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), M0)
+        total = shifting4d(multiplied, shift)
+        total = total.add(z3)
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
