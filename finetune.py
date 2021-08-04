@@ -113,6 +113,8 @@ def _finetune(args, tools):
             kmeans.load_kmeans_model()
         runtime_helper.kmeans = kmeans
 
+    # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+
     if args.horovod:
         hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
@@ -174,5 +176,8 @@ def _finetune(args, tools):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             del quantized_model
+
+    with open('./exp_results.txt', 'a') as f:
+        f.write('{:.3f}\n'.format(best_score_int))
 
     # save_fused_network_in_darknet_form(model, args)
