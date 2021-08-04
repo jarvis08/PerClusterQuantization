@@ -11,6 +11,7 @@ import shutil
 from datetime import datetime
 import json
 import logging
+from time import time
 
 
 class RuntimeHelper(object):
@@ -24,9 +25,8 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.kmeans = None
 
-    def get_pcq_batch(self, input, target):
-        input, target, self.batch_cluster = self.kmeans.get_batch(input, target)
-        return input, target
+    def get_pcq_batch(self, input):
+        self.batch_cluster = self.kmeans.get_batch(input)
 
 
 class AverageMeter(object):
@@ -129,7 +129,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
 
-                input, target = runtime_helper.get_pcq_batch(input, target)
+                runtime_helper.get_pcq_batch(input)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -203,7 +203,8 @@ def get_train_loader(args, normalizer):
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
+            root='/nvme/ken/mnt/PerClusterQuantization/data',
+            #root='./data',
             train=True,
             download=True,
             transform=transforms.Compose([
@@ -228,7 +229,8 @@ def get_test_loader(args, normalizer):
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=10)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
+            root='/nvme/ken/mnt/PerClusterQuantization/data',
+            #root='./data',
             train=False,
             download=True,
             transform=transforms.Compose([

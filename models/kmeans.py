@@ -49,22 +49,10 @@ class KMeans(object):
             "\n(K-means model's = {}, Current model's = {}".format(saved_args['num_partitions'], self.args.partition)
         self.model = joblib.load(os.path.join(self.args.kmeans_path, 'checkpoint.pkl'))
     
-    def get_batch(self, input, target):
+    def get_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
-
-        num_data_per_cluster = []
-        input_ordered_by_cluster = torch.zeros(input.shape)
-        target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
-        existing_clusters, counts = np.unique(cluster_info, return_counts=True)
-        ordered = 0
-        for cluster, n in zip(existing_clusters, counts):
-            num_data_per_cluster.append([cluster, n])
-            data_indices = (cluster_info == cluster).nonzero()[0]
-            input_ordered_by_cluster[ordered:ordered + n] = input[data_indices].clone().detach()
-            target_ordered_by_cluster[ordered:ordered + n] = target[data_indices].clone().detach()
-            ordered += n
-        return input_ordered_by_cluster, target_ordered_by_cluster, torch.ByteTensor(num_data_per_cluster)
+        return torch.cuda.LongTensor(cluster_info)
 
     def train_kmeans_model(self, train_loader):
         def check_convergence(prev, cur, tol):
@@ -106,9 +94,9 @@ def check_cluster_distribution(kmeans, train_loader):
     n_data_per_cluster = dict()
     for c in range(kmeans.args.cluster):
         n_data_per_cluster[c] = 0
-    for i, (input, target) in enumerate(train_loader):
-        _, _, batch_cluster = kmeans.get_batch(input, target)
-        for c, n in batch_cluster:
-            n_data_per_cluster[c.item()] += n.item()
-    for c in range(kmeans.args.cluster):
-        print("C{}: {}, \t{:.2f}%".format(c, n_data_per_cluster[c], n_data_per_cluster[c] / n_data * 100))
+    #for i, (input, target) in enumerate(train_loader):
+    #    _, _, batch_cluster = kmeans.get_batch(input)
+    #    for c, n in batch_cluster:
+    #        n_data_per_cluster[c.item()] += n.item()
+    #for c in range(kmeans.args.cluster):
+    #    print("C{}: {}, \t{:.2f}%".format(c, n_data_per_cluster[c], n_data_per_cluster[c] / n_data * 100))
