@@ -122,7 +122,6 @@ class MobileNetV3(nn.Module):
             norm_layer (Optional[Callable[..., nn.Module]]): Module specifying the normalization layer to use
         """
         super().__init__()
-
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
         elif not (isinstance(inverted_residual_setting, Sequence) and
@@ -231,7 +230,7 @@ def Mobilenet_v3_model(
     return model
 
 
-def mobilenet(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> MobileNetV3:
+def mobilenet(pretrained: bool = False, progress: bool = True, width_mul: float= 1.0, **kwargs: Any) -> MobileNetV3:
     """
     Constructs a small MobileNetV3 architecture from
     `"Searching for MobileNetV3" <https://arxiv.org/abs/1905.02244>`_.
@@ -241,7 +240,7 @@ def mobilenet(pretrained: bool = False, progress: bool = True, **kwargs: Any) ->
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     # arch = "mobilenet"
-    inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
+    inverted_residual_setting, last_channel = _mobilenet_v3_conf(width_mul=width_mul, **kwargs)
     return Mobilenet_v3_model(inverted_residual_setting, last_channel, pretrained, progress, **kwargs)
 
 if __name__ == '__main__':

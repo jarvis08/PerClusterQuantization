@@ -136,38 +136,27 @@ class QuantizedConv2d(nn.Conv2d):
         filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
-        # start = time.time()
         for output_ch in range(filter_batch):
             sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
-        # print("\nAdd bias\t", time.time() - start, "\n")
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
         sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
 
-        # start = time.time()
         for output_ch in range(filter_batch):
             sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
-        # print("\nMul z1\t", time.time() - start, "\n")
-        # start = time.time()
         for o_col in range(output_col):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
-        # print("\nmul z2\t", time.time() - start, "\n")
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sum_q1q2 = sum_q1q2.add(nz1z2)
 
-        # start = time.time()
         for i_batch in range(input_batch):
             sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
-        # print("\nsub a1\t", time.time() - start, "\n")
-        # start = time.time()
         for out_c in range(filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
-        # print("\sub a2\t", time.time() - start, "\n")
-        # exit()
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
             total = shifting(multiplied, 0)
@@ -240,7 +229,7 @@ class PCQConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, bias=False,
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, dilation=1, bias=False,
                  norm_layer=None, activation=None, arg_dict=None):
         super(PCQConv2d, self).__init__()
         self.layer_type = 'PCQConv2d'
@@ -255,7 +244,7 @@ class PCQConv2d(nn.Module):
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
-                              groups=groups,  bias=bias)
+                              groups=groups,  bias=bias, dilation=dilation)
         if self.quant_noise:
             self.conv = _quant_noise(self.conv, self.qn_prob, 1, self.q_max)
 
@@ -349,7 +338,7 @@ class FusedConv2d(nn.Module):
         self.apply_ema = False
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
-                              groups=self.groups, bias=bias)
+                              groups=self.groups, bias=bias, dilation=dilation)
         if self.quant_noise:
             self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
@@ -391,14 +380,15 @@ class FusedConv2d(nn.Module):
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
         assert self.training == False, 'Do not fuse layers while training.'
-        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
-                                      self._norm_layer.running_var, self._norm_layer.eps
-        n_channel = self.conv.weight.shape[0]
-        self.conv.bias = nn.Parameter(beta)
-        for c in range(n_channel):
-            self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-            self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-        self._norm_layer = nn.Identity()
+        if self._norm_layer is not None:
+            alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
+                                          self._norm_layer.running_var, self._norm_layer.eps
+            n_channel = self.conv.weight.shape[0]
+            self.conv.bias = nn.Parameter(beta)
+            for c in range(n_channel):
+                self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
+                self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
+            self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)

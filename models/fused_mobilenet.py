@@ -28,8 +28,10 @@ class FusedSqueezeExcitation(nn.Module):
         self.apply_ema = False
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
+        # self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
+        #                        activation=nn.ReLU6, arg_dict=arg_dict)
         self.fc1 = FusedConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
-                               activation=nn.ReLU6, arg_dict=arg_dict)
+                               activation=nn.ReLU, arg_dict=arg_dict)
         self.fc2 = FusedConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, arg_dict=arg_dict)
         self.QAct = QActivation(activation=nn.Hardsigmoid, arg_dict=arg_dict)
 
@@ -90,7 +92,7 @@ class InvertedResidual(nn.Module):
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
-            layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1, 
+            layers.append(FusedConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
                                       norm_layer=norm_layer, activation=self.activation, arg_dict=arg_dict))
             if cnf.use_hs:
                 layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
@@ -159,6 +161,7 @@ class FusedMobileNet(nn.Module):
             **kwargs: Any
     ) -> None:
         super().__init__()
+        self.arg_dict = arg_dict
         self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
@@ -183,26 +186,26 @@ class FusedMobileNet(nn.Module):
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
         layers.append(FusedConv2d(3, firstconv_output_channels, kernel_size=3, padding=self.dilation, stride=2,
-                                  norm_layer=norm_layer, arg_dict=arg_dict))
-        layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
+                                  norm_layer=norm_layer, arg_dict=self.arg_dict))
+        layers.append(QActivation(activation=nn.Hardswish, arg_dict=self.arg_dict))
 
         # building inverted residual blocks
         for cnf in inverted_residual_setting:
-            layers.append(block(cnf, norm_layer, arg_dict=arg_dict))
+            layers.append(block(cnf, norm_layer, arg_dict=self.arg_dict))
 
         # building last several layers
         lastconv_input_channels = inverted_residual_setting[-1].out_channels
         lastconv_output_channels = 6 * lastconv_input_channels
         layers.append(FusedConv2d(lastconv_input_channels, lastconv_output_channels, kernel_size=1,
-                                  norm_layer=norm_layer, arg_dict=arg_dict))
-        layers.append(QActivation(activation=nn.Hardswish, arg_dict=arg_dict))
+                                  norm_layer=norm_layer, arg_dict=self.arg_dict))
+        layers.append(QActivation(activation=nn.Hardswish, arg_dict=self.arg_dict))
 
         self.features = nn.Sequential(*layers)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            FusedLinear(lastconv_output_channels, last_channel, arg_dict=arg_dict),
-            QActivation(activation=nn.Hardswish, arg_dict=arg_dict),
-            FusedLinear(last_channel, num_classes, arg_dict=arg_dict)
+            FusedLinear(lastconv_output_channels, last_channel, arg_dict=self.arg_dict),
+            QActivation(activation=nn.Hardswish, arg_dict=self.arg_dict),
+            FusedLinear(last_channel, num_classes, arg_dict=self.arg_dict)
         )
 
     def _forward_impl(self, x: Tensor) -> Tensor:
@@ -269,7 +272,7 @@ def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dila
     return inverted_residual_setting, last_channel
 
 
-def fused_mobilenet(arg_dict: dict, num_classes: int = 1000, **kwargs: Any) -> FusedMobileNet:
+def fused_mobilenet(arg_dict: dict, **kwargs: Any) -> FusedMobileNet:
     inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
     return FusedMobileNet(inverted_residual_setting, last_channel, arg_dict, **kwargs)
 

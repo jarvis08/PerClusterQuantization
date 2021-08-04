@@ -120,19 +120,20 @@ class QuantizedMul(nn.Module):
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-    def forward(self, bypass, prev):
-        if self.batch_cluster is not None:
+    def forward(self, prev, bypass):
+        if self.runtime_helper.batch_cluster is not None:
             return self.pcq_mul(bypass, prev)
         else:
-            return self.general_mul(bypass, prev)
+            return self.general_mul(prev, bypass)
 
-    def general_mul(self, bypass, prev):
+    def general_mul(self, prev, bypass):
         mul_q1q2 = torch.mul(prev, bypass).type(torch.cuda.IntTensor)
         z1z2 = self.z_bypass * self.z_prev
         z2q1 = torch.mul(prev, self.z_bypass)
         z1q2 = torch.mul(bypass, self.z_prev)
         mul_q1q2 = torch.sub(mul_q1q2, z2q1)
         mul_q1q2 = torch.sub(mul_q1q2, z1q2)
+        mul_q1q2 = mul_q1q2.add(z1z2)
 
         if self.shift < 0:
             multiplied = multiply_M((mul_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
@@ -141,7 +142,7 @@ class QuantizedMul(nn.Module):
             multiplied = multiply_M(mul_q1q2.type(torch.cuda.LongTensor), self.M0)
             total = shifting(multiplied, self.shift.item())
 
-        total = total.add(z1z2)
+        total = total.add(self.z3)
 
         if self.bit == 4:
             out = torch.clamp(total, 0, 15)
