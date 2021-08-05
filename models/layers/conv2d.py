@@ -95,7 +95,7 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
 
         nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2.reshape(bc.shape[0], 1, 1, 1))
+        sum_q1q2 = sum_q1q2.add(nz1z2.type(torch.cuda.IntTensor).reshape(bc.shape[0], 1, 1, 1))
 
         for i_batch in range(input_batch):
             sum_q1q2[i_batch] = torch.sub(sum_q1q2[i_batch], sum_a1[i_batch])
@@ -271,8 +271,8 @@ class PCQConv2d(nn.Module):
 
         done = 0
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
+            c = self.runtime_helper.batch_cluster[i][0]
+            n = self.runtime_helper.batch_cluster[i][1]
             if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:

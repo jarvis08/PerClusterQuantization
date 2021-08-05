@@ -70,7 +70,7 @@ class QuantizedLinear(nn.Linear):
 
         z1 = z1.reshape(bc.shape[0], 1)
         nz1z2 = N * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add_(nz1z2)
+        sum_q1q2 = sum_q1q2.add_(nz1z2.type(torch.cuda.IntTensor))
 
         for in_f in range(input_feature):
             sum_q1q2[in_f, :] = torch.sub(sum_q1q2[in_f, :], sum_a1[in_f])
@@ -177,8 +177,8 @@ class PCQLinear(nn.Module):
 
         done = 0
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
+            c = self.runtime_helper.batch_cluster[i][0]
+            n = self.runtime_helper.batch_cluster[i][1]
             if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:

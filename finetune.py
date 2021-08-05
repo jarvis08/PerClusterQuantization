@@ -47,6 +47,7 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             t.set_description("Epoch {}".format(epoch))
 
             runtime_helper.get_pcq_batch(input)
+            input, target = runtime_helper.sort_by_cluster_info(input, target)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
