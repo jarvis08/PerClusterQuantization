@@ -17,8 +17,8 @@ from time import time
 class RuntimeHelper(object):
     """
         apply_fake_quantization : Flag used in layers
-        batch_cluster_info      : Cluster information of current batch
-        kmeans                  : Trined K-Means Algorithm Object
+        batch_cluster           : Cluster information of current batch
+        kmeans                  : Trained K-Means model's object
     """
     def __init__(self):
         self.apply_fake_quantization = False
@@ -27,6 +27,21 @@ class RuntimeHelper(object):
 
     def get_pcq_batch(self, input):
         self.batch_cluster = self.kmeans.get_batch(input)
+
+    def sort_by_cluster_info(self, input, target):
+        num_data_per_cluster = []
+        input_ordered_by_cluster = torch.zeros(input.shape)
+        target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
+        existing_clusters, counts = torch.unique(self.batch_cluster, return_counts=True)
+        ordered = 0
+        for cluster, n in zip(existing_clusters, counts):
+            num_data_per_cluster.append([cluster, n])
+            data_indices = (self.batch_cluster == cluster).nonzero()[0]
+            input_ordered_by_cluster[ordered:ordered + n] = input[data_indices].clone().detach()
+            target_ordered_by_cluster[ordered:ordered + n] = target[data_indices].clone().detach()
+            ordered += n
+        self.batch_cluster = torch.LongTensor(num_data_per_cluster)
+        return input_ordered_by_cluster, target_ordered_by_cluster
 
 
 class AverageMeter(object):
@@ -203,8 +218,7 @@ def get_train_loader(args, normalizer):
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
-            root='/nvme/ken/mnt/PerClusterQuantization/data',
-            #root='./data',
+            root='./data',
             train=True,
             download=True,
             transform=transforms.Compose([
@@ -229,8 +243,7 @@ def get_test_loader(args, normalizer):
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=10)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
-            root='/nvme/ken/mnt/PerClusterQuantization/data',
-            #root='./data',
+            root='./data',
             train=False,
             download=True,
             transform=transforms.Compose([
