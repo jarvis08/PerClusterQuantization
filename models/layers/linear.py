@@ -159,7 +159,6 @@ class PCQLinear(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-        self.runtime_helper.apply_fake_quantization = False
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
@@ -228,6 +227,7 @@ class FusedLinear(nn.Module):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
 
+        self.arg_dict = arg_dict
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
@@ -235,11 +235,10 @@ class FusedLinear(nn.Module):
 
         self.apply_ema = False
 
-        arch = itemgetter('arch')(arg_dict)
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        if arch in ['ResNet50', 'ResNet18'] :
-            if self.quant_noise:
-                self.fc = _quant_noise(self.fc, self.qn_prob, 1, q_max=self.q_max)
+
+        if self.quant_noise:
+            self.fc = _quant_noise(self.fc, self.qn_prob + self.runtime_helper.qn_prob_increment, 1, q_max=self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
@@ -276,3 +275,5 @@ class FusedLinear(nn.Module):
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
+
+# --task_name MRPC --do_train --do_eval --do_lower_case --data_dir $GLUE_DIR/MRPC/ --bert_model /home/hansung/quantization/bert/pytorch-pretrained-BERT/examples/uncased_L-4_H-512_A-8 --max_seq_length 128 --train_batch_size 8 --learning_rate 2e-5 --num_train_epochs 3.0 --output_dir ./mrpc_output

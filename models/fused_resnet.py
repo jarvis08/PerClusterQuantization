@@ -40,7 +40,7 @@ class FusedBasicBlock(nn.Module):
 
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
@@ -103,6 +103,7 @@ class FusedBottleneck(nn.Module):
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob = \
             itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
@@ -188,6 +189,8 @@ class FusedResNet(nn.Module):
         self.inplanes = 64
         self.dilation = 1
         self.num_blocks = 4
+
+        self.qn_incre_check = self.quant_noise + self.runtime_helper.qn_prob_increment
 
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -418,7 +421,7 @@ def fold_resnet(model):
         fp_block[i].conv1.fold_conv_and_bn()
         fp_block[i].conv2.fold_conv_and_bn()
         if type(fp_block[i]) == FusedBottleneck:
-            fp_block[i].conv3.fole_conv_and_bn()
+            fp_block[i].conv3.fold_conv_and_bn()
 
     # Block 2
     fp_block = model.layer2
@@ -427,7 +430,7 @@ def fold_resnet(model):
         fp_block[i].conv1.fold_conv_and_bn()
         fp_block[i].conv2.fold_conv_and_bn()
         if type(fp_block[i]) == FusedBottleneck:
-            fp_block[i].conv3.fole_conv_and_bn()
+            fp_block[i].conv3.fold_conv_and_bn()
 
     # Block 3
     fp_block = model.layer3
@@ -436,7 +439,7 @@ def fold_resnet(model):
         fp_block[i].conv1.fold_conv_and_bn()
         fp_block[i].conv2.fold_conv_and_bn()
         if type(fp_block[i]) == FusedBottleneck:
-            fp_block[i].conv3.fole_conv_and_bn()
+            fp_block[i].conv3.fold_conv_and_bn()
 
     # Block 4
     if model.num_blocks == 4:
@@ -446,5 +449,56 @@ def fold_resnet(model):
             fp_block[i].conv1.fold_conv_and_bn()
             fp_block[i].conv2.fold_conv_and_bn()
             if type(fp_block[i]) == FusedBottleneck:
-                fp_block[i].conv3.fole_conv_and_bn()
+                fp_block[i].conv3.fold_conv_and_bn()
     return model
+
+
+# def modify_qn_pre_hook(model):
+#     """
+#         Copy from pre model's params to fused layers.
+#         Use fused architecture, but not really fused (use CONV & BN seperately)
+#     """
+#     model.first_conv.quant_noise = False
+#     # Block 1
+#     block = model.layer1
+#     if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
+#         m = block[0].downsample
+#         m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, q_max=m.q_max)
+#     for i in range(len(block)):
+#         block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer1[i].conv1, pre.layer1[i].bn1)
+#         block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer1[i].conv2, pre.layer1[i].bn2)
+#         if type(block[i]) == FusedBottleneck:
+#             block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer1[i].conv3, pre.layer1[i].bn3)
+#
+#     # Block 2
+#     block = model.layer2
+#     block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0], pre.layer2[0].downsample[1])
+#     for i in range(len(block)):
+#         block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer2[i].conv1, pre.layer2[i].bn1)
+#         block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer2[i].conv2, pre.layer2[i].bn2)
+#
+#         if type(block[i]) == FusedBottleneck:
+#             block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer2[i].conv3, pre.layer2[i].bn3)
+#
+#     # Block 3
+#     block = model.layer3
+#     block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0], pre.layer3[0].downsample[1])
+#     for i in range(len(block)):
+#         block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer3[i].conv1, pre.layer3[i].bn1)
+#         block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer3[i].conv2, pre.layer3[i].bn2)
+#         if type(block[i]) == FusedBottleneck:
+#             block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer3[i].conv3, pre.layer3[i].bn3)
+#
+#     # Block 4
+#     if model.num_blocks == 4:
+#         block = model.layer4
+#         block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0], pre.layer4[0].downsample[1])
+#         for i in range(len(block)):
+#             block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer4[i].conv1, pre.layer4[i].bn1)
+#             block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer4[i].conv2, pre.layer4[i].bn2)
+#             if type(block[i]) == FusedBottleneck:
+#                 block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer4[i].conv3, pre.layer4[i].bn3)
+#
+#     # Classifier
+#     model.fc.quant_noise = False
+#     return model

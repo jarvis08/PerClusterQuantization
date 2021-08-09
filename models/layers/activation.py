@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from ..quantization_utils import *
+from ..quant_noise import _quant_noise
 
 
 class PCQActivation(nn.Module):
@@ -21,7 +22,7 @@ class PCQActivation(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-        self.apply_ema = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self._activation = activation(inplace=False)
 

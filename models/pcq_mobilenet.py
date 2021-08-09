@@ -11,65 +11,62 @@ from torch import Tensor
 from torch.nn import functional as F
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from torchvision.models.mobilenetv2 import _make_divisible, ConvBNActivation
-from .mobilenet import SqueezeExcitation, InvertedResidualConfig
+from torchvision.models.mobilenetv2 import _make_divisible
+from .mobilenet import InvertedResidualConfig
 
 
 class PCQSqueezeExcitation(nn.Module):
     # Implemented as described at Figure 4 of the MobileNetV3 paper
     def __init__(self, input_channels: int, squeeze_factor: int = 4, arg_dict: dict = None):
         super().__init__()
-        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         squeeze_channels = _make_divisible(input_channels // squeeze_factor, 8)
         self.fc1 = PCQConv2d(input_channels, squeeze_channels, kernel_size=1, bias=True,
-                             activation=nn.ReLU, arg_dict=arg_dict)
+                             activation=nn.ReLU6, arg_dict=arg_dict)
         self.fc2 = PCQConv2d(squeeze_channels, input_channels, kernel_size=1, bias=True, arg_dict=arg_dict)
         self.QAct = PCQActivation(activation=nn.Hardsigmoid, arg_dict=arg_dict)
 
-    def _scale(self, x, inplace: bool):
-        _x = x[0]
-        cluster_info = x[1]
-
-        scale = F.adaptive_avg_pool2d(_x, 1)
-        scale = self.fc1((scale, cluster_info))
-        scale = self.fc2((scale, cluster_info))
-        scale = self.QAct((scale, cluster_info))
-        return scale, cluster_info
+    def _scale(self, x):
+        scale = F.adaptive_avg_pool2d(x, 1)
+        scale = self.fc1(scale)
+        scale = self.fc2(scale)
+        scale = self.QAct(scale)
+        return scale
 
     def forward(self, x):
-        _x = x[0]
-        cluster_info = x[1]
-        scale = self._scale(x, True)
-        out = scale * _x
+        scale = self._scale(x)
+        out = scale * x
 
-        if self.training:
-            done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
-                if self.flag_ema_init[c]:
-                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-                    if self.flag_fake_quantization:
-                        s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max)
-                else:
-                    self.act_range[c][0] = torch.min(out).item()
-                    self.act_range[c][1] = torch.max(out).item()
-                    self.flag_ema_init[c] = True
-                done += n
-        return out, cluster_info
+        if not self.training:
+            return out
 
-    def set_squeeze_fq(self):
-        self.flag_fake_quantization = True
-        self.fc1.set_fake_quantization_flag()
-        self.fc2.set_fake_quantization_flag()
-        self.QAct.set_fake_quantization_flag()
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
+            _out = torch.zeros(out.shape).cuda()
+        else:
+            _out = out
+
+        done = 0
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+            else:
+                self.act_range[c][0] = torch.min(out).item()
+                self.act_range[c][1] = torch.max(out).item()
+                self.apply_ema[c] = True
+            done += n
+        return _out
 
     def set_squeeze_qparams(self, s1, z1):
         prev_s, prev_z = self.fc1.set_qparams(s1, z1)
@@ -89,32 +86,32 @@ class PCQInvertedResidual(nn.Module):
         super().__init__()
         if not (1 <= cnf.stride <= 2):
             raise ValueError('illegal stride value')
-        self.bit, self.smooth, self.num_clusters, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.use_res_connect = cnf.stride == 1 and cnf.input_channels == cnf.out_channels
 
         layers: List[nn.Module] = []
-        activation = nn.ReLU if not cnf.use_hs else None
+        self.activation = nn.ReLU if not cnf.use_hs else None
 
         # expand
         if cnf.expanded_channels != cnf.input_channels:
             layers.append(PCQConv2d(cnf.input_channels, cnf.expanded_channels, kernel_size=1,
-                                      norm_layer=norm_layer, activation=activation, arg_dict=arg_dict))
+                                      norm_layer=norm_layer, activation=self.activation, arg_dict=arg_dict))
             if cnf.use_hs:
                 layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
         # depthwise
         stride = 1 if cnf.dilation > 1 else cnf.stride
         layers.append(PCQConv2d(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
-                                padding=(cnf.kernel-1)//2, stride=stride, dilation=cnf.dilation,
+                                padding=(cnf.kernel-1)//2*cnf.dilation, stride=stride, dilation=cnf.dilation,
                                 groups=cnf.expanded_channels, norm_layer=norm_layer,
-                                activation=activation, arg_dict=arg_dict))
+                                activation=self.activation, arg_dict=arg_dict))
         if cnf.use_hs:
             layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
@@ -130,37 +127,34 @@ class PCQInvertedResidual(nn.Module):
         self._is_cn = cnf.stride > 1
 
     def forward(self, x):
-        identity = x[0]
-        cluster_info = x[1]
-
-        out = self.block((x[0], cluster_info))
+        identity = x
+        out = self.block(x)
         if self.use_res_connect:
             out += identity
 
-        if self.training:
-            done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
-                if self.flag_ema_init[c]:
-                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-                    if self.flag_fake_quantization:
-                        s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                        out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max)
-                else:
-                    self.act_range[c][0] = torch.min(out).item()
-                    self.act_range[c][1] = torch.max(out).item()
-                    self.flag_ema_init[c] = True
-                done += n
-        return out, cluster_info
+        if not self.training:
+            return out
 
-    def set_block_fq(self):
-        self.flag_fake_quantization = True
-        for i in range(len(self.block)):
-            if isinstance(self.block[i], PCQSqueezeExcitation):
-                self.block[i].set_squeeze_fq()
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
+            _out = torch.zeros(out.shape).cuda()
+        else:
+            _out = out
+
+        done = 0
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
             else:
-                self.block[i].set_fake_quantization_flag()
+                self.act_range[c][0] = torch.min(out).item()
+                self.act_range[c][1] = torch.max(out).item()
+                self.apply_ema[c] = True
+            done += n
+        return _out
 
     def set_block_qparams(self, s1, z1):
         prev_s, prev_z = self.block[0].set_qparams(s1, z1)
@@ -181,20 +175,22 @@ class PCQMobileNet(nn.Module):
             self,
             inverted_residual_setting: List[InvertedResidualConfig],
             last_channel: int,
-            arg_dict: dict,
+            arg_dict: dict = None,
             num_classes: int = 1000,
             block: Optional[Callable[..., nn.Module]] = None,
             norm_layer: Optional[Callable[..., nn.Module]] = None,
             dilation: int = 1,
             **kwargs: Any
     ) -> None:
-        super().__init__()
-        self.bit, self.smooth, self.num_clusters = itemgetter('bit', 'smooth', 'cluster')(arg_dict)
+        super(PCQMobileNet, self).__init__()
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.dilation = dilation
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         if not inverted_residual_setting:
             raise ValueError("The inverted_residual_setting should not be empty")
@@ -212,7 +208,7 @@ class PCQMobileNet(nn.Module):
 
         # building first layer
         firstconv_output_channels = inverted_residual_setting[0].input_channels
-        layers.append(PCQConv2d(3, firstconv_output_channels, kernel_size=3, padding=1, stride=2,
+        layers.append(PCQConv2d(3, firstconv_output_channels, kernel_size=3, padding=self.dilation, stride=2,
                                   norm_layer=norm_layer, arg_dict=arg_dict))
         layers.append(PCQActivation(activation=nn.Hardswish, arg_dict=arg_dict))
 
@@ -247,52 +243,38 @@ class PCQMobileNet(nn.Module):
                 nn.init.normal_(m.fc.weight, 0, 0.01)
                 nn.init.zeros_(m.fc.bias)
 
-    def _forward_impl(self, x: Tensor, cluster_info=None) -> Tensor:
+    def _forward_impl(self, x: Tensor) -> Tensor:
         if self.training:
             done = 0
-            for i in range(cluster_info.shape[0]):
-                c = cluster_info[i][0].item()
-                n = cluster_info[i][1].item()
-                if self.flag_ema_init[c]:
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0].item()
+                n = self.runtime_helper.batch_cluster[i][1].item()
+                if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.flag_fake_quantization:
+                    if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()
-                    self.flag_ema_init[c] = True
+                    self.apply_ema[c] = True
                 done += n
 
-        x = self.features((x, cluster_info))
+        x = self.features(x)
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
 
-        x = self.classifier((x, cluster_info))
-
+        x = self.classifier(x)
         return x
 
-    def forward(self, x: Tensor, cluster_info=None) -> Tensor:
-        return self._forward_impl(x, cluster_info)
+    def forward(self, x: Tensor) -> Tensor:
+        return self._forward_impl(x)
 
     def show_params(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
-
-    def start_fake_quantization(self):
-        self.flag_fake_quantization = True
-        self.features[0].set_fake_quantization_flag()
-        self.features[1].set_fake_quantization_flag()
-        for feature_idx in range(2, len(self.features)-2):
-            self.features[feature_idx].set_block_fq()
-
-        self.features[-2].set_fake_quantization_flag()
-        self.features[-1].set_fake_quantization_flag()
-
-        for idx in range(len(self.classifier)):
-            self.classifier[idx].set_fake_quantization_flag()
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
@@ -341,58 +323,3 @@ def _mobilenet_v3_conf(width_mult: float = 1.0, reduced_tail: bool = False, dila
 def pcq_mobilenet(arg_dict: dict, num_classes: int = 1000, **kwargs: Any) -> PCQMobileNet:
     inverted_residual_setting, last_channel = _mobilenet_v3_conf(**kwargs)
     return PCQMobileNet(inverted_residual_setting, last_channel, arg_dict, num_classes=num_classes, **kwargs)
-
-
-# def set_fused_mobilenet(fused, pre):
-#     """
-#         Copy pre model's params & set fused layers.
-#         Use fused architecture, but not really fused (use CONV & BN seperately)
-#     """
-#     # First layer
-#     fused.features[0] = copy_from_pretrained(fused.features[0], pre.features[0][0], pre.features[0][1])
-
-#     # InvertedResidual
-#     fused_feature_idx = 2
-#     for pre_feature_idx in range(1, len(pre.features)-1):
-#         fused_block_idx = 0
-#         for pre_block_idx in range(len(pre.features[pre_feature_idx].block)):
-#             if isinstance(fused.features[fused_feature_idx].block[fused_block_idx], QActivation):
-#                 fused_block_idx += 1
-#             fused_module = fused.features[fused_feature_idx].block[fused_block_idx]
-#             pre_module = pre.features[pre_feature_idx].block[pre_block_idx]
-#             if isinstance(pre_module, ConvBNActivation):
-#                 fused_module = copy_from_pretrained(fused_module, pre_module[0], pre_module[1])
-#             else:   # SqueezeExcitation
-#                 fused_module.fc1 = copy_from_pretrained(fused_module.fc1, pre_module.fc1, None)
-#                 fused_module.fc2 = copy_from_pretrained(fused_module.fc2, pre_module.fc2, None)
-#             fused_block_idx += 1
-#         fused_feature_idx += 1
-
-#     # Last conv
-#     fused.features[-2] = copy_from_pretrained(fused.features[-2], pre.features[-1][0], pre.features[-1][1])
-
-#     # Fully Connected
-#     fused.classifier[0] = copy_from_pretrained(fused.classifier[0], pre.classifier[0], None)
-#     fused.classifier[2] = copy_from_pretrained(fused.classifier[2], pre.classifier[3], None)
-#     return fused
-
-
-# def fold_mobilenet(model):
-#     # first layer
-#     model.features[0].fuse_conv_and_bn()
-
-#     # InvertedResidual
-#     for feature_idx in range(2, len(model.features)-2):
-#         for block_idx in range(len(model.features[feature_idx].block)):
-#             fused_module = model.features[feature_idx].block[block_idx]
-#             if isinstance(fused_module, FusedConv2d):
-#                 fused_module.fuse_conv_and_bn()
-#             elif isinstance(fused_module, FusedSqueezeExcitation):
-#                 fused_module.fc1.fuse_conv_and_bn()
-#                 fused_module.fc2.fuse_conv_and_bn()
-
-#     # Last conv
-#     model.features[-2].fuse_conv_and_bn()
-
-#     return model
-

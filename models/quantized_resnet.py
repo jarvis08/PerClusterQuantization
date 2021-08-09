@@ -63,7 +63,7 @@ class QuantizedBottleneck(nn.Module):
         self.stride = stride
 
         self.arg_dict = arg_dict
-        self.bit, self.num_clusters = itemgetter('bit', 'num_clusters')(arg_dict)
+        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
@@ -96,7 +96,8 @@ class QuantizedResNet18(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(QuantizedResNet18, self).__init__()
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.bit, self.num_clusters, self.runtime_helper = \
+            itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.arg_dict = arg_dict
 
@@ -116,15 +117,15 @@ class QuantizedResNet18(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                          arg_dcit=arg_dict)
-        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dcit=arg_dict)
+        self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, activation=nn.ReLU,
+                                          bias=False, arg_dict=arg_dict)
+        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = QuantizedLinear(512 * block.expansion, num_classes, bias=False, arg_dcit=arg_dict)
+        self.fc = QuantizedLinear(512 * block.expansion, num_classes, bias=False, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -134,8 +135,12 @@ class QuantizedResNet18(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                           arg_dict=self.arg_dict)
+            print('DownSample')
+            downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False, arg_dict=self.arg_dict)
+        else:
+            print('No DownSample')
+
+
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,

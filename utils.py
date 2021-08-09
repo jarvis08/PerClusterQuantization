@@ -23,6 +23,7 @@ class RuntimeHelper(object):
         self.apply_fake_quantization = False
         self.batch_cluster = None
         self.kmeans = None
+        self.qn_prob = 0.0
 
     def get_pcq_batch(self, input, target):
         input, target, self.batch_cluster = self.kmeans.get_batch(input, target)
@@ -74,7 +75,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
     top1 = AverageMeter()
 
     model.train()
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
+    with tqdm(train_loader, unit="batch",ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
@@ -167,7 +168,7 @@ def validate_darknet_dataset(model, test_loader, criterion):
 def load_dnn_model(args, tools):
     model = None
     if args.quantized:
-        model = tools.quantized_model_initializer(bit=args.bit, num_clusters=args.cluster)
+        model = tools.quantized_model_initializer(vars(args))
     elif args.fused:
         model = tools.fused_model_initializer(vars(args))
     else:
@@ -186,6 +187,13 @@ def load_dnn_model(args, tools):
     checkpoint = torch.load(args.dnn_path)
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
+
+
+def load_optimizer(optim, path):
+    checkpoint = torch.load(path)
+    optim.load_state_dict(checkpoint['optimizer'])
+    epoch_to_start = checkpoint['epoch']
+    return optim, epoch_to_start
 
 
 def get_normalizer(dataset):

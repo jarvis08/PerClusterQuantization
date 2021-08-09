@@ -36,7 +36,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.activation = activation
-        
+
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
@@ -63,6 +63,8 @@ class QuantizedConv2d(nn.Conv2d):
         if self.padding[0] > 0 or self.padding[1] > 0:
             x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1.item())
         sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
+        if self.groups > 1:
+            return self.depthwise_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
         return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2):
@@ -134,29 +136,82 @@ class QuantizedConv2d(nn.Conv2d):
         filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
+        # start = time.time()
         for output_ch in range(filter_batch):
             sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
-
+        # print("\nAdd bias\t", time.time() - start, "\n")
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
         sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
 
-        for output_ch in range(0, filter_batch):
+        # start = time.time()
+        for output_ch in range(filter_batch):
             sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
-
-        for o_col in range(0, output_col):
-            for o_row in range(0, output_row):
+        # print("\nMul z1\t", time.time() - start, "\n")
+        # start = time.time()
+        for o_col in range(output_col):
+            for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
+        # print("\nmul z2\t", time.time() - start, "\n")
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sum_q1q2 = sum_q1q2.add(nz1z2)
 
-        for i_batch in range(0, input_batch):
+        # start = time.time()
+        for i_batch in range(input_batch):
             sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
-        for out_c in range(0, filter_batch):
+        # print("\nsub a1\t", time.time() - start, "\n")
+        # start = time.time()
+        for out_c in range(filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
+        # print("\sub a2\t", time.time() - start, "\n")
+        # exit()
+        if self.shift < 0:
+            multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
+        else:
+            multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
+        total = total.add(self.z3)
+
+        if self.activation is not None:
+            hs_total = total + self.hardswish_3
+            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
+            if self.activation == 'Hardswish':
+                total = total * hs_total / self.hardswish_6.item()
+            else:
+                total = hs_total / self.hardswish_6.item()
+
+        if self.bit == 4:
+            total = torch.clamp(total, 0, 15)
+        else:
+            total = torch.clamp(total, -128, 127)
+        return total.type(torch.cuda.FloatTensor)
+
+    def depthwise_totalsum(self, x, sum_q1q2):
+        input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
+        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+        stride = self.stride[0]
+
+        for output_ch in range(filter_batch):
+            sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
+        output_col = sum_q1q2.shape[2]
+        output_row = sum_q1q2.shape[3]
+
+        for output_ch in range(filter_batch):
+            sum_q1q2[:, output_ch, :, :] = torch.sub(sum_q1q2[:, output_ch, :, :], torch.sum(self.weight.data[output_ch, :]).mul(self.z1))
+
+        for o_col in range(output_col):
+            for o_row in range(output_row):
+                col_st, col_end = o_col * stride, o_col * stride + filter_col
+                row_st, row_end = o_row * stride, o_row * stride + filter_row
+                sum_q1q2[:, :, o_col, o_row] = torch.sub(sum_q1q2[:, :, o_col, o_row],
+                                                         torch.sum(x[:, :, col_st: col_end, row_st: row_end], (2, 3)).mul(self.z2))
+
+        nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
+        sum_q1q2 = sum_q1q2.add(nz1z2)
 
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
@@ -197,8 +252,7 @@ class PCQConv2d(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-        self.flag_ema_init = np.zeros(self.num_clusters, dtype=bool)
-        self.flag_fake_quantization = False
+        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)
@@ -228,7 +282,7 @@ class PCQConv2d(nn.Module):
         if self._activation:
             x = self._activation(x)
 
-        if self.flag_fake_quantization and self.use_ste:
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
             out = torch.zeros(x.shape).cuda()
         else:
             out = x
@@ -237,15 +291,15 @@ class PCQConv2d(nn.Module):
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
             c = self.runtime_helper.batch_cluster[i][0].item()
             n = self.runtime_helper.batch_cluster[i][1].item()
-            if self.flag_ema_init[c]:
+            if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
-                if self.flag_fake_quantization:
+                if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
                     out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(x[done:done + n]).item()
                 self.act_range[c][1] = torch.max(x[done:done + n]).item()
-                self.flag_ema_init[c] = True
+                self.apply_ema[c] = True
             done += n
         return out
 
@@ -286,23 +340,21 @@ class FusedConv2d(nn.Module):
         self.layer_type = 'FusedConv2d'
         self.groups = groups
 
-        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise\
+            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise')(arg_dict)
+
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        # self.flag_ema_init = False
-        # self.flag_fake_quantization = False
-        
-
         self.apply_ema = False
 
-        arch = itemgetter('arch')(arg_dict)
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias)
-        if arch in ['ResNet50', 'ResNet18']:
-            if self.quant_noise:
-                self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
+
+        # if self.quant_noise:
+        #     self.conv = _quant_noise(self.conv, self.runtime_helper.qn_prob, 1, q_max=self.q_max)
 
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
@@ -329,15 +381,15 @@ class FusedConv2d(nn.Module):
             x = self._activation(x)
 
         out = x
-        if self.flag_ema_init:
+        if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-            if self.flag_fake_quantization:
+            if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                 out = fake_quantize(x, s, z, self.q_max, self.use_ste)
         else:
             self.act_range[0] = torch.min(x).item()
             self.act_range[1] = torch.max(x).item()
-            self.flag_ema_init = True
+            self.apply_ema = True
         return out
 
     def fold_conv_and_bn(self):
