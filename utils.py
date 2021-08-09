@@ -165,26 +165,26 @@ def validate_darknet_dataset(model, test_loader, criterion):
     return top1.avg
 
 
-def load_dnn_model(args, tools):
+def load_dnn_model(arg_dict, tools):
     model = None
-    if args.quantized:
-        model = tools.quantized_model_initializer(vars(args))
-    elif args.fused:
-        model = tools.fused_model_initializer(vars(args))
+    if arg_dict['quantized']:
+        model = tools.quantized_model_initializer(arg_dict)
+    elif arg_dict['fused']:
+        model = tools.fused_model_initializer(arg_dict)
     else:
-        if args.dataset == 'imagenet':
-            if args.arch == 'MobileNetV3':
+        if arg_dict['dataset'] == 'imagenet':
+            if arg_dict['arch'] == 'MobileNetV3':
                 return vision_models.mobilenet_v3_small(pretrained=True)
-            elif args.arch == 'ResNet18':
+            elif arg_dict.arch == 'ResNet18':
                 return vision_models.resnet18(pretrained=True)
-            elif args.arch == 'AlexNet':
+            elif arg_dict.arch == 'AlexNet':
                 return vision_models.alexnet(pretrained=True)
-            elif args.arch == 'ResNet50':
+            elif arg_dict.arch == 'ResNet50':
                 return vision_models.resnet50(pretrained=True)
         else:
             model = tools.pretrained_model_initializer()
 
-    checkpoint = torch.load(args.dnn_path)
+    checkpoint = torch.load(arg_dict['dnn_path'])
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
 

@@ -38,7 +38,6 @@ class FusedBasicBlock(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.arg_dict = arg_dict
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
@@ -177,6 +176,7 @@ class FusedResNet(nn.Module):
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
@@ -282,6 +282,7 @@ class FusedResNet20(nn.Module):
         super(FusedResNet20, self).__init__()
         self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 

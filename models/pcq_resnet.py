@@ -36,7 +36,6 @@ class PCQBasicBlock(nn.Module):
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.arg_dict = arg_dict
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
@@ -191,8 +190,6 @@ class PCQBottleneck(nn.Module):
         return self.s3, self.z3
 
 class PCQResNet(nn.Module):
-    batch_cluster = None
-
     def __init__(self, block, layers, runtime_helper, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None, arg_dict=None):
         super(PCQResNet, self).__init__()
