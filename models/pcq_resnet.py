@@ -78,8 +78,8 @@ class PCQBasicBlock(nn.Module):
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
                     _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
             else:
-                self.act_range[c][0] = torch.min(out).item()
-                self.act_range[c][1] = torch.max(out).item()
+                self.act_range[c][0] = torch.min(out[done:done + n]).item()
+                self.act_range[c][1] = torch.max(out[done:done + n]).item()
                 self.apply_ema[c] = True
             done += n
         return _out
@@ -249,8 +249,8 @@ class PCQResNet20(nn.Module):
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
-                    self.in_range[c][0] = torch.min(x).item()
-                    self.in_range[c][1] = torch.max(x).item()
+                    self.in_range[c][0] = torch.min(x[done:done + n]).item()
+                    self.in_range[c][1] = torch.max(x[done:done + n]).item()
                     self.apply_ema[c] = True
                 done += n
 
