@@ -128,6 +128,9 @@ def check_cluster_distribution(kmeans, train_loader):
         for c, n in batch_cluster:
             n_data_per_cluster[c.item()] += n.item()
 
+    assert sum(n_data_per_cluster.values()) == n_data,\
+        "Total # of data doesn't match (n_data: {}, calc: {})".format(n_data, sum(n_data_per_cluster.values()))
+
     ratio = np.zeros((kmeans.args.cluster))
     #ratio = [0 for _ in range(kmeans.args.cluster)]
     for c in range(kmeans.args.cluster):
