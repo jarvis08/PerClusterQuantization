@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from .layers.conv2d import *
 from .layers.linear import *
+from .layers.norm import *
 from .quantization_utils import *
 
 
@@ -32,30 +33,59 @@ class PCQBasicBlock(nn.Module):
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.downsample = downsample
         self.stride = stride
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
 
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, norm_layer=self._norm_layer,
-                                 activation=nn.ReLU, arg_dict=arg_dict)
-        self.conv2 = pcq_conv3x3(planes, planes, norm_layer=self._norm_layer, arg_dict=arg_dict)
+        if self.downsample is not None:
+            self.bn_down = nn.ModuleList([FusedBnReLU(planes, arg_dict=arg_dict) for _ in range(self.num_clusters)])
+
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict)
+        self.bn1 = nn.ModuleList([FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict) for _ in range(self.num_clusters)])
+
+        self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict)
+        self.bn2 = nn.ModuleList([FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict) for _ in range(self.num_clusters)])
+
         self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
+
+        done = 0
+        bn_output_per_cluster = []
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0]
+            n = self.runtime_helper.batch_cluster[i][1]
+            bn_output_per_cluster.append(self.bn1[c](out[done:done + n]))
+            done += n
+        out = torch.cat(bn_output_per_cluster)
+
         out = self.conv2(out)
+
+        done = 0
+        bn_output_per_cluster = []
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0]
+            n = self.runtime_helper.batch_cluster[i][1]
+            bn_output_per_cluster.append(self.bn2[c](out[done:done + n]))
+            done += n
+        out = torch.cat(bn_output_per_cluster)
 
         if self.downsample is not None:
             identity = self.downsample(x)
+            bn_output_per_cluster = []
+            done = 0
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
+                bn_output_per_cluster.append(self.bn_down[c](identity[done:done + n]))
+                done += n
+            identity = torch.cat(bn_output_per_cluster)
 
         out += identity
         out = self.relu(out)
@@ -217,8 +247,8 @@ class PCQResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                    norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=self.arg_dict)
+        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict)
+        self.bn1 = nn.ModuleList([FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict) for _ in range(self.num_clusters)])
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
@@ -228,8 +258,7 @@ class PCQResNet20(nn.Module):
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride,
-                                     norm_layer=self._norm_layer, arg_dict=self.arg_dict)
+            downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict)
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
@@ -255,6 +284,15 @@ class PCQResNet20(nn.Module):
                 done += n
 
         x = self.first_conv(x)
+        bn_output_per_cluster = []
+        done = 0
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            bn_output_per_cluster.append(self.bn1[c](x[done:done + n]))
+            done += n
+        x = torch.cat(bn_output_per_cluster)
+
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -287,3 +325,72 @@ def pcq_resnet18(arg_dict, **kwargs):
 
 def pcq_resnet20(arg_dict):
     return PCQResNet20(PCQBasicBlock, [3, 3, 3], arg_dict)
+
+
+def set_pcq_resnet(fused, pre):
+    """
+        Copy from pre model's params to fused layers.
+        Use fused architecture, but not really fused (use CONV & BN seperately)
+    """
+    n = fused.arg_dict['cluster']
+    # First layer
+    fused.first_conv = copy_from_pretrained(fused.first_conv, pre.conv1, pre.bn1)
+    for c in range(n):
+        fused.bn1[c] = copy_bn_from_pretrained(fused.bn1[c], pre.bn1)
+
+    # Block 1
+    block = fused.layer1
+    if block[0].downsample is not None:
+        block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer1[0].downsample[0])
+        for c in range(n):
+            block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer1[0].downsample[1])
+    for i in range(len(block)):
+        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer1[i].conv1)
+        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer1[i].conv2)
+        for c in range(n):
+            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer1[i].bn1)
+            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer1[i].bn2)
+
+    # Block 2
+    block = fused.layer2
+    if block[0].downsample is not None:
+        block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0])
+        for c in range(n):
+            block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer2[0].downsample[1])
+    for i in range(len(block)):
+        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer2[i].conv1, pre.layer2[i].bn1)
+        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer2[i].conv2, pre.layer2[i].bn2)
+        for c in range(n):
+            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer2[i].bn1)
+            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer2[i].bn2)
+
+    # Block 3
+    block = fused.layer3
+    if block[0].downsample is not None:
+        block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0])
+        for c in range(n):
+            block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer3[0].downsample[1])
+    for i in range(len(block)):
+        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer3[i].conv1, pre.layer3[i].bn1)
+        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer3[i].conv2, pre.layer3[i].bn2)
+        for c in range(n):
+            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer3[i].bn1)
+            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer3[i].bn2)
+
+    # Block 4
+    if fused.num_blocks == 4:
+        block = fused.layer4
+        if block[0].downsample is not None:
+            block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0])
+            for c in range(n):
+                block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer4[0].downsample[1])
+        for i in range(len(block)):
+            block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer4[i].conv1, pre.layer4[i].bn1)
+            block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer4[i].conv2, pre.layer4[i].bn2)
+        for c in range(n):
+            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer4[i].bn1)
+            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer4[i].bn2)
+
+    # Classifier
+    fused.fc = copy_from_pretrained(fused.fc, pre.fc)
+    return fused
