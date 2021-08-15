@@ -71,7 +71,10 @@ def set_func_for_target_arch(arch, is_pcq):
 
     elif 'ResNet' in arch:
         setattr(tools, 'folder', fold_resnet)
-        setattr(tools, 'fuser', set_fused_resnet)
+        if is_pcq:
+            setattr(tools, 'fuser', set_pcq_resnet)
+        else:
+            setattr(tools, 'fuser', set_fused_resnet)
         setattr(tools, 'quantizer', quantize_resnet)
         if '18' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet18)
