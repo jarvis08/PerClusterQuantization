@@ -247,3 +247,16 @@ def quantize_resnet(fp_model, int_model):
         int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
+
+
+def quantize_pcq_resnet(fp_model, int_model):
+    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
+    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
+    int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
+    int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
+    if int_model.num_blocks == 4:
+        int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
+    int_model.fc = quantize(fp_model.fc, int_model.fc)
+    return int_model

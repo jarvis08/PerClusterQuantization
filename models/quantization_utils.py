@@ -160,15 +160,25 @@ def copy_bn_from_pretrained(_to, _from):
     return _to
 
 
+def copy_weight_from_pretrained(_to, _from, norm_layer=None):
+    # Copy weights from pretrained FP model
+    with torch.no_grad():
+        if 'Conv' in _to.layer_type:
+            _to.conv.weight.copy_(_from.weight)
+        else:
+            _to.fc.weight.copy_(_from.weight)
+    return _to
+
+
 def copy_from_pretrained(_to, _from, norm_layer=None):
     # Copy weights from pretrained FP model
     with torch.no_grad():
         if 'Conv' in _to.layer_type:
             _to.conv.weight.copy_(_from.weight)
-            #if norm_layer:
-            #    _to._norm_layer = deepcopy(norm_layer)
-            #else:
-            #    _to.conv.bias.copy_(_from.bias)
+            if norm_layer:
+                _to._norm_layer = deepcopy(norm_layer)
+            else:
+                _to.conv.bias.copy_(_from.bias)
         else:
             _to.fc.weight.copy_(_from.weight)
             _to.fc.bias.copy_(_from.bias)
