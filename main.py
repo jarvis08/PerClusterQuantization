@@ -2,8 +2,7 @@ import argparse
 
 from models import *
 from models.bert.bert import bert_small
-# from models.bert.fused_bert import fused_bert_small, set_fused_bert
-from models.bert.fused_bert import fused_bert_small
+from models.bert.fused_bert import fused_bert_small, set_fused_bert_small
 from models.resnet import resnet50
 from pretrain import _pretrain
 from finetune import _finetune
@@ -41,10 +40,13 @@ parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means mo
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
+parser.add_argument('--qn_increment_epoch', default=10000, type=int, help='qn prob increment gap')
 
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
+
+
 
 ### About Bert ###
 ## Required parameters
@@ -153,42 +155,52 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'pretrained_model_initializer', alexnet_small)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_alexnet_small)
+                setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_alexnet_small)
+                setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
         else:
             setattr(tools, 'pretrained_model_initializer', alexnet)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_alexnet)
+                setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_alexnet)
+                setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
         setattr(tools, 'folder', fold_resnet)
         setattr(tools, 'fuser', set_fused_resnet)
-        setattr(tools, 'quantizer', quantize_resnet)
+        setattr(tools, 'quantizer', quantize_resnet)    #
         if '18' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet18)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet18)
+                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet18)
+                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet18)
         # Test ResNet50
         elif '50' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet50)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet50)
+                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet50)
+                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet50)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet20)
+                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet20)
+                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
 
     elif arch == 'MobileNetV3':
@@ -200,9 +212,11 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
     elif arch == 'Bert':
-        # setattr(tools, 'fuser', set_fused_bert)
+        # main.py import 부분 수정 필요함.
+        setattr(tools, 'fuser', set_fused_bert_small)
         setattr(tools, 'pretrained_model_initializer', bert_small)
         setattr(tools, 'fused_model_initializer', fused_bert_small)
+
 
     return tools
 
