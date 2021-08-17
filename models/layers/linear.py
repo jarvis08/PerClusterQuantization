@@ -223,7 +223,7 @@ class FusedLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_features, out_features, bias=True, activation=None, arg_dict=None):
+    def __init__(self, in_features, out_features, bias=True, activation=None, arg_dict=None, entire=False):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
 
@@ -234,11 +234,13 @@ class FusedLinear(nn.Module):
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
-
+        self.entire = entire
         self.fc = nn.Linear(in_features, out_features, bias=bias)
 
-        if self.quant_noise:
-            self.fc = _quant_noise(self.fc, self.qn_prob + self.runtime_helper.qn_prob_increment, 1, q_max=self.q_max)
+        if self.entire and self.quant_noise:
+            self.fc = _quant_noise(self.fc, 1, 1, q_max=self.q_max)
+        else:
+            self.fc = _quant_noise(self.fc, self.runtime_helper.qn_prob, 1, q_max=self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):

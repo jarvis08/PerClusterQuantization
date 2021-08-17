@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Any
 from .layers.conv2d import *
 from .layers.linear import *
+from .quant_noise import _quant_noise
 from .quantization_utils import *
 
 
@@ -157,3 +158,14 @@ def set_fused_alexnet(fused, pre):
     fused.fc2 = copy_from_pretrained(fused.fc2, pre.classifier[4])
     fused.fc3 = copy_from_pretrained(fused.fc3, pre.classifier[6])
     return fused
+
+
+def modify_fused_alexnet_qn_pre_hook(model):
+    model.conv1.conv = _quant_noise(model.conv1.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.conv2.conv = _quant_noise(model.conv2.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.conv3.conv = _quant_noise(model.conv3.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.conv4.conv = _quant_noise(model.conv4.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.conv5.conv = _quant_noise(model.conv5.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.fc1.fc = _quant_noise(model.fc1.fc, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.fc2.fc = _quant_noise(model.fc2.fc, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.fc3.fc = _quant_noise(model.fc3.fc, model.runtime_helper.qn_prob, 1, q_max=model.q_max)

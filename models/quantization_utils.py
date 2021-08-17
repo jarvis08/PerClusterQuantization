@@ -23,6 +23,8 @@ class QuantizationTool(object):
         self.fused_model_initializer = None
         self.quantized_model_initializer = None
 
+        self.shift_qn_prob = None
+
 
 def calc_qparams(_min, _max, q_max):
     s = (_max - _min) / q_max

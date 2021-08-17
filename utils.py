@@ -175,11 +175,11 @@ def load_dnn_model(arg_dict, tools):
         if arg_dict['dataset'] == 'imagenet':
             if arg_dict['arch'] == 'MobileNetV3':
                 return vision_models.mobilenet_v3_small(pretrained=True)
-            elif arg_dict.arch == 'ResNet18':
+            elif arg_dict['arch'] == 'ResNet18':
                 return vision_models.resnet18(pretrained=True)
-            elif arg_dict.arch == 'AlexNet':
+            elif arg_dict['arch'] == 'AlexNet':
                 return vision_models.alexnet(pretrained=True)
-            elif arg_dict.arch == 'ResNet50':
+            elif arg_dict['arch'] == 'ResNet50':
                 return vision_models.resnet50(pretrained=True)
         else:
             model = tools.pretrained_model_initializer()

@@ -335,11 +335,10 @@ class FusedConv2d(nn.Module):
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False,
-                 norm_layer=None, activation=None, arg_dict=None):
+                 norm_layer=None, activation=None, arg_dict=None, entire=False):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.groups = groups
-
 
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise\
@@ -349,13 +348,14 @@ class FusedConv2d(nn.Module):
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
-
+        self.entire = entire
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias)
 
-        # if self.quant_noise:
-        #     self.conv = _quant_noise(self.conv, self.runtime_helper.qn_prob, 1, q_max=self.q_max)
-
+        if self.entire and self.quant_noise:
+            self.conv = _quant_noise(self.conv, 1.0, 1, q_max=self.q_max)
+        else:
+            self.conv = _quant_noise(self.conv, self.runtime_helper.qn_prob, 1, q_max=self.q_max)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
 

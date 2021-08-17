@@ -140,8 +140,6 @@ class QuantizedResNet18(nn.Module):
         else:
             print('No DownSample')
 
-
-
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
                             self.base_width, previous_dilation, arg_dict=self.arg_dict))
