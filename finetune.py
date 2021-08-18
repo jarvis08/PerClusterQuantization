@@ -130,13 +130,14 @@ def _finetune(args, tools):
             pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
+
         opt_scheduler.step()
 
         if args.cluster > 1:
-            val_score = pcq_validate(quantized_model, test_loader, criterion, runtime_helper, logger)
+            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
         else:
-            val_score = validate(quantized_model, test_loader, criterion, logger)
-        #fp_score = validate(model, test_loader, criterion, logger)
+            fp_score = validate(model, test_loader, criterion, logger)
+
         state = {
             'epoch': e,
             'state_dict': model.state_dict(),
@@ -184,10 +185,14 @@ def _finetune(args, tools):
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f}\n'.format(best_score_int))
 
-    #with open('./test.txt', 'a') as f:
-    #    for name, param in model.named_parameters():
-    #        if 'act_range' in name:
-    #            f.write('{}\n'.format(name))
-    #            for c in range(args.cluster):
-    #                f.write('{:.4f}, {:.4f}\n'.format(param[c][0], param[c][1]))
+    with open('./test.txt', 'a') as f:
+        for name, param in model.named_parameters():
+            if 'act_range' in name:
+                f.write('{}\n'.format(name))
+                if 'norm' in name:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+                else:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)

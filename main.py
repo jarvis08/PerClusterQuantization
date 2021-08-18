@@ -51,8 +51,8 @@ print(vars(args))
 def set_func_for_target_arch(arch, is_pcq):
     tools = QuantizationTool()
     if 'AlexNet' in arch:
-        setattr(tools, 'folder', None)
         setattr(tools, 'fuser', set_fused_alexnet)
+        setattr(tools, 'folder', None)
         setattr(tools, 'quantizer', quantize_alexnet)
         if 'Small' in arch:
             setattr(tools, 'pretrained_model_initializer', alexnet_small)
@@ -70,12 +70,14 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
-        setattr(tools, 'folder', fold_resnet)
         if is_pcq:
             setattr(tools, 'fuser', set_pcq_resnet)
+            setattr(tools, 'folder', fold_pcq_resnet)
+            setattr(tools, 'quantizer', quantize_pcq_resnet)
         else:
             setattr(tools, 'fuser', set_fused_resnet)
-        setattr(tools, 'quantizer', quantize_resnet)
+            setattr(tools, 'folder', fold_resnet)
+            setattr(tools, 'quantizer', quantize_resnet)
         if '18' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet18)
             if is_pcq:
