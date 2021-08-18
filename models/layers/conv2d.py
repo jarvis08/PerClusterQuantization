@@ -18,6 +18,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.bit, self.num_clusters, self.runtime_helper =\
                 itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_qmax = nn.Parameter(torch.tensor([0], dtype=torch.int32), requires_grad=False)
 
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels)), requires_grad=False)
 
@@ -69,8 +70,8 @@ class QuantizedConv2d(nn.Conv2d):
 
     def pcq_totalsum(self, x, sum_q1q2):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[
-            2], self.weight.shape[3]
+        filter_batch, filter_ch, filter_col, filter_row =\
+            self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
         done = 0
@@ -120,15 +121,27 @@ class QuantizedConv2d(nn.Conv2d):
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
             c = self.runtime_helper.batch_cluster[i][0].item()
             n = self.runtime_helper.batch_cluster[i][1].item()
-            multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
-            total[done:done + n] = shifting(multiplied, self.shift[c].item())
-            total[done:done + n] = total[done:done + n].add(self.z3[c])
+            if self.shift[c] < 0:
+               subsum = multiply_M((sum_q1q2[done:done + n].type(torch.cuda.LongTensor) << - self.shift[c].item()), self.M0[c])
+               subsum = shifting(subsum, 0)
+            else:
+               subsum = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
+               subsum = shifting(subsum, self.shift[c].item())
+            total[done:done + n] = subsum.add(self.z3[c])
             done += n
 
-        if self.bit == 4:
+        # if self.bit == 4:
+        #     total = torch.clamp(total, 0, 15)
+        # else:
+        #     total = torch.clamp(total, -128, 127)
+        if self.act_qmax == 15:
             total = torch.clamp(total, 0, 15)
-        else: 
+        elif self.act_qmax == 255:
             total = torch.clamp(total, -128, 127)
+        elif self.act_qmax == 65535:  # INT 16
+            total = torch.clamp(total, -32768, 32767)
+        elif self.act_qmax == 4294967295:  # INT 32
+            total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
     def general_totalsum(self, x, sum_q1q2):
@@ -145,6 +158,7 @@ class QuantizedConv2d(nn.Conv2d):
 
         for output_ch in range(filter_batch):
             sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
+
         for o_col in range(output_col):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
@@ -155,8 +169,10 @@ class QuantizedConv2d(nn.Conv2d):
 
         for i_batch in range(input_batch):
             sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
+
         for out_c in range(filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
+
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
             total = shifting(multiplied, 0)
@@ -242,6 +258,7 @@ class PCQConv2d(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_qmax = 2 ** 8 - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -286,8 +303,8 @@ class PCQConv2d(nn.Module):
             if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, self.use_ste)
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(x[done:done + n]).item()
                 self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -317,7 +334,7 @@ class PCQConv2d(nn.Module):
         self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
             self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 

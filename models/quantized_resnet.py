@@ -32,20 +32,25 @@ class QuantizedBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
-
-        self.conv1 = quantized_conv3x3(inplanes, planes, stride, bias=False, arg_dict=arg_dict)
-        self.conv2 = quantized_conv3x3(planes, planes, bias=False, arg_dict=arg_dict)
+        if self.downsample is not None:
+            self.bn_down = QuantizedBn2d(planes, arg_dict=arg_dict)
+        self.conv1 = quantized_conv3x3(inplanes, planes, stride, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(planes, arg_dict=arg_dict)
+        self.conv2 = quantized_conv3x3(planes, planes, arg_dict=arg_dict)
+        self.bn2 = QuantizedBn2d(planes, arg_dict=arg_dict)
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
+        out = self.bn1(out)
         out = self.conv2(out)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
+            identity = self.bn_down(identity)
 
         out = self.shortcut(identity, out)
         return out
@@ -144,19 +149,18 @@ class QuantizedResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False,
-                                          arg_dict=arg_dict)
+        self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(16, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = QuantizedLinear(64 * block.expansion, num_classes, bias=False, arg_dict=arg_dict)
+        self.fc = QuantizedLinear(64 * block.expansion, num_classes, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                           arg_dict=self.arg_dict)
+            downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict)
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
@@ -177,12 +181,11 @@ class QuantizedResNet20(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.first_conv(x)
+        x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
 
-        x = x.type(torch.cuda.IntTensor)
-        x = x.type(torch.cuda.FloatTensor)
         x = self.avgpool(x)
         x = x.type(torch.cuda.IntTensor)
         x = x.type(torch.cuda.FloatTensor)
@@ -236,6 +239,27 @@ def quantize_block(_fp, _int):
     return _int
 
 
+def quantize_pcq_block(_fp, _int):
+    for i in range(len(_int)):
+        _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
+        _int[i].bn1 = quantize(_fp[i].bn1, _int[i].bn1)
+        _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
+        _int[i].bn2 = quantize(_fp[i].bn2, _int[i].bn2)
+        if _int[i].downsample:
+            _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
+            _int[i].bn_down = quantize(_fp[i].bn_down, _int[i].bn_down)
+            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                    _int[i].bn_down.s3, _int[i].bn_down.z3,
+                                                    _int[i].bn2.s3, _int[i].bn2.z3,
+                                                    _fp[i].s3, _fp[i].z3)
+        else:
+            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                    _int[i].conv1.s1, _int[i].conv1.z1,
+                                                    _int[i].bn2.s3, _int[i].bn2.z3,
+                                                    _fp[i].s3, _fp[i].z3)
+    return _int
+
+
 def quantize_resnet(fp_model, int_model):
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
@@ -245,5 +269,19 @@ def quantize_resnet(fp_model, int_model):
     int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
     if int_model.num_blocks == 4:
         int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
+    int_model.fc = quantize(fp_model.fc, int_model.fc)
+    return int_model
+
+
+def quantize_pcq_resnet(fp_model, int_model):
+    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
+    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.bn1 = quantize(fp_model.bn1, int_model.bn1)
+    int_model.layer1 = quantize_pcq_block(fp_model.layer1, int_model.layer1)
+    int_model.layer2 = quantize_pcq_block(fp_model.layer2, int_model.layer2)
+    int_model.layer3 = quantize_pcq_block(fp_model.layer3, int_model.layer3)
+    if int_model.num_blocks == 4:
+        int_model.layer4 = quantize_pcq_block(fp_model.layer4, int_model.layer4)
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model

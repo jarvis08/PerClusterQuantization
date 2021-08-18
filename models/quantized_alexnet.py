@@ -60,7 +60,7 @@ class QuantizedAlexNet(nn.Module):
 
 
 class QuantizedAlexNetSmall(nn.Module):
-    def __init__(self, num_classes: int = 10, bit: int = 32, num_clusters: int = 1) -> None:
+    def __init__(self, arg_dict, num_classes: int = 10) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
         self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1

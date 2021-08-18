@@ -92,10 +92,10 @@ def _finetune(args, tools):
 
     model.cuda()
     model.eval()
-    if args.dataset == 'imagenet':
-        summary(model, (3, 224, 224))
-    else:
-        summary(model, (3, 32, 32))
+    #if args.dataset == 'imagenet':
+    #    summary(model, (3, 224, 224))
+    #else:
+    #    summary(model, (3, 32, 32))
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -130,9 +130,14 @@ def _finetune(args, tools):
             pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
+
         opt_scheduler.step()
 
-        fp_score = validate(model, test_loader, criterion, logger)
+        if args.cluster > 1:
+            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
+        else:
+            fp_score = validate(model, test_loader, criterion, logger)
+
         state = {
             'epoch': e,
             'state_dict': model.state_dict(),
@@ -178,6 +183,16 @@ def _finetune(args, tools):
             del quantized_model
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.3f}\n'.format(best_score_int))
+        f.write('{:.2f}\n'.format(best_score_int))
 
+    with open('./test.txt', 'a') as f:
+        for name, param in model.named_parameters():
+            if 'act_range' in name:
+                f.write('{}\n'.format(name))
+                if 'norm' in name:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+                else:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)
