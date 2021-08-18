@@ -23,8 +23,7 @@ def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, ac
 class PCQBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 norm_layer=None, arg_dict=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, arg_dict=None):
         super(PCQBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -41,28 +40,25 @@ class PCQBasicBlock(nn.Module):
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         if self.downsample is not None:
-            self.bn_down = nn.ModuleList([FusedBnReLU(planes, arg_dict=arg_dict) for _ in range(self.num_clusters)])
-
+            self.bn_down = PCQBnReLU(planes, arg_dict=arg_dict)
         self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict)
-        self.bn1 = nn.ModuleList([FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict) for _ in range(self.num_clusters)])
-
+        self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict)
-        self.bn2 = nn.ModuleList([FusedBnReLU(planes, arg_dict=arg_dict) for _ in range(self.num_clusters)])
-
+        self.bn2 = PCQBnReLU(planes, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
-        out = self.forward_bn_per_cluster(out, self.bn1)
+        out = self.bn1(out)
 
         out = self.conv2(out)
-        out = self.forward_bn_per_cluster(out, self.bn2)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.forward_bn_per_cluster(identity, self.bn_down)
+            identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -91,22 +87,14 @@ class PCQBasicBlock(nn.Module):
             done += n
         return _out
 
-    def forward_bn_per_cluster(self, x, bn):
-        done = 0
-        out = []
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            out.append(bn[c](x[done:done + n]))
-            done += n
-        return torch.cat(out)
-
-
     def set_block_qparams(self, s1, z1):
         if self.downsample:
-            self.downsample.set_qparams(s1, z1)
+            prev_s, prev_z = self.downsample.set_qparams(s1, z1)
+            self.bn_down.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv1.set_qparams(s1, z1)
-        _, _ = self.conv2.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+        _, _ = self.bn2.set_qparams(prev_s, prev_z)
 
         self.s3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
         self.z3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
@@ -219,7 +207,7 @@ class PCQResNet(nn.Module):
 
 
 class PCQResNet20(nn.Module):
-    def __init__(self, block, layers, arg_dict, num_classes=10, norm_layer=None):
+    def __init__(self, block, layers, arg_dict, num_classes=10):
         super(PCQResNet20, self).__init__()
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
@@ -228,15 +216,12 @@ class PCQResNet20(nn.Module):
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
         self.inplanes = 16
         self.dilation = 1
         self.num_blocks = 3
 
         self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict)
-        self.bn1 = nn.ModuleList([FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict) for _ in range(self.num_clusters)])
+        self.bn1 = PCQBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
@@ -249,10 +234,10 @@ class PCQResNet20(nn.Module):
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict)
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+            layers.append(block(self.inplanes, planes, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -273,15 +258,7 @@ class PCQResNet20(nn.Module):
                 done += n
 
         x = self.first_conv(x)
-
-        out = []
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            out.append(self.bn1[c](x[done:done + n]))
-            done += n
-        x = torch.cat(out)
+        x = self.bn1(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -297,6 +274,7 @@ class PCQResNet20(nn.Module):
         for c in range(self.num_clusters):
             self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[2].set_block_qparams(prev_s, prev_z)
@@ -326,46 +304,46 @@ def set_pcq_resnet(fused, pre):
     # First layer
     fused.first_conv = copy_weight_from_pretrained(fused.first_conv, pre.conv1)
     for c in range(n):
-        fused.bn1[c] = copy_bn_from_pretrained(fused.bn1[c], pre.bn1)
+        fused.bn1.norms[c] = copy_bn_from_pretrained(fused.bn1.norms[c], pre.bn1)
 
     # Block 1
     block = fused.layer1
     if block[0].downsample is not None:
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer1[0].downsample[0])
         for c in range(n):
-            block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer1[0].downsample[1])
+            block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer1[0].downsample[1])
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer1[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer1[i].conv2)
         for c in range(n):
-            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer1[i].bn1)
-            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer1[i].bn2)
+            block[i].bn1.norms[c] = copy_bn_from_pretrained(block[i].bn1.norms[c], pre.layer1[i].bn1)
+            block[i].bn2.norms[c] = copy_bn_from_pretrained(block[i].bn2.norms[c], pre.layer1[i].bn2)
 
     # Block 2
     block = fused.layer2
     if block[0].downsample is not None:
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0])
         for c in range(n):
-            block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer2[0].downsample[1])
+            block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer2[0].downsample[1])
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer2[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer2[i].conv2)
         for c in range(n):
-            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer2[i].bn1)
-            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer2[i].bn2)
+            block[i].bn1.norms[c] = copy_bn_from_pretrained(block[i].bn1.norms[c], pre.layer2[i].bn1)
+            block[i].bn2.norms[c] = copy_bn_from_pretrained(block[i].bn2.norms[c], pre.layer2[i].bn2)
 
     # Block 3
     block = fused.layer3
     if block[0].downsample is not None:
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0])
         for c in range(n):
-            block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer3[0].downsample[1])
+            block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer3[0].downsample[1])
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer3[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer3[i].conv2)
         for c in range(n):
-            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer3[i].bn1)
-            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer3[i].bn2)
+            block[i].bn1.norms[c] = copy_bn_from_pretrained(block[i].bn1.norms[c], pre.layer3[i].bn1)
+            block[i].bn2.norms[c] = copy_bn_from_pretrained(block[i].bn2.norms[c], pre.layer3[i].bn2)
 
     # Block 4
     if fused.num_blocks == 4:
@@ -373,14 +351,45 @@ def set_pcq_resnet(fused, pre):
         if block[0].downsample is not None:
             block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0])
             for c in range(n):
-                block[0].bn_down[c] = copy_bn_from_pretrained(block[0].bn_down[c], pre.layer4[0].downsample[1])
+                block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer4[0].downsample[1])
         for i in range(len(block)):
             block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer4[i].conv1)
             block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer4[i].conv2)
-        for c in range(n):
-            block[i].bn1[c] = copy_bn_from_pretrained(block[i].bn1[c], pre.layer4[i].bn1)
-            block[i].bn2[c] = copy_bn_from_pretrained(block[i].bn2[c], pre.layer4[i].bn2)
+            for c in range(n):
+                block[i].bn1.norms[c] = copy_bn_from_pretrained(block[i].bn1.norms[c], pre.layer4[i].bn1)
+                block[i].bn2.norms[c] = copy_bn_from_pretrained(block[i].bn2.norms[c], pre.layer4[i].bn2)
 
     # Classifier
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
+
+
+def fold_pcq_resnet(model):
+    # First layer
+    model.bn1.fold_norms()
+
+    block = model.layer1  # Block 1
+    for i in range(len(block)):
+        block[i].bn1.fold_norms()
+        block[i].bn2.fold_norms()
+
+    # Block 2
+    block = model.layer2  # Block 2
+    block[0].bn_down.fold_norms()
+    for i in range(len(block)):
+        block[i].bn1.fold_norms()
+        block[i].bn2.fold_norms()
+
+    block = model.layer3  # Block 3
+    block[0].bn_down.fold_norms()
+    for i in range(len(block)):
+        block[i].bn1.fold_norms()
+        block[i].bn2.fold_norms()
+
+    if model.num_blocks == 4:  # Block 4
+        block = model.layer4
+        block[0].bn_down.fold_norms()
+        for i in range(len(block)):
+            block[i].bn1.fold_norms()
+            block[i].bn2.fold_norms()
+    return model
