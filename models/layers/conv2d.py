@@ -166,12 +166,15 @@ class QuantizedConv2d(nn.Conv2d):
         total = total.add(self.z3)
 
         if self.activation is not None:
-            hs_total = total + self.hardswish_3
-            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
-            if self.activation == 'Hardswish':
-                total = total * hs_total / self.hardswish_6.item()
-            else:
-                total = hs_total / self.hardswish_6.item()
+            # hs_total = total + self.hardswish_3
+            # hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
+            # if self.activation == 'Hardswish':
+            #     total = total * hs_total / self.hardswish_6.item()
+            # else:
+            #     total = hs_total / self.hardswish_6.item()
+            total = dequantize_matrix(total, self.s_activation, self.z_activation)
+            total = nn.Hardswish(inplace=False)(total)
+            total = quantize_matrix(total, self.s_activation, self.z_activation, self.q_max)
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
@@ -343,6 +346,7 @@ class FusedConv2d(nn.Module):
             self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
+        self.out_channels = out_channels
 
     def forward(self, x):
         if not self.training:

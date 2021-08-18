@@ -95,6 +95,17 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'pretrained_model_initializer', mobilenet)
         setattr(tools, 'fused_model_initializer', fused_mobilenet)
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
+
+    elif arch == 'DenseNet121':
+        setattr(tools, 'folder', fold_densenet)
+        setattr(tools, 'fuser', set_fused_densenet)
+        setattr(tools, 'pretrained_model_initializer', densenet121)
+        setattr(tools, 'quantizer', quantize_densenet)
+        if is_pcq:
+            setattr(tools, 'fused_model_initializer', pcq_densenet)
+        else:
+            setattr(tools, 'fused_model_initializer', fused_densenet)
+        setattr(tools, 'quantized_model_initializer', quantized_densenet)
     return tools
 
 
@@ -113,6 +124,9 @@ def specify_target_arch(arch, dataset, num_clusters):
 
     elif arch == 'mobilenet':
         arch = 'MobileNetV3'
+
+    elif arch == 'densenet':
+        arch = 'DenseNet121'
 
     is_pcq = True if num_clusters > 1 else False
     model_initializers = set_func_for_target_arch(arch, is_pcq)

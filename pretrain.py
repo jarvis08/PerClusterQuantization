@@ -33,7 +33,8 @@ def get_train_loader(args, normalizer):
 
 
 def _pretrain(args, tools):
-    model = tools.pretrained_model_initializer()
+    # model = tools.pretrained_model_initializer()
+    model = vision_models.densenet121(pretrained=True)
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
@@ -41,7 +42,9 @@ def _pretrain(args, tools):
         summary(model, (3, 32, 32))
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    # optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr, momentum=0.9, alpha=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    # opt_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epoch + 1, eta_min=0, last_epoch=-1, verbose=False)
     cudnn.benchmark = True
 
     normalizer = get_normalizer(args.dataset)

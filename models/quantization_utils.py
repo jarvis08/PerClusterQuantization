@@ -90,7 +90,7 @@ def quantize_M(M):
 
 
 def multiply_M(sub_sum, q_M):
-    max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
+    max_int = torch.tensor(9223272036854775807, dtype=torch.int64, device='cuda:0')
     overflow_max = torch.where(sub_sum == q_M, True, False)
     overflow_min = torch.where(sub_sum == -max_int -1, True, False)
     overflow = torch.logical_and(overflow_max, overflow_min)
@@ -160,12 +160,15 @@ def copy_from_pretrained(_to, _from, norm_layer=None):
         if 'Conv' in _to.layer_type:
             _to.conv.weight.copy_(_from.weight)
             if norm_layer:
-                _to._norm_layer = deepcopy(norm_layer)
+                    _to._norm_layer = deepcopy(norm_layer)
             else:
-                _to.conv.bias.copy_(_from.bias)
-        else:
+                if _from.bias is not None:
+                    _to.conv.bias.copy_(_from.bias)
+        elif 'Linear' in _to.layer_type:
             _to.fc.weight.copy_(_from.weight)
             _to.fc.bias.copy_(_from.bias)
+        else:
+            _to._norm_layer = deepcopy(_from)
     return _to
 
 

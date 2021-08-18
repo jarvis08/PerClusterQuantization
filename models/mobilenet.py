@@ -17,6 +17,35 @@ model_urls = {
 }
 
 
+# class ConvBNActivation_without_act(nn.Sequential):
+#     def __init__(
+#         self,
+#         in_planes: int,
+#         out_planes: int,
+#         kernel_size: int = 3,
+#         stride: int = 1,
+#         groups: int = 1,
+#         norm_layer: Optional[Callable[..., nn.Module]] = None,
+#         activation_layer: Optional[Callable[..., nn.Module]] = None,
+#         dilation: int = 1,
+#     ) -> None:
+#         padding = (kernel_size - 1) // 2 * dilation
+#         # if norm_layer is None:
+#         #     norm_layer = nn.BatchNorm2d
+#         # if activation_layer is None:
+#             # activation_layer = nn.ReLU6
+#         super(ConvBNReLU, self).__init__(
+#             nn.Conv2d(in_planes, out_planes, kernel_size, stride, padding, dilation=dilation, groups=groups,
+#                       bias=False)
+#             # norm_layer(out_planes)
+#         )
+#         self.out_channels = out_planes
+#
+#
+# # necessary for backwards compatibility
+# ConvBNReLU = ConvBNActivation_without_act
+
+
 class SqueezeExcitation(nn.Module):
     # Implemented as described at Figure 4 of the MobileNetV3 paper
     def __init__(self, input_channels: int, squeeze_factor: int = 4):
@@ -80,6 +109,8 @@ class InvertedResidual(nn.Module):
         layers.append(ConvBNActivation(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
                                        stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels,
                                        norm_layer=norm_layer, activation_layer=activation_layer))
+        # layers.append(ConvBNActivation_without_act(cnf.expanded_channels, cnf.expanded_channels, kernel_size=cnf.kernel,
+        #                                            stride=stride, dilation=cnf.dilation, groups=cnf.expanded_channels))
 
         if cnf.use_se:
             layers.append(se_layer(cnf.expanded_channels))
