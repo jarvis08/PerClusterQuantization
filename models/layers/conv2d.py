@@ -353,6 +353,7 @@ class FusedConv2d(nn.Module):
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_qmax = 2 ** 8 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -390,8 +391,8 @@ class FusedConv2d(nn.Module):
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(x, s, z, self.q_max, self.use_ste)
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
         else:
             self.act_range[0] = torch.min(x).item()
             self.act_range[1] = torch.max(x).item()
@@ -413,6 +414,6 @@ class FusedConv2d(nn.Module):
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3

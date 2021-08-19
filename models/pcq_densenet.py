@@ -53,16 +53,25 @@ class PCQDenseLayer(nn.Module):
         if not self.training:
             return out
 
-        _out = out
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
+            _out = torch.zeros(out.shape).cuda()
         else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
-            self.apply_ema = True
+            _out = out
+
+        done = 0
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+            else:
+                self.act_range[c][0] = torch.min(out[done:done + n]).item()
+                self.act_range[c][1] = torch.max(out[done:done + n]).item()
+                self.apply_ema[c] = True
+            done += n
         return _out
 
     def set_layer_qparams(self, s1, z1):
@@ -101,16 +110,25 @@ class PCQTransition(nn.Sequential):
         if not self.training:
             return out
 
-        _out = out
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+        if self.runtime_helper.apply_fake_quantization and self.use_ste:
+            _out = torch.zeros(out.shape).cuda()
         else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
-            self.apply_ema = True
+            _out = out
+
+        done = 0
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0].item()
+            n = self.runtime_helper.batch_cluster[i][1].item()
+            if self.apply_ema[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+            else:
+                self.act_range[c][0] = torch.min(out[done:done + n]).item()
+                self.act_range[c][1] = torch.max(out[done:done + n]).item()
+                self.apply_ema[c] = True
+            done += n
         return _out
 
     def set_transition_qparams(self, s1, z1):
@@ -219,7 +237,7 @@ class PCQDenseNet(nn.Module):
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
-            ('fisrt_norm', PCQBnReLU(num_init_features, arg_dict)),
+            ('first_norm', PCQBnReLU(num_init_features, arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -290,7 +308,7 @@ def pcq_densenet(arg_dict: dict, **kwargs):
     return PCQDenseNet(32, (6, 12, 24, 16), 64, arg_dict, **kwargs)
 
 
-def set_fused_densenet(fused, pre):
+def set_pcq_densenet(fused, pre):
     # first conv & norm
     fused.features.first_conv = copy_from_pretrained(fused.features.first_conv, pre.features.conv0)
     fused.features.first_norm = copy_from_pretrained(fused.features.first_norm, pre.features.norm0)
@@ -319,3 +337,24 @@ def set_fused_densenet(fused, pre):
     # Classifier
     fused.classifier = copy_from_pretrained(fused.classifier, pre.classifier)
     return fused
+
+
+def fold_pcq_densenet(model):
+    # first norm
+    model.features.first_norm.fold_norms()
+    # dense block & Transition
+    for block_idx in range(1, 5):
+        block = getattr(model.features, 'denseblock%d' % block_idx)
+        if block_idx < 4:
+            trans = getattr(model.features, 'transition%d' % block_idx)
+        # dense layer
+        for layer_idx in range(1, block.num_layers + 1):
+            fused_layer = getattr(block, 'denselayer%d' % layer_idx)
+            fused_layer.bn1.fold_norms()
+            fused_layer.bn2.fold_norms()
+        # transition
+        if block_idx < 4:
+            trans.norm.fold_norms()
+    # Last BatchNorm
+    model.features.last_norm.fold_norms()
+    return model

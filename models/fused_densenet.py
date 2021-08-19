@@ -290,9 +290,9 @@ def fold_densenet(model):
     for block_idx in range(1,5):
         dense_block = getattr(model.features, 'denseblock%d' % block_idx)
         for i, layer in dense_block.items():
+            layer.bn.fold_norm()
             layer.conv1.fold_conv_and_bn()
-            layer.conv2.fold_conv_and_bn()
     for tran_idx in range(1,4):
-        getattr(model.features, 'transition%d' % tran_idx).conv.fold_conv_and_bn()
+        getattr(model.features, 'transition%d' % tran_idx).norm.fold_norm()
     return model
 

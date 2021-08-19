@@ -215,7 +215,7 @@ def quantize_densenet(fp_model, int_model):
     return int_model
 
 
-def quantize_pcqdensenet(fp_model, int_model):
+def quantize_pcq_densenet(fp_model, int_model):
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)

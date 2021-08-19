@@ -69,11 +69,13 @@ def get_finetuning_model(arg_dict, tools):
     pretrained_model = load_dnn_model(arg_dict, tools)
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
-    return fused_model, arg_dict
+    return pretrained_model, fused_model, arg_dict
 
 
 def _finetune(args, tools):
     normalizer = get_normalizer(args.dataset)
+
+
     if args.horovod:
         import horovod.torch as hvd
         hvd.init()
@@ -88,7 +90,7 @@ def _finetune(args, tools):
     arg_dict = deepcopy(vars(args))
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
-    model, arg_dict = get_finetuning_model(arg_dict, tools)
+    pretrained_model, model, arg_dict = get_finetuning_model(arg_dict, tools)
 
     model.cuda()
     model.eval()
