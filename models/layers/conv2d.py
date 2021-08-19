@@ -15,8 +15,7 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        self.bit, self.num_clusters, self.runtime_helper =\
-                itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = nn.Parameter(torch.tensor([0], dtype=torch.int32), requires_grad=False)
 
@@ -37,7 +36,6 @@ class QuantizedConv2d(nn.Conv2d):
         self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.activation = activation
-
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
@@ -233,7 +231,7 @@ class PCQConv2d(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.act_qmax = 2 ** 8 - 1
+        self.act_qmax = 2 ** 16 - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -330,7 +328,7 @@ class FusedConv2d(nn.Module):
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
-        self.act_qmax = 2 ** 8 - 1
+        self.act_qmax = 2 ** 16 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
