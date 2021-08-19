@@ -9,13 +9,11 @@ from .quantization_utils import *
 
 
 def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, norm_layer=None, activation=None, arg_dict=None):
-    """3x3 convolution with padding"""
     return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,\
                      bias=bias, norm_layer=norm_layer, activation=activation, arg_dict=arg_dict)
 
 
 def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None, arg_dict=None):
-    """1x1 convolution"""
     return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
                      norm_layer=norm_layer, activation=activation, arg_dict=arg_dict)
 
@@ -190,8 +188,9 @@ class PCQBottleneck(nn.Module):
 
         return self.s3, self.z3
 
+
 class PCQResNet(nn.Module):
-    def __init__(self, block, layers, runtime_helper, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
+    def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None, arg_dict=None):
         super(PCQResNet, self).__init__()
         self.arg_dict = arg_dict
@@ -412,10 +411,9 @@ def set_pcq_resnet(fused, pre):
 
     # Block 2
     block = fused.layer2
-    if block[0].downsample is not None:
-        block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0])
-        for c in range(n):
-            block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer2[0].downsample[1])
+    block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0])
+    for c in range(n):
+        block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer2[0].downsample[1])
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer2[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer2[i].conv2)
@@ -425,10 +423,9 @@ def set_pcq_resnet(fused, pre):
 
     # Block 3
     block = fused.layer3
-    if block[0].downsample is not None:
-        block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0])
-        for c in range(n):
-            block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer3[0].downsample[1])
+    block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0])
+    for c in range(n):
+        block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer3[0].downsample[1])
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer3[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer3[i].conv2)
@@ -439,10 +436,9 @@ def set_pcq_resnet(fused, pre):
     # Block 4
     if fused.num_blocks == 4:
         block = fused.layer4
-        if block[0].downsample is not None:
-            block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0])
-            for c in range(n):
-                block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer4[0].downsample[1])
+        block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0])
+        for c in range(n):
+            block[0].bn_down.norms[c] = copy_bn_from_pretrained(block[0].bn_down.norms[c], pre.layer4[0].downsample[1])
         for i in range(len(block)):
             block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer4[i].conv1)
             block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer4[i].conv2)

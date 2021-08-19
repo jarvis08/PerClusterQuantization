@@ -5,8 +5,6 @@ from torch.utils.model_zoo import load_url
 from typing import Type, Any, Callable, Union, List, Optional
 
 
-__all__ = ['ResNet', 'resnet18', 'resnet20']
-
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
     'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
@@ -331,6 +329,7 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
 
 def resnet20() -> ResNet20:
     return ResNet20(BasicBlock, [3, 3, 3])
+
 
 def resnet50(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
     r"""ResNet-50 model from

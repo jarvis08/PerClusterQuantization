@@ -251,7 +251,7 @@ def copy_from_pretrained(_to, _from, norm_layer=None):
         if 'Conv' in _to.layer_type:
             _to.conv.weight.copy_(_from.weight)
             if norm_layer:
-                    _to._norm_layer = deepcopy(norm_layer)
+                _to._norm_layer = deepcopy(norm_layer)
             else:
                 if _from.bias is not None:
                     _to.conv.bias.copy_(_from.bias)

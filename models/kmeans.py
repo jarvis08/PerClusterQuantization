@@ -16,11 +16,9 @@ class KMeans(object):
 
     def get_partitioned_batch(self, data):
         # Under the premise that images are in the form of square matrix
-        channel = data.shape[1]
-        width = data.shape[2]
-        height = data.shape[3]
-        n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3)) # Per row or col
-        n_data = int(width / n_part) # Per part
+        _size = data.shape[-1]
+        n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3))  # Per row or col
+        n_data = int(_size / n_part)  # Per part
         rst = None
         for i in range(n_part):
             r_start = n_data * i
