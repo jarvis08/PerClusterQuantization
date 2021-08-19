@@ -11,22 +11,37 @@ import shutil
 from datetime import datetime
 import json
 import logging
+from time import time
 
 
 class RuntimeHelper(object):
     """
         apply_fake_quantization : Flag used in layers
-        batch_cluster_info      : Cluster information of current batch
-        kmeans                  : Trined K-Means Algorithm Object
+        batch_cluster           : Cluster information of current batch
+        kmeans                  : Trained K-Means model's object
     """
     def __init__(self):
         self.apply_fake_quantization = False
         self.batch_cluster = None
         self.kmeans = None
 
-    def get_pcq_batch(self, input, target):
-        input, target, self.batch_cluster = self.kmeans.get_batch(input, target)
-        return input, target
+    def get_pcq_batch(self, input):
+        self.batch_cluster = self.kmeans.get_batch(input)
+
+    def sort_by_cluster_info(self, input, target):
+        num_data_per_cluster = []
+        input_ordered_by_cluster = torch.zeros(input.shape)
+        target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
+        existing_clusters, counts = torch.unique(self.batch_cluster, return_counts=True)
+        ordered = 0
+        for cluster, n in zip(existing_clusters, counts):
+            num_data_per_cluster.append([cluster, n])
+            data_indices = (self.batch_cluster == cluster).nonzero()[0]
+            input_ordered_by_cluster[ordered:ordered + n] = input[data_indices].clone().detach()
+            target_ordered_by_cluster[ordered:ordered + n] = target[data_indices].clone().detach()
+            ordered += n
+        self.batch_cluster = torch.LongTensor(num_data_per_cluster)
+        return input_ordered_by_cluster, target_ordered_by_cluster
 
 
 class AverageMeter(object):
@@ -129,7 +144,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
 
-                input, target = runtime_helper.get_pcq_batch(input, target)
+                runtime_helper.get_pcq_batch(input)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)

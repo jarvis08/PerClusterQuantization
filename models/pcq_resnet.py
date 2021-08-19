@@ -73,8 +73,8 @@ class PCQBasicBlock(nn.Module):
 
         done = 0
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
+            c = self.runtime_helper.batch_cluster[i][0]
+            n = self.runtime_helper.batch_cluster[i][1]
             if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
@@ -163,16 +163,16 @@ class PCQResNet(nn.Module):
         if self.training:
             done = 0
             for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
                 if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
                         x[done:done + n] = fake_quantize(x[done:done + n], s, z)
                 else:
-                    self.in_range[c][0] = torch.min(x).item()
-                    self.in_range[c][1] = torch.max(x).item()
+                    self.in_range[c][0] = torch.min(x[done:done + n]).item()
+                    self.in_range[c][1] = torch.max(x[done:done + n]).item()
                     self.apply_ema[c] = True
                 done += n
 
@@ -244,8 +244,8 @@ class PCQResNet20(nn.Module):
         if self.training:
             done = 0
             for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
                 if self.apply_ema[c]:
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.runtime_helper.apply_fake_quantization:
