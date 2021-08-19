@@ -34,13 +34,13 @@ class RuntimeHelper(object):
         input_ordered_by_cluster = torch.zeros(input.shape)
         target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
         existing_clusters, counts = torch.unique(self.batch_cluster, return_counts=True)
-        ordered = 0
+        done = 0
         for cluster, n in zip(existing_clusters, counts):
             num_data_per_cluster.append([cluster, n])
-            data_indices = (self.batch_cluster == cluster).nonzero()[0]
-            input_ordered_by_cluster[ordered:ordered + n] = input[data_indices].clone().detach()
-            target_ordered_by_cluster[ordered:ordered + n] = target[data_indices].clone().detach()
-            ordered += n
+            data_indices = (self.batch_cluster == cluster).nonzero(as_tuple=True)[0]
+            input_ordered_by_cluster[done:done + n] = input[data_indices]
+            target_ordered_by_cluster[done:done + n] = target[data_indices]
+            done += n
         self.batch_cluster = torch.LongTensor(num_data_per_cluster)
         return input_ordered_by_cluster, target_ordered_by_cluster
 
@@ -135,7 +135,7 @@ def validate(model, test_loader, criterion, logger=None):
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
+def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sort_input=False):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -144,8 +144,9 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-
                 runtime_helper.get_pcq_batch(input)
+                if sort_input:
+                    input, target = runtime_helper.sort_by_cluster_info(input, target)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -154,6 +155,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+                print()
 
     if logger:
         logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))

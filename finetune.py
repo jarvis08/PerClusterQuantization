@@ -45,7 +45,6 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
-
             runtime_helper.get_pcq_batch(input)
             input, target = runtime_helper.sort_by_cluster_info(input, target)
             input, target = input.cuda(), target.cuda()
@@ -76,7 +75,6 @@ def get_finetuning_model(arg_dict, tools):
 def _finetune(args, tools):
     normalizer = get_normalizer(args.dataset)
 
-
     if args.horovod:
         import horovod.torch as hvd
         hvd.init()
@@ -92,7 +90,6 @@ def _finetune(args, tools):
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
     pretrained_model, model, arg_dict = get_finetuning_model(arg_dict, tools)
-
     model.cuda()
     model.eval()
     #if args.dataset == 'imagenet':
@@ -152,7 +149,7 @@ def _finetune(args, tools):
         opt_scheduler.step()
 
         if args.cluster > 1:
-            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
+            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger, sort_input=True)
         else:
             fp_score = validate(model, test_loader, criterion, logger)
 
