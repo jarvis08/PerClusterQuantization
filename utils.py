@@ -181,9 +181,12 @@ def load_dnn_model(arg_dict, tools):
                 return vision_models.alexnet(pretrained=True)
             elif arg_dict.arch == 'ResNet50':
                 return vision_models.resnet50(pretrained=True)
+            elif arg_dict['arch'] == 'DenseNet121':
+                return vision_models.densenet121(pretrained=True)
+            elif arg_dict['arch'] == 'ResNet18':
+                exit()
         else:
             model = tools.pretrained_model_initializer()
-
     checkpoint = torch.load(arg_dict['dnn_path'])
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model

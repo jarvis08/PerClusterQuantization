@@ -26,12 +26,21 @@ class QuantizationTool(object):
 
 def calc_qparams(_min, _max, q_max):
     s = (_max - _min) / q_max
-    if q_max == 255:
-        z = -128 - torch.round(_min / s)
-        return s, torch.clamp(z, -128, 127)
-    else:
+    if q_max == 15:            # UINT 4
         z = - torch.round(_min / s)
         return s, torch.clamp(z, 0, q_max)
+    elif q_max == 255:         # INT 8
+        z = -128 - torch.round(_min / s)
+        return s, torch.clamp(z, -128, 127)
+    elif q_max == 65535:       # INT 16
+        z = -32768 - torch.round(_min / s)
+        return s, torch.clamp(z, -32768, 32767)
+    elif q_max == 4294967295:  # INT 32
+        z = -2147483648 - torch.round(_min / s)
+        return s, torch.clamp(z, -2147483648, 2147483647)
+    else:
+        z = - torch.round(_min / s)
+        return s, z
 
 
 def ema(x, averaged, smooth):
@@ -43,22 +52,32 @@ def ema(x, averaged, smooth):
 
 
 def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
-    if q_max == 255:
-        _x = (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
-    else:
+    if q_max == 15:            # UINT 4
         _x = (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
+    elif q_max == 255:         # INT 8
+        _x = (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
+    elif q_max == 65535:       # INT 16
+        _x = (torch.clamp(torch.round(x / scale + zero_point), -32768, 32767) - zero_point) * scale
+    elif q_max == 4294967295:  # INT 32
+        _x = (torch.clamp(torch.round(x / scale + zero_point), -2147483648, 2147483647) - zero_point) * scale
+    else:
+        _x = (torch.round(x / scale + zero_point) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def quantize_matrix(x, scale, zero_point, q_max=None):
-    if q_max is None:
-        return torch.round(x / scale + zero_point)  # sth like bias
-    elif q_max == 255:
-        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
-    else:
+    if q_max == 15:            # UINT 4
         return torch.clamp(torch.round(x / scale + zero_point), 0, q_max)
+    elif q_max == 255:         # INT 8
+        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+    elif q_max == 65535:       # INT 16
+        return torch.clamp(torch.round(x / scale + zero_point), -32768, 32767)
+    elif q_max == 4294967295:  # INT 32
+        return torch.clamp(torch.round(x / scale + zero_point), -2147483648, 2147483647)
+    else:
+        return torch.round(x / scale + zero_point)
 
 
 def dequantize_matrix(x, scale, zero_point):
@@ -90,7 +109,7 @@ def quantize_M(M):
 
 
 def multiply_M(sub_sum, q_M):
-    max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
+    max_int = torch.tensor(9223272036854775807, dtype=torch.int64, device='cuda:0')
     overflow_max = torch.where(sub_sum == q_M, True, False)
     overflow_min = torch.where(sub_sum == -max_int -1, True, False)
     overflow = torch.logical_and(overflow_max, overflow_min)
@@ -130,27 +149,41 @@ def transfer_qparams(_fp, _int):
     return _int
 
 
-def quantize_and_transfer_params(_fp, _int):
-    assert _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear'], "Not supported quantized layer"
-    if _int.layer_type == 'QuantizedConv2d':
-        fp_layer = _fp.conv
-    else:
-        fp_layer = _fp.fc
-
+def quantize_layer_and_transfer(_fp, _int):
+    assert _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d'], "Not supported quantized layer"
     with torch.no_grad():
-        _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.q_max))
-        if _int.num_clusters > 1:
-            for c in range(_int.num_clusters):
-                _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(), _int.s1[c] * _int.s2, 0))
+        if _int.layer_type == 'QuantizedBn2d':
+            if _int.num_clusters > 1:
+                for c in range(_int.num_clusters):
+                    w = quantize_matrix(_fp.norms[c].weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    b = quantize_matrix(_fp.norms[c].bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
+                    _int.weight[c].copy_(w.type(torch.cuda.IntTensor))
+                    _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
+            else:
+                w = quantize_matrix(_fp.weight, _int.s2, _int.z2, _fp.w_qmax)
+                b = quantize_matrix(_fp.bias, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
+                _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
+                _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
         else:
+            if _int.layer_type == 'QuantizedConv2d':
+                fp_layer = _fp.conv
+            else:
+                fp_layer = _fp.fc
+            _int.act_qmax = nn.Parameter(torch.tensor(_fp.act_qmax), requires_grad=False)
+
+            _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
             if fp_layer.bias is not None:
-                _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(), _int.s1 * _int.s2, 0))
+                if _int.num_clusters > 1:
+                    for c in range(_int.num_clusters):
+                        _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0, 2 ** 32 - 1))
+                else:
+                    _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0, 2 ** 32 - 1))
     return _int
 
 
 def quantize(_fp, _int):
     _int = transfer_qparams(_fp, _int)
-    _int = quantize_and_transfer_params(_fp, _int)
+    _int = quantize_layer_and_transfer(_fp, _int)
     return _int
 
 
@@ -160,12 +193,31 @@ def copy_from_pretrained(_to, _from, norm_layer=None):
         if 'Conv' in _to.layer_type:
             _to.conv.weight.copy_(_from.weight)
             if norm_layer:
-                _to._norm_layer = deepcopy(norm_layer)
+                    _to._norm_layer = deepcopy(norm_layer)
             else:
-                _to.conv.bias.copy_(_from.bias)
-        else:
+                if _from.bias is not None:
+                    _to.conv.bias.copy_(_from.bias)
+        elif 'Linear' in _to.layer_type:
             _to.fc.weight.copy_(_from.weight)
             _to.fc.bias.copy_(_from.bias)
+        else:
+            _to._norm_layer = deepcopy(_from)
+    return _to
+
+
+def copy_bn_from_pretrained(_to, _from):
+    with torch.no_grad():
+        _to.bn = deepcopy(_from)
+    return _to
+
+
+def copy_weight_from_pretrained(_to, _from):
+    # Copy weights from pretrained FP model
+    with torch.no_grad():
+        if 'Conv' in _to.layer_type:
+            _to.conv.weight.copy_(_from.weight)
+        else:
+            _to.fc.weight.copy_(_from.weight)
     return _to
 
 
@@ -256,4 +308,3 @@ def save_fused_network_in_darknet_form(model, args):
         save_fused_resnet_qparams(model, path + 'qparams')
     elif 'AlexNet' in args.arch:
         save_fused_alexnet_qparams(model, path + 'qparams')
-

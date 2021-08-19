@@ -19,6 +19,7 @@ class QuantizedLinear(nn.Linear):
         self.bit, self.num_clusters, self.runtime_helper =\
                 itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_qmax = nn.Parameter(torch.tensor([0], dtype=torch.int32), requires_grad=False)
 
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features)), requires_grad=False)
 
@@ -90,15 +91,30 @@ class QuantizedLinear(nn.Linear):
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
             c = self.runtime_helper.batch_cluster[i][0].item()
             n = self.runtime_helper.batch_cluster[i][1].item()
-            multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
-            total[done:done + n] = shifting(multiplied, self.shift[c].item())
-            total[done:done + n] = total[done:done + n].add(self.z3[c])
+            if self.shift[c] < 0:
+               subsum = multiply_M((sum_q1q2[done:done + n].type(torch.cuda.LongTensor) << - self.shift[c].item()), self.M0[c])
+               subsum = shifting(subsum, 0)
+            else:
+               subsum = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
+               subsum = shifting(subsum, self.shift[c].item())
+            total[done:done + n] = subsum.add(self.z3[c])
+            #multiplied = multiply_M(sum_q1q2[done:done + n].type(torch.cuda.LongTensor), self.M0[c])
+            #total[done:done + n] = shifting(multiplied, self.shift[c].item())
+            #total[done:done + n] = total[done:done + n].add(self.z3[c])
             done += n
 
-        if self.bit == 4:
+        #if self.bit == 4:
+        #    total = torch.clamp(total, 0, 15)
+        #else: 
+        #    total = torch.clamp(total, -128, 127)
+        if self.act_qmax == 15:
             total = torch.clamp(total, 0, 15)
-        else: 
+        elif self.act_qmax == 255:
             total = torch.clamp(total, -128, 127)
+        elif self.act_qmax == 65535:  # INT 16
+            total = torch.clamp(total, -32768, 32767)
+        elif self.act_qmax == 4294967295:  # INT 32
+            total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
     def general_totalsum(self, x, sum_q1q2):
@@ -157,6 +173,7 @@ class PCQLinear(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_qmax = 2 ** 4 - 1
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -195,8 +212,8 @@ class PCQLinear(nn.Module):
             if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, self.use_ste)
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(x[done:done + n]).item()
                 self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -214,7 +231,7 @@ class PCQLinear(nn.Module):
         self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
+            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
             self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 

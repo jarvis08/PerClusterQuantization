@@ -102,7 +102,8 @@ class KMeans(object):
 
 
 def check_cluster_distribution(kmeans, train_loader):
-    n_data = kmeans.args.batch * len(train_loader)
+    #n_data = kmeans.args.batch * len(train_loader)
+    n_data = 50000 # CIFAR-10 train dataset
     n_data_per_cluster = dict()
     for c in range(kmeans.args.cluster):
         n_data_per_cluster[c] = 0
@@ -110,5 +111,22 @@ def check_cluster_distribution(kmeans, train_loader):
         _, _, batch_cluster = kmeans.get_batch(input, target)
         for c, n in batch_cluster:
             n_data_per_cluster[c.item()] += n.item()
+
+    assert sum(n_data_per_cluster.values()) == n_data,\
+        "Total # of data doesn't match (n_data: {}, calc: {})".format(n_data, sum(n_data_per_cluster.values()))
+
+    ratio = np.zeros((kmeans.args.cluster))
+    #ratio = [0 for _ in range(kmeans.args.cluster)]
     for c in range(kmeans.args.cluster):
-        print("C{}: {}, \t{:.2f}%".format(c, n_data_per_cluster[c], n_data_per_cluster[c] / n_data * 100))
+        ratio[c] = n_data_per_cluster[c] / n_data * 100
+
+    for c in range(kmeans.args.cluster):
+        print("{},{:.2f} %".format(n_data_per_cluster[c], ratio[c]))
+    print(">> [#Data] Mean, Var, Std")
+    d = list((n_data_per_cluster.values()))
+    print("{}, {:.2f}, {:.2f}".format(np.mean(d), np.var(d), np.std(d)))
+    print(">> [Ratio] Mean, Var, Std")
+    print("{:.2f} %, {:.4f}, {:.4f}".format(np.mean(ratio), np.var(ratio), np.std(ratio)))
+    centroids = kmeans.model.cluster_centers_
+    print(">> [Centroids] Var, Std")
+    print("var: {:.4f}, std: {:.4f}".format(np.var(centroids), np.std(centroids)))

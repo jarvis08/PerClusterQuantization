@@ -69,11 +69,13 @@ def get_finetuning_model(arg_dict, tools):
     pretrained_model = load_dnn_model(arg_dict, tools)
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
-    return fused_model, arg_dict
+    return pretrained_model, fused_model, arg_dict
 
 
 def _finetune(args, tools):
     normalizer = get_normalizer(args.dataset)
+
+
     if args.horovod:
         import horovod.torch as hvd
         hvd.init()
@@ -88,14 +90,14 @@ def _finetune(args, tools):
     arg_dict = deepcopy(vars(args))
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
-    model, arg_dict = get_finetuning_model(arg_dict, tools)
+    pretrained_model, model, arg_dict = get_finetuning_model(arg_dict, tools)
 
     model.cuda()
     model.eval()
-    if args.dataset == 'imagenet':
-        summary(model, (3, 224, 224))
-    else:
-        summary(model, (3, 32, 32))
+    #if args.dataset == 'imagenet':
+    #    summary(model, (3, 224, 224))
+    #else:
+    #    summary(model, (3, 32, 32))
 
     if args.quant_noise:
         runtime_helper.qn_prob = args.qn_prob - 0.1
@@ -148,7 +150,11 @@ def _finetune(args, tools):
 
         opt_scheduler.step()
 
-        fp_score = validate(model, test_loader, criterion, logger)
+        if args.cluster > 1:
+            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
+        else:
+            fp_score = validate(model, test_loader, criterion, logger)
+
         state = {
             'epoch': e,
             'state_dict': model.state_dict(),
@@ -194,6 +200,16 @@ def _finetune(args, tools):
             del quantized_model
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.3f}\n'.format(best_score_int))
+        f.write('{:.2f}\n'.format(best_score_int))
 
+    with open('./test.txt', 'a') as f:
+        for name, param in model.named_parameters():
+            if 'act_range' in name:
+                f.write('{}\n'.format(name))
+                if 'norm' in name:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+                else:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)
