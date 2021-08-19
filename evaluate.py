@@ -26,6 +26,7 @@ def _evaluate(args, tools):
     if args.darknet:
         darknet_loader = load_preprocessed_cifar10_from_darknet()
         validate_darknet_dataset(model, darknet_loader, criterion)
+
     else:
         normalizer = get_normalizer(args.dataset)
         test_loader = get_test_loader(args, normalizer)

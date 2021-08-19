@@ -16,7 +16,7 @@ def get_train_loader(args, normalizer, hvd=None):
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
-                                                            normalizer,]))
+                                                            normalizer]))
         if args.horovod:
             sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
         else:
@@ -97,11 +97,20 @@ def _finetune(args, tools):
     else:
         summary(model, (3, 32, 32))
 
-    criterion = torch.nn.CrossEntropyLoss().cuda()
+    if args.quant_noise:
+        runtime_helper.qn_prob = args.qn_prob - 0.1
+        tools.qn_forward_pre_hooker(model)
+
+    epoch_to_start = 1
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    if args.fused:
+        optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
     if args.horovod:
         optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+
+    criterion = torch.nn.CrossEntropyLoss().cuda()
+
     cudnn.benchmark = True
 
     if args.cluster > 1:
@@ -122,14 +131,21 @@ def _finetune(args, tools):
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
     best_score_int = 0
-    for e in range(1, args.epoch + 1):
+    for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
+
+        # TODO: Quantnoise prob-increasing method
+        if args.quant_noise and e % 3 == 1:
+            runtime_helper.qn_prob += 0.1
+            tools.qn_forward_pre_hooker(model)
+        # TODO: In Fused/PCQ-Conv/Linear, use runtimehelper.qn_prob
 
         if args.cluster > 1:
             pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
+
         opt_scheduler.step()
 
         fp_score = validate(model, test_loader, criterion, logger)

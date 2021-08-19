@@ -1,9 +1,14 @@
 import argparse
 
 from models import *
+from models.bert.bert import bert_small
+# from models.bert.fused_bert import fused_bert_small, set_fused_bert
+from models.bert.fused_bert import fused_bert_small
+from models.resnet import resnet50
 from pretrain import _pretrain
 from finetune import _finetune
 from evaluate import _evaluate
+from run_classifier import _run_classifier
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
@@ -40,6 +45,96 @@ parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise prob
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
+
+### About Bert ###
+## Required parameters
+parser.add_argument("--data_dir",
+                    default=None,
+                    type=str,
+                    # required=True,
+                    help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
+parser.add_argument("--bert_model", default=None, type=str,
+                    # required=True,
+                    help="Bert pre-trained model selected in the list: bert-base-uncased, "
+                         "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.")
+parser.add_argument("--task_name",
+                    default=None,
+                    type=str,
+                    # required=True,
+                    help="The name of the task to train.")
+parser.add_argument("--output_dir",
+                    default=None,
+                    type=str,
+                    # required=True,
+                    help="The output directory where the model checkpoints will be written.")
+## Other parameters
+parser.add_argument("--max_seq_length",
+                    default=128,
+                    type=int,
+                    help="The maximum total input sequence length after WordPiece tokenization. \n"
+                         "Sequences longer than this will be truncated, and sequences shorter \n"
+                         "than this will be padded.")
+parser.add_argument("--do_train",
+                    default=False,
+                    action='store_true',
+                    help="Whether to run training.")
+parser.add_argument("--do_eval",
+                    default=False,
+                    action='store_true',
+                    help="Whether to run eval on the dev set.")
+parser.add_argument("--do_lower_case",
+                    default=False,
+                    action='store_true',
+                    help="Set this flag if you are using an uncased model.")
+parser.add_argument("--train_batch_size",
+                    default=32,
+                    type=int,
+                    help="Total batch size for training.")
+parser.add_argument("--eval_batch_size",
+                    default=8,
+                    type=int,
+                    help="Total batch size for eval.")
+parser.add_argument("--learning_rate",
+                    default=5e-5,
+                    type=float,
+                    help="The initial learning rate for Adam.")
+parser.add_argument("--num_train_epochs",
+                    default=3.0,
+                    type=float,
+                    help="Total number of training epochs to perform.")
+parser.add_argument("--warmup_proportion",
+                    default=0.1,
+                    type=float,
+                    help="Proportion of training to perform linear learning rate warmup for. "
+                         "E.g., 0.1 = 10%% of training.")
+parser.add_argument("--no_cuda",
+                    default=False,
+                    action='store_true',
+                    help="Whether not to use CUDA when available")
+parser.add_argument("--local_rank",
+                    type=int,
+                    default=-1,
+                    help="local_rank for distributed training on gpus")
+parser.add_argument('--seed',
+                    type=int,
+                    default=42,
+                    help="random seed for initialization")
+parser.add_argument('--gradient_accumulation_steps',
+                    type=int,
+                    default=1,
+                    help="Number of updates steps to accumulate before performing a backward/update pass.")
+parser.add_argument('--optimize_on_cpu',
+                    default=False,
+                    action='store_true',
+                    help="Whether to perform optimization and keep the optimizer averages on CPU")
+parser.add_argument('--fp16',
+                    default=False,
+                    action='store_true',
+                    help="Whether to use 16-bit float precision instead of 32-bit")
+parser.add_argument('--loss_scale',
+                    type=float, default=128,
+                    help='Loss scaling, positive power of 2 values can improve fp16 convergence.')
+
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -80,6 +175,14 @@ def set_func_for_target_arch(arch, is_pcq):
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet18)
             setattr(tools, 'quantized_model_initializer', quantized_resnet18)
+        # Test ResNet50
+        elif '50' in arch:
+            setattr(tools, 'pretrained_model_initializer', resnet50)
+            if is_pcq:
+                setattr(tools, 'fused_model_initializer', pcq_resnet50)
+            else:
+                setattr(tools, 'fused_model_initializer', fused_resnet50)
+            setattr(tools, 'quantized_model_initializer', quantized_resnet50)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
@@ -95,6 +198,12 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'pretrained_model_initializer', mobilenet)
         setattr(tools, 'fused_model_initializer', fused_mobilenet)
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
+
+    elif arch == 'Bert':
+        # setattr(tools, 'fuser', set_fused_bert)
+        setattr(tools, 'pretrained_model_initializer', bert_small)
+        setattr(tools, 'fused_model_initializer', fused_bert_small)
+
     return tools
 
 
@@ -107,12 +216,16 @@ def specify_target_arch(arch, dataset, num_clusters):
 
     elif arch == 'resnet':
         if dataset == 'imagenet':
-            arch = 'ResNet18'
+            # arch = 'ResNet18'
+            arch = 'ResNet50'
         else:
             arch = 'ResNet20'
 
     elif arch == 'mobilenet':
         arch = 'MobileNetV3'
+
+    elif arch =='bert':
+        arch = 'Bert'
 
     is_pcq = True if num_clusters > 1 else False
     model_initializers = set_func_for_target_arch(arch, is_pcq)
@@ -120,7 +233,7 @@ def specify_target_arch(arch, dataset, num_clusters):
 
 
 if __name__=='__main__':
-    assert args.arch in ['alexnet', 'resnet', 'densenet', 'mobilenet'], 'Not supported architecture'
+    assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 32], 'Not supported target bit'
 
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
@@ -128,5 +241,7 @@ if __name__=='__main__':
         _pretrain(args, tools)
     elif args.mode == 'fine':
         _finetune(args, tools)
+    elif args.mode == 'test':
+        _run_classifier(args, tools)
     else:
         _evaluate(args, tools)

@@ -236,8 +236,9 @@ class FusedLinear(nn.Module):
         self.apply_ema = False
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
+
         if self.quant_noise:
-            self.fc = _quant_noise(self.fc, self.qn_prob, 1, q_max=self.q_max)
+            self.fc = _quant_noise(self.fc, self.qn_prob + self.runtime_helper.qn_prob_increment, 1, q_max=self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
@@ -274,3 +275,5 @@ class FusedLinear(nn.Module):
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
+
+# --task_name MRPC --do_train --do_eval --do_lower_case --data_dir $GLUE_DIR/MRPC/ --bert_model /home/hansung/quantization/bert/pytorch-pretrained-BERT/examples/uncased_L-4_H-512_A-8 --max_seq_length 128 --train_batch_size 8 --learning_rate 2e-5 --num_train_epochs 3.0 --output_dir ./mrpc_output

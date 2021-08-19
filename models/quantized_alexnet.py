@@ -21,16 +21,16 @@ class QuantizedAlexNet(nn.Module):
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dcit)
+        self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dict)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.conv1 = QuantizedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, arg_dict=arg_dcit)
-        self.conv2 = QuantizedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, arg_dict=arg_dcit)
-        self.conv3 = QuantizedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dcit)
-        self.conv4 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dcit)
-        self.conv5 = QuantizedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dcit)
-        self.fc1 = QuantizedLinear(256 * 6 * 6, 4096, bit=bit)
-        self.fc2 = QuantizedLinear(4096, 4096, bit=bit)
-        self.fc3 = QuantizedLinear(4096, num_classes, bit=bit)
+        self.conv1 = QuantizedConv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=True, arg_dict=arg_dict)
+        self.conv2 = QuantizedConv2d(64, 192, kernel_size=5, stride=1, padding=2, bias=True, arg_dict=arg_dict)
+        self.conv3 = QuantizedConv2d(192, 384, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dict)
+        self.conv4 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dict)
+        self.conv5 = QuantizedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dict)
+        self.fc1 = QuantizedLinear(256 * 6 * 6, 4096, arg_dict=arg_dict)
+        self.fc2 = QuantizedLinear(4096, 4096, arg_dict=arg_dict)
+        self.fc3 = QuantizedLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_helper.batch_cluster is not None:
@@ -60,7 +60,7 @@ class QuantizedAlexNet(nn.Module):
 
 
 class QuantizedAlexNetSmall(nn.Module):
-    def __init__(self, num_classes: int = 10, bit: int = 32, num_clusters: int = 1) -> None:
+    def __init__(self, arg_dict=None, num_classes: int = 10, ) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
         self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1

@@ -23,6 +23,7 @@ class RuntimeHelper(object):
         self.apply_fake_quantization = False
         self.batch_cluster = None
         self.kmeans = None
+        self.qn_prob = 0.0
 
     def get_pcq_batch(self, input, target):
         input, target, self.batch_cluster = self.kmeans.get_batch(input, target)
@@ -74,7 +75,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
     top1 = AverageMeter()
 
     model.train()
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
+    with tqdm(train_loader, unit="batch",ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
@@ -174,14 +175,25 @@ def load_dnn_model(arg_dict, tools):
         if arg_dict['dataset'] == 'imagenet':
             if arg_dict['arch'] == 'MobileNetV3':
                 return vision_models.mobilenet_v3_small(pretrained=True)
-            elif arg_dict['arch'] == 'ResNet18':
-                exit()
+            elif arg_dict.arch == 'ResNet18':
+                return vision_models.resnet18(pretrained=True)
+            elif arg_dict.arch == 'AlexNet':
+                return vision_models.alexnet(pretrained=True)
+            elif arg_dict.arch == 'ResNet50':
+                return vision_models.resnet50(pretrained=True)
         else:
             model = tools.pretrained_model_initializer()
 
     checkpoint = torch.load(arg_dict['dnn_path'])
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
+
+
+def load_optimizer(optim, path):
+    checkpoint = torch.load(path)
+    optim.load_state_dict(checkpoint['optimizer'])
+    epoch_to_start = checkpoint['epoch']
+    return optim, epoch_to_start
 
 
 def get_normalizer(dataset):

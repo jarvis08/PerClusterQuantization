@@ -329,9 +329,11 @@ class FusedConv2d(nn.Module):
         self.layer_type = 'FusedConv2d'
         self.groups = groups
 
+
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise\
+            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise')(arg_dict)
+
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 

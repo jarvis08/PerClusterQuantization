@@ -331,3 +331,12 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
 
 def resnet20() -> ResNet20:
     return ResNet20(BasicBlock, [3, 3, 3])
+
+def resnet50(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNet-50 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet('resnet50', Bottleneck, [3, 4, 6, 3], pretrained, progress, **kwargs)
