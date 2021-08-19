@@ -23,16 +23,16 @@ class PCQDenseLayer(nn.Module):
         self.arg_dict = arg_dict
         self._norm_layer = nn.BatchNorm2d
 
-        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
-        self.bn1 = PCQBnReLU(num_input_features,  arg_dict)
+        self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
-        self.bn2 = PCQBnReLU(num_input_features,  arg_dict)
+        self.bn2 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
@@ -91,14 +91,14 @@ class PCQTransition(nn.Sequential):
     def __init__(self, arg_dict, num_input_features: int, num_output_features: int) -> None:
         super(PCQTransition, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
-        self.norm = PCQBnReLU(num_input_features, arg_dict)
+        self.norm = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
         self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
@@ -157,8 +157,8 @@ class PCQDenseBlock(nn.ModuleDict):
         super(PCQDenseBlock, self).__init__()
         self.arg_dict = arg_dict
         self.num_layers = num_layers
-        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
@@ -227,8 +227,8 @@ class PCQDenseNet(nn.Module):
     ) -> None:
         super(PCQDenseNet, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
@@ -237,7 +237,7 @@ class PCQDenseNet(nn.Module):
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
-            ('first_norm', PCQBnReLU(num_init_features, arg_dict)),
+            ('first_norm', PCQBnReLU(num_init_features, nn.ReLU, arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -259,7 +259,7 @@ class PCQDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', PCQBnReLU(num_features, arg_dict))
+        self.features.add_module('last_norm', PCQBnReLU(num_features, nn.ReLU, arg_dict))
         # Linear layer
         self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
 

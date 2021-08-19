@@ -11,6 +11,7 @@ import shutil
 from datetime import datetime
 import json
 import logging
+import random
 
 
 class RuntimeHelper(object):
@@ -25,8 +26,8 @@ class RuntimeHelper(object):
         self.kmeans = None
         self.qn_prob = 0.0
 
-    def get_pcq_batch(self, input, target):
-        input, target, self.batch_cluster = self.kmeans.get_batch(input, target)
+    def get_pcq_batch(self, input, target, for_pcq=False):
+        input, target, self.batch_cluster = self.kmeans.get_batch(input, target, for_pcq)
         return input, target
 
 
@@ -105,7 +106,35 @@ def validate(model, test_loader, criterion, logger=None):
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
+                # print(test_loader.dataset.samples)
+                print(dir(test_loader))
+                # print(test_loader.batch_sampler.sampler)
+                exit()
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
 
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+    if logger:
+        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    return top1.avg
+
+
+def pcq_initialize_bn(model, train_loader, criterion, runtime_helper, logger=None):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    model.eval()
+    with torch.no_grad():
+        with tqdm(train_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Validate")
+                filename, _ = train_loader.dataset.samples[i]
+                input, target = runtime_helper.get_pcq_batch(input, target, filename)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -129,7 +158,6 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-
                 input, target = runtime_helper.get_pcq_batch(input, target)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
@@ -175,11 +203,11 @@ def load_dnn_model(arg_dict, tools):
         if arg_dict['dataset'] == 'imagenet':
             if arg_dict['arch'] == 'MobileNetV3':
                 return vision_models.mobilenet_v3_small(pretrained=True)
-            elif arg_dict.arch == 'ResNet18':
+            elif arg_dict['arch'] == 'ResNet18':
                 return vision_models.resnet18(pretrained=True)
-            elif arg_dict.arch == 'AlexNet':
+            elif arg_dict['arch'] == 'AlexNet':
                 return vision_models.alexnet(pretrained=True)
-            elif arg_dict.arch == 'ResNet50':
+            elif arg_dict['arch'] == 'ResNet50':
                 return vision_models.resnet50(pretrained=True)
             elif arg_dict['arch'] == 'DenseNet121':
                 return vision_models.densenet121(pretrained=True)
@@ -293,3 +321,23 @@ def load_preprocessed_cifar10_from_darknet():
     input = torch.tensor(np.fromfile("result/darknet/cifar_test_dataset.bin", dtype='float32').reshape((10000, 1, 3, 32, 32)))
     target = torch.tensor(np.fromfile("result/darknet/cifar_test_target.bin", dtype='int32').reshape((10000, 1)), dtype=torch.long)
     return input, target
+
+
+def make_ctr_filelist(train_loader, args, runtime_helper):
+    total_list = [[] for _ in range(args.cluster)]
+    ctr_filelist = []
+    num_data = args.batch // args.cluster
+
+    done = 0
+    with torch.no_grad():
+        with tqdm(train_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                cluster_info = runtime_helper.get_pcq_batch(input, target, True)
+                for idx in range(len(cluster_info)):
+                    total_list[cluster_info[idx]].append(done)
+                    done += 1
+    for idx in range(args.cluster):
+        assert len(total_list[idx]) < num_data, "Not enough data in cluster{}".format(idx)
+        cur_list = random.sample(total_list[idx], num_data)
+        ctr_filelist += cur_list
+    return ctr_filelist

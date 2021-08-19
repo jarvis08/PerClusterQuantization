@@ -1,14 +1,14 @@
 import argparse
 
 from models import *
-from models.bert.bert import bert_small
+# from models.bert.bert import bert_small
 # from models.bert.fused_bert import fused_bert_small, set_fused_bert
-from models.bert.fused_bert import fused_bert_small
+# from models.bert.fused_bert import fused_bert_small
 from models.resnet import resnet50
 from pretrain import _pretrain
 from finetune import _finetune
 from evaluate import _evaluate
-from run_classifier import _run_classifier
+# from run_classifier import _run_classifier
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
@@ -261,7 +261,7 @@ if __name__=='__main__':
         _pretrain(args, tools)
     elif args.mode == 'fine':
         _finetune(args, tools)
-    elif args.mode == 'test':
-        _run_classifier(args, tools)
+    # elif args.mode == 'test':
+        # _run_classifier(args, tools)
     else:
         _evaluate(args, tools)

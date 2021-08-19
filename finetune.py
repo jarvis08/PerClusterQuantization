@@ -9,7 +9,7 @@ from models import *
 from tqdm import tqdm
 
 
-def get_train_loader(args, normalizer, hvd=None):
+def get_train_loader(args, normalizer, hvd=None, for_pcq=False, ctr_filelist=None):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                         transform=transforms.Compose([
@@ -17,12 +17,20 @@ def get_train_loader(args, normalizer, hvd=None):
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
                                                             normalizer]))
-        if args.horovod:
-            sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
-        else:
-            sampler = torch.utils.data.RandomSampler(train_dataset)
+        if not for_pcq:
+            if args.horovod:
+                sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
+            else:
+                sampler = torch.utils.data.RandomSampler(train_dataset)
 
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10, sampler=sampler)
+        if for_pcq:
+            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, num_workers=10, shuffle=False)
+        elif ctr_filelist is not None:
+            cur_dataset = torch.utils.data.Subset(train_dataset, ctr_filelist)
+            train_loader = torch.utils.data.DataLoader(cur_dataset, batch_size=args.batch // args.cluster, num_workers=10, shuffle=False)
+        else:
+            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10,
+                                                       sampler=sampler)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -33,7 +41,15 @@ def get_train_loader(args, normalizer, hvd=None):
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalizer]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+        if for_pcq:
+            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=False, num_workers=2)
+        elif ctr_filelist is not None:
+            cur_dataset = torch.utils.data.Subset(train_dataset, ctr_filelist)
+            train_loader = torch.utils.data.DataLoader(cur_dataset, batch_size=args.batch // args.cluster,
+                                                       num_workers=2, shuffle=False)
+        else:
+            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True,
+                                                       num_workers=2)
     return train_loader
 
 
@@ -82,8 +98,10 @@ def _finetune(args, tools):
         torch.set_num_threads(1)
         torch.cuda.set_device(hvd.local_rank())
         train_loader = get_train_loader(args, normalizer, hvd)
+        pcq_train_loader = get_train_loader(args, normalizer, hvd, for_pcq=True)
     else:
         train_loader = get_train_loader(args, normalizer)
+        pcq_train_loader = get_train_loader(args, normalizer, for_pcq=True)
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
@@ -119,12 +137,22 @@ def _finetune(args, tools):
         kmeans = KMeans(args)
         if not args.kmeans_path:
             args.kmeans_path = set_kmeans_dir(args)
-            kmeans.train_kmeans_model(train_loader)
+            kmeans.train_kmeans_model(pcq_train_loader)
         else:
             kmeans.load_kmeans_model()
         runtime_helper.kmeans = kmeans
 
     # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+    if args.cluster > 1:
+        if args.horovod:
+            if hvd.rank() == 0:
+                ctr_filelist = make_ctr_filelist(model, pcq_train_loader, runtime_helper)
+                train_loader_inference = get_train_loader(args, normalizer, ctr_filelist=ctr_filelist)
+                pcq_validate(model, train_loader_inference, criterion, runtime_helper)
+        else:
+            ctr_filelist = make_ctr_filelist(model, pcq_train_loader, runtime_helper)
+            train_loader_inference = get_train_loader(args, normalizer, ctr_filelist=ctr_filelist)
+            pcq_validate(model, train_loader_inference, criterion, runtime_helper)
 
     if args.horovod:
         hvd.broadcast_parameters(model.state_dict(), root_rank=0)
