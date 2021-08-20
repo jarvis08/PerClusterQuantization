@@ -31,6 +31,7 @@ parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-qu
                                                       ' PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
+parser.add_argument('--folded_fq', default=True, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
 parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
