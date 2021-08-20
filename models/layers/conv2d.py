@@ -335,7 +335,6 @@ class FusedConv2d(nn.Module):
         self.layer_type = 'FusedConv2d'
         self.groups = groups
 
-
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.fodled_fq, self.use_ste, self.runtime_helper, self.quant_noise\
             = itemgetter('bit', 'smooth', 'folded_fq', 'ste', 'runtime_helper', 'quant_noise')(arg_dict)
@@ -355,6 +354,14 @@ class FusedConv2d(nn.Module):
         self.out_channels = out_channels
 
     def forward(self, x):
+        if not self.training:
+            x = self.conv(x)
+            if self._norm_layer:
+                x = self._norm_layer(x)
+            if self._activation:
+                x = self._activation(x)
+            return x
+
         if not self.folded_fq:
             return self._general(x)
         else:
@@ -366,14 +373,6 @@ class FusedConv2d(nn.Module):
                 return self._without_norm(x)
 
     def _general(self, x):
-        if not self.training:
-            x = self.conv(x)
-            if self._norm_layer:
-                x = self._norm_layer(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
-
         _weight = self.conv.weight
         if not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
@@ -399,14 +398,6 @@ class FusedConv2d(nn.Module):
         return out
 
     def _quant_noise(self, x):
-        if not self.training:
-            x = self.conv(x)
-            if self._norm_layer:
-                x = self._norm_layer(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
-
         x = F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding,
                      self.conv.dilation, self.conv.groups)
         if self._norm_layer:
@@ -431,9 +422,6 @@ class FusedConv2d(nn.Module):
         general_out = self._norm_layer(general_out)
         if self._activation:
             general_out = self._activation(general_out)
-
-        if not self.training:
-            return general_out
 
         with torch.no_grad():
             alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean, \
@@ -466,12 +454,6 @@ class FusedConv2d(nn.Module):
         return STE.apply(general_out, folded_out)
 
     def _without_norm(self, x):
-        if not self.training:
-            x = self.conv(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
-
         _weight = self.conv.weight
         if not self.quant_noise:
             s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
