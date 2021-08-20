@@ -336,7 +336,7 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.fodled_fq, self.use_ste, self.runtime_helper, self.quant_noise\
+        self.bit, self.smooth, self.folded_fq, self.use_ste, self.runtime_helper, self.quant_noise\
             = itemgetter('bit', 'smooth', 'folded_fq', 'ste', 'runtime_helper', 'quant_noise')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
