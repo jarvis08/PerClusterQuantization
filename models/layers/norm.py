@@ -71,7 +71,7 @@ class QuantizedBn2d(nn.Module):
             total = torch.clamp(total, -128, 127)
         return total.type(torch.cuda.FloatTensor)
 
-    def general(self, x):
+    def _general(self, x):
         _size = x.shape[-1]
         weight = self.weight[0].repeat_interleave(_size * _size)\
                                .reshape(self.num_features, _size, _size)\
@@ -85,12 +85,12 @@ class QuantizedBn2d(nn.Module):
         subsum = q1q2 - q1z2 - q2z1 + self.z1 * self.z2 + bias
 
         if self.shift.item() < 0:
-           subsum = multiply_M((subsum << - self.shift.item()), self.M0)
-           subsum = shifting(subsum, 0)
+            multiplied = multiply_M((subsum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
         else:
-           subsum = multiply_M(subsum, self.M0)
-           subsum = shifting(subsum, self.shift.item())
-        total = subsum.add(self.z3)
+            multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
+        total = total.add(self.z3)
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
