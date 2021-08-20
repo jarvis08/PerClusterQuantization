@@ -36,30 +36,49 @@ class QuantizedBn2d(nn.Module):
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
         _size = x.shape[-1]
-        done = 0
-        total = torch.zeros(x.shape, dtype=torch.int32).cuda()
-        for i in range(bc.shape[0]):
-            c = bc[i][0].item()
-            n = bc[i][1].item()
-            weight = self.weight[c].repeat_interleave(_size * _size)\
-                                   .reshape(self.num_features, _size, _size)\
-                                   .repeat(n, 1, 1, 1)
-            bias = self.bias[c].repeat_interleave(_size * _size)\
-                               .reshape(self.num_features, _size, _size)\
-                               .repeat(n, 1, 1, 1)
-            q1q2 = x[done:done + n].mul(weight)
-            q1z2 = x[done:done + n].mul(self.z2[c])
-            q2z1 = weight.mul(self.z1[c])
-            subsum = q1q2 - q1z2 - q2z1 + self.z1[c] * self.z2[c] + bias
 
-            if self.shift[c] < 0:
-               subsum = multiply_M((subsum << - self.shift[c].item()), self.M0[c])
-               subsum = shifting(subsum, 0)
-            else:
-               subsum = multiply_M(subsum, self.M0[c])
-               subsum = shifting(subsum, self.shift[c].item())
-            total[done:done + n] = subsum.add(self.z3[c])
-            done += n
+        weight = torch.index_select(self.weight.repeat_interleave(_size * _size)
+                                    .reshape(self.num_clusters, self.num_features, _size, _size), 0, bc)
+        bias = torch.index_select(self.bias.repeat_interleave(_size * _size)
+                                  .reshape(self.num_clusters, self.num_features, _size, _size), 0, bc)
+        z1 = torch.index_select(self.z1, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        z2 = torch.index_select(self.z2, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        shift = torch.index_select(self.shift, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+
+        # done = 0
+        # total = torch.zeros(x.shape, dtype=torch.int32).cuda()
+        # for i in range(bc.shape[0]):
+        #     c = bc[i][0].item()
+        #     n = bc[i][1].item()
+        #     weight = self.weight[c].repeat_interleave(_size * _size)\
+        #                            .reshape(self.num_features, _size, _size)\
+        #                            .repeat(n, 1, 1, 1)
+        #     bias = self.bias[c].repeat_interleave(_size * _size)\
+        #                        .reshape(self.num_features, _size, _size)\
+        #                        .repeat(n, 1, 1, 1)
+        #     q1q2 = x[done:done + n].mul(weight)
+        #     q1z2 = x[done:done + n].mul(self.z2[c])
+        #     q2z1 = weight.mul(self.z1[c])
+        #     subsum = q1q2 - q1z2 - q2z1 + self.z1[c] * self.z2[c] + bias
+        #
+        #     if self.shift[c] < 0:
+        #        subsum = multiply_M((subsum << - self.shift[c].item()), self.M0[c])
+        #        subsum = shifting(subsum, 0)
+        #     else:
+        #        subsum = multiply_M(subsum, self.M0[c])
+        #        subsum = shifting(subsum, self.shift[c].item())
+        #     total[done:done + n] = subsum.add(self.z3[c])
+        #     done += n
+
+        q1q2 = x.mul(weight)
+        q1z2 = x.mul(z2)
+        q2z1 = weight.mul(z1)
+        subsum = q1q2 - q1z2 - q2z1 + z1 * z2 + bias
+        subsum = multiply_M(subsum, M0)
+        subsum = shifting4d(subsum, shift)
+        total = subsum.add(z3)
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
@@ -104,12 +123,33 @@ class PCQBnReLU(nn.Module):
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, arg_dict=arg_dict)\
                                     for _ in range(self.num_clusters)])
 
+        if self.runtime_helper.bn_init[1]:
+            self.ema_params = torch.zeros((self.num_clusters, 2))
+            self.bn_act_range = torch.zeros((self.num_clusters, 2))
+            self.bn_ema = False
+
     def forward(self, x):
+        bc = self.runtime_helper.batch_cluster
+        # clusters_in_batch = torch.unique(bc)
+        # for c in clusters_in_batch:
+        #     data_idx_of_c = (bc == c).nonzero(as_tuple=True)[0].cuda()
+        #     out.append(self.norms[c](torch.index_select(x, 0, data_idx_of_c)))
+        if not self.training and self.runtime_helper.bn_init[1]:
+            c = self.runtime_helper.bn_init[0]
+            out = self.norms[c](x)
+            if self.bn_ema:
+                self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], self.smooth)
+                self.bn_act_range[c][0], self.bn_act_range[c][1] = ema(out, self.bn_act_range[c], self.smooth)
+            else:
+                self.bn_act_range[c][0], self.bn_act_range[c][1] = torch.min(out).item(), torch.max(out).item()
+                self.ema_params[c][0], self.ema_params[c][1] = self.norms[c].running_mean. running_val
+                self.bn_ema = True
+            return out
         done = 0
         out = []
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
+        for i in range(bc.shape[0]):
+            c = bc[i][0]
+            n = bc[i][1]
             out.append(self.norms[c](x[done:done + n]))
             done += n
         return torch.cat(out)
@@ -133,6 +173,12 @@ class PCQBnReLU(nn.Module):
         for c in range(self.num_clusters):
             self.norms[c].fold_bn()
 
+    def pass_params(self):
+        for c in range(self.num_clusters):
+            self.norms[c].running_mean.copy_(self.ema_params[c][0])
+            self.norms[c].running_var.copy_(self.ema_params[c][1])
+            self.norms[c].act_range.copy_(self.bn_act_range[c])
+
 
 class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, arg_dict=None):
@@ -141,8 +187,7 @@ class FusedBnReLU(nn.Module):
         self.bit, self.smooth, self.use_ste, self.runtime_helper = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        # self.w_qmax = 2 ** 32 - 1
-        self.w_qmax = 2 ** 4 - 1
+        self.w_qmax = 2 ** 8 - 1
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False

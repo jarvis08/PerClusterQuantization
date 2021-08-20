@@ -358,3 +358,24 @@ def fold_pcq_densenet(model):
     # Last BatchNorm
     model.features.last_norm.fold_norms()
     return model
+
+
+def densenet_init_bn_params(model):
+    # first norm
+    model.features.first_norm.pass_param_norm()
+    # dense block & Transition
+    for block_idx in range(1, 5):
+        block = getattr(model.features, 'denseblock%d' % block_idx)
+        if block_idx < 4:
+            trans = getattr(model.features, 'transition%d' % block_idx)
+        # dense layer
+        for layer_idx in range(1, block.num_layers + 1):
+            fused_layer = getattr(block, 'denselayer%d' % layer_idx)
+            fused_layer.bn1.pass_param_norm()
+            fused_layer.bn2.pass_param_norm()
+        # transition
+        if block_idx < 4:
+            trans.norm.pass_param_norm()
+    # Last BatchNorm
+    model.features.last_norm.pass_param_norm()
+    return model

@@ -16,11 +16,9 @@ class KMeans(object):
 
     def get_partitioned_batch(self, data):
         # Under the premise that images are in the form of square matrix
-        channel = data.shape[1]
-        width = data.shape[2]
-        height = data.shape[3]
-        n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3)) # Per row or col
-        n_data = int(width / n_part) # Per part
+        _size = data.shape[-1]
+        n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3))  # Per row or col
+        n_data = int(_size / n_part)  # Per part
         rst = None
         for i in range(n_part):
             r_start = n_data * i
@@ -49,24 +47,12 @@ class KMeans(object):
             "\n(K-means model's = {}, Current model's = {}".format(saved_args['num_partitions'], self.args.partition)
         self.model = joblib.load(os.path.join(self.args.kmeans_path, 'checkpoint.pkl'))
     
-    def get_batch(self, input, target, for_pcq=False):
+    def get_batch(self, input, for_infer=False):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
-        if for_pcq:
+        if for_infer:
             return cluster_info
-
-        num_data_per_cluster = []
-        input_ordered_by_cluster = torch.zeros(input.shape)
-        target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
-        existing_clusters, counts = np.unique(cluster_info, return_counts=True)
-        ordered = 0
-        for cluster, n in zip(existing_clusters, counts):
-            num_data_per_cluster.append([cluster, n])
-            data_indices = (cluster_info == cluster).nonzero()[0]
-            input_ordered_by_cluster[ordered:ordered + n] = input[data_indices].clone().detach()
-            target_ordered_by_cluster[ordered:ordered + n] = target[data_indices].clone().detach()
-            ordered += n
-        return input_ordered_by_cluster, target_ordered_by_cluster, torch.ByteTensor(num_data_per_cluster)
+        return torch.cuda.LongTensor(cluster_info)
 
     def train_kmeans_model(self, train_loader):
         def check_convergence(prev, cur, tol):
@@ -118,7 +104,6 @@ def check_cluster_distribution(kmeans, train_loader):
         "Total # of data doesn't match (n_data: {}, calc: {})".format(n_data, sum(n_data_per_cluster.values()))
 
     ratio = np.zeros((kmeans.args.cluster))
-    #ratio = [0 for _ in range(kmeans.args.cluster)]
     for c in range(kmeans.args.cluster):
         ratio[c] = n_data_per_cluster[c] / n_data * 100
 

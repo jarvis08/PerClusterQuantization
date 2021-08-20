@@ -9,7 +9,7 @@ from models import *
 from tqdm import tqdm
 
 
-def get_train_loader(args, normalizer, hvd=None, for_pcq=False, ctr_filelist=None):
+def get_train_loader(args, normalizer, hvd=None):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                         transform=transforms.Compose([
@@ -17,19 +17,12 @@ def get_train_loader(args, normalizer, hvd=None, for_pcq=False, ctr_filelist=Non
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
                                                             normalizer]))
-        if not for_pcq:
-            if args.horovod:
-                sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
-            else:
-                sampler = torch.utils.data.RandomSampler(train_dataset)
-
-        if for_pcq:
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, num_workers=10, shuffle=False)
-        elif ctr_filelist is not None:
-            cur_dataset = torch.utils.data.Subset(train_dataset, ctr_filelist)
-            train_loader = torch.utils.data.DataLoader(cur_dataset, batch_size=args.batch // args.cluster, num_workers=10, shuffle=False)
+        if args.horovod:
+            sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
         else:
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10,
+            sampler = torch.utils.data.RandomSampler(train_dataset)
+
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10,
                                                        sampler=sampler)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
@@ -41,15 +34,55 @@ def get_train_loader(args, normalizer, hvd=None, for_pcq=False, ctr_filelist=Non
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalizer]))
-        if for_pcq:
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=False, num_workers=2)
-        elif ctr_filelist is not None:
-            cur_dataset = torch.utils.data.Subset(train_dataset, ctr_filelist)
-            train_loader = torch.utils.data.DataLoader(cur_dataset, batch_size=args.batch // args.cluster,
-                                                       num_workers=2, shuffle=False)
-        else:
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True,
-                                                       num_workers=2)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+    return train_loader
+
+
+def get_kmeans_train_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer]))
+
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, num_workers=10, shuffle=False)
+    else:
+        train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer]))
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=False, num_workers=2)
+    return train_loader
+
+
+def get_indices_train_loader(args, normalizer):
+    if args.dataset == 'imagenet':
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer]))
+
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, num_workers=10, shuffle=False)
+    else:
+        train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer]))
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=False, num_workers=2)
     return train_loader
 
 
@@ -61,8 +94,8 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
-
-            input, target = runtime_helper.get_pcq_batch(input, target)
+            runtime_helper.get_pcq_batch(input)
+            input, target = runtime_helper.sort_by_cluster_info(input, target)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -85,37 +118,24 @@ def get_finetuning_model(arg_dict, tools):
     pretrained_model = load_dnn_model(arg_dict, tools)
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
-    return pretrained_model, fused_model, arg_dict
+    return fused_model, arg_dict
 
 
 def _finetune(args, tools):
     normalizer = get_normalizer(args.dataset)
-
-
-    if args.horovod:
-        import horovod.torch as hvd
-        hvd.init()
-        torch.set_num_threads(1)
-        torch.cuda.set_device(hvd.local_rank())
-        train_loader = get_train_loader(args, normalizer, hvd)
-        pcq_train_loader = get_train_loader(args, normalizer, hvd, for_pcq=True)
-    else:
-        train_loader = get_train_loader(args, normalizer)
-        pcq_train_loader = get_train_loader(args, normalizer, for_pcq=True)
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
     arg_dict = deepcopy(vars(args))
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
-    pretrained_model, model, arg_dict = get_finetuning_model(arg_dict, tools)
-
+    model, model, arg_dict = get_finetuning_model(arg_dict, tools)
     model.cuda()
     model.eval()
-    #if args.dataset == 'imagenet':
-    #    summary(model, (3, 224, 224))
-    #else:
-    #    summary(model, (3, 32, 32))
+    if args.dataset == 'imagenet':
+       summary(model, (3, 224, 224))
+    else:
+       summary(model, (3, 32, 32))
 
     if args.quant_noise:
         runtime_helper.qn_prob = args.qn_prob - 0.1
@@ -135,24 +155,33 @@ def _finetune(args, tools):
 
     if args.cluster > 1:
         kmeans = KMeans(args)
+        kmeans_train_loader = get_kmeans_train_loader(args, normalizer)
         if not args.kmeans_path:
             args.kmeans_path = set_kmeans_dir(args)
-            kmeans.train_kmeans_model(pcq_train_loader)
+            kmeans.train_kmeans_model(kmeans_train_loader)
         else:
             kmeans.load_kmeans_model()
         runtime_helper.kmeans = kmeans
-
     # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+
     if args.cluster > 1:
-        if args.horovod:
-            if hvd.rank() == 0:
-                ctr_filelist = make_ctr_filelist(model, pcq_train_loader, runtime_helper)
-                train_loader_inference = get_train_loader(args, normalizer, ctr_filelist=ctr_filelist)
-                pcq_validate(model, train_loader_inference, criterion, runtime_helper)
-        else:
-            ctr_filelist = make_ctr_filelist(model, pcq_train_loader, runtime_helper)
-            train_loader_inference = get_train_loader(args, normalizer, ctr_filelist=ctr_filelist)
-            pcq_validate(model, train_loader_inference, criterion, runtime_helper)
+        loaders = []
+        indices_train_loader = get_indices_train_loader(args, normalizer)
+        indices_per_cluster = make_indices_list(indices_train_loader, args, runtime_helper)
+        for c in range(args.cluster):
+            cur_dataset = torch.utils.data.Subset(indices_train_loader.dataset, indices_per_cluster[c])
+            loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
+        kmeans_validate(model, loaders, criterion, runtime_helper)
+        model = tools.bn_initialzier(model)
+
+    if args.horovod:
+        import horovod.torch as hvd
+        hvd.init()
+        torch.set_num_threads(1)
+        torch.cuda.set_device(hvd.local_rank())
+        train_loader = get_train_loader(args, normalizer, hvd)
+    else:
+        train_loader = get_train_loader(args, normalizer)
 
     if args.horovod:
         hvd.broadcast_parameters(model.state_dict(), root_rank=0)
@@ -179,7 +208,7 @@ def _finetune(args, tools):
         opt_scheduler.step()
 
         if args.cluster > 1:
-            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
+            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger, sort_input=True)
         else:
             fp_score = validate(model, test_loader, criterion, logger)
 

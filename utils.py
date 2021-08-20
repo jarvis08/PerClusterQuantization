@@ -11,24 +11,40 @@ import shutil
 from datetime import datetime
 import json
 import logging
-import random
+from time import time
 
 
 class RuntimeHelper(object):
     """
         apply_fake_quantization : Flag used in layers
-        batch_cluster_info      : Cluster information of current batch
-        kmeans                  : Trined K-Means Algorithm Object
+        batch_cluster           : Cluster information of current batch
+        kmeans                  : Trained K-Means model's object
+        bn_init                 : Initialize mean and variance of BatchNorm
     """
     def __init__(self):
         self.apply_fake_quantization = False
         self.batch_cluster = None
         self.kmeans = None
         self.qn_prob = 0.0
+        self.bn_init = [0, False]
 
-    def get_pcq_batch(self, input, target, for_pcq=False):
-        input, target, self.batch_cluster = self.kmeans.get_batch(input, target, for_pcq)
-        return input, target
+    def get_pcq_batch(self, input):
+        self.batch_cluster = self.kmeans.get_batch(input)
+
+    def sort_by_cluster_info(self, input, target):
+        num_data_per_cluster = []
+        input_ordered_by_cluster = torch.zeros(input.shape)
+        target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
+        existing_clusters, counts = torch.unique(self.batch_cluster, return_counts=True)
+        done = 0
+        for cluster, n in zip(existing_clusters, counts):
+            num_data_per_cluster.append([cluster, n])
+            data_indices = (self.batch_cluster == cluster).nonzero(as_tuple=True)[0]
+            input_ordered_by_cluster[done:done + n] = input[data_indices]
+            target_ordered_by_cluster[done:done + n] = target[data_indices]
+            done += n
+        self.batch_cluster = torch.LongTensor(num_data_per_cluster)
+        return input_ordered_by_cluster, target_ordered_by_cluster
 
 
 class AverageMeter(object):
@@ -124,32 +140,33 @@ def validate(model, test_loader, criterion, logger=None):
     return top1.avg
 
 
-def pcq_initialize_bn(model, train_loader, criterion, runtime_helper, logger=None):
+def kmeans_validate(model, loader_list, criterion, runtime_helper):
     losses = AverageMeter()
     top1 = AverageMeter()
 
     model.eval()
     with torch.no_grad():
-        with tqdm(train_loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
-                t.set_description("Validate")
-                filename, _ = train_loader.dataset.samples[i]
-                input, target = runtime_helper.get_pcq_batch(input, target, filename)
-                input, target = input.cuda(), target.cuda()
-                output = model(input)
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
+        for c in range(len(loader_list)):
+            with tqdm(loader_list[c], unit="batch", ncols=90) as t:
+                for i, (input, target) in enumerate(t):
+                    t.set_description("Validate")
+                    input, target = input.cuda(), target.cuda()
+                    runtime_helper.bn_init[0], runtime_helper.bn_init[1] = c, True
+                    output = model(input)
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
+                    losses.update(loss.item(), input.size(0))
+                    top1.update(prec.item(), input.size(0))
 
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
+                    t.set_postfix(loss=losses.avg, acc=top1.avg)
 
-    if logger:
-        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    runtime_helper.bn_init[1] = False
+    # if logger:
+        # logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
+def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sort_input=False):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -158,7 +175,9 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                input, target = runtime_helper.get_pcq_batch(input, target)
+                runtime_helper.get_pcq_batch(input)
+                if sort_input:
+                    input, target = runtime_helper.sort_by_cluster_info(input, target)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -167,6 +186,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None):
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+                print()
 
     if logger:
         logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
@@ -323,10 +343,8 @@ def load_preprocessed_cifar10_from_darknet():
     return input, target
 
 
-def make_ctr_filelist(train_loader, args, runtime_helper):
+def make_indices_list(train_loader, args, runtime_helper):
     total_list = [[] for _ in range(args.cluster)]
-    ctr_filelist = []
-    num_data = args.batch // args.cluster
 
     done = 0
     with torch.no_grad():
@@ -336,8 +354,4 @@ def make_ctr_filelist(train_loader, args, runtime_helper):
                 for idx in range(len(cluster_info)):
                     total_list[cluster_info[idx]].append(done)
                     done += 1
-    for idx in range(args.cluster):
-        assert len(total_list[idx]) < num_data, "Not enough data in cluster{}".format(idx)
-        cur_list = random.sample(total_list[idx], num_data)
-        ctr_filelist += cur_list
-    return ctr_filelist
+    return total_list
