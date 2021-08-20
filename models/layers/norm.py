@@ -138,7 +138,7 @@ class PCQBnReLU(nn.Module):
             c = self.runtime_helper.bn_init[0]
             out = self.norms[c](x)
             if self.bn_ema:
-                self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], self.smooth)
+                self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], 0.9)
                 self.bn_act_range[c][0], self.bn_act_range[c][1] = ema(out, self.bn_act_range[c], self.smooth)
             else:
                 self.bn_act_range[c][0], self.bn_act_range[c][1] = torch.min(out).item(), torch.max(out).item()

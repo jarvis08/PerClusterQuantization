@@ -129,13 +129,13 @@ def _finetune(args, tools):
     arg_dict = deepcopy(vars(args))
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
-    model, model, arg_dict = get_finetuning_model(arg_dict, tools)
+    model, arg_dict = get_finetuning_model(arg_dict, tools)
     model.cuda()
     model.eval()
-    if args.dataset == 'imagenet':
-       summary(model, (3, 224, 224))
-    else:
-       summary(model, (3, 32, 32))
+    # if args.dataset == 'imagenet':
+    #    summary(model, (3, 224, 224))
+    # else:
+    #    summary(model, (3, 32, 32))
 
     if args.quant_noise:
         runtime_helper.qn_prob = args.qn_prob - 0.1

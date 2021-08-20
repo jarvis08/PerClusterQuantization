@@ -122,10 +122,6 @@ def validate(model, test_loader, criterion, logger=None):
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                # print(test_loader.dataset.samples)
-                print(dir(test_loader))
-                # print(test_loader.batch_sampler.sampler)
-                exit()
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
