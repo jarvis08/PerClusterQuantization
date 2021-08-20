@@ -32,25 +32,33 @@ class QuantizedBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        if self.downsample is not None:
-            self.bn_down = QuantizedBn2d(planes, arg_dict=arg_dict)
+        self.num_clusters = itemgetter('cluster')(arg_dict)
+
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(planes, arg_dict=arg_dict)
         self.conv2 = quantized_conv3x3(planes, planes, arg_dict=arg_dict)
-        self.bn2 = QuantizedBn2d(planes, arg_dict=arg_dict)
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
+
+        if self.num_clusters > 1:
+            if self.downsample is not None:
+                self.bn_down = QuantizedBn2d(planes, arg_dict=arg_dict)
+            self.bn1 = QuantizedBn2d(planes, arg_dict=arg_dict)
+            self.bn2 = QuantizedBn2d(planes, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
-        out = self.bn1(out)
+        if self.num_clusters > 1:
+            out = self.bn1(out)
+
         out = self.conv2(out)
-        out = self.bn2(out)
+        if self.num_clusters > 1:
+            out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.bn_down(identity)
+            if self.num_clusters > 1:
+                identity = self.bn_down(identity)
 
         out = self.shortcut(identity, out)
         return out
@@ -191,7 +199,8 @@ class QuantizedResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(16, arg_dict=arg_dict)
+        if self.num_clusters > 1:
+            self.bn1 = QuantizedBn2d(16, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
@@ -217,7 +226,8 @@ class QuantizedResNet20(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.first_conv(x)
-        x = self.bn1(x)
+        if self.num_clusters > 1:
+            x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
