@@ -19,7 +19,7 @@ class QuantizedLinear(nn.Linear):
         self.bit, self.num_clusters, self.runtime_helper =\
                 itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.act_qmax = nn.Parameter(torch.tensor([0], dtype=torch.int32), requires_grad=False)
+        self.act_qmax = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.out_features = out_features
 
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features)), requires_grad=False)
@@ -131,10 +131,14 @@ class QuantizedLinear(nn.Linear):
             else:
                 total = hs_total
 
-        if self.bit == 4:
+        if self.act_qmax == 15:
             total = torch.clamp(total, 0, 15)
-        else:
+        elif self.act_qmax == 255:
             total = torch.clamp(total, -128, 127)
+        elif self.act_qmax == 65535:  # INT 16
+            total = torch.clamp(total, -32768, 32767)
+        elif self.act_qmax == 4294967295:  # INT 32
+            total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
 
@@ -224,6 +228,7 @@ class FusedLinear(nn.Module):
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.act_qmax = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False

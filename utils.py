@@ -155,7 +155,6 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sor
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
-                print()
 
     if logger:
         logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))

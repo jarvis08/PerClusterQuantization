@@ -29,9 +29,9 @@ class QuantizedBn2d(nn.Module):
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
-            return self._pcq(x.type(torch.cuda.LongTensor))
+            return self._pcq(x.type(torch.cuda.IntTensor))
         else:
-            return self._general(x.type(torch.cuda.LongTensor))
+            return self._general(x.type(torch.cuda.IntTensor))
 
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
@@ -45,40 +45,25 @@ class QuantizedBn2d(nn.Module):
         z2 = torch.index_select(self.z2, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        shift = torch.index_select(self.shift, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-
-        # done = 0
-        # total = torch.zeros(x.shape, dtype=torch.int32).cuda()
-        # for i in range(bc.shape[0]):
-        #     c = bc[i][0].item()
-        #     n = bc[i][1].item()
-        #     weight = self.weight[c].repeat_interleave(_size * _size)\
-        #                            .reshape(self.num_features, _size, _size)\
-        #                            .repeat(n, 1, 1, 1)
-        #     bias = self.bias[c].repeat_interleave(_size * _size)\
-        #                        .reshape(self.num_features, _size, _size)\
-        #                        .repeat(n, 1, 1, 1)
-        #     q1q2 = x[done:done + n].mul(weight)
-        #     q1z2 = x[done:done + n].mul(self.z2[c])
-        #     q2z1 = weight.mul(self.z1[c])
-        #     subsum = q1q2 - q1z2 - q2z1 + self.z1[c] * self.z2[c] + bias
-        #
-        #     if self.shift[c] < 0:
-        #        subsum = multiply_M((subsum << - self.shift[c].item()), self.M0[c])
-        #        subsum = shifting(subsum, 0)
-        #     else:
-        #        subsum = multiply_M(subsum, self.M0[c])
-        #        subsum = shifting(subsum, self.shift[c].item())
-        #     total[done:done + n] = subsum.add(self.z3[c])
-        #     done += n
+        shift = torch.index_select(self.shift, 0, bc)
 
         q1q2 = x.mul(weight)
         q1z2 = x.mul(z2)
         q2z1 = weight.mul(z1)
         subsum = q1q2 - q1z2 - q2z1 + z1 * z2 + bias
-        subsum = multiply_M(subsum, M0)
-        subsum = shifting4d(subsum, shift)
-        total = subsum.add(z3)
+
+        total = torch.zeros(subsum.shape, dtype=torch.int32).cuda()
+        neg = (shift < 0).nonzero(as_tuple=True)[0]
+        pos = (shift >= 0).nonzero(as_tuple=True)[0]
+        if len(neg) > 0:
+            s = - shift[neg].reshape(neg.shape[0], 1, 1, 1)
+            multiplied = multiply_M((subsum[neg].type(torch.cuda.LongTensor) << s), M0[neg])
+            total[neg] = shifting(multiplied, 0)
+        if len(pos) > 0:
+            s = shift[pos].reshape(pos.shape[0], 1, 1, 1)
+            multiplied = multiply_M(subsum[pos].type(torch.cuda.LongTensor), M0[pos])
+            total[pos] = shifting4d(multiplied, s)
+        total = total.add(z3)
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
