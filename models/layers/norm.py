@@ -71,7 +71,7 @@ class QuantizedBn2d(nn.Module):
             total = torch.clamp(total, -128, 127)
         return total.type(torch.cuda.FloatTensor)
 
-    def general(self, x):
+    def _general(self, x):
         _size = x.shape[-1]
         weight = self.weight[0].repeat_interleave(_size * _size)\
                                .reshape(self.num_features, _size, _size)\
@@ -85,12 +85,12 @@ class QuantizedBn2d(nn.Module):
         subsum = q1q2 - q1z2 - q2z1 + self.z1 * self.z2 + bias
 
         if self.shift.item() < 0:
-           subsum = multiply_M((subsum << - self.shift.item()), self.M0)
-           subsum = shifting(subsum, 0)
+            multiplied = multiply_M((subsum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            total = shifting(multiplied, 0)
         else:
-           subsum = multiply_M(subsum, self.M0)
-           subsum = shifting(subsum, self.shift.item())
-        total = subsum.add(self.z3)
+            multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), self.M0)
+            total = shifting(multiplied, self.shift.item())
+        total = total.add(self.z3)
 
         if self.bit == 4:
             total = torch.clamp(total, 0, 15)
@@ -107,6 +107,7 @@ class PCQBnReLU(nn.Module):
 
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, arg_dict=arg_dict)\
                                     for _ in range(self.num_clusters)])
+        #self.bn = nn.BatchNorm2d(num_features)
 
         self.ema_params = torch.zeros((self.num_clusters, 2))
         self.bn_act_range = torch.zeros((self.num_clusters, 2))
@@ -118,6 +119,7 @@ class PCQBnReLU(nn.Module):
         # for c in clusters_in_batch:
         #     data_idx_of_c = (bc == c).nonzero(as_tuple=True)[0].cuda()
         #     out.append(self.norms[c](torch.index_select(x, 0, data_idx_of_c)))
+
         done = 0
         out = []
         for i in range(bc.shape[0]):
@@ -168,33 +170,55 @@ class FusedBnReLU(nn.Module):
         self.layer_type = 'FusedBnReLU'
         self.bit, self.smooth, self.use_ste, self.runtime_helper = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
         self.w_qmax = 2 ** 8 - 1
+        self.q_max = 2 ** self.bit - 1
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
+        self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
         self._activation = activation(inplace=True) if activation else None
 
     def forward(self, x):
-        x = self.bn(x)
-        if self._activation is not None:
-            x = self._activation(x)
+        general_out = self.bn(x)
+        if self._activation:
+            general_out = self._activation(general_out)
         if not self.training:
-            return x
+            return general_out
 
-        out = x
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(x, s, z, self.q_max, self.use_ste)
-        else:
-            self.act_range[0] = torch.min(x).item()
-            self.act_range[1] = torch.max(x).item()
-            self.apply_ema = True
-        return out
+        with torch.no_grad():
+            alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean, \
+                                          self.bn.running_var, self.bn.eps
+            folded_weight = alpha.div(torch.sqrt(var.add(eps)))
+            folded_bias = beta.sub(alpha.mul(mean).div(torch.sqrt(var.add(eps))))
+
+            if folded_weight.min() > 0:
+                s, z = calc_qparams(torch.tensor(0), folded_weight.max(), self.w_qmax)
+            elif folded_weight.max() < 0:
+                s, z = calc_qparams(folded_weight.min(), torch.tensor(0), self.w_qmax)
+            else:
+                s, z = calc_qparams(folded_weight.min(), folded_weight.max(), self.w_qmax)
+            fq_weight = fake_quantize(folded_weight, s, z, self.w_qmax, use_ste=False)
+
+            batch, channel, width, height = x.shape
+            w = fq_weight.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+            b = folded_bias.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+
+            folded_out = w * x + b
+            if self._activation:
+                folded_out = self._activation(folded_out)
+
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                    folded_out = fake_quantize(folded_out, s, z, self.q_max, use_ste=False)
+            else:
+                self.act_range[0] = torch.min(folded_out).item()
+                self.act_range[1] = torch.max(folded_out).item()
+                self.apply_ema = True
+        return STE.apply(general_out, folded_out)
 
     def fold_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params

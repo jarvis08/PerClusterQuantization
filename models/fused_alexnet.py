@@ -97,18 +97,21 @@ class FusedAlexNetSmall(nn.Module):
         self.fc3 = FusedLinear(4096, num_classes, bias=True, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        fake_input = x.clone().detach()
         if self.training:
-            if self.apply_ema:
-                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                    x = fake_quantize(x, s, z, self.q_max)
-            else:
-                self.in_range[0] = torch.min(x).item()
-                self.in_range[1] = torch.max(x).item()
-                self.apply_ema = True
+            with torch.no_grad():
+                if self.apply_ema:
+                    self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
+                    if self.runtime_helper.apply_fake_quantization:
+                        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                        fake_input = fake_quantize(x, s, z, self.q_max, use_ste=False)
+                else:
+                    self.in_range[0] = torch.min(x).item()
+                    self.in_range[1] = torch.max(x).item()
+                    self.apply_ema = True
 
-        x = self.conv1(x)
+        #x = self.conv1(x)
+        x = self.conv1(STE.apply(x, fake_input))
         x = self.maxpool(x)
         x = self.conv2(x)
         x = self.maxpool(x)
