@@ -37,6 +37,29 @@ def get_train_loader(args, normalizer, hvd=None):
     return train_loader
 
 
+def warm_up(model, train_loader, criterion, runtime_helper, epoch, logger):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    with tqdm(train_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            t.set_description("Warm-up".format(epoch))
+            runtime_helper.get_pcq_batch(input)
+            input, target = runtime_helper.sort_by_cluster_info(input, target)
+            input, target = input.cuda(), target.cuda()
+            output = model(input)
+
+            loss = criterion(output, target)
+            prec = accuracy(output, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec.item(), input.size(0))
+
+            logger.debug("[Warm-up] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+
+            t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+
 def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -131,6 +154,10 @@ def _finetune(args, tools):
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
     best_score_int = 0
+    #if args.cluster > 1:
+    #    model.eval()
+    #    warmup_resnet(model)
+    #    warm_up(model, train_loader, criterion, runtime_helper, 0, logger)
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
