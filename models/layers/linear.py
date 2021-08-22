@@ -165,41 +165,35 @@ class PCQLinear(nn.Module):
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if not self.training:
-            x = self.fc(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
-
-        _weight = self.fc.weight
-        if not self.quant_noise:
-            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
-
-        x = F.linear(x, _weight, self.fc.bias)
+        general_out = self.fc(x)
         if self._activation:
-            x = self._activation(x)
+            general_out = self._activation(general_out)
+        if not self.training:
+            return general_out
 
-        if self.runtime_helper.apply_fake_quantization and self.use_ste:
-            out = torch.zeros(x.shape).cuda()
-        else:
-            out = x
+        with torch.no_grad():
+            s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
+            fake_weight = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=False)
 
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0]
-            n = self.runtime_helper.batch_cluster[i][1]
-            if self.apply_ema[c]:
-                self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
-            else:
-                self.act_range[c][0] = torch.min(x[done:done + n]).item()
-                self.act_range[c][1] = torch.max(x[done:done + n]).item()
-                self.apply_ema[c] = True
-            done += n
-        return out
+            fake_out = F.linear(x, fake_weight, self.fc.bias)
+            if self._activation:
+                fake_out = self._activation(fake_out)
+
+            done = 0
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(fake_out[done:done + n], self.act_range[c], self.smooth)
+                    if self.runtime_helper.apply_fake_quantization:
+                        s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                        fake_out[done:done + n] = fake_quantize(fake_out[done:done + n], s, z, self.act_qmax, use_ste=False)
+                else:
+                    self.act_range[c][0] = torch.min(fake_out[done:done + n]).item()
+                    self.act_range[c][1] = torch.max(fake_out[done:done + n]).item()
+                    self.apply_ema[c] = True
+                done += n
+        return STE.apply(general_out, fake_out)
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
@@ -240,32 +234,30 @@ class FusedLinear(nn.Module):
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if not self.training:
-            x = self.fc(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
-
-        _weight = self.fc.weight.data
-        if not self.quant_noise:
-            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
-
-        x = F.linear(x, _weight, self.fc.bias)
+        general_out = self.fc(x)
         if self._activation:
-            x = self._activation(x)
+            general_out = self._activation(general_out)
+        if not self.training:
+            return general_out
 
-        out = x
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(x, s, z, self.q_max, self.use_ste)
-        else:
-            self.act_range[0] = torch.min(x).item()
-            self.act_range[1] = torch.max(x).item()
-            self.apply_ema = True
-        return out
+        with torch.no_grad():
+            s, z = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
+            fake_weight = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=False)
+
+            fake_out = F.linear(x, fake_weight, self.fc.bias)
+            if self._activation:
+                fake_out = self._activation(fake_out)
+
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(fake_out, self.act_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+                    fake_out = fake_quantize(fake_out, s, z, self.act_qmax, use_ste=False)
+            else:
+                self.act_range[0] = torch.min(fake_out).item()
+                self.act_range[1] = torch.max(fake_out).item()
+                self.apply_ema = True
+        return STE.apply(general_out, fake_out)
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
