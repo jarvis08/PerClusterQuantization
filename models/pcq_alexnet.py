@@ -107,23 +107,26 @@ class PCQAlexNetSmall(nn.Module):
         self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        fake_input = x.clone().detach()
         if self.training:
-            done = 0
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0]
-                n = self.runtime_helper.batch_cluster[i][1]
-                if self.apply_ema[c]:
-                    self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
-                else:
-                    self.in_range[c][0] = torch.min(x[done:done + n]).item()
-                    self.in_range[c][1] = torch.max(x[done:done + n]).item()
-                    self.apply_ema[c] = True
-                done += n
+            with torch.no_grad():
+                done = 0
+                for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                    c = self.runtime_helper.batch_cluster[i][0]
+                    n = self.runtime_helper.batch_cluster[i][1]
+                    if self.apply_ema[c]:
+                        self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
+                        if self.runtime_helper.apply_fake_quantization:
+                            s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+                            fake_input[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, use_ste=False)
+                    else:
+                        self.in_range[c][0] = torch.min(x[done:done + n]).item()
+                        self.in_range[c][1] = torch.max(x[done:done + n]).item()
+                        self.apply_ema[c] = True
+                    done += n
 
-        x = self.conv1(x)
+        x = self.conv1(STE.apply(x, fake_input))
+        #x = self.conv1(x)
         x = self.maxpool(x)
         x = self.conv2(x)
         x = self.maxpool(x)
