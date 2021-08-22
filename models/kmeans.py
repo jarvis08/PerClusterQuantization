@@ -47,11 +47,9 @@ class KMeans(object):
             "\n(K-means model's = {}, Current model's = {}".format(saved_args['num_partitions'], self.args.partition)
         self.model = joblib.load(os.path.join(self.args.kmeans_path, 'checkpoint.pkl'))
     
-    def get_batch(self, input, for_infer=False):
+    def get_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
-        if for_infer:
-            return cluster_info
         return torch.cuda.LongTensor(cluster_info)
 
     def train_kmeans_model(self, train_loader):

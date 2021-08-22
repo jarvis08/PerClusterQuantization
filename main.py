@@ -6,6 +6,7 @@ from models import *
 # from models.bert.fused_bert import fused_bert_small
 from pretrain import _pretrain
 from finetune import _finetune
+from hvd_finetune import hvd_finetune
 from evaluate import _evaluate
 # from run_classifier import _run_classifier
 
@@ -252,7 +253,10 @@ if __name__=='__main__':
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
-        _finetune(args, tools)
+        if args.horovod:
+            hvd_finetune(args,tools)
+        else:
+            _finetune(args, tools)
     # elif args.mode == 'test':
     #     _run_classifier(args, tools)
     else:

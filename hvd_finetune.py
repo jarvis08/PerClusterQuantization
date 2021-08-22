@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import torch
 import torch.backends.cudnn as cudnn
+import horovod.torch as hvd
 from torchsummary import summary
 
 from utils import *
@@ -9,7 +10,7 @@ from models import *
 from tqdm import tqdm
 
 
-def get_train_loader(args, normalizer, hvd=None):
+def get_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                          transform=transforms.Compose([
@@ -17,13 +18,10 @@ def get_train_loader(args, normalizer, hvd=None):
                                                              transforms.RandomHorizontalFlip(),
                                                              transforms.ToTensor(),
                                                              normalizer]))
-        if args.horovod:
-            sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
-        else:
-            sampler = torch.utils.data.RandomSampler(train_dataset)
+        sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
 
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10,
-                                                       sampler=sampler)
+                                                   sampler=sampler)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -41,11 +39,11 @@ def get_train_loader(args, normalizer, hvd=None):
 def get_kmeans_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                        transform=transforms.Compose([
-                                                            transforms.RandomSizedCrop(224),
-                                                            transforms.RandomHorizontalFlip(),
-                                                            transforms.ToTensor(),
-                                                            normalizer]))
+                                                         transform=transforms.Compose([
+                                                             transforms.RandomSizedCrop(224),
+                                                             transforms.RandomHorizontalFlip(),
+                                                             transforms.ToTensor(),
+                                                             normalizer]))
 
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, num_workers=10, shuffle=False)
     else:
@@ -65,11 +63,11 @@ def get_kmeans_train_loader(args, normalizer):
 def get_indices_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                        transform=transforms.Compose([
-                                                            transforms.Resize(256),
-                                                            transforms.CenterCrop(224),
-                                                            transforms.ToTensor(),
-                                                            normalizer]))
+                                                         transform=transforms.Compose([
+                                                             transforms.Resize(256),
+                                                             transforms.CenterCrop(224),
+                                                             transforms.ToTensor(),
+                                                             normalizer]))
 
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, num_workers=10, shuffle=False)
     else:
@@ -99,19 +97,28 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
+            loss = metric_average(criterion(output, target), 'avg_loss')
+            prec = metric_average(accuracy(output, target)[0], 'avg_accuracy')
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            if hvd.rank() == 0:
+                # *** all_reduce 해서 평균 낼껀데 loss.avg, top1.avg 어떻게 할껀가
+                # 애네도 iteration 돌기때문에 loss.avg 필요할듯
+                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+
+def metric_average(val, name):
+    tensor = torch.tensor(val)
+    avg_tensor = hvd.allreduce(tensor, name=name)
+    return avg_tensor.item()
 
 
 def get_finetuning_model(arg_dict, tools):
@@ -121,85 +128,102 @@ def get_finetuning_model(arg_dict, tools):
     return fused_model, arg_dict
 
 
-def _finetune(args, tools):
+def hvd_finetune(args, tools):
+    # init hvd
+    hvd.init()
+    torch.set_num_threads(1)
+    torch.cuda.set_device(hvd.local_rank())
+    # Randomness 제어 필요한가?
+    # torch.cuda.manual_seed(args.seed)
 
+    # 공유
     normalizer = get_normalizer(args.dataset)
+    criterion = torch.nn.CrossEntropyLoss().cuda()
     test_loader = get_test_loader(args, normalizer)
-
+    train_loader = get_train_loader(args, normalizer)
     runtime_helper = RuntimeHelper()
     arg_dict = deepcopy(vars(args))
+
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
-    model, arg_dict = get_finetuning_model(arg_dict, tools)
-    model.cuda()
-    model.eval()
-    # if args.dataset == 'imagenet':
-    #    summary(model, (3, 224, 224))
-    # else:
-    #    summary(model, (3, 32, 32))
-
-    if args.quant_noise:
-        runtime_helper.qn_prob = args.qn_prob - 0.1
-        tools.qn_forward_pre_hooker(model)
-
-    epoch_to_start = 1
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
-    if args.fused:
-        optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
-    if args.horovod:
-        optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
-
-    criterion = torch.nn.CrossEntropyLoss().cuda()
 
     cudnn.benchmark = True
 
-    if args.cluster > 1:
-        kmeans = KMeans(args)
-        kmeans_train_loader = get_kmeans_train_loader(args, normalizer)
-        if not args.kmeans_path:
-            args.kmeans_path = set_kmeans_dir(args)
-            kmeans.train_kmeans_model(kmeans_train_loader)
+    # gpu 0만
+
+    # 아래에서 model.state_dict()로 bn initialize 해준 것에 대한 업데이트를 해줄 수 있다면, model initialize를
+    # 공유해도 될듯
+    model, arg_dict = get_finetuning_model(arg_dict, tools)
+    model.cuda()
+    model.eval()
+
+    if hvd.rank() == 0:
+        # model, arg_dict = get_finetuning_model(arg_dict, tools)
+        # model.cuda()
+        # model.eval()
+        if args.dataset == 'imagenet':
+           summary(model, (3, 224, 224))
         else:
-            kmeans.load_kmeans_model()
-        runtime_helper.kmeans = kmeans
-    # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+           summary(model, (3, 32, 32))
 
-    if args.cluster > 1:
-        loaders = []
-        indices_train_loader = get_indices_train_loader(args, normalizer)
-        indices_per_cluster, min_count = make_indices_list(indices_train_loader, args, runtime_helper)
-        # Load Minimum number of images
-        list_with_minimum = []
-        done = 0
-        for loops in range(min_count // 8):
-            for c in range(args.cluster):
-                list_with_minimum += indices_per_cluster[c][done:done+8]
-            done += 8
-        min_dataset = torch.utils.data.Subset(indices_train_loader.dataset, list_with_minimum)
-        min_loader = torch.utils.data.DataLoader(min_dataset, batch_size=8, num_workers=2, shuffle=False)
-        bn_init_validate(model, min_loader, criterion, runtime_helper)
+        # 어디에 쓰는 것인고
+        epoch_to_start = 1
 
-        # # Load images per cluster
-        # for c in range(args.cluster):
-        #     cur_dataset = torch.utils.data.Subset(indices_train_loader.dataset, indices_per_cluster[c])
-        #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
-        # bn_init_validate(model, loaders, criterion, runtime_helper)
+        # 아래에서 broadcast model.state_dict()에서 document 보면 optimizer상태도 같이 넘겨주는 것 같은데
+        # 가능하면, 아래에 optimzer 해주는 부분도 모두 공유할 수 있을듯
+        # 체크해봐야되고 공유했을때, distributed optimizer가 다르게 동작하는지도 체크 필요
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
 
-        model = tools.bn_initialzier(model)
+        # 왜 필요한지 모르겠음
+        if args.fused:
+            optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
 
-    if args.horovod:
-        hvd.init()
-        torch.set_num_threads(1)
-        torch.cuda.set_device(hvd.local_rank())
-        # torch.cuda.manual_seed(args.seed)
-        train_loader = get_train_loader(args, normalizer, hvd)
-    else:
-        train_loader = get_train_loader(args, normalizer)
+        optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
+        opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-    if args.horovod:
-        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-        # hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+        if args.cluster > 1:
+            kmeans = KMeans(args)
+            kmeans_train_loader = get_kmeans_train_loader(args, normalizer)
+            if not args.kmeans_path:
+                args.kmeans_path = set_kmeans_dir(args)
+                kmeans.train_kmeans_model(kmeans_train_loader)
+            else:
+                kmeans.load_kmeans_model()
+            runtime_helper.kmeans = kmeans
+            # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+
+            # 데이터셋 클러스터별로 모아서 dataset 만들고 bn_initialize 해주는 부분
+            loaders = []
+            indices_train_loader = get_indices_train_loader(args, normalizer)
+            indices_per_cluster, min_count = make_indices_list(indices_train_loader, args, runtime_helper)
+            # Load Minimum number of images
+            list_with_minimum = []
+            done = 0
+            for loops in range(min_count // 8):
+                for c in range(args.cluster):
+                    list_with_minimum += indices_per_cluster[c][done:done + 8]
+                done += 8
+            min_dataset = torch.utils.data.Subset(indices_train_loader.dataset, list_with_minimum)
+            min_loader = torch.utils.data.DataLoader(min_dataset, batch_size=8, num_workers=2, shuffle=False)
+            bn_init_validate(model, min_loader, criterion, runtime_helper)
+
+            # # Load images per cluster
+            # for c in range(args.cluster):
+            #     cur_dataset = torch.utils.data.Subset(indices_train_loader.dataset, indices_per_cluster[c])
+            #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
+            # bn_init_validate(model, loaders, criterion, runtime_helper)
+
+            model = tools.bn_initialzier(model)
+
+    # 모델 뿌려주고
+    # 이게 state_dict가 python dictionary인데 필요한 정보들이 있지 않을까?
+    # 다시 체크 필요하다 왜냐하면 이게 전부 다 복사가 아니고 일부만 복사일 수도 있으니까
+    hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+
+    # hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+    if args.quant_noise:
+        runtime_helper.qn_prob = args.qn_prob - 0.1
+        tools.qn_forward_pre_hooker(model)
 
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
@@ -247,9 +271,9 @@ def _finetune(args, tools):
             del folded_model
 
             if args.cluster > 1:
-                val_score = pcq_validate(quantized_model, test_loader, criterion, runtime_helper, logger)
+                val_score = pcq_validate(quantized_model, test_loader, criterion, runtime_helper, logger, True)
             else:
-                val_score = validate(quantized_model, test_loader, criterion, logger)
+                val_score = validate(quantized_model, test_loader, criterion, logger, True)
 
             if val_score > best_score_int:
                 # Save best model's FP model

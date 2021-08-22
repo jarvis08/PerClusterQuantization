@@ -2,6 +2,7 @@ import torch
 import torchvision
 import torchvision.models as vision_models
 import torchvision.transforms as transforms
+import horovod.pytorch as hvd
 
 import numpy as np
 from tqdm import tqdm
@@ -11,6 +12,7 @@ import shutil
 from datetime import datetime
 import json
 import logging
+import random
 from time import time
 
 
@@ -26,7 +28,7 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.kmeans = None
         self.qn_prob = 0.0
-        self.bn_init = [0, False]
+        self.bn_init = True
 
     def get_pcq_batch(self, input):
         self.batch_cluster = self.kmeans.get_batch(input)
@@ -87,7 +89,7 @@ def save_checkpoint(state, is_best, path):
         shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
 
 
-def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
+def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -98,13 +100,19 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
 
             input, target = input.cuda(), target.cuda()
             output = model(input)
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
+            if hvd:
+                loss = metric_average(criterion(output, target))
+                prec = metric_average(accuracy(output, target)[0])
+            else:
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            if hvd:
+                if hvd.rank() == 0:
+                    logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                                 .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
             loss.backward()
@@ -113,7 +121,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def validate(model, test_loader, criterion, logger=None):
+def validate(model, test_loader, criterion, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -124,30 +132,52 @@ def validate(model, test_loader, criterion, logger=None):
                 t.set_description("Validate")
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
+                if hvd:
+                    loss = metric_average(criterion(output, target))
+                    prec = metric_average(accuracy(output, target)[0])
+                else:
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     if logger:
-        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+        if hvd:
+            if hvd.rank() == 0:
+                logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+        else:
+            logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
     return top1.avg
 
 
-def kmeans_validate(model, loader_list, criterion, runtime_helper):
+def bn_init_validate(model, loader, criterion, runtime_helper):
     losses = AverageMeter()
     top1 = AverageMeter()
 
     model.eval()
     with torch.no_grad():
-        for c in range(len(loader_list)):
-            with tqdm(loader_list[c], unit="batch", ncols=90) as t:
+        if isinstance(loader, list):
+            for c in range(len(loader)):
+                with tqdm(loader[c], unit="batch", ncols=90) as t:
+                    for i, (input, target) in enumerate(t):
+                        t.set_description("Validate")
+                        input, target = runtime_helper.sort_by_cluster_info(input, target)
+                        input, target = input.cuda(), target.cuda()
+                        output = model(input)
+                        loss = criterion(output, target)
+                        prec = accuracy(output, target)[0]
+                        losses.update(loss.item(), input.size(0))
+                        top1.update(prec.item(), input.size(0))
+
+                        t.set_postfix(loss=losses.avg, acc=top1.avg)
+        else:
+            with tqdm(loader, unit="batch", ncols=90) as t:
                 for i, (input, target) in enumerate(t):
                     t.set_description("Validate")
+                    input, target = runtime_helper.sort_by_cluster_info(input, target)
                     input, target = input.cuda(), target.cuda()
-                    runtime_helper.bn_init[0], runtime_helper.bn_init[1] = c, True
                     output = model(input)
                     loss = criterion(output, target)
                     prec = accuracy(output, target)[0]
@@ -156,13 +186,12 @@ def kmeans_validate(model, loader_list, criterion, runtime_helper):
 
                     t.set_postfix(loss=losses.avg, acc=top1.avg)
 
-    runtime_helper.bn_init[1] = False
-    # if logger:
-        # logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    runtime_helper.bn_init = False
+    print("[BatchNorm Initialize Inference] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sort_input=False):
+def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sort_input=False, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -176,14 +205,21 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sor
                     input, target = runtime_helper.sort_by_cluster_info(input, target)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
+                if hvd:
+                    loss = metric_average(criterion(output, target))
+                    prec = metric_average(accuracy(output, target)[0])
+                else:
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     if logger:
+        if hvd:
+            if hvd.rank() == 0:
+                logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
     return top1.avg
 
@@ -345,8 +381,20 @@ def make_indices_list(train_loader, args, runtime_helper):
     with torch.no_grad():
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
-                cluster_info = runtime_helper.get_pcq_batch(input, target, True)
-                for idx in range(len(cluster_info)):
-                    total_list[cluster_info[idx]].append(done)
+                runtime_helper.get_pcq_batch(input)
+                for idx in range(len(runtime_helper.batch_cluster)):
+                    total_list[runtime_helper.batch_cluster[idx]].append(done)
                     done += 1
-    return total_list
+    # shuffle list
+    min_count = 200000
+    for c in range(len(args.cluster)):
+        if min_count > len(total_list[c]):
+            min_count = len(total_list[c])
+        random.shuffle(total_list[c])
+    return total_list, min_count
+
+
+def metric_average(val, name):
+    tensor = torch.tensor(val)
+    avg_tensor = hvd.allreduce(tensor, name=name)
+    return avg_tensor.item()

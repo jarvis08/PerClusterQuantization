@@ -108,10 +108,9 @@ class PCQBnReLU(nn.Module):
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, arg_dict=arg_dict)\
                                     for _ in range(self.num_clusters)])
 
-        if self.runtime_helper.bn_init[1]:
-            self.ema_params = torch.zeros((self.num_clusters, 2))
-            self.bn_act_range = torch.zeros((self.num_clusters, 2))
-            self.bn_ema = False
+        self.ema_params = torch.zeros((self.num_clusters, 2))
+        self.bn_act_range = torch.zeros((self.num_clusters, 2))
+        self.bn_ema = False
 
     def forward(self, x):
         bc = self.runtime_helper.batch_cluster
@@ -119,24 +118,22 @@ class PCQBnReLU(nn.Module):
         # for c in clusters_in_batch:
         #     data_idx_of_c = (bc == c).nonzero(as_tuple=True)[0].cuda()
         #     out.append(self.norms[c](torch.index_select(x, 0, data_idx_of_c)))
-        if not self.training and self.runtime_helper.bn_init[1]:
-            c = self.runtime_helper.bn_init[0]
-            out = self.norms[c](x)
-            if self.bn_ema:
-                self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], 0.9)
-                self.bn_act_range[c][0], self.bn_act_range[c][1] = ema(out, self.bn_act_range[c], self.smooth)
-            else:
-                self.bn_act_range[c][0], self.bn_act_range[c][1] = torch.min(out).item(), torch.max(out).item()
-                self.ema_params[c][0], self.ema_params[c][1] = self.norms[c].running_mean. running_val
-                self.bn_ema = True
-            return out
         done = 0
         out = []
         for i in range(bc.shape[0]):
             c = bc[i][0]
             n = bc[i][1]
-            out.append(self.norms[c](x[done:done + n]))
+            cur_res = self.norms[c](x[done:done + n])
+            if not self.training and self.runtime_helper.bn_init:
+                if self.bn_ema:
+                    self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], 0.9)
+                    self.bn_act_range[c][0], self.bn_act_range[c][1] = ema(cur_res, self.bn_act_range[c], self.smooth)
+                else:
+                    self.bn_act_range[c][0], self.bn_act_range[c][1] = torch.min(cur_res).item(), torch.max(cur_res).item()
+                    self.ema_params[c][0], self.ema_params[c][1] = self.norms[c].running_mean.running_val
+                    self.bn_ema = True
             done += n
+            out.append(cur_res)
         return torch.cat(out)
 
     def set_qparams(self, s1, z1):
@@ -158,7 +155,7 @@ class PCQBnReLU(nn.Module):
         for c in range(self.num_clusters):
             self.norms[c].fold_bn()
 
-    def pass_params(self):
+    def pass_bn_params(self):
         for c in range(self.num_clusters):
             self.norms[c].running_mean.copy_(self.ema_params[c][0])
             self.norms[c].running_var.copy_(self.ema_params[c][1])
