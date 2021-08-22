@@ -234,8 +234,8 @@ class PCQConv2d(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, dilation=1, bias=False,
-                 norm_layer=None, activation=None, arg_dict=None):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1, dilation=1,
+                 bias=False, activation=None, arg_dict=None):
         super(PCQConv2d, self).__init__()
         self.layer_type = 'PCQConv2d'
         self.out_channels = out_channels
@@ -254,61 +254,70 @@ class PCQConv2d(nn.Module):
         if self.quant_noise:
             self.conv = _quant_noise(self.conv, self.qn_prob, 1, self.q_max)
 
-        self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
         if not self.training:
             x = self.conv(x)
-            if self._norm_layer:
-                x = self._norm_layer(x)
             if self._activation:
                 x = self._activation(x)
             return x
 
-        _weight = self.conv.weight.data
-        if not self.quant_noise:
-            s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
-
-        x = F.conv2d(x, _weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-        if self._norm_layer:
-            x = self._norm_layer(x)
-        if self._activation:
-            x = self._activation(x)
-
-        if self.runtime_helper.apply_fake_quantization and self.use_ste:
-            out = torch.zeros(x.shape).cuda()
+        if self.quant_noise:
+            return self._qn(x)
         else:
-            out = x
+            return self._pcq(x)
+
+    def _pcq(self, x):
+        general_out = self.conv(x)
+        if self._activation:
+            general_out = self._activation(general_out)
+
+        with torch.no_grad():
+            s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+            fake_weight = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=False)
+
+            fake_out = F.conv2d(x, fake_weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+            if self._activation:
+                fake_out = self._activation(fake_out)
+
+            done = 0
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(fake_out[done:done + n], self.act_range[c], self.smooth)
+                    if self.runtime_helper.apply_fake_quantization:
+                        s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                        fake_out[done:done + n] = fake_quantize(fake_out[done:done + n], s, z, self.act_qmax, use_ste=False)
+                else:
+                    self.act_range[c][0] = torch.min(fake_out[done:done + n]).item()
+                    self.act_range[c][1] = torch.max(fake_out[done:done + n]).item()
+                    self.apply_ema[c] = True
+                done += n
+        return STE.apply(general_out, fake_out)
+
+    def _qn(self, x):
+        out = F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding,
+                               self.conv.dilation, self.conv.groups)
+        if self._activation:
+            out = self._activation(out)
 
         done = 0
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
             c = self.runtime_helper.batch_cluster[i][0]
             n = self.runtime_helper.batch_cluster[i][1]
             if self.apply_ema[c]:
-                self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
+                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
+                    out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.act_qmax, use_ste=True)
             else:
-                self.act_range[c][0] = torch.min(x[done:done + n]).item()
-                self.act_range[c][1] = torch.max(x[done:done + n]).item()
+                self.act_range[c][0] = torch.min(out[done:done + n]).item()
+                self.act_range[c][1] = torch.max(out[done:done + n]).item()
                 self.apply_ema[c] = True
             done += n
         return out
-
-    def fold_conv_and_bn(self):
-        # In case of validation, fuse pretrained Conv&BatchNorm params
-        assert self.training == False, "Do not fuse layers while training."
-        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
-                                      self._norm_layer.running_var, self._norm_layer.eps
-        n_channel = self.conv.weight.shape[0]
-        self.conv.bias = nn.Parameter(beta)
-        for c in range(n_channel):
-            self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-            self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-        self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
@@ -366,7 +375,7 @@ class FusedConv2d(nn.Module):
             return self._general(x)
         else:
             if self.quant_noise:
-                return self._quant_noise(x)
+                return self._qn(x)
             elif self._norm_layer is not None:
                 return self._norm_folded(x)
             else:
@@ -397,7 +406,7 @@ class FusedConv2d(nn.Module):
             self.apply_ema = True
         return out
 
-    def _quant_noise(self, x):
+    def _qn(self, x):
         x = F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding,
                      self.conv.dilation, self.conv.groups)
         if self._norm_layer:
@@ -454,27 +463,30 @@ class FusedConv2d(nn.Module):
         return STE.apply(general_out, folded_out)
 
     def _without_norm(self, x):
-        _weight = self.conv.weight
-        if not self.quant_noise:
-            s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-            _weight = fake_quantize(_weight, s, z, self.q_max, self.use_ste)
-
-        x = F.conv2d(x, _weight, self.conv.bias, self.conv.stride, self.conv.padding,
-                     self.conv.dilation, self.conv.groups)
+        general_out = self.conv(x)
         if self._activation:
-            x = self._activation(x)
+            general_out = self._activation(general_out)
 
-        out = x
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
-        else:
-            self.act_range[0] = torch.min(x).item()
-            self.act_range[1] = torch.max(x).item()
-            self.apply_ema = True
-        return out
+        with torch.no_grad():
+            s, z = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
+            fake_weight = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=False)
+
+            fake_out = F.conv2d(x, fake_weight, self.conv.bias, self.conv.stride, self.conv.padding,
+                                  self.conv.dilation, self.conv.groups)
+
+            if self._activation:
+                fake_out = self._activation(fake_out)
+
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(fake_out, self.act_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+                    fake_out = fake_quantize(fake_out, s, z, self.act_qmax, use_ste=False)
+            else:
+                self.act_range[0] = torch.min(fake_out).item()
+                self.act_range[1] = torch.max(fake_out).item()
+                self.apply_ema = True
+        return STE.apply(general_out, fake_out)
 
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
@@ -494,3 +506,4 @@ class FusedConv2d(nn.Module):
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
+
