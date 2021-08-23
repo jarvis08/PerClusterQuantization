@@ -257,12 +257,6 @@ class PCQConv2d(nn.Module):
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if not self.training:
-            x = self.conv(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
-
         if self.quant_noise:
             return self._qn(x)
         else:
@@ -272,6 +266,21 @@ class PCQConv2d(nn.Module):
         general_out = self.conv(x)
         if self._activation:
             general_out = self._activation(general_out)
+
+        if not self.runtime_helper.pcq_initialized:
+            done = 0
+            for c in range(self.num_clusters):
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(general_out[done:done + 8], self.act_range[c], self.smooth)
+                else:
+                    self.act_range[c][0] = torch.min(general_out[done:done + 8]).item()
+                    self.act_range[c][1] = torch.max(general_out[done:done + 8]).item()
+                    self.apply_ema[c] = True
+                done += 8
+            return general_out
+
+        if not self.training:
+            return general_out
 
         with torch.no_grad():
             s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
@@ -298,6 +307,20 @@ class PCQConv2d(nn.Module):
         return STE.apply(general_out, fake_out)
 
     def _qn(self, x):
+        if not self.training:
+            general_out = self.conv(x)
+            if self._activation:
+                general_out = self._activation(x)
+
+            if not self.runtime_helper.pcq_initialized:
+                if self.apply_ema:
+                    self.act_range[0], self.act_range[1] = ema(general_out, self.act_range, self.smooth)
+                else:
+                    self.act_range[0] = torch.min(general_out).item()
+                    self.act_range[1] = torch.max(general_out).item()
+                    self.apply_ema = True
+            return general_out
+
         out = F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding,
                                self.conv.dilation, self.conv.groups)
         if self._activation:

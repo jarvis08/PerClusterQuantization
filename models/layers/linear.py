@@ -168,31 +168,44 @@ class PCQLinear(nn.Module):
         general_out = self.fc(x)
         if self._activation:
             general_out = self._activation(general_out)
+
+        if not self.runtime_helper.pcq_initialized:
+            done = 0
+            for c in range(self.num_clusters):
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(general_out[done:done + 8], self.act_range[c],
+                                                                     self.smooth)
+                else:
+                    self.act_range[c][0] = torch.min(general_out[done:done + 8]).item()
+                    self.act_range[c][1] = torch.max(general_out[done:done + 8]).item()
+                    self.apply_ema[c] = True
+                done += 8
+            return general_out
+
         if not self.training:
             return general_out
 
-        with torch.no_grad():
-            s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
-            fake_weight = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=False)
+        s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
+        fake_weight = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=False)
 
-            fake_out = F.linear(x, fake_weight, self.fc.bias)
-            if self._activation:
-                fake_out = self._activation(fake_out)
+        fake_out = F.linear(x, fake_weight, self.fc.bias)
+        if self._activation:
+            fake_out = self._activation(fake_out)
 
-            done = 0
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0]
-                n = self.runtime_helper.batch_cluster[i][1]
-                if self.apply_ema[c]:
-                    self.act_range[c][0], self.act_range[c][1] = ema(fake_out[done:done + n], self.act_range[c], self.smooth)
-                    if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-                        fake_out[done:done + n] = fake_quantize(fake_out[done:done + n], s, z, self.act_qmax, use_ste=False)
-                else:
-                    self.act_range[c][0] = torch.min(fake_out[done:done + n]).item()
-                    self.act_range[c][1] = torch.max(fake_out[done:done + n]).item()
-                    self.apply_ema[c] = True
-                done += n
+        done = 0
+        for i in range(self.runtime_helper.batch_cluster.shape[0]):
+            c = self.runtime_helper.batch_cluster[i][0]
+            n = self.runtime_helper.batch_cluster[i][1]
+            if self.apply_ema[c]:
+                self.act_range[c][0], self.act_range[c][1] = ema(fake_out[done:done + n], self.act_range[c], self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                    fake_out[done:done + n] = fake_quantize(fake_out[done:done + n], s, z, self.act_qmax, use_ste=False)
+            else:
+                self.act_range[c][0] = torch.min(fake_out[done:done + n]).item()
+                self.act_range[c][1] = torch.max(fake_out[done:done + n]).item()
+                self.apply_ema[c] = True
+            done += n
         return STE.apply(general_out, fake_out)
 
     def set_qparams(self, s1, z1):
