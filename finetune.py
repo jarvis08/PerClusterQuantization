@@ -17,6 +17,7 @@ def get_train_loader(args, normalizer, hvd=None):
                                                              transforms.RandomHorizontalFlip(),
                                                              transforms.ToTensor(),
                                                              normalizer]))
+
         if args.horovod:
             sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
         else:
@@ -246,7 +247,6 @@ def _finetune(args, tools):
             pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
-
         opt_scheduler.step()
 
         if args.cluster > 1:

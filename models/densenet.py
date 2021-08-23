@@ -210,11 +210,7 @@ class DenseNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x: Tensor) -> Tensor:
-        # features = self.features(x)
-        print("\n Input ", torch.min(x).item(), torch.max(x).item())
-        for feature in self.features:
-            x = feature(x)
-            print(torch.min(x).item(), torch.max(x).item())
+        x = self.features(x)
         out = F.relu(x, inplace=True)
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)

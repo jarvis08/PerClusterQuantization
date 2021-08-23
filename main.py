@@ -6,7 +6,7 @@ from models import *
 # from models.bert.fused_bert import fused_bert_small
 from pretrain import _pretrain
 from finetune import _finetune
-from hvd_finetune import hvd_finetune
+#from hvd_finetune import hvd_finetune
 from evaluate import _evaluate
 # from run_classifier import _run_classifier
 
@@ -204,7 +204,7 @@ def set_func_for_target_arch(arch, is_pcq):
     #     setattr(tools, 'fused_model_initializer', fused_bert_small)
 
     elif arch == 'DenseNet121':
-        setattr(tools, 'pretrained_model_initializer', densenet121)
+        # setattr(tools, 'pretrained_model_initializer', densenet121)
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)
@@ -254,10 +254,10 @@ if __name__=='__main__':
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
-        if args.horovod:
-            hvd_finetune(args,tools)
-        else:
-            _finetune(args, tools)
+        #if args.horovod:
+        #    hvd_finetune(args,tools)
+        #else:
+        _finetune(args, tools)
     # elif args.mode == 'test':
     #     _run_classifier(args, tools)
     else:

@@ -2,7 +2,7 @@ import torch
 import torchvision
 import torchvision.models as vision_models
 import torchvision.transforms as transforms
-import horovod.pytorch as hvd
+# import horovod.torch as hvd
 
 import numpy as np
 from tqdm import tqdm
@@ -23,6 +23,7 @@ class RuntimeHelper(object):
         kmeans                  : Trained K-Means model's object
         bn_init                 : Initialize mean and variance of BatchNorm
     """
+
     def __init__(self):
         self.apply_fake_quantization = False
         self.batch_cluster = None
@@ -51,6 +52,7 @@ class RuntimeHelper(object):
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -94,18 +96,14 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
     top1 = AverageMeter()
 
     model.train()
-    with tqdm(train_loader, unit="batch",ncols=90) as t:
+    with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
             input, target = input.cuda(), target.cuda()
             output = model(input)
-            if hvd:
-                loss = metric_average(criterion(output, target))
-                prec = metric_average(accuracy(output, target)[0])
-            else:
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
+            loss = criterion(output, target)
+            prec = accuracy(output, target)[0]
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
@@ -113,6 +111,9 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
                 if hvd.rank() == 0:
                     logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                                  .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            else:
+                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
             loss.backward()
@@ -132,12 +133,8 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
                 t.set_description("Validate")
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
-                if hvd:
-                    loss = metric_average(criterion(output, target))
-                    prec = metric_average(accuracy(output, target)[0])
-                else:
-                    loss = criterion(output, target)
-                    prec = accuracy(output, target)[0]
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
@@ -163,7 +160,6 @@ def bn_init_validate(model, loader, criterion, runtime_helper):
                 with tqdm(loader[c], unit="batch", ncols=90) as t:
                     for i, (input, target) in enumerate(t):
                         t.set_description("Validate")
-                        input, target = runtime_helper.sort_by_cluster_info(input, target)
                         input, target = input.cuda(), target.cuda()
                         output = model(input)
                         loss = criterion(output, target)
@@ -176,7 +172,6 @@ def bn_init_validate(model, loader, criterion, runtime_helper):
             with tqdm(loader, unit="batch", ncols=90) as t:
                 for i, (input, target) in enumerate(t):
                     t.set_description("Validate")
-                    input, target = runtime_helper.sort_by_cluster_info(input, target)
                     input, target = input.cuda(), target.cuda()
                     output = model(input)
                     loss = criterion(output, target)
@@ -205,12 +200,8 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sor
                     input, target = runtime_helper.sort_by_cluster_info(input, target)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
-                if hvd:
-                    loss = metric_average(criterion(output, target))
-                    prec = metric_average(accuracy(output, target)[0])
-                else:
-                    loss = criterion(output, target)
-                    prec = accuracy(output, target)[0]
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
@@ -220,7 +211,8 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sor
         if hvd:
             if hvd.rank() == 0:
                 logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
-        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+        else:
+            logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
     return top1.avg
 
 
@@ -230,7 +222,7 @@ def validate_darknet_dataset(model, test_loader, criterion):
 
     model.eval()
     with torch.no_grad():
-        #for i in range(1000):
+        # for i in range(1000):
         for i in range(1):
             _in = test_loader[0][i]
             _targ = test_loader[1][i]
@@ -280,7 +272,7 @@ def load_optimizer(optim, path):
 
 def get_normalizer(dataset):
     if dataset == 'imagenet':
-       return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     else:
         return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
@@ -288,12 +280,12 @@ def get_normalizer(dataset):
 def get_train_loader(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                        transform=transforms.Compose([
-                                                            transforms.Resize(256),
-                                                            transforms.CenterCrop(224),
-                                                            transforms.ToTensor(),
-                                                            normalizer,
-                                                        ]))
+                                                         transform=transforms.Compose([
+                                                             transforms.Resize(256),
+                                                             transforms.CenterCrop(224),
+                                                             transforms.ToTensor(),
+                                                             normalizer,
+                                                         ]))
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
@@ -369,8 +361,10 @@ def set_logger(path):
 
 
 def load_preprocessed_cifar10_from_darknet():
-    input = torch.tensor(np.fromfile("result/darknet/cifar_test_dataset.bin", dtype='float32').reshape((10000, 1, 3, 32, 32)))
-    target = torch.tensor(np.fromfile("result/darknet/cifar_test_target.bin", dtype='int32').reshape((10000, 1)), dtype=torch.long)
+    input = torch.tensor(
+        np.fromfile("result/darknet/cifar_test_dataset.bin", dtype='float32').reshape((10000, 1, 3, 32, 32)))
+    target = torch.tensor(np.fromfile("result/darknet/cifar_test_target.bin", dtype='int32').reshape((10000, 1)),
+                          dtype=torch.long)
     return input, target
 
 
@@ -387,14 +381,14 @@ def make_indices_list(train_loader, args, runtime_helper):
                     done += 1
     # shuffle list
     min_count = 200000
-    for c in range(len(args.cluster)):
+    for c in range(args.cluster):
         if min_count > len(total_list[c]):
             min_count = len(total_list[c])
         random.shuffle(total_list[c])
     return total_list, min_count
 
 
-def metric_average(val, name):
-    tensor = torch.tensor(val)
-    avg_tensor = hvd.allreduce(tensor, name=name)
-    return avg_tensor.item()
+# def metric_average(val, name):
+#     tensor = torch.tensor(val)
+#     avg_tensor = hvd.allreduce(tensor, name=name)
+#     return avg_tensor.item()

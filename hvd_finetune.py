@@ -97,8 +97,8 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
-            loss = metric_average(criterion(output, target), 'avg_loss')
-            prec = metric_average(accuracy(output, target)[0], 'avg_accuracy')
+            loss = criterion(output, target)
+            prec = accuracy(output, target[0])
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
@@ -129,14 +129,14 @@ def get_finetuning_model(arg_dict, tools):
 
 
 def hvd_finetune(args, tools):
+    save_path_fp = set_save_dir(args)
+    save_path_int = add_path(save_path_fp, 'quantized')
+    logger = set_logger(save_path_fp)
     # init hvd
     hvd.init()
     torch.set_num_threads(1)
     torch.cuda.set_device(hvd.local_rank())
-    # Randomness 제어 필요한가?
-    # torch.cuda.manual_seed(args.seed)
 
-    # 공유
     normalizer = get_normalizer(args.dataset)
     criterion = torch.nn.CrossEntropyLoss().cuda()
     test_loader = get_test_loader(args, normalizer)
@@ -149,37 +149,25 @@ def hvd_finetune(args, tools):
 
     cudnn.benchmark = True
 
-    # gpu 0만
-
-    # 아래에서 model.state_dict()로 bn initialize 해준 것에 대한 업데이트를 해줄 수 있다면, model initialize를
-    # 공유해도 될듯
     model, arg_dict = get_finetuning_model(arg_dict, tools)
     model.cuda()
     model.eval()
 
+    epoch_to_start = 1
+
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+
+    if args.fused:
+        optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
+
+    optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
+    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+
     if hvd.rank() == 0:
-        # model, arg_dict = get_finetuning_model(arg_dict, tools)
-        # model.cuda()
-        # model.eval()
-        if args.dataset == 'imagenet':
-           summary(model, (3, 224, 224))
-        else:
-           summary(model, (3, 32, 32))
-
-        # 어디에 쓰는 것인고
-        epoch_to_start = 1
-
-        # 아래에서 broadcast model.state_dict()에서 document 보면 optimizer상태도 같이 넘겨주는 것 같은데
-        # 가능하면, 아래에 optimzer 해주는 부분도 모두 공유할 수 있을듯
-        # 체크해봐야되고 공유했을때, distributed optimizer가 다르게 동작하는지도 체크 필요
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
-
-        # 왜 필요한지 모르겠음
-        if args.fused:
-            optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
-
-        optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-        opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+        #        if args.dataset == 'imagenet':
+        #           summary(model, (3, 224, 224))
+        #        else:
+        #           summary(model, (3, 32, 32))
 
         if args.cluster > 1:
             kmeans = KMeans(args)
@@ -192,7 +180,6 @@ def hvd_finetune(args, tools):
             runtime_helper.kmeans = kmeans
             # check_cluster_distribution(runtime_helper.kmeans, train_loader)
 
-            # 데이터셋 클러스터별로 모아서 dataset 만들고 bn_initialize 해주는 부분
             loaders = []
             indices_train_loader = get_indices_train_loader(args, normalizer)
             indices_per_cluster, min_count = make_indices_list(indices_train_loader, args, runtime_helper)
@@ -215,9 +202,6 @@ def hvd_finetune(args, tools):
 
             model = tools.bn_initialzier(model)
 
-    # 모델 뿌려주고
-    # 이게 state_dict가 python dictionary인데 필요한 정보들이 있지 않을까?
-    # 다시 체크 필요하다 왜냐하면 이게 전부 다 복사가 아니고 일부만 복사일 수도 있으니까
     hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
     # hvd.broadcast_optimizer_state(optimizer, root_rank=0)
@@ -225,9 +209,6 @@ def hvd_finetune(args, tools):
         runtime_helper.qn_prob = args.qn_prob - 0.1
         tools.qn_forward_pre_hooker(model)
 
-    save_path_fp = set_save_dir(args)
-    save_path_int = add_path(save_path_fp, 'quantized')
-    logger = set_logger(save_path_fp)
     best_score_int = 0
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:

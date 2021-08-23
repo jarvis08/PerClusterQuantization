@@ -69,6 +69,7 @@ class FusedDenseLayer(nn.Module):
         prev_s, prev_z = self.conv1.set_qparams(prev_s, prev_z)
         _, _ = self.conv2.set_qparams(prev_s, prev_z)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        return self.s3, self.z3
 
 
 class FusedTransition(nn.Sequential):
@@ -82,12 +83,12 @@ class FusedTransition(nn.Sequential):
 
         self.apply_ema = False
 
-        self.norm = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
+        self.bn = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
         self.conv = FusedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        out = self.norm(x)
+        out = self.bn(x)
         out = self.conv(out)
         out = self.pool(out)
 
@@ -107,7 +108,7 @@ class FusedTransition(nn.Sequential):
         return _out
 
     def set_transition_qparams(self, s1, z1):
-        prev_s, prev_z = self.norm.set_qparams(s1, z1)
+        prev_s, prev_z = self.bn.set_qparams(s1, z1)
         _, _ = self.conv.set_qparams(prev_s, prev_z)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         return self.s3, self.z3
@@ -270,16 +271,16 @@ def set_fused_densenet(fused, pre):
         for layer_idx in range(1, fused_block.num_layers+1):
             fused_layer = getattr(fused_block,'denselayer%d' % layer_idx)
             pre_layer = getattr(pre_block,'denselayer%d' % layer_idx)
-            fused_layer.bn = copy_from_pretrained(fused_layer.bn, pre_layer.norm1)
+            fused_layer.bn = copy_bn_from_pretrained(fused_layer.bn, pre_layer.norm1)
             fused_layer.conv1 = copy_from_pretrained(fused_layer.conv1, pre_layer.conv1, pre_layer.norm2)
             fused_layer.conv2 = copy_from_pretrained(fused_layer.conv2, pre_layer.conv2)
 
         # transition
         if block_idx < 4:
-            fused_trans.norm = copy_from_pretrained(fused_trans.norm, pre_trans.norm)
+            fused_trans.bn = copy_bn_from_pretrained(fused_trans.bn, pre_trans.norm)
             fused_trans.conv = copy_from_pretrained(fused_trans.conv, pre_trans.conv)
     # Last BatchNorm
-    fused.features.last_norm = copy_from_pretrained(fused.features.last_norm, pre.features.norm5)
+    fused.features.last_norm = copy_bn_from_pretrained(fused.features.last_norm, pre.features.norm5)
     # Classifier
     fused.classifier = copy_from_pretrained(fused.classifier, pre.classifier)
     return fused
@@ -290,9 +291,10 @@ def fold_densenet(model):
     for block_idx in range(1,5):
         dense_block = getattr(model.features, 'denseblock%d' % block_idx)
         for i, layer in dense_block.items():
-            layer.bn.fold_norm()
+            layer.bn.fold_bn()
             layer.conv1.fold_conv_and_bn()
     for tran_idx in range(1,4):
-        getattr(model.features, 'transition%d' % tran_idx).norm.fold_norm()
+        getattr(model.features, 'transition%d' % tran_idx).bn.fold_bn()
+    model.features.last_norm.fold_bn()
     return model
 

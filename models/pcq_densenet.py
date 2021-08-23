@@ -98,12 +98,12 @@ class PCQTransition(nn.Sequential):
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
-        self.norm = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
+        self.bn = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
         self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        out = self.norm(x)
+        out = self.bn(x)
         out = self.conv(out)
         out = self.pool(out)
 
@@ -132,7 +132,7 @@ class PCQTransition(nn.Sequential):
         return _out
 
     def set_transition_qparams(self, s1, z1):
-        prev_s, prev_z = self.norm.set_qparams(s1, z1)
+        prev_s, prev_z = self.bn.set_qparams(s1, z1)
         _, _ = self.conv.set_qparams(prev_s, prev_z)
 
         self.s3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
@@ -311,7 +311,7 @@ def pcq_densenet(arg_dict: dict, **kwargs):
 def set_pcq_densenet(fused, pre):
     # first conv & norm
     fused.features.first_conv = copy_from_pretrained(fused.features.first_conv, pre.features.conv0)
-    fused.features.first_norm = copy_from_pretrained(fused.features.first_norm, pre.features.norm0)
+    fused.features.first_norm = copy_bn_from_pretrained(fused.features.first_norm, pre.features.norm0)
     # dense block & Transition
     for block_idx in range(1,5):
         fused_block = getattr(fused.features, 'denseblock%d' % block_idx)
@@ -323,17 +323,17 @@ def set_pcq_densenet(fused, pre):
         for layer_idx in range(1, fused_block.num_layers+1):
             fused_layer = getattr(fused_block,'denselayer%d' % layer_idx)
             pre_layer = getattr(pre_block,'denselayer%d' % layer_idx)
-            fused_layer.bn1 = copy_from_pretrained(fused_layer.bn1, pre_layer.norm1)
+            fused_layer.bn1 = copy_bn_from_pretrained(fused_layer.bn1, pre_layer.norm1)
             fused_layer.conv1 = copy_from_pretrained(fused_layer.conv1, pre_layer.conv1)
-            fused_layer.bn2 = copy_from_pretrained(fused_layer.bn2, pre_layer.norm2)
+            fused_layer.bn2 = copy_bn_from_pretrained(fused_layer.bn2, pre_layer.norm2)
             fused_layer.conv2 = copy_from_pretrained(fused_layer.conv2, pre_layer.conv2)
 
         # transition
         if block_idx < 4:
-            fused_trans.norm = copy_from_pretrained(fused_trans.norm, pre_trans.norm)
+            fused_trans.bn = copy_bn_from_pretrained(fused_trans.bn, pre_trans.norm)
             fused_trans.conv = copy_from_pretrained(fused_trans.conv, pre_trans.conv)
     # Last BatchNorm
-    fused.features.last_norm = copy_from_pretrained(fused.features.last_norm, pre.features.norm5)
+    fused.features.last_norm = copy_bn_from_pretrained(fused.features.last_norm, pre.features.norm5)
     # Classifier
     fused.classifier = copy_from_pretrained(fused.classifier, pre.classifier)
     return fused
@@ -375,7 +375,7 @@ def densenet_init_bn_params(model):
             fused_layer.bn2.pass_bn_params()
         # transition
         if block_idx < 4:
-            trans.norm.pass_bn_params()
+            trans.bn.pass_bn_params()
     # Last BatchNorm
     model.features.last_norm.pass_bn_params()
     return model

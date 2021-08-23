@@ -24,7 +24,7 @@ class QuantizedDenseLayer(nn.Module):
         self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.bn = QuantizedBnReLU(num_input_features, arg_dict)
+        self.bn = QuantizedBn2d(num_input_features, arg_dict)
         self.conv1 = QuantizedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
                                  arg_dict=arg_dict)
         self.conv2 = QuantizedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
@@ -52,12 +52,12 @@ class QuantizedTransition(nn.Sequential):
         self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.norm = QuantizedBnReLU(num_input_features, arg_dict)
+        self.bn = QuantizedBn2d(num_input_features, arg_dict)
         self.conv = QuantizedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        out = self.norm(x)
+        out = self.bn(x)
         out = self.conv(out)
         out = self.pool(out)
         return out
@@ -82,7 +82,7 @@ class QuantizedDenseBlock(nn.ModuleDict):
         self.q_max = 2 ** self.bit - 1
 
         for i in range(num_layers):
-            layer = FusedDenseLayer(
+            layer = QuantizedDenseLayer(
                 arg_dict,
                 num_input_features + i * growth_rate,
                 growth_rate=growth_rate,
@@ -144,7 +144,7 @@ class QuantizedDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', QuantizedBnReLU(num_features, arg_dict))
+        self.features.add_module('last_norm', QuantizedBn2d(num_features, arg_dict))
         # Linear layer
         self.classifier = QuantizedLinear(num_features, num_classes, arg_dict=arg_dict)
 
@@ -194,7 +194,7 @@ def quantize_PCQblock(_fp, _int):
 
 
 def quantize_trans(_fp, _int):
-    _int.norm = quantize(_fp.norm, _int.norm)
+    _int.bn = quantize(_fp.bn, _int.bn)
     _int.conv = quantize(_fp.conv, _int.conv)
     return _int
 

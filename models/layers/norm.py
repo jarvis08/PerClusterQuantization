@@ -122,20 +122,26 @@ class PCQBnReLU(nn.Module):
 
         done = 0
         out = []
-        for i in range(bc.shape[0]):
-            c = bc[i][0]
-            n = bc[i][1]
-            cur_res = self.norms[c](x[done:done + n])
-            if not self.training and self.runtime_helper.bn_init:
+
+        if not self.training and self.runtime_helper.bn_init:
+            for c in range(self.num_clusters):
+                cur_res = self.norms[c](x[done:done + 8])
                 if self.bn_ema:
                     self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], 0.9)
                     self.bn_act_range[c][0], self.bn_act_range[c][1] = ema(cur_res, self.bn_act_range[c], self.smooth)
                 else:
                     self.bn_act_range[c][0], self.bn_act_range[c][1] = torch.min(cur_res).item(), torch.max(cur_res).item()
-                    self.ema_params[c][0], self.ema_params[c][1] = self.norms[c].running_mean.running_val
+                    self.ema_params[c][0], self.ema_params[c][1] = self.norms[c].bn.running_mean, self.norms[c].bn.running_var
                     self.bn_ema = True
+                out.append(cur_res)
+                done += 8
+                return torch.cat(out)
+
+        for i in range(bc.shape[0]):
+            c = bc[i][0].item()
+            n = bc[i][1].item()
+            out.append(self.norms[c](x[done:done + n]))
             done += n
-            out.append(cur_res)
         return torch.cat(out)
 
     def set_qparams(self, s1, z1):
@@ -159,8 +165,8 @@ class PCQBnReLU(nn.Module):
 
     def pass_bn_params(self):
         for c in range(self.num_clusters):
-            self.norms[c].running_mean.copy_(self.ema_params[c][0])
-            self.norms[c].running_var.copy_(self.ema_params[c][1])
+            self.norms[c].bn.running_mean.copy_(self.ema_params[c][0])
+            self.norms[c].bn.running_var.copy_(self.ema_params[c][1])
             self.norms[c].act_range.copy_(self.bn_act_range[c])
 
 
