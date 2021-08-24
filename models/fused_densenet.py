@@ -21,7 +21,6 @@ class FusedDenseLayer(nn.Module):
     ) -> None:
         super(FusedDenseLayer, self).__init__()
         self.arg_dict = arg_dict
-        self._norm_layer = nn.BatchNorm2d
 
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
@@ -292,7 +291,6 @@ def set_fused_densenet(fused, pre):
 
 
 def fold_densenet(model):
-    model.features.first_conv.fold_conv_and_bn()
     model.features.first_norm.fold_bn()
     for block_idx in range(1,5):
         dense_block = getattr(model.features, 'denseblock%d' % block_idx)
