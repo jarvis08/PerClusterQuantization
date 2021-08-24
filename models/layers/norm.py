@@ -107,11 +107,9 @@ class PCQBnReLU(nn.Module):
 
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, arg_dict=arg_dict)\
                                     for _ in range(self.num_clusters)])
-        #self.bn = nn.BatchNorm2d(num_features)
-
-        self.ema_params = torch.zeros((self.num_clusters, 2))
-        self.bn_act_range = torch.zeros((self.num_clusters, 2))
-        self.bn_ema = False
+        # self.initial_params = torch.zeros((self.num_clusters, 2))
+        # self.initial_range = torch.zeros((self.num_clusters, 2))
+        # self.apply_ema = False
 
     def forward(self, x):
         bc = self.runtime_helper.batch_cluster
@@ -122,20 +120,19 @@ class PCQBnReLU(nn.Module):
 
         done = 0
         out = []
-
-        if not self.training and self.runtime_helper.bn_init:
-            for c in range(self.num_clusters):
-                cur_res = self.norms[c](x[done:done + 8])
-                if self.bn_ema:
-                    self.ema_params[c][0], self.ema_params[c][1] = bn_ema(self.ema_params[c], self.norms[c], 0.9)
-                    self.bn_act_range[c][0], self.bn_act_range[c][1] = ema(cur_res, self.bn_act_range[c], self.smooth)
-                else:
-                    self.bn_act_range[c][0], self.bn_act_range[c][1] = torch.min(cur_res).item(), torch.max(cur_res).item()
-                    self.ema_params[c][0], self.ema_params[c][1] = self.norms[c].bn.running_mean, self.norms[c].bn.running_var
-                    self.bn_ema = True
-                out.append(cur_res)
-                done += 8
-                return torch.cat(out)
+        # if self.runtime_helper.pcq_initialized:
+        #     for c in range(self.num_clusters):
+        #         cur_res = self.norms[c](x[done:done + 8])
+        #         if self.apply_ema:
+        #             self.initial_params[c][0], self.initial_params[c][1] = bn_ema(self.initial_params[c], self.norms[c], 0.9)
+        #             self.initial_range[c][0], self.initial_range[c][1] = ema(cur_res, self.initial_range[c], self.smooth)
+        #         else:
+        #             self.initial_range[c][0], self.initial_range[c][1] = torch.min(cur_res).item(), torch.max(cur_res).item()
+        #             self.initial_params[c][0], self.initial_params[c][1] = self.norms[c].bn.running_mean, self.norms[c].bn.running_var
+        #             self.apply_ema = True
+        #         out.append(cur_res)
+        #         done += 8
+        #         return torch.cat(out)
 
         for i in range(bc.shape[0]):
             c = bc[i][0].item()
@@ -163,11 +160,11 @@ class PCQBnReLU(nn.Module):
         for c in range(self.num_clusters):
             self.norms[c].fold_bn()
 
-    def pass_bn_params(self):
-        for c in range(self.num_clusters):
-            self.norms[c].bn.running_mean.copy_(self.ema_params[c][0])
-            self.norms[c].bn.running_var.copy_(self.ema_params[c][1])
-            self.norms[c].act_range.copy_(self.bn_act_range[c])
+    # def pass_bn_params(self):
+    #     for c in range(self.num_clusters):
+    #         self.norms[c].bn.running_mean.copy_(self.initial_params[c][0])
+    #         self.norms[c].bn.running_var.copy_(self.initial_params[c][1])
+    #         self.norms[c].act_range.copy_(self.initial_range[c])
 
 
 class FusedBnReLU(nn.Module):
@@ -190,40 +187,49 @@ class FusedBnReLU(nn.Module):
         general_out = self.bn(x)
         if self._activation:
             general_out = self._activation(general_out)
+
+        if not self.runtime_helper.pcq_initialized:
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(general_out, self.act_range, self.smooth)
+            else:
+                self.act_range[0] = torch.min(general_out).item()
+                self.act_range[1] = torch.max(general_out).item()
+                self.apply_ema = True
+            return general_out
+
         if not self.training:
             return general_out
 
-        with torch.no_grad():
-            alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean, \
-                                          self.bn.running_var, self.bn.eps
-            folded_weight = alpha.div(torch.sqrt(var.add(eps)))
-            folded_bias = beta.sub(alpha.mul(mean).div(torch.sqrt(var.add(eps))))
+        alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean, \
+                                      self.bn.running_var, self.bn.eps
+        folded_weight = alpha.div(torch.sqrt(var.add(eps)))
+        folded_bias = beta.sub(alpha.mul(mean).div(torch.sqrt(var.add(eps))))
 
-            if folded_weight.min() > 0:
-                s, z = calc_qparams(torch.tensor(0), folded_weight.max(), self.w_qmax)
-            elif folded_weight.max() < 0:
-                s, z = calc_qparams(folded_weight.min(), torch.tensor(0), self.w_qmax)
-            else:
-                s, z = calc_qparams(folded_weight.min(), folded_weight.max(), self.w_qmax)
-            fq_weight = fake_quantize(folded_weight, s, z, self.w_qmax, use_ste=False)
+        if folded_weight.min() > 0:
+            s, z = calc_qparams(torch.tensor(0), folded_weight.max(), self.w_qmax)
+        elif folded_weight.max() < 0:
+            s, z = calc_qparams(folded_weight.min(), torch.tensor(0), self.w_qmax)
+        else:
+            s, z = calc_qparams(folded_weight.min(), folded_weight.max(), self.w_qmax)
+        fq_weight = fake_quantize(folded_weight, s, z, self.w_qmax, use_ste=False)
 
-            batch, channel, width, height = x.shape
-            w = fq_weight.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-            b = folded_bias.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        batch, channel, width, height = x.shape
+        w = fq_weight.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        b = folded_bias.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
 
-            folded_out = w * x + b
-            if self._activation:
-                folded_out = self._activation(folded_out)
+        folded_out = w * x + b
+        if self._activation:
+            folded_out = self._activation(folded_out)
 
-            if self.apply_ema:
-                self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                    folded_out = fake_quantize(folded_out, s, z, self.q_max, use_ste=False)
-            else:
-                self.act_range[0] = torch.min(folded_out).item()
-                self.act_range[1] = torch.max(folded_out).item()
-                self.apply_ema = True
+        if self.apply_ema:
+            self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
+            if self.runtime_helper.apply_fake_quantization:
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+                folded_out = fake_quantize(folded_out, s, z, self.q_max, use_ste=False)
+        else:
+            self.act_range[0] = torch.min(folded_out).item()
+            self.act_range[1] = torch.max(folded_out).item()
+            self.apply_ema = True
         return STE.apply(general_out, folded_out)
 
     def fold_bn(self):

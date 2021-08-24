@@ -29,7 +29,7 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.kmeans = None
         self.qn_prob = 0.0
-        self.bn_init = True
+        self.pcq_initialized = False
 
     def get_pcq_batch(self, input):
         self.batch_cluster = self.kmeans.get_batch(input)
@@ -149,43 +149,6 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
-def bn_init_validate(model, loader, criterion, runtime_helper):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-
-    model.eval()
-    with torch.no_grad():
-        if isinstance(loader, list):
-            for c in range(len(loader)):
-                with tqdm(loader[c], unit="batch", ncols=90) as t:
-                    for i, (input, target) in enumerate(t):
-                        t.set_description("Validate")
-                        input, target = input.cuda(), target.cuda()
-                        output = model(input)
-                        loss = criterion(output, target)
-                        prec = accuracy(output, target)[0]
-                        losses.update(loss.item(), input.size(0))
-                        top1.update(prec.item(), input.size(0))
-
-                        t.set_postfix(loss=losses.avg, acc=top1.avg)
-        else:
-            with tqdm(loader, unit="batch", ncols=90) as t:
-                for i, (input, target) in enumerate(t):
-                    t.set_description("Validate")
-                    input, target = input.cuda(), target.cuda()
-                    output = model(input)
-                    loss = criterion(output, target)
-                    prec = accuracy(output, target)[0]
-                    losses.update(loss.item(), input.size(0))
-                    top1.update(prec.item(), input.size(0))
-
-                    t.set_postfix(loss=losses.avg, acc=top1.avg)
-
-    runtime_helper.bn_init = False
-    print("[BatchNorm Initialize Inference] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
-    return top1.avg
-
-
 def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sort_input=False, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -277,16 +240,14 @@ def get_normalizer(dataset):
         return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 
-def get_train_loader(args, normalizer):
+def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                          transform=transforms.Compose([
-                                                             transforms.Resize(256),
-                                                             transforms.CenterCrop(224),
+                                                             transforms.RandomSizedCrop(224),
+                                                             transforms.RandomHorizontalFlip(),
                                                              transforms.ToTensor(),
-                                                             normalizer,
-                                                         ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10)
+                                                             normalizer]))
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -296,10 +257,46 @@ def get_train_loader(args, normalizer):
                 transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                normalizer,
-            ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
-    return train_loader
+                normalizer]))
+    return train_dataset
+
+
+def get_train_dataset_without_augmentation(args, normalizer):
+    if args.dataset == 'imagenet':
+        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer]))
+    else:
+        train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer]))
+    return train_dataset
+
+
+def get_data_loader(args, dataset, usage=None):
+    if usage == 'kmeans':
+        if args.dataset == 'imagenet':
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=10)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=2)
+    elif usage == 'initializer':
+        if args.dataset == 'imagenet':
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=10)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=False, num_workers=2)
+    else:
+        if args.dataset == 'imagenet':
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=10)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+    return loader
 
 
 def get_test_loader(args, normalizer):
@@ -366,26 +363,6 @@ def load_preprocessed_cifar10_from_darknet():
     target = torch.tensor(np.fromfile("result/darknet/cifar_test_target.bin", dtype='int32').reshape((10000, 1)),
                           dtype=torch.long)
     return input, target
-
-
-def make_indices_list(train_loader, args, runtime_helper):
-    total_list = [[] for _ in range(args.cluster)]
-
-    done = 0
-    with torch.no_grad():
-        with tqdm(train_loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
-                runtime_helper.get_pcq_batch(input)
-                for idx in range(len(runtime_helper.batch_cluster)):
-                    total_list[runtime_helper.batch_cluster[idx]].append(done)
-                    done += 1
-    # shuffle list
-    min_count = 200000
-    for c in range(args.cluster):
-        if min_count > len(total_list[c]):
-            min_count = len(total_list[c])
-        random.shuffle(total_list[c])
-    return total_list, min_count
 
 
 # def metric_average(val, name):
