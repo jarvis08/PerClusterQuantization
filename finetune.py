@@ -185,13 +185,12 @@ def _finetune(args, tools):
             bc.append(tmp)
         runtime_helper.batch_cluster = torch.cuda.LongTensor(bc)
         initialize_pcq_model(model, sorted_loader, criterion)
-        # bn_init_validate(model, min_loader, criterion, runtime_helper)
 
         # # Load images per cluster
         # for c in range(args.cluster):
         #     cur_dataset = torch.utils.data.Subset(indices_train_loader.dataset, indices_per_cluster[c])
         #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
-        # bn_init_validate(model, loaders, criterion, runtime_helper)
+        # initialize_pcq_model(model, loaders, criterion, runtime_helper)
 
         model = tools.bn_initializer(model)
         runtime_helper.pcq_initialized = True

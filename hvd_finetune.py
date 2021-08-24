@@ -10,78 +10,80 @@ from models import *
 from tqdm import tqdm
 
 
-def get_train_loader(args, normalizer):
-    if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                         transform=transforms.Compose([
-                                                             transforms.RandomSizedCrop(224),
-                                                             transforms.RandomHorizontalFlip(),
-                                                             transforms.ToTensor(),
-                                                             normalizer]))
-        sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, hvd.size(), hvd.rank())
+def make_indices_list(train_loader, args, runtime_helper):
+    total_list = [[] for _ in range(args.cluster)]
 
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, num_workers=10,
-                                                   sampler=sampler)
+    idx = 0
+    with torch.no_grad():
+        with tqdm(train_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Indices per Cluster")
+                runtime_helper.get_pcq_batch(input)
+                for c in runtime_helper.batch_cluster:
+                    total_list[c].append(idx)
+                    idx += 1
+                t.set_postfix()
+    # shuffle list
+    min_count = 99999999999999999
+    for c in range(args.cluster):
+        if min_count > len(total_list[c]):
+            min_count = len(total_list[c])
+        random.shuffle(total_list[c])
+    return total_list, min_count
+
+
+def initialize_pcq_model(model, loader, criterion):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    model.eval()
+    with torch.no_grad():
+        if isinstance(loader, list):
+            for c in range(len(loader)):
+                with tqdm(loader[c], unit="batch", ncols=90) as t:
+                    for i, (input, target) in enumerate(t):
+                        t.set_description("Validate")
+                        input, target = input.cuda(), target.cuda()
+                        output = model(input)
+                        loss = criterion(output, target)
+                        prec = accuracy(output, target)[0]
+                        losses.update(loss.item(), input.size(0))
+                        top1.update(prec.item(), input.size(0))
+
+                        t.set_postfix(loss=losses.avg, acc=top1.avg)
+        else:
+            with tqdm(loader, unit="batch", ncols=90) as t:
+                for i, (input, target) in enumerate(t):
+                    t.set_description("Initialize PCQ")
+                    input, target = input.cuda(), target.cuda()
+                    output = model(input)
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
+                    losses.update(loss.item(), input.size(0))
+                    top1.update(prec.item(), input.size(0))
+
+                    t.set_postfix(loss=losses.avg, acc=top1.avg)
+    return top1.avg
+
+
+def get_data_loader_hvd(args, dataset, usage=None):
+    if usage == 'kmeans':
+        if args.dataset == 'imagenet':
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=10)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=2)
+    elif usage == 'initializer':
+        if args.dataset == 'imagenet':
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=10)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=False, num_workers=2)
     else:
-        train_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
-    return train_loader
-
-
-def get_kmeans_train_loader(args, normalizer):
-    if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                         transform=transforms.Compose([
-                                                             transforms.RandomSizedCrop(224),
-                                                             transforms.RandomHorizontalFlip(),
-                                                             transforms.ToTensor(),
-                                                             normalizer]))
-
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, num_workers=10, shuffle=False)
-    else:
-        train_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=False, num_workers=2)
-    return train_loader
-
-
-def get_indices_train_loader(args, normalizer):
-    if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                         transform=transforms.Compose([
-                                                             transforms.Resize(256),
-                                                             transforms.CenterCrop(224),
-                                                             transforms.ToTensor(),
-                                                             normalizer]))
-
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, num_workers=10, shuffle=False)
-    else:
-        train_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                # transforms.RandomCrop(32, padding=4),
-                # transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=False, num_workers=2)
-    return train_loader
+        sampler = torch.utils.data.distributed.DistributedSampler(dataset, hvd.size(), hvd.rank())
+        if args.dataset == 'imagenet':
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, sampler=sampler, num_workers=10)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, sampler=sampler, num_workers=2)
+    return loader
 
 
 def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
@@ -103,8 +105,6 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             top1.update(prec.item(), input.size(0))
 
             if hvd.rank() == 0:
-                # *** all_reduce 해서 평균 낼껀데 loss.avg, top1.avg 어떻게 할껀가
-                # 애네도 iteration 돌기때문에 loss.avg 필요할듯
                 logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                              .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
@@ -115,10 +115,10 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def metric_average(val, name):
-    tensor = torch.tensor(val)
-    avg_tensor = hvd.allreduce(tensor, name=name)
-    return avg_tensor.item()
+# def metric_average(val, name):
+#     tensor = torch.tensor(val)
+#     avg_tensor = hvd.allreduce(tensor, name=name)
+#     return avg_tensor.item()
 
 
 def get_finetuning_model(arg_dict, tools):
@@ -140,7 +140,8 @@ def hvd_finetune(args, tools):
     normalizer = get_normalizer(args.dataset)
     criterion = torch.nn.CrossEntropyLoss().cuda()
     test_loader = get_test_loader(args, normalizer)
-    train_loader = get_train_loader(args, normalizer)
+    train_dataset = get_train_dataset(args, normalizer)
+    train_loader = get_data_loader_hvd(args, train_dataset)
     runtime_helper = RuntimeHelper()
     arg_dict = deepcopy(vars(args))
 
@@ -152,6 +153,10 @@ def hvd_finetune(args, tools):
     model, arg_dict = get_finetuning_model(arg_dict, tools)
     model.cuda()
     model.eval()
+
+    if args.quant_noise:
+        runtime_helper.qn_prob = args.qn_prob - 0.1
+        tools.qn_forward_pre_hooker(model)
 
     epoch_to_start = 1
 
@@ -171,7 +176,7 @@ def hvd_finetune(args, tools):
 
         if args.cluster > 1:
             kmeans = KMeans(args)
-            kmeans_train_loader = get_kmeans_train_loader(args, normalizer)
+            kmeans_train_loader = get_data_loader_hvd(args, train_dataset, usage='kmeans')
             if not args.kmeans_path:
                 args.kmeans_path = set_kmeans_dir(args)
                 kmeans.train_kmeans_model(kmeans_train_loader)
@@ -181,8 +186,9 @@ def hvd_finetune(args, tools):
             # check_cluster_distribution(runtime_helper.kmeans, train_loader)
 
             loaders = []
-            indices_train_loader = get_indices_train_loader(args, normalizer)
-            indices_per_cluster, min_count = make_indices_list(indices_train_loader, args, runtime_helper)
+            non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
+            non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
+            indices_per_cluster, min_count = make_indices_list(non_augmented_loader, args, runtime_helper)
             # Load Minimum number of images
             list_with_minimum = []
             done = 0
@@ -190,9 +196,14 @@ def hvd_finetune(args, tools):
                 for c in range(args.cluster):
                     list_with_minimum += indices_per_cluster[c][done:done + 8]
                 done += 8
-            min_dataset = torch.utils.data.Subset(indices_train_loader.dataset, list_with_minimum)
-            min_loader = torch.utils.data.DataLoader(min_dataset, batch_size=8, num_workers=2, shuffle=False)
-            bn_init_validate(model, min_loader, criterion, runtime_helper)
+            sorted_dataset = torch.utils.data.Subset(non_augmented_dataset, list_with_minimum)
+            sorted_loader = torch.utils.data.DataLoader(sorted_dataset, batch_size=64, num_workers=2, shuffle=False)
+            bc = []
+            for c in range(args.cluster):
+                tmp = [c, 8]
+                bc.append(tmp)
+            runtime_helper.batch_cluster = torch.cuda.LongTensor(bc)
+            initialize_pcq_model(model, sorted_loader, criterion)
 
             # # Load images per cluster
             # for c in range(args.cluster):
@@ -201,13 +212,10 @@ def hvd_finetune(args, tools):
             # bn_init_validate(model, loaders, criterion, runtime_helper)
 
             model = tools.bn_initialzier(model)
+            runtime_helper.pcq_initialized = True
 
     hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-
-    # hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-    if args.quant_noise:
-        runtime_helper.qn_prob = args.qn_prob - 0.1
-        tools.qn_forward_pre_hooker(model)
+    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     best_score_int = 0
     for e in range(epoch_to_start, args.epoch + 1):

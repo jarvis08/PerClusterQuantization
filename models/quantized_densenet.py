@@ -24,9 +24,9 @@ class QuantizedDenseLayer(nn.Module):
         self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.bn = QuantizedBn2d(num_input_features, arg_dict)
-        self.conv1 = QuantizedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
-                                 arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(num_input_features, arg_dict)
+        self.conv1 = QuantizedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
+        self.bn2 = QuantizedBn2d(bn_size * growth_rate, arg_dict)
         self.conv2 = QuantizedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
@@ -39,8 +39,9 @@ class QuantizedDenseLayer(nn.Module):
             prev_features = input
 
         x = torch.cat(prev_features, 1)
-        out = self.bn(x)
+        out = self.bn1(x)
         out = self.conv1(out)
+        out = self.bn2(out)
         out = self.conv2(out)
         return out
 
@@ -123,6 +124,7 @@ class QuantizedDenseNet(nn.Module):
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
+            ('first_norm', QuantizedBn2d(num_init_features, nn.ReLU, arg_dict)),
             ('maxpool', QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict))
         ]))
 
@@ -175,8 +177,9 @@ def quantize_block(_fp, _int):
         fp_layer = getattr(_fp, 'denselayer%d' % layer_idx)
         int_layer = getattr(_int, 'denselayer%d' % layer_idx)
 
-        int_layer.bn = quantize(fp_layer.bn, int_layer.bn)
+        int_layer.bn1 = quantize(fp_layer.bn1, int_layer.bn1)
         int_layer.conv1 = quantize(fp_layer.conv1, int_layer.conv1)
+        int_layer.bn2 = quantize(fp_layer.bn2, int_layer.bn2)
         int_layer.conv2 = quantize(fp_layer.conv2, int_layer.conv2)
     return _int
 
@@ -203,6 +206,7 @@ def quantize_densenet(fp_model, int_model):
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.first_norm = quantize(fp_model.first_norm, int_model.first_norm)
     int_model.features.denseblock1 = quantize_block(fp_model.features.denseblock1, int_model.features.denseblock1)
     int_model.features.transition1 = quantize_trans(fp_model.features.transition1, int_model.features.transition1)
     int_model.features.denseblock2 = quantize_block(fp_model.features.denseblock2, int_model.features.denseblock2)

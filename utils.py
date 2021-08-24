@@ -244,7 +244,7 @@ def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                          transform=transforms.Compose([
-                                                             transforms.RandomSizedCrop(224),
+                                                             transforms.RandomResizedCrop(224),
                                                              transforms.RandomHorizontalFlip(),
                                                              transforms.ToTensor(),
                                                              normalizer]))
