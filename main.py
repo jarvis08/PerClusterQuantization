@@ -23,6 +23,7 @@ parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
 parser.add_argument('--val_batch', default=256, type=int, help='Validation batch size')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
+parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d's momentum factor")
 
 parser.add_argument('--fused', default=False, type=bool, help="Evaluate fine-tuned, fused model")
 parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quantized model")
@@ -32,7 +33,7 @@ parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-qu
                                                       ' PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
-parser.add_argument('--folded_fq', default=True, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
+parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
 parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
@@ -166,14 +167,17 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
+        #setattr(tools, 'folder', fold_resnet_bn)
+        setattr(tools, 'folder', None)
+        setattr(tools, 'quantizer', quantize_pcq_resnet)
         if is_pcq:
             setattr(tools, 'fuser', set_pcq_resnet)
-            setattr(tools, 'folder', fold_pcq_resnet)
-            setattr(tools, 'quantizer', quantize_pcq_resnet)
+            # setattr(tools, 'folder', fold_pcq_resnet)
+            # setattr(tools, 'quantizer', quantize_pcq_resnet)
         else:
             setattr(tools, 'fuser', set_fused_resnet)
-            setattr(tools, 'folder', fold_resnet)
-            setattr(tools, 'quantizer', quantize_resnet)
+            # setattr(tools, 'folder', fold_resnet)
+            # setattr(tools, 'quantizer', quantize_resnet)
 
         if '50' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet50)
