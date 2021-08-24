@@ -202,7 +202,7 @@ def _finetune(args, tools):
             done += 8
         min_dataset = torch.utils.data.Subset(indices_train_loader.dataset, list_with_minimum)
         min_loader = torch.utils.data.DataLoader(min_dataset, batch_size=8, num_workers=2, shuffle=False)
-        bn_init_validate(model, min_loader, criterion, runtime_helper)
+        # bn_init_validate(model, min_loader, criterion, runtime_helper)
 
         # # Load images per cluster
         # for c in range(args.cluster):
@@ -210,7 +210,7 @@ def _finetune(args, tools):
         #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
         # bn_init_validate(model, loaders, criterion, runtime_helper)
 
-        model = tools.bn_initialzier(model)
+        model = tools.bn_initializer(model)
 
     if args.horovod:
         hvd.init()
