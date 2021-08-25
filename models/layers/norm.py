@@ -200,8 +200,8 @@ class FusedBnReLU(nn.Module):
         self.bn.running_var = self.bn.running_var * (1 - self.bn.momentum) + var * self.bn.momentum
 
         s, z = calc_qparams(conv_range[0], conv_range[1], self.w_qmax)
-        m = fake_quantize(self.bn.running_mean, s, z, self.w_qmax, use_ste=False)
-        v = fake_quantize(self.bn.running_var, s, z, self.w_qmax, use_ste=False)
+        m = fake_quantize(mean, s, z, self.w_qmax, use_ste=False)
+        v = fake_quantize(var, s, z, self.w_qmax, use_ste=False)
         w = fake_quantize(self.bn.weight, s, z, self.w_qmax, self.use_ste)
         b = fake_quantize(self.bn.bias, s, z, self.w_qmax, self.use_ste)
 
@@ -212,7 +212,8 @@ class FusedBnReLU(nn.Module):
         # b = b.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
 
         # out = (x - m) / torch.sqrt(v + self.bn.eps) * w + b
-        x = (x - m[None, :, None, None]) / torch.sqrt(v[None, :, None, None] + self.bn.eps) * w[None, :, None, None] + b[None, :, None, None]
+        x = (x - m[None, :, None, None]) / torch.sqrt(v[None, :, None, None] + self.bn.eps)\
+            * w[None, :, None, None] + b[None, :, None, None]
         if self._activation:
             x = self._activation(x)
         return x
