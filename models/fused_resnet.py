@@ -100,15 +100,13 @@ class FusedBottleneck(nn.Module):
         self._norm_layer = norm_layer
 
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob = \
-            itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
-
+        self.apply_ema = False
 
         width = int(planes * (base_width/64.)) * groups
         self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width,
@@ -123,9 +121,9 @@ class FusedBottleneck(nn.Module):
     def forward(self, x):
         identity = x
 
-        out = self.conv1(x)             # Fused conv 내에서 norm_layer, activation 사용.
-        out = self.conv2(out)           # Fused conv 내에서 norm_layer, activation 사용.
-        out = self.conv3(out)           # Fused conv 내에서 norm_layer
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.conv3(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -137,32 +135,23 @@ class FusedBottleneck(nn.Module):
             return out
 
         _out = out
-        if self.flag_ema_init:
+        if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.flag_fake_quantization:
+            if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                 _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
         else:
             self.act_range[0] = torch.min(out).item()
             self.act_range[1] = torch.max(out).item()
-            self.flag_ema_init = True
+            self.apply_ema = True
         return _out
 
-    def set_block_fq_flag(self):
-        self.flag_fake_quantization = True
-        if self.downsample:
-            self.downsample.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
-        self.conv3.flag_fake_quantization = True
-
-    # 여기서 s, z 값을 잘못 설정해주는 것 같음. conv가 하나 늘어나면서.
     def set_block_qparams(self, s1, z1):
         if self.downsample:
             self.downsample.set_qparams(s1, z1)
-        prev_s, prev_z = self.conv1.set_qparams(s1, z1)                     #
-        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)             #
-        _, _ = self.conv3.set_qparams(prev_s, prev_z)                       #
+        prev_s, prev_z = self.conv1.set_qparams(s1, z1)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+        _, _ = self.conv3.set_qparams(prev_s, prev_z)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
 
         return self.s3, self.z3

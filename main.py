@@ -211,7 +211,6 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'fuser', set_pcq_densenet)
             setattr(tools, 'folder', fold_pcq_densenet)
             setattr(tools, 'quantizer', quantize_pcq_densenet)
-            setattr(tools, 'bn_initializer', densenet_init_bn_params)
         else:
             setattr(tools, 'fused_model_initializer', fused_densenet)
             setattr(tools, 'fuser', set_fused_densenet)

@@ -35,7 +35,7 @@ def initialize_pcq_model(model, loader, criterion):
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    model.eval()
+    model.train()
     with torch.no_grad():
         if isinstance(loader, list):
             for c in range(len(loader)):
@@ -82,8 +82,7 @@ def warm_up(model, train_loader, criterion, runtime_helper, epoch, logger):
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
-            logger.debug("[Warm-up] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            logger.debug("[Warm-up] {}, step {}/{}".format(epoch, i + 1, len(t)))
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
@@ -192,8 +191,7 @@ def _finetune(args, tools):
         #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
         # initialize_pcq_model(model, loaders, criterion, runtime_helper)
 
-        model = tools.bn_initializer(model)
-        runtime_helper.pcq_initialized = True
+    runtime_helper.pcq_initialized = True
 
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')

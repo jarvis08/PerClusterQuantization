@@ -21,7 +21,7 @@ class RuntimeHelper(object):
         apply_fake_quantization : Flag used in layers
         batch_cluster           : Cluster information of current batch
         kmeans                  : Trained K-Means model's object
-        bn_init                 : Initialize mean and variance of BatchNorm
+        pcq_initialized         : Initialize mean and variance of BatchNorm
     """
 
     def __init__(self):

@@ -124,7 +124,7 @@ class QuantizedDenseNet(nn.Module):
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
-            ('first_norm', QuantizedBn2d(num_init_features, nn.ReLU, arg_dict)),
+            ('first_norm', QuantizedBn2d(num_init_features, arg_dict)),
             ('maxpool', QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict))
         ]))
 
@@ -152,12 +152,7 @@ class QuantizedDenseNet(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         if self.runtime_helper.batch_cluster is not None:
-            done = 0
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
-                x[done:done + n] = quantize_matrix(x[done:done + n], self.scale[c], self.zero_point[c], self.q_max)
-                done += n
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 

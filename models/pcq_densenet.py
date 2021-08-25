@@ -21,13 +21,11 @@ class PCQDenseLayer(nn.Module):
     ) -> None:
         super(PCQDenseLayer, self).__init__()
         self.arg_dict = arg_dict
-        self._norm_layer = nn.BatchNorm2d
 
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
@@ -49,6 +47,18 @@ class PCQDenseLayer(nn.Module):
         out = self.conv1(out)
         out = self.bn2(out)
         out = self.conv2(out)
+
+        if not self.runtime_helper.pcq_initialized:
+            done = 0
+            for c in range(self.num_clusters):
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + 8], self.act_range[c], self.smooth)
+                else:
+                    self.act_range[c][0] = torch.min(out[done:done + 8]).item()
+                    self.act_range[c][1] = torch.max(out[done:done + 8]).item()
+                    self.apply_ema[c] = True
+                done += 8
+            return out
 
         if not self.training:
             return out
@@ -106,6 +116,18 @@ class PCQTransition(nn.Sequential):
         out = self.bn(x)
         out = self.conv(out)
         out = self.pool(out)
+
+        if not self.runtime_helper.pcq_initialized:
+            done = 0
+            for c in range(self.num_clusters):
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + 8], self.act_range[c], self.smooth)
+                else:
+                    self.act_range[c][0] = torch.min(out[done:done + 8]).item()
+                    self.act_range[c][1] = torch.max(out[done:done + 8]).item()
+                    self.apply_ema[c] = True
+                done += 8
+            return out
 
         if not self.training:
             return out
@@ -180,6 +202,19 @@ class PCQDenseBlock(nn.ModuleDict):
             new_features = layer(features)
             features.append(new_features)
         out = torch.cat(features, 1)
+
+        if not self.runtime_helper.pcq_initialized:
+            done = 0
+            for c in range(self.num_clusters):
+                if self.apply_ema[c]:
+                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + 8], self.act_range[c], self.smooth)
+                else:
+                    self.act_range[c][0] = torch.min(out[done:done + 8]).item()
+                    self.act_range[c][1] = torch.max(out[done:done + 8]).item()
+                    self.apply_ema[c] = True
+                done += 8
+            return out
+
         if not self.training:
             return out
 
@@ -231,7 +266,6 @@ class PCQDenseNet(nn.Module):
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         # First convolution
@@ -357,25 +391,4 @@ def fold_pcq_densenet(model):
             trans.norm.fold_norms()
     # Last BatchNorm
     model.features.last_norm.fold_norms()
-    return model
-
-
-def densenet_init_bn_params(model):
-    # first norm
-    model.features.first_norm.pass_bn_params()
-    # dense block & Transition
-    for block_idx in range(1, 5):
-        block = getattr(model.features, 'denseblock%d' % block_idx)
-        if block_idx < 4:
-            trans = getattr(model.features, 'transition%d' % block_idx)
-        # dense layer
-        for layer_idx in range(1, block.num_layers + 1):
-            fused_layer = getattr(block, 'denselayer%d' % layer_idx)
-            fused_layer.bn1.pass_bn_params()
-            fused_layer.bn2.pass_bn_params()
-        # transition
-        if block_idx < 4:
-            trans.bn.pass_bn_params()
-    # Last BatchNorm
-    model.features.last_norm.pass_bn_params()
     return model
