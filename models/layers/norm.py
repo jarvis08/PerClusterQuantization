@@ -205,16 +205,17 @@ class FusedBnReLU(nn.Module):
         w = fake_quantize(self.bn.weight, s, z, self.w_qmax, self.use_ste)
         b = fake_quantize(self.bn.bias, s, z, self.w_qmax, self.use_ste)
 
-        batch, channel, width, height = x.shape
-        m = m.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        v = v.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        w = w.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        b = b.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        # batch, channel, width, height = x.shape
+        # m = m.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        # v = v.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        # w = w.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        # b = b.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
 
-        out = (x - m) / torch.sqrt(v + self.bn.eps) * w + b
+        # out = (x - m) / torch.sqrt(v + self.bn.eps) * w + b
+        x = (x - m[None, :, None, None]) / torch.sqrt(v[None, :, None, None] + self.bn.eps) * w[None, :, None, None] + b[None, :, None, None]
         if self._activation:
-            out = self._activation(out)
-        return out
+            x = self._activation(x)
+        return x
 
     def _update_range_without_fq(self, x):
         if self.apply_ema:
