@@ -32,7 +32,7 @@ class PCQDenseLayer(nn.Module):
 
         self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
-        self.bn2 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
+        self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
@@ -301,7 +301,7 @@ class PCQDenseNet(nn.Module):
         prev_s, prev_z = self.features.transition3.set_transition_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.denseblock4.set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.last_norm.set_qparams(prev_s, prev_z)
-        _, _ = self.classifer.set_qparams(prev_s, prev_z)
+        _, _ = self.classifier.set_qparams(prev_s, prev_z)
 
 
 def pcq_densenet(arg_dict: dict, **kwargs):

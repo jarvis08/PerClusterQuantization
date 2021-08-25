@@ -21,7 +21,6 @@ class FusedDenseLayer(nn.Module):
     ) -> None:
         super(FusedDenseLayer, self).__init__()
         self.arg_dict = arg_dict
-        self._norm_layer = nn.BatchNorm2d
 
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
@@ -30,9 +29,9 @@ class FusedDenseLayer(nn.Module):
 
         self.apply_ema = False
 
-        self.bn = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
-        self.conv1 = FusedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
-                                 norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=arg_dict)
+        self.bn1 = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
+        self.conv1 = FusedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
+        self.bn2 = FusedBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
         self.conv2 = FusedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
@@ -45,8 +44,9 @@ class FusedDenseLayer(nn.Module):
             prev_features = input
 
         x = torch.cat(prev_features, 1)
-        out = self.bn(x)
+        out = self.bn1(x)
         out = self.conv1(out)
+        out = self.bn2(out)
         out = self.conv2(out)
 
         if not self.training:
@@ -65,8 +65,9 @@ class FusedDenseLayer(nn.Module):
         return _out
 
     def set_layer_qparams(self, s1, z1):
-        prev_s, prev_z = self.bn.set_qparams(s1, z1)
+        prev_s, prev_z = self.bn1.set_qparams(s1, z1)
         prev_s, prev_z = self.conv1.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
         _, _ = self.conv2.set_qparams(prev_s, prev_z)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         return self.s3, self.z3
@@ -195,8 +196,8 @@ class FusedDenseNet(nn.Module):
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
-            ('first_conv', FusedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
-                                       norm_layer=nn.BatchNorm2d, activation=nn.ReLU, arg_dict=arg_dict)),
+            ('first_conv', FusedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
+            ('first_norm', FusedBnReLU(num_init_features, nn.ReLU, arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -243,6 +244,7 @@ class FusedDenseNet(nn.Module):
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.features.first_conv.set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.features.first_norm.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.denseblock1.set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.transition1.set_transition_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.denseblock2.set_block_qparams(prev_s, prev_z)
@@ -251,7 +253,7 @@ class FusedDenseNet(nn.Module):
         prev_s, prev_z = self.features.transition3.set_transition_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.denseblock4.set_block_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.last_norm.set_qparams(prev_s, prev_z)
-        _, _ = self.classifer.set_qparams(prev_s, prev_z)
+        _, _ = self.classifier.set_qparams(prev_s, prev_z)
 
 def fused_densenet(arg_dict: dict, **kwargs):
     return FusedDenseNet(32, (6, 12, 24, 16), 64, arg_dict, **kwargs)
@@ -259,7 +261,8 @@ def fused_densenet(arg_dict: dict, **kwargs):
 
 def set_fused_densenet(fused, pre):
     # first conv & norm
-    fused.features.first_conv = copy_from_pretrained(fused.features.first_conv, pre.features.conv0, pre.features.norm0)
+    fused.features.first_conv = copy_from_pretrained(fused.features.first_conv, pre.features.conv0)
+    fused.features.first_norm = copy_bn_from_pretrained(fused.features.first_norm, pre.features.norm0)
     # dense block & Transition
     for block_idx in range(1,5):
         fused_block = getattr(fused.features, 'denseblock%d' % block_idx)
@@ -271,8 +274,9 @@ def set_fused_densenet(fused, pre):
         for layer_idx in range(1, fused_block.num_layers+1):
             fused_layer = getattr(fused_block,'denselayer%d' % layer_idx)
             pre_layer = getattr(pre_block,'denselayer%d' % layer_idx)
-            fused_layer.bn = copy_bn_from_pretrained(fused_layer.bn, pre_layer.norm1)
-            fused_layer.conv1 = copy_from_pretrained(fused_layer.conv1, pre_layer.conv1, pre_layer.norm2)
+            fused_layer.bn1 = copy_bn_from_pretrained(fused_layer.bn1, pre_layer.norm1)
+            fused_layer.conv1 = copy_from_pretrained(fused_layer.conv1, pre_layer.conv1)
+            fused_layer.bn2 = copy_bn_from_pretrained(fused_layer.bn2, pre_layer.norm2)
             fused_layer.conv2 = copy_from_pretrained(fused_layer.conv2, pre_layer.conv2)
 
         # transition
@@ -287,12 +291,12 @@ def set_fused_densenet(fused, pre):
 
 
 def fold_densenet(model):
-    model.features.first_conv.fold_conv_and_bn()
+    model.features.first_norm.fold_bn()
     for block_idx in range(1,5):
         dense_block = getattr(model.features, 'denseblock%d' % block_idx)
         for i, layer in dense_block.items():
-            layer.bn.fold_bn()
-            layer.conv1.fold_conv_and_bn()
+            layer.bn1.fold_bn()
+            layer.bn2.fold_bn()
     for tran_idx in range(1,4):
         getattr(model.features, 'transition%d' % tran_idx).bn.fold_bn()
     model.features.last_norm.fold_bn()
