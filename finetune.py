@@ -184,8 +184,8 @@ def _finetune(args, tools):
         # initialize_pcq_model(model, loaders, criterion, runtime_helper)
 
         #model = tools.bn_initializer(model)
-        #runtime_helper.pcq_initialized = True
 
+    runtime_helper.pcq_initialized = True
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
