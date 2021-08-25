@@ -70,41 +70,45 @@ class QuantizedBottleneck(nn.Module):
 
         self.downsample = downsample
         self.stride = stride
-
         self.arg_dict = arg_dict
-        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
-        self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
+        self.num_clusters = itemgetter('cluster')(arg_dict)
 
         width = int(planes * (base_width/64.)) * groups
-        self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, stride=stride, bias=False,
-                                       arg_dict=arg_dict)
+        self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, stride=stride, arg_dict=arg_dict)
         self.conv2 = quantized_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                       bias=False, arg_dict=arg_dict)
-        self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes *self.expansion,
-                                       bias=False, arg_dict=arg_dict)
+                                       arg_dict=arg_dict)
+        self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=arg_dict)
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
+
+        if self.downsample is not None:
+            self.bn_down = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(planes, arg_dict=arg_dict)
+        self.bn2 = QuantizedBn2d(planes, arg_dict=arg_dict)
+        self.bn3 = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
+        out = self.bn1(out)
         out = self.conv2(out)
+        out = self.bn2(out)
         out = self.conv3(out)
+        out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
+            identity = self.bn_down(identity)
 
         out = self.shortcut(identity, out)
-
         return out
 
 
-class QuantizedResNet18(nn.Module):
+class QuantizedResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
-        super(QuantizedResNet18, self).__init__()
+        super(QuantizedResNet, self).__init__()
         self.bit, self.num_clusters, self.runtime_helper = \
             itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
@@ -126,15 +130,15 @@ class QuantizedResNet18(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, activation=nn.ReLU,
-                                          bias=False, arg_dict=arg_dict)
+        self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(self.inplanes, arg_dict=arg_dict)
         self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = QuantizedLinear(512 * block.expansion, num_classes, bias=False, arg_dict=arg_dict)
+        self.fc = QuantizedLinear(512 * block.expansion, num_classes, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -144,12 +148,7 @@ class QuantizedResNet18(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            print('DownSample')
             downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False, arg_dict=self.arg_dict)
-        else:
-            print('No DownSample')
-
-
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
@@ -168,12 +167,15 @@ class QuantizedResNet18(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.first_conv(x)
+        x = self.bn1(x)
         x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
         x = self.avgpool(x)
+        x = x.type(torch.cuda.IntTensor)
+        x = x.type(torch.cuda.FloatTensor)
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
@@ -235,8 +237,8 @@ class QuantizedResNet20(nn.Module):
         return x
 
 
-def quantized_resnet18(arg_dict, **kwargs):
-    return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
+# def quantized_resnet18(arg_dict, **kwargs):
+#     return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
 
 
 def quantized_resnet20(arg_dict):
@@ -244,7 +246,7 @@ def quantized_resnet20(arg_dict):
 
 
 def quantized_resnet50(arg_dict, **kwargs):
-    return QuantizedResNet18(QuantizedBottleneck, [3, 4, 6, 3], arg_dict, **kwargs)
+    return QuantizedResNet(QuantizedBottleneck, [3, 4, 6, 3], arg_dict, **kwargs)
 
 
 def set_shortcut_qparams(m, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
@@ -271,15 +273,27 @@ def quantize_block(_fp, _int):
         _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
         if _int[i].downsample:
             _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
-            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
-                                                    _int[i].downsample.s3, _int[i].downsample.z3,
-                                                    _int[i].conv2.s3, _int[i].conv2.z3,
-                                                    _fp[i].s3, _fp[i].z3)
+            if type(_int[i]) == QuantizedBottleneck:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].downsample.s3, _int[i].downsample.z3,
+                                                        _int[i].bn3.s3, _int[i].bn3.z3,
+                                                        _fp[i].s3, _fp[i].z3)
+            else:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].downsample.s3, _int[i].downsample.z3,
+                                                        _int[i].bn2.s3, _int[i].bn2.z3,
+                                                        _fp[i].s3, _fp[i].z3)
         else:
-            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
-                                                    _int[i].conv1.s1, _int[i].conv1.z1,
-                                                    _int[i].conv2.s3, _int[i].conv2.z3,
-                                                    _fp[i].s3, _fp[i].z3)
+            if type(_int[i]) == QuantizedBottleneck:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].conv1.s1, _int[i].conv1.z1,
+                                                        _int[i].bn3.s3, _int[i].bn3.z3,
+                                                        _fp[i].s3, _fp[i].z3)
+            else:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].conv1.s1, _int[i].conv1.z1,
+                                                        _int[i].bn2.s3, _int[i].bn2.z3,
+                                                        _fp[i].s3, _fp[i].z3)
     return _int
 
 
@@ -289,18 +303,33 @@ def quantize_pcq_block(_fp, _int):
         _int[i].bn1 = quantize(_fp[i].bn1, _int[i].bn1)
         _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
         _int[i].bn2 = quantize(_fp[i].bn2, _int[i].bn2)
+        if type(_int[i]) == QuantizedBottleneck:
+            _int[i].conv3 = quantize(_fp[i].conv3, _int[i].conv3)
+            _int[i].bn3 = quantize(_fp[i].bn3, _int[i].bn3)
         if _int[i].downsample:
             _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
             _int[i].bn_down = quantize(_fp[i].bn_down, _int[i].bn_down)
-            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
-                                                    _int[i].bn_down.s3, _int[i].bn_down.z3,
-                                                    _int[i].bn2.s3, _int[i].bn2.z3,
-                                                    _fp[i].s3, _fp[i].z3)
+            if type(_int[i]) == QuantizedBottleneck:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].bn_down.s3, _int[i].bn_down.z3,
+                                                        _int[i].bn3.s3, _int[i].bn3.z3,
+                                                        _fp[i].s3, _fp[i].z3)
+            else:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].bn_down.s3, _int[i].bn_down.z3,
+                                                        _int[i].bn2.s3, _int[i].bn2.z3,
+                                                        _fp[i].s3, _fp[i].z3)
         else:
-            _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
-                                                    _int[i].conv1.s1, _int[i].conv1.z1,
-                                                    _int[i].bn2.s3, _int[i].bn2.z3,
-                                                    _fp[i].s3, _fp[i].z3)
+            if type(_int[i]) == QuantizedBottleneck:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].conv1.s1, _int[i].conv1.z1,
+                                                        _int[i].bn3.s3, _int[i].bn3.z3,
+                                                        _fp[i].s3, _fp[i].z3)
+            else:
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
+                                                        _int[i].conv1.s1, _int[i].conv1.z1,
+                                                        _int[i].bn2.s3, _int[i].bn2.z3,
+                                                        _fp[i].s3, _fp[i].z3)
     return _int
 
 
@@ -308,6 +337,7 @@ def quantize_resnet(fp_model, int_model):
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.bn1 = quantize(fp_model.bn1, int_model.bn1)
     int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
     int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
     int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)

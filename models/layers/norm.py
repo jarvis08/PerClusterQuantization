@@ -196,6 +196,7 @@ class FusedBnReLU(nn.Module):
     def _fake_quantized_bn(self, x, conv_range):
         mean = x.mean(dim=(0, 2, 3))
         var = x.var(dim=(0, 2, 3), unbiased=False)
+
         self.bn.running_mean = self.bn.running_mean * (1 - self.bn.momentum) + mean * self.bn.momentum
         self.bn.running_var = self.bn.running_var * (1 - self.bn.momentum) + var * self.bn.momentum
 
