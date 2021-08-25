@@ -183,8 +183,8 @@ def _finetune(args, tools):
         #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
         # initialize_pcq_model(model, loaders, criterion, runtime_helper)
 
-        model = tools.bn_initializer(model)
-        runtime_helper.pcq_initialized = True
+        #model = tools.bn_initializer(model)
+        #runtime_helper.pcq_initialized = True
 
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
