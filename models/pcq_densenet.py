@@ -25,13 +25,16 @@ class PCQDenseLayer(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.activation_qmax = 2 ** 32 - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
-        self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
+        self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
+                               arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
-        self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
+        self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
+                               arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
     # torchscript does not yet support *args, so we overload method
@@ -109,7 +112,8 @@ class PCQTransition(nn.Sequential):
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.bn = PCQBnReLU(num_input_features, nn.ReLU, arg_dict)
-        self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
+        self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
+                              arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
@@ -183,7 +187,6 @@ class PCQDenseBlock(nn.ModuleDict):
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         for i in range(num_layers):
@@ -265,12 +268,14 @@ class PCQDenseNet(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.activation_qmax = 2 ** 32 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
-            ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
+            ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
+                                     arg_dict=arg_dict, act_qmax=self.activation_qmax)),
             ('first_norm', PCQBnReLU(num_init_features, nn.ReLU, arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
@@ -298,7 +303,18 @@ class PCQDenseNet(nn.Module):
         self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
-        if self.training:
+        if not self.runtime_helper.pcq_initialized:
+            done = 0
+            for c in range(self.num_clusters):
+                if self.apply_ema[c]:
+                    self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + 8], self.in_range[c], self.smooth)
+                else:
+                    self.in_range[c][0] = torch.min(x[done:done + 8]).item()
+                    self.in_range[c][1] = torch.max(x[done:done + 8]).item()
+                    self.apply_ema[c] = True
+                done += 8
+
+        elif self.training:
             done = 0
             for i in range(self.runtime_helper.batch_cluster.shape[0]):
                 c = self.runtime_helper.batch_cluster[i][0].item()
@@ -307,7 +323,7 @@ class PCQDenseNet(nn.Module):
                     self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
                     if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n], s, z)
+                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
                 else:
                     self.in_range[c][0] = torch.min(x).item()
                     self.in_range[c][1] = torch.max(x).item()

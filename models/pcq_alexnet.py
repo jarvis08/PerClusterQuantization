@@ -86,6 +86,7 @@ class PCQAlexNetSmall(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        activation_qmax = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -93,40 +94,37 @@ class PCQAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc1 = PCQLinear(256, 4096, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+        self.fc1 = PCQLinear(256, 4096, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict, act_qmax=activation_qmax)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        fake_input = x.clone().detach()
         if self.training:
-            with torch.no_grad():
-                done = 0
-                for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                    c = self.runtime_helper.batch_cluster[i][0]
-                    n = self.runtime_helper.batch_cluster[i][1]
-                    if self.apply_ema[c]:
-                        self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                        if self.runtime_helper.apply_fake_quantization:
-                            s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                            fake_input[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, use_ste=False)
-                    else:
-                        self.in_range[c][0] = torch.min(x[done:done + n]).item()
-                        self.in_range[c][1] = torch.max(x[done:done + n]).item()
-                        self.apply_ema[c] = True
-                    done += n
+            done = 0
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
+                if self.apply_ema[c]:
+                    self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
+                    if self.runtime_helper.apply_fake_quantization:
+                        s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
+                else:
+                    self.in_range[c][0] = torch.min(x[done:done + n]).item()
+                    self.in_range[c][1] = torch.max(x[done:done + n]).item()
+                    self.apply_ema[c] = True
+                done += n
 
-        x = self.conv1(STE.apply(x, fake_input))
-        #x = self.conv1(x)
+        x = self.conv1(x)
         x = self.maxpool(x)
         x = self.conv2(x)
         x = self.maxpool(x)
@@ -153,7 +151,7 @@ class PCQAlexNetSmall(nn.Module):
         prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
-        _, _ = self.fc3.set_qparams(prev_s, prev_z)
+        self.fc3.set_qparams(prev_s, prev_z)
 
 
 def pcq_alexnet(arg_dict: dict, **kwargs: Any) -> PCQAlexNet:

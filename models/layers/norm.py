@@ -24,8 +24,10 @@ class QuantizedBn2d(nn.Module):
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        #self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
         self.bias = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        self.mean = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        self.weight_divided_by_std = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
@@ -35,22 +37,29 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
-        _size = x.shape[-1]
+        batch, channel, width, height = x.shape
 
-        weight = torch.index_select(self.weight.repeat_interleave(_size * _size)
-                                    .reshape(self.num_clusters, self.num_features, _size, _size), 0, bc)
-        bias = torch.index_select(self.bias.repeat_interleave(_size * _size)
-                                  .reshape(self.num_clusters, self.num_features, _size, _size), 0, bc)
-        z1 = torch.index_select(self.z1, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        z2 = torch.index_select(self.z2, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        #weight = torch.index_select(self.weight.repeat_interleave(_size * _size)
+        #                            .reshape(self.num_clusters, self.num_features, _size, _size), 0, bc)
+        #bias = torch.index_select(self.bias.repeat_interleave(_size * _size)
+        #                          .reshape(self.num_clusters, self.num_features, _size, _size), 0, bc)
+        #z1 = torch.index_select(self.z1, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        #z2 = torch.index_select(self.z2, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         shift = torch.index_select(self.shift, 0, bc)
+        weight_divided_by_std = torch.index_select(self.weight_divided_by_std.repeat_interleave(width * height)
+                                                   .reshape(self.num_clusters, channel, width, height), 0, bc)
+        bias = torch.index_select(self.bias.repeat_interleave(width * height)
+                                  .reshape(self.num_clusters, channel, width, height), 0, bc)
+        mean = torch.index_select(self.mean.repeat_interleave(width * height)
+                                  .reshape(self.num_clusters, channel, width, height), 0, bc)
 
-        q1q2 = x.mul(weight)
-        q1z2 = x.mul(z2)
-        q2z1 = weight.mul(z1)
-        subsum = q1q2 - q1z2 - q2z1 + z1 * z2 + bias
+        #q1q2 = x.mul(weight)
+        #q1z2 = x.mul(z2)
+        #q2z1 = weight.mul(z1)
+        #subsum = q1q2 - q1z2 - q2z1 + z1 * z2 + bias
+        subsum = (x - mean) * weight_divided_by_std + bias
 
         total = torch.zeros(subsum.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
@@ -111,33 +120,14 @@ class PCQBnReLU(nn.Module):
         # self.initial_range = torch.zeros((self.num_clusters, 2))
         # self.apply_ema = False
 
-    def forward(self, x):
+    def forward(self, x, conv_range=None):
         bc = self.runtime_helper.batch_cluster
-        # clusters_in_batch = torch.unique(bc)
-        # for c in clusters_in_batch:
-        #     data_idx_of_c = (bc == c).nonzero(as_tuple=True)[0].cuda()
-        #     out.append(self.norms[c](torch.index_select(x, 0, data_idx_of_c)))
-
         done = 0
         out = []
-        # if self.runtime_helper.pcq_initialized:
-        #     for c in range(self.num_clusters):
-        #         cur_res = self.norms[c](x[done:done + 8])
-        #         if self.apply_ema:
-        #             self.initial_params[c][0], self.initial_params[c][1] = bn_ema(self.initial_params[c], self.norms[c], 0.9)
-        #             self.initial_range[c][0], self.initial_range[c][1] = ema(cur_res, self.initial_range[c], self.smooth)
-        #         else:
-        #             self.initial_range[c][0], self.initial_range[c][1] = torch.min(cur_res).item(), torch.max(cur_res).item()
-        #             self.initial_params[c][0], self.initial_params[c][1] = self.norms[c].bn.running_mean, self.norms[c].bn.running_var
-        #             self.apply_ema = True
-        #         out.append(cur_res)
-        #         done += 8
-        #         return torch.cat(out)
-
         for i in range(bc.shape[0]):
             c = bc[i][0].item()
             n = bc[i][1].item()
-            out.append(self.norms[c](x[done:done + n]))
+            out.append(self.norms[c](x[done:done + n], conv_range[c]))
             done += n
         return torch.cat(out)
 
@@ -156,15 +146,9 @@ class PCQBnReLU(nn.Module):
             self.M0[c], self.shift[c] = self.norms[c].get_multiplier_qparams()
         return self.s3, self.z3
 
-    def fold_norms(self):
+    def fold_bn(self):
         for c in range(self.num_clusters):
             self.norms[c].fold_bn()
-
-    # def pass_bn_params(self):
-    #     for c in range(self.num_clusters):
-    #         self.norms[c].bn.running_mean.copy_(self.initial_params[c][0])
-    #         self.norms[c].bn.running_var.copy_(self.initial_params[c][1])
-    #         self.norms[c].act_range.copy_(self.initial_range[c])
 
 
 class FusedBnReLU(nn.Module):
@@ -173,7 +157,8 @@ class FusedBnReLU(nn.Module):
         self.layer_type = 'FusedBnReLU'
         self.bit, self.smooth, self.use_ste, self.runtime_helper = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper')(arg_dict)
-        self.w_qmax = 2 ** 8 - 1
+        #self.w_qmax = 2 ** 8 - 1
+        self.w_qmax = 2 ** 32 - 1
         self.q_max = 2 ** self.bit - 1
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -183,74 +168,92 @@ class FusedBnReLU(nn.Module):
         self.bn = nn.BatchNorm2d(num_features)
         self._activation = activation(inplace=True) if activation else None
 
-    def forward(self, x):
-        general_out = self.bn(x)
-        if self._activation:
-            general_out = self._activation(general_out)
-
+    def forward(self, x, conv_range=None):
         if not self.runtime_helper.pcq_initialized:
-            if self.apply_ema:
-                self.act_range[0], self.act_range[1] = ema(general_out, self.act_range, self.smooth)
-            else:
-                self.act_range[0] = torch.min(general_out).item()
-                self.act_range[1] = torch.max(general_out).item()
-                self.apply_ema = True
-            return general_out
+            # PCQ initialization
+            out = self._forward_impl(x)
+            self._update_range_without_fq(out)
+            return out
 
-        if not self.training:
-            return general_out
+        elif not self.training:
+            return self._forward_impl(x)
 
-        alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean, \
-                                      self.bn.running_var, self.bn.eps
-        folded_weight = alpha.div(torch.sqrt(var.add(eps)))
-        folded_bias = beta.sub(alpha.mul(mean).div(torch.sqrt(var.add(eps))))
-
-        if folded_weight.min() > 0:
-            s, z = calc_qparams(torch.tensor(0), folded_weight.max(), self.w_qmax)
-        elif folded_weight.max() < 0:
-            s, z = calc_qparams(folded_weight.min(), torch.tensor(0), self.w_qmax)
         else:
-            s, z = calc_qparams(folded_weight.min(), folded_weight.max(), self.w_qmax)
-        fq_weight = fake_quantize(folded_weight, s, z, self.w_qmax, use_ste=False)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantized_bn(x, conv_range)
+                return self._fake_quantize_and_update_range(out)
+            else:
+                out = self._forward_impl(x)
+                self._update_range_without_fq(out)
+                return out
+
+    def _forward_impl(self, x):
+        x = self.bn(x)
+        if self._activation:
+            x = self._activation(x)
+        return x
+
+    def _fake_quantized_bn(self, x, conv_range):
+        mean = x.mean(dim=(0, 2, 3))
+        var = x.var(dim=(0, 2, 3), unbiased=False)
+        self.bn.running_mean = self.bn.running_mean * (1 - self.bn.momentum) + mean * self.bn.momentum
+        self.bn.running_var = self.bn.running_var * (1 - self.bn.momentum) + var * self.bn.momentum
+
+        s, z = calc_qparams(conv_range[0], conv_range[1], self.w_qmax)
+        m = fake_quantize(self.bn.running_mean, s, z, self.w_qmax, use_ste=False)
+        v = fake_quantize(self.bn.running_var, s, z, self.w_qmax, use_ste=False)
+        w = fake_quantize(self.bn.weight, s, z, self.w_qmax, self.use_ste)
+        b = fake_quantize(self.bn.bias, s, z, self.w_qmax, self.use_ste)
 
         batch, channel, width, height = x.shape
-        w = fq_weight.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        b = folded_bias.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        m = m.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        v = v.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        w = w.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
+        b = b.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
 
-        folded_out = w * x + b
+        out = (x - m) / torch.sqrt(v + self.bn.eps) * w + b
         if self._activation:
-            folded_out = self._activation(folded_out)
+            out = self._activation(out)
+        return out
 
+    def _update_range_without_fq(self, x):
         if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                folded_out = fake_quantize(folded_out, s, z, self.q_max, use_ste=False)
+            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
         else:
-            self.act_range[0] = torch.min(folded_out).item()
-            self.act_range[1] = torch.max(folded_out).item()
+            self.act_range[0] = torch.min(x).item()
+            self.act_range[1] = torch.max(x).item()
             self.apply_ema = True
-        return STE.apply(general_out, folded_out)
 
-    def fold_bn(self):
-        # In case of validation, fuse pretrained Conv&BatchNorm params
-        assert self.training == False, 'Do not fuse layers while training.'
-        alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean,\
-                                      self.bn.running_var, self.bn.eps
-        self.weight = nn.Parameter(alpha / torch.sqrt(var + eps), requires_grad=False)
-        self.bias = nn.Parameter(beta - alpha * mean / torch.sqrt(var + eps), requires_grad=False)
+    def _fake_quantize_and_update_range(self, x):
+        self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, self.use_ste)
+
+    # def fold_bn(self):
+    #     # In case of validation, fuse pretrained Conv&BatchNorm params
+    #     assert self.training == False, 'Do not fuse layers while training.'
+    #     alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean,\
+    #                                   self.bn.running_var, self.bn.eps
+    #     self.weight = nn.Parameter(alpha / torch.sqrt(var + eps), requires_grad=False)
+    #     self.bias = nn.Parameter(beta - alpha * mean / torch.sqrt(var + eps), requires_grad=False)
+
+    # def set_qparams(self, s1, z1):
+    #     self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
+    #     if self.weight.min() > 0:
+    #         self.s2, self.z2 = calc_qparams(torch.tensor(0), self.weight.max(), self.w_qmax)
+    #     elif self.weight.max() < 0:
+    #         self.s2, self.z2 = calc_qparams(self.weight.min(), torch.tensor(0), self.w_qmax)
+    #     else:
+    #         self.s2, self.z2 = calc_qparams(self.weight.min(), self.weight.max(), self.w_qmax)
+    #     self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+    #     self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
+    #     return self.s3, self.z3
 
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
-        if self.weight.min() > 0:
-            self.s2, self.z2 = calc_qparams(torch.tensor(0), self.weight.max(), self.w_qmax)
-        elif self.weight.max() < 0:
-            self.s2, self.z2 = calc_qparams(self.weight.min(), torch.tensor(0), self.w_qmax)
-        else:
-            self.s2, self.z2 = calc_qparams(self.weight.min(), self.weight.max(), self.w_qmax)
+        self.s2, self.z2 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-        self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
-        return self.s3, self.z3
+        self.M0, self.shift = quantize_M(self.s1 / self.s3)
 
     def get_weight_qparams(self):
         return self.s2, self.z2

@@ -30,6 +30,7 @@ class RuntimeHelper(object):
         self.kmeans = None
         self.qn_prob = 0.0
         self.pcq_initialized = False
+        self.range_update_phase = False
 
     def get_pcq_batch(self, input):
         self.batch_cluster = self.kmeans.get_batch(input)

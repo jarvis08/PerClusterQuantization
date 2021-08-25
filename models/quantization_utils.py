@@ -7,8 +7,8 @@ from copy import deepcopy
 
 class STE(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, original, modified):
-        return modified.detach()
+    def forward(ctx, original, fake_quantized):
+        return fake_quantized.detach()
 
     @staticmethod
     def backward(ctx, grad):
@@ -36,8 +36,7 @@ def calc_qparams(_min, _max, q_max):
         z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767)
     elif q_max == 4294967295:  # INT 32
-        z = -2147483648 - torch.round(_min / s)
-        return s, torch.clamp(z, -2147483648, 2147483647)
+        return s, torch.nn.Parameter(torch.tensor(0), requires_grad=False)
     else:
         z = - torch.round(_min / s)
         return s, z
@@ -58,16 +57,17 @@ def bn_ema(cur, pre, smooth):
 
 
 def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
+    _x = x.detach()
     if q_max == 15:            # UINT 4
-        _x = (torch.clamp(torch.round(x / scale + zero_point), 0, q_max) - zero_point) * scale
+        _x = (torch.clamp(torch.round(_x / scale + zero_point), 0, q_max) - zero_point) * scale
     elif q_max == 255:         # INT 8
-        _x = (torch.clamp(torch.round(x / scale + zero_point), -128, 127) - zero_point) * scale
+        _x = (torch.clamp(torch.round(_x / scale + zero_point), -128, 127) - zero_point) * scale
     elif q_max == 65535:       # INT 16
-        _x = (torch.clamp(torch.round(x / scale + zero_point), -32768, 32767) - zero_point) * scale
+        _x = (torch.clamp(torch.round(_x / scale + zero_point), -32768, 32767) - zero_point) * scale
     elif q_max == 4294967295:  # INT 32
-        _x = (torch.clamp(torch.round(x / scale + zero_point), -2147483648, 2147483647) - zero_point) * scale
+        _x = (torch.clamp(torch.round(_x / scale), -2147483648, 2147483647)) * scale
     else:
-        _x = (torch.round(x / scale + zero_point) - zero_point) * scale
+        _x = (torch.round(_x / scale + zero_point) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
@@ -81,7 +81,7 @@ def quantize_matrix(x, scale, zero_point, q_max=None):
     elif q_max == 65535:       # INT 16
         return torch.clamp(torch.round(x / scale + zero_point), -32768, 32767)
     elif q_max == 4294967295:  # INT 32
-        return torch.clamp(torch.round(x / scale + zero_point), -2147483648, 2147483647)
+        return torch.clamp(torch.round(x / scale), -2147483648, 2147483647)
     else:
         return torch.round(x / scale + zero_point)
 
@@ -210,6 +210,8 @@ def transfer_qparams(_fp, _int):
     _int.z3 = torch.nn.Parameter(_fp.z3, requires_grad=False)
     _int.M0 = torch.nn.Parameter(_fp.M0, requires_grad=False)
     _int.shift = torch.nn.Parameter(_fp.shift, requires_grad=False)
+    if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d']:
+        _int.act_qmax = nn.Parameter(torch.tensor(_fp.act_qmax), requires_grad=False)
     return _int
 
 
@@ -219,21 +221,34 @@ def quantize_layer_and_transfer(_fp, _int):
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
                 for c in range(_int.num_clusters):
-                    w = quantize_matrix(_fp.norms[c].weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    b = quantize_matrix(_fp.norms[c].bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
-                    _int.weight[c].copy_(w.type(torch.cuda.IntTensor))
+                    #w = quantize_matrix(_fp.norms[c].weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    #b = quantize_matrix(_fp.norms[c].bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
+                    w = quantize_matrix(_fp.norms[c].bn.weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    b = quantize_matrix(_fp.norms[c].bn.bias, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    m = quantize_matrix(_fp.norms[c].bn.running_mean, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    s = quantize_matrix(torch.sqrt(_fp.norms[c].bn.running_var + _fp.norms[c].bn.eps), _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    weight_divided_by_std = w.div(s).floor()
+                    #_int.weight[c].copy_(w.type(torch.cuda.IntTensor))
                     _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
+                    _int.mean[c].copy_(m.type(torch.cuda.IntTensor))
+                    _int.weight_divided_by_std[c].copy_(weight_divided_by_std.type(torch.cuda.IntTensor))
             else:
-                w = quantize_matrix(_fp.weight, _int.s2, _int.z2, _fp.w_qmax)
-                b = quantize_matrix(_fp.bias, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
-                _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
+                #w = quantize_matrix(_fp.weight, _int.s2, _int.z2, _fp.w_qmax)
+                #b = quantize_matrix(_fp.bias, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
+                w = quantize_matrix(_fp.bn.weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                b = quantize_matrix(_fp.bn.bias, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                m = quantize_matrix(_fp.bn.running_mean, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                s = quantize_matrix(torch.sqrt(_fp.bn.running_var + _fp.bn.eps), _int.s2[c], _int.z2[c], _fp.w_qmax)
+                weight_divided_by_std = w.div(s).floor()
+                #_int.weight[0].copy_(w.type(torch.cuda.IntTensor))
                 _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
+                _int.mean[0].copy_(m.type(torch.cuda.IntTensor))
+                _int.weight_divided_by_std[0].copy_(weight_divided_by_std.type(torch.cuda.IntTensor))
         else:
             if _int.layer_type == 'QuantizedConv2d':
                 fp_layer = _fp.conv
             else:
                 fp_layer = _fp.fc
-            _int.act_qmax = nn.Parameter(torch.tensor(_fp.act_qmax), requires_grad=False)
 
             _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
             if fp_layer.bias is not None:

@@ -67,7 +67,7 @@ class FusedAlexNet(nn.Module):
         prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
-        _, _ = self.fc3.set_qparams(prev_s, prev_z)
+        self.fc3.set_qparams(prev_s, prev_z)
 
 
 class FusedAlexNetSmall(nn.Module):
@@ -75,6 +75,7 @@ class FusedAlexNetSmall(nn.Module):
         super(FusedAlexNetSmall, self).__init__()
         self.bit, self.smooth, self.runtime_helper = itemgetter('bit', 'smooth', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        activation_qmax = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -83,35 +84,32 @@ class FusedAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv4 = FusedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
         self.conv5 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc3 = FusedLinear(4096, num_classes, bias=True, arg_dict=arg_dict)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+        self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+        self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+        self.fc3 = FusedLinear(4096, num_classes, bias=True, arg_dict=arg_dict, act_qmax=activation_qmax)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        fake_input = x.clone().detach()
         if self.training:
-            with torch.no_grad():
-                if self.apply_ema:
-                    self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                    if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                        fake_input = fake_quantize(x, s, z, self.q_max, use_ste=False)
-                else:
-                    self.in_range[0] = torch.min(x).item()
-                    self.in_range[1] = torch.max(x).item()
-                    self.apply_ema = True
+            if self.apply_ema:
+                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+                    x = fake_quantize(x, s, z, self.q_max)
+            else:
+                self.in_range[0] = torch.min(x).item()
+                self.in_range[1] = torch.max(x).item()
+                self.apply_ema = True
 
-        #x = self.conv1(x)
-        x = self.conv1(STE.apply(x, fake_input))
+        x = self.conv1(x)
         x = self.maxpool(x)
         x = self.conv2(x)
         x = self.maxpool(x)

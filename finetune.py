@@ -65,36 +65,19 @@ def initialize_pcq_model(model, loader, criterion):
     return top1.avg
 
 
-def warm_up(model, train_loader, criterion, runtime_helper, epoch, logger):
+def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
-        for i, (input, target) in enumerate(t):
-            t.set_description("Warm-up".format(epoch))
-            runtime_helper.get_pcq_batch(input)
-            input, target = runtime_helper.sort_by_cluster_info(input, target)
-            input, target = input.cuda(), target.cuda()
-            output = model(input)
-
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec.item(), input.size(0))
-
-            logger.debug("[Warm-up] {}, step {}/{}".format(epoch, i + 1, len(t)))
-
-            t.set_postfix(loss=losses.avg, acc=top1.avg)
-
-
-def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
-    losses = AverageMeter()
-    top1 = AverageMeter()
+    phase2_generator = iter(phase2_loader)
+    phase2_data_length = len(phase2_loader)
+    phase2_data_iter = 0
 
     model.train()
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
+    with tqdm(phase1_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
+            # Phase-1
             runtime_helper.get_pcq_batch(input)
             input, target = runtime_helper.sort_by_cluster_info(input, target)
             input, target = input.cuda(), target.cuda()
@@ -112,6 +95,15 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
             loss.backward()
             optimizer.step()
 
+            # Phase-2
+            runtime_helper.range_update_phase = True
+            phase2_input, _ = next(phase2_generator)
+            model(phase2_input.cuda())
+            phase2_data_iter += 1
+            if phase2_data_iter == phase2_data_length:
+                phase2_generator = iter(phase2_loader)
+                phase2_data_iter = 0
+            runtime_helper.range_update_phase = False
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
@@ -134,7 +126,6 @@ def _finetune(args, tools):
         arg_dict['runtime_helper'] = runtime_helper
     model, arg_dict = get_finetuning_model(arg_dict, tools)
     model.cuda()
-    model.eval()
     # if args.dataset == 'imagenet':
     #    summary(model, (3, 224, 224))
     # else:
@@ -165,6 +156,7 @@ def _finetune(args, tools):
         runtime_helper.kmeans = kmeans
     # check_cluster_distribution(runtime_helper.kmeans, train_loader)
 
+    non_augmented_loader = None
     if args.cluster > 1:
         non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
         non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
@@ -197,22 +189,16 @@ def _finetune(args, tools):
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
     best_score_int = 0
-    #if args.cluster > 1:
-    #    model.eval()
-    #    warmup_resnet(model)
-    #    warm_up(model, train_loader, criterion, runtime_helper, 0, logger)
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
-        # TODO: Quantnoise prob-increasing method
         if args.quant_noise and e % 3 == 1:
             runtime_helper.qn_prob += 0.1
             tools.qn_forward_pre_hooker(model)
-        # TODO: In Fused/PCQ-Conv/Linear, use runtimehelper.qn_prob
 
         if args.cluster > 1:
-            pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, train_loader, non_augmented_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
