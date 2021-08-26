@@ -41,7 +41,6 @@ class FusedBasicBlock(nn.Module):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         activation_qmax = 2 ** 32 - 1
-        # activation_qmax = 2 ** 16 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -56,7 +55,6 @@ class FusedBasicBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.bn1(out, self.conv1.act_range)
         out = self.conv2(out)
@@ -116,7 +114,6 @@ class FusedBottleneck(nn.Module):
 
         self.q_max = 2 ** self.bit - 1
         self.activation_qmax = 2 ** 32 - 1
-        # self.activation_qmax = 2 ** 16 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -298,7 +295,6 @@ class FusedResNet20(nn.Module):
         self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
         self.activation_qmax = 2 ** 32 - 1
-        # self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False

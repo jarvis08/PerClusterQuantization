@@ -23,13 +23,11 @@ class QuantizedBn2d(nn.Module):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.M0_bias = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.shift_bias = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int64), requires_grad=False)
-        self.bias = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int64), requires_grad=False)
-        self.mean = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int64), requires_grad=False)
-        self.std = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int64), requires_grad=False)
+        self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        self.bias = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        self.mean = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        self.std = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
@@ -39,40 +37,35 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
-
         batch, channel, width, height = x.shape
-        weight = torch.index_select(self.weight.repeat_interleave(width * height)
-                                    .reshape(self.num_clusters, self.num_features, width, height), 0, bc)
-        bias = torch.index_select(self.bias.repeat_interleave(width * height)
-                                  .reshape(self.num_clusters, self.num_features, width, height), 0, bc)
+
         z1 = torch.index_select(self.z1, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         z2 = torch.index_select(self.z2, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         shift = torch.index_select(self.shift, 0, bc)
-        #weight_divided_by_std = torch.index_select(self.weight_divided_by_std.repeat_interleave(width * height)
-        #                                           .reshape(self.num_clusters, channel, width, height), 0, bc)
-        #bias = torch.index_select(self.bias.repeat_interleave(width * height)
-        #                          .reshape(self.num_clusters, channel, width, height), 0, bc)
-        #mean = torch.index_select(self.mean.repeat_interleave(width * height)
-        #                          .reshape(self.num_clusters, channel, width, height), 0, bc)
 
-        q1q2 = x.mul(weight)
-        q1z2 = x.mul(z2)
-        q2z1 = weight.mul(z1)
-        subsum = q1q2 - q1z2 - q2z1 + z1 * z2 + bias
-        #subsum = (x - mean + bias) * weight_divided_by_std
+        weight = torch.index_select(self.weight.repeat_interleave(width * height)
+                                  .reshape(self.num_clusters, channel, width, height), 0, bc)
+        bias = torch.index_select(self.bias.repeat_interleave(width * height)
+                                  .reshape(self.num_clusters, channel, width, height), 0, bc)
+        mean = torch.index_select(self.mean.repeat_interleave(width * height)
+                                  .reshape(self.num_clusters, channel, width, height), 0, bc)
+        std = torch.index_select(self.std.repeat_interleave(width * height)
+                                  .reshape(self.num_clusters, channel, width, height), 0, bc)
+
+        subsum = (x - mean) * weight / std + bias
 
         total = torch.zeros(subsum.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
         pos = (shift >= 0).nonzero(as_tuple=True)[0]
         if len(neg) > 0:
             s = - shift[neg].reshape(neg.shape[0], 1, 1, 1)
-            multiplied = multiply_M((subsum[neg].type(torch.cuda.LongTensor) << s), M0[neg])
+            multiplied = multiply_M((subsum[neg] << s), M0[neg])
             total[neg] = shifting(multiplied, 0)
         if len(pos) > 0:
             s = shift[pos].reshape(pos.shape[0], 1, 1, 1)
-            multiplied = multiply_M(subsum[pos].type(torch.cuda.LongTensor), M0[pos])
+            multiplied = multiply_M(subsum[pos], M0[pos])
             total[pos] = shifting4d(multiplied, s)
         total = total.add(z3)
 
@@ -83,40 +76,17 @@ class QuantizedBn2d(nn.Module):
         return total.type(torch.cuda.FloatTensor)
 
     def _general(self, x):
-        # Using conv's act_range in BN params
-        # subsum = self.weight[0][None, :, None, None].type(torch.cuda.LongTensor) * (x - self.mean[0][None, :, None, None].type(torch.cuda.LongTensor))\
-        #          + self.bias[0][None, :, None, None].type(torch.cuda.LongTensor)
-
-        # subsum = self.weight[0][None, :, None, None] * (x - self.mean[0][None, :, None, None]) \
-        #          + self.bias[0][None, :, None, None]
-
         subsum = (x - self.mean[0][None, :, None, None]) \
                  * self.weight[0][None, :, None, None]\
                  / self.std[0][None, :, None, None] \
                  + self.bias[0][None, :, None, None]
-
         subsum = subsum.clamp(-2147483648, 2147483647)
-
-        # # Not using conv's act_range in BN params
-        # q1q2 = x.mul(self.weight[0][None, :, None, None])
-        # q1z2 = x.mul(self.z2)
-        # q2z1 = self.weight[0].mul(self.z1)
-        # subsum = q1q2 - q1z2 - q2z1[None, :, None, None] + self.z1 * self.z2 + self.bias[0][None, :, None, None]
-
-        if subsum.max() > 2147483647:
-            print('>> OverFlow')
-        if subsum.min() < -2147483648:
-            print('>> UnderFlow')
         if self.shift.item() < 0:
             multiplied = multiply_M((subsum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
             total = shifting(multiplied, 0)
         else:
             multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), self.M0)
             total = shifting(multiplied, self.shift.item())
-
-        #multiplied = multiply_M(self.bias[0].type(torch.cuda.LongTensor), self.M0_bias)
-        #shifted = shifting(multiplied, self.shift_bias.item())
-        #total = total.add(shifted[None, :, None, None])
         total = total.add(self.z3)
 
         if self.bit == 4:
@@ -134,9 +104,6 @@ class PCQBnReLU(nn.Module):
 
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, arg_dict=arg_dict)\
                                     for _ in range(self.num_clusters)])
-        # self.initial_params = torch.zeros((self.num_clusters, 2))
-        # self.initial_range = torch.zeros((self.num_clusters, 2))
-        # self.apply_ema = False
 
     def forward(self, x, conv_range=None):
         bc = self.runtime_helper.batch_cluster
@@ -145,8 +112,7 @@ class PCQBnReLU(nn.Module):
         for i in range(bc.shape[0]):
             c = bc[i][0]
             n = bc[i][1]
-            #out.append(self.norms[c](x[done:done + n], conv_range[c]))
-            out.append(self.norms[c](x[done:done + n]))
+            out.append(self.norms[c](x[done:done + n], conv_range[c]))
             done += n
         return torch.cat(out)
 
