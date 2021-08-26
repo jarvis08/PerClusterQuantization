@@ -61,6 +61,8 @@ class QuantizedTransition(nn.Sequential):
         out = self.bn(x)
         out = self.conv(out)
         out = self.pool(out)
+        out = out.type(torch.cuda.IntTensor)
+        out = out.type(torch.cuda.FloatTensor)
         return out
 
 

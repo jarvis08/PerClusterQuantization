@@ -75,7 +75,7 @@ class QuantizedBottleneck(nn.Module):
         self.num_clusters = itemgetter('cluster')(arg_dict)
 
         width = int(planes * (base_width/64.)) * groups
-        self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, stride=stride, arg_dict=arg_dict)
+        self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, arg_dict=arg_dict)
         self.conv2 = quantized_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
                                        arg_dict=arg_dict)
         self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=arg_dict)
@@ -83,13 +83,12 @@ class QuantizedBottleneck(nn.Module):
 
         if self.downsample is not None:
             self.bn_down = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(planes, arg_dict=arg_dict)
-        self.bn2 = QuantizedBn2d(planes, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(width, arg_dict=arg_dict)
+        self.bn2 = QuantizedBn2d(width, arg_dict=arg_dict)
         self.bn3 = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.conv2(out)
@@ -100,7 +99,6 @@ class QuantizedBottleneck(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
             identity = self.bn_down(identity)
-
         out = self.shortcut(identity, out)
         return out
 
@@ -148,7 +146,7 @@ class QuantizedResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False, arg_dict=self.arg_dict)
+            downsample = quantized_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
@@ -271,7 +269,7 @@ def quantize_block(_fp, _int):
     for i in range(len(_int)):
         _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
         _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
-        if _int[i].downsample:
+        if _fp[i].downsample:
             _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
             if type(_int[i]) == QuantizedBottleneck:
                 _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut,
@@ -359,3 +357,4 @@ def quantize_pcq_resnet(fp_model, int_model):
         int_model.layer4 = quantize_pcq_block(fp_model.layer4, int_model.layer4)
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
+
