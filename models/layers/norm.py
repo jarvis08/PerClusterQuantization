@@ -189,8 +189,7 @@ class FusedBnReLU(nn.Module):
         self.bn = nn.BatchNorm2d(num_features)
         self._activation = activation(inplace=True) if activation else None
 
-    #def forward(self, x, conv_range=None):
-    def forward(self, x):
+    def forward(self, x, conv_range=None):
         if not self.runtime_helper.pcq_initialized:
             out = self._forward_impl(x)
             self._update_range_without_fq(out)
