@@ -176,9 +176,7 @@ class FusedBnReLU(nn.Module):
         self.layer_type = 'FusedBnReLU'
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
-        # self.w_qmax = 2 ** 8 - 1
         self.w_qmax = 2 ** 32 - 1
-        # self.w_qmax = 2 ** 32 - 1
         self.q_max = 2 ** self.bit - 1
         self.is_pcq = True if self.num_clusters > 1 else False
 
@@ -260,10 +258,10 @@ class FusedBnReLU(nn.Module):
 
         s, z = calc_qparams(conv_range[0], conv_range[1], self.w_qmax)
         m = fake_quantize(mean, s, z, self.w_qmax, use_ste=False)
-        w = self.bn.weight / torch.sqrt(var + self.bn.eps)
-        w = fake_quantize(w, s, z, self.w_qmax, self.use_ste)
+        std = torch.sqrt(var + self.bn.eps)
+        w = fake_quantize(self.bn.weight, s, z, self.w_qmax, self.use_ste)
         b = fake_quantize(self.bn.bias, s, z, self.w_qmax, self.use_ste)
-        x = w[None, :, None, None] * (x - m[None, :, None, None]) + b[None, :, None, None]
+        x = w[None, :, None, None] * (x - m[None, :, None, None]) / std[None, :, None, None] + b[None, :, None, None]
         if self._activation:
             x = self._activation(x)
         return x
@@ -304,7 +302,6 @@ class FusedBnReLU(nn.Module):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-        # self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         self.M0, self.shift = quantize_M(self.s1 / self.s3)
         return self.s3, self.z3
 
