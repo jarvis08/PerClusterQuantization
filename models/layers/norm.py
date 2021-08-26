@@ -55,6 +55,7 @@ class QuantizedBn2d(nn.Module):
                                   .reshape(self.num_clusters, channel, width, height), 0, bc)
 
         subsum = (x - mean) * weight / std + bias
+        subsum = subsum.clamp(-2147483648, 2147483647)
 
         total = torch.zeros(subsum.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
