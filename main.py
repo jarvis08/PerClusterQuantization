@@ -139,7 +139,7 @@ parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
 
 args = parser.parse_args()
-os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+# os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
 print(vars(args))
