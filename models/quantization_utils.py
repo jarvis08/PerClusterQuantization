@@ -33,9 +33,9 @@ def calc_qparams(_min, _max, q_max):
         z = -128 - torch.round(_min / s)
         return s, torch.clamp(z, -128, 127)
     elif q_max == 65535:       # INT 16
-        z = -32768 - torch.round(_min / s)
-        return s, torch.clamp(z, -32768, 32767)
-        #return s, torch.nn.Parameter(torch.tensor(0), requires_grad=False) 
+        # z = -32768 - torch.round(_min / s)
+        # return s, torch.clamp(z, -32768, 32767)
+        return s, torch.nn.Parameter(torch.tensor(0), requires_grad=False)
     elif q_max == 4294967295:  # INT 32
         # z = -2147483648 - torch.round(_min / s)
         # return s, torch.clamp(z, -2147483648, 2147483647)
@@ -146,7 +146,7 @@ def quantize_M(M):
 
 
 def multiply_M(sub_sum, q_M):
-    max_int = torch.tensor(9223272036854775807, dtype=torch.int64, device='cuda:0')
+    max_int = torch.tensor(9223372036854775807, dtype=torch.int64, device='cuda:0')
     overflow_max = torch.where(sub_sum == q_M, True, False)
     overflow_min = torch.where(sub_sum == -max_int -1, True, False)
     overflow = torch.logical_and(overflow_max, overflow_min)
@@ -157,7 +157,7 @@ def multiply_M(sub_sum, q_M):
     return torch.where(overflow, max_int, subsummultiplier_high)
 
 
-def shifting(cur, shift, is_conv=False):
+def shifting(cur, shift):
     assert shift >= 0
     # assert shift <= 31
     # mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
@@ -170,7 +170,8 @@ def shifting(cur, shift, is_conv=False):
     threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
 
-    total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
+    # total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
+    total = ((cur >> shift).add(maskifgreaterthan & one))
     return total
 
 
@@ -241,19 +242,23 @@ def quantize_layer_and_transfer(_fp, _int):
                     _int.weight[c].copy_(weight.type(torch.cuda.IntTensor))
                     _int.bias[c].copy_(bias.type(torch.cuda.IntTensor))
             else:
-                #w = _fp.bn.weight.div(torch.sqrt(_fp.bn.running_var + _fp.bn.eps))
-                #w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
-                #b = quantize_matrix(_fp.bn.bias, _int.s2, _int.z2, _fp.w_qmax)
-                #m = quantize_matrix(_fp.bn.running_mean, _int.s2, _int.z2, _fp.w_qmax)
-                s = torch.sqrt(_fp.bn.running_var + _fp.bn.eps)
-                w = _fp.bn.weight.div(s)
-                b = _fp.bn.bias - _fp.bn.weight * _fp.bn.running_mean / s
-                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
-                b = quantize_matrix(b, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
+                # bias = quantize_matrix(_fp.bn.bias, _int.s2, _int.z2, _fp.w_qmax)
+                # bias = quantize_matrix(_fp.bn.bias, _int.s1 * _int.s2, 0, _fp.w_qmax)
+                std = torch.sqrt(_fp.bn.running_var + _fp.bn.eps)
+                std = quantize_matrix(std, _int.s2, _int.z2, _fp.w_qmax)
+                weight = quantize_matrix(_fp.bn.weight, _int.s2, _int.z2, _fp.w_qmax)
+                bias = quantize_matrix(_fp.bn.bias, _int.s2, 0)
+                mean = quantize_matrix(_fp.bn.running_mean, _int.s2, _int.z2, _fp.w_qmax)
 
-                _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
-                _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
-                #_int.mean[0].copy_(m.type(torch.cuda.IntTensor))
+                # s = torch.sqrt(_fp.bn.running_var + _fp.bn.eps)
+                # w = _fp.bn.weight.div(s)
+                # b = _fp.bn.bias - _fp.bn.weight * _fp.bn.running_mean / s
+                # w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
+                # b = quantize_matrix(b, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
+                _int.weight[0].copy_(weight.type(torch.cuda.LongTensor))
+                _int.bias[0].copy_(bias.type(torch.cuda.LongTensor))
+                _int.mean[0].copy_(mean.type(torch.cuda.LongTensor))
+                _int.std[0].copy_(std.type(torch.cuda.LongTensor))
         else:
             if _int.layer_type == 'QuantizedConv2d':
                 fp_layer = _fp.conv
