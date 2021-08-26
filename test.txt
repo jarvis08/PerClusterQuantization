@@ -13,3 +13,6 @@ first_conv.act_range
 first_conv.act_range
 first_conv.act_range
 features.first_conv.act_range
+features.first_conv.act_range
+features.first_conv.act_range
+features.first_conv.act_range

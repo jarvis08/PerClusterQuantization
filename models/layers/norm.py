@@ -170,7 +170,6 @@ class FusedBnReLU(nn.Module):
 
     def forward(self, x, conv_range=None):
         if not self.runtime_helper.pcq_initialized:
-            # PCQ initialization
             out = self._forward_impl(x)
             self._update_range_without_fq(out)
             return out
@@ -194,28 +193,23 @@ class FusedBnReLU(nn.Module):
         return x
 
     def _fake_quantized_bn(self, x, conv_range):
-        mean = x.mean(dim=(0, 2, 3))
-        var = x.var(dim=(0, 2, 3), unbiased=False)
-
-        self.bn.running_mean = self.bn.running_mean * (1 - self.bn.momentum) + mean * self.bn.momentum
-        self.bn.running_var = self.bn.running_var * (1 - self.bn.momentum) + var * self.bn.momentum
+        mean = x.detach().mean(dim=(0, 2, 3))
+        var = x.detach().var(dim=(0, 2, 3), unbiased=False)
+        with torch.no_grad():
+            self.bn.running_mean = self.bn.running_mean * (1 - self.bn.momentum) + mean * self.bn.momentum
+            self.bn.running_var = self.bn.running_var * (1 - self.bn.momentum) + var * self.bn.momentum
 
         s, z = calc_qparams(conv_range[0], conv_range[1], self.w_qmax)
-        m = fake_quantize(self.bn.running_mean, s, z, self.w_qmax, use_ste=False)
-        v = fake_quantize(self.bn.running_var, s, z, self.w_qmax, use_ste=False)
+        m = fake_quantize(mean, s, z, self.w_qmax, use_ste=False)
+        v = fake_quantize(var, s, z, self.w_qmax, use_ste=False)
         w = fake_quantize(self.bn.weight, s, z, self.w_qmax, self.use_ste)
         b = fake_quantize(self.bn.bias, s, z, self.w_qmax, self.use_ste)
 
-        batch, channel, width, height = x.shape
-        m = m.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        v = v.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        w = w.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-        b = b.repeat_interleave(width * height).reshape(channel, width, height).repeat(batch, 1, 1, 1)
-
-        out = (x - m) / torch.sqrt(v + self.bn.eps) * w + b
+        x = (x - m[None, :, None, None]) / torch.sqrt(v[None, :, None, None] + self.bn.eps)\
+            * w[None, :, None, None] + b[None, :, None, None]
         if self._activation:
-            out = self._activation(out)
-        return out
+            x = self._activation(x)
+        return x
 
     def _update_range_without_fq(self, x):
         if self.apply_ema:
@@ -230,31 +224,12 @@ class FusedBnReLU(nn.Module):
         s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         return fake_quantize(x, s, z, self.q_max, self.use_ste)
 
-    # def fold_bn(self):
-    #     # In case of validation, fuse pretrained Conv&BatchNorm params
-    #     assert self.training == False, 'Do not fuse layers while training.'
-    #     alpha, beta, mean, var, eps = self.bn.weight, self.bn.bias, self.bn.running_mean,\
-    #                                   self.bn.running_var, self.bn.eps
-    #     self.weight = nn.Parameter(alpha / torch.sqrt(var + eps), requires_grad=False)
-    #     self.bias = nn.Parameter(beta - alpha * mean / torch.sqrt(var + eps), requires_grad=False)
-
-    # def set_qparams(self, s1, z1):
-    #     self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
-    #     if self.weight.min() > 0:
-    #         self.s2, self.z2 = calc_qparams(torch.tensor(0), self.weight.max(), self.w_qmax)
-    #     elif self.weight.max() < 0:
-    #         self.s2, self.z2 = calc_qparams(self.weight.min(), torch.tensor(0), self.w_qmax)
-    #     else:
-    #         self.s2, self.z2 = calc_qparams(self.weight.min(), self.weight.max(), self.w_qmax)
-    #     self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-    #     self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
-    #     return self.s3, self.z3
-
     def set_qparams(self, s1, z1):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
         self.M0, self.shift = quantize_M(self.s1 / self.s3)
+        return self.s3, self.z3
 
     def get_weight_qparams(self):
         return self.s2, self.z2
