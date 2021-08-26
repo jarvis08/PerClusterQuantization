@@ -98,6 +98,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
+            break
 
 
 def validate(model, test_loader, criterion, logger=None):
@@ -118,6 +119,7 @@ def validate(model, test_loader, criterion, logger=None):
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+                break
 
     if logger:
         logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
