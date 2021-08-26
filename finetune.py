@@ -260,7 +260,7 @@ def _finetune(args, tools):
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     method = None
-    if cluster > 1:
+    if args.cluster > 1:
         if args.quant_noise:
             method = 'QN+PCQ'
         else:
