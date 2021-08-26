@@ -36,7 +36,10 @@ def calc_qparams(_min, _max, q_max):
     elif q_max == 65535:       # INT 16
         z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767)
+        #return s, torch.nn.Parameter(torch.tensor(0), requires_grad=False) 
     elif q_max == 4294967295:  # INT 32
+        # z = -2147483648 - torch.round(_min / s)
+        # return s, torch.clamp(z, -2147483648, 2147483647)
         return s, torch.nn.Parameter(torch.tensor(0), requires_grad=False)
     else:
         z = - torch.round(_min / s)
@@ -66,7 +69,7 @@ def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     elif q_max == 65535:       # INT 16
         _x = (torch.clamp(torch.round(_x / scale + zero_point), -32768, 32767) - zero_point) * scale
     elif q_max == 4294967295:  # INT 32
-        _x = (torch.clamp(torch.round(_x / scale), -2147483648, 2147483647)) * scale
+        _x = (torch.clamp(torch.round(_x / scale + zero_point), -2147483648, 2147483647) - zero_point) * scale
     else:
         _x = (torch.round(_x / scale + zero_point) - zero_point) * scale
     if use_ste:
@@ -82,7 +85,7 @@ def quantize_matrix(x, scale, zero_point, q_max=None):
     elif q_max == 65535:       # INT 16
         return torch.clamp(torch.round(x / scale + zero_point), -32768, 32767)
     elif q_max == 4294967295:  # INT 32
-        return torch.clamp(torch.round(x / scale), -2147483648, 2147483647)
+        return torch.clamp(torch.round(x / scale + zero_point), -2147483648, 2147483647)
     else:
         return torch.round(x / scale + zero_point)
 
@@ -155,7 +158,7 @@ def multiply_M(sub_sum, q_M):
     return torch.where(overflow, max_int, subsummultiplier_high)
 
 
-def shifting(cur, shift):
+def shifting(cur, shift, is_conv=False):
     assert shift >= 0
     # assert shift <= 31
     # mask = torch.tensor((1 << shift) - 1, dtype=torch.int32, device='cuda:0')
@@ -222,29 +225,36 @@ def quantize_layer_and_transfer(_fp, _int):
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
                 for c in range(_int.num_clusters):
-                    #w = quantize_matrix(_fp.norms[c].weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    #b = quantize_matrix(_fp.norms[c].bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
-                    w = quantize_matrix(_fp.norms[c].bn.weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    b = quantize_matrix(_fp.norms[c].bn.bias, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    m = quantize_matrix(_fp.norms[c].bn.running_mean, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    s = quantize_matrix(torch.sqrt(_fp.norms[c].bn.running_var + _fp.norms[c].bn.eps), _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    weight_divided_by_std = w.div(s).floor()
-                    #_int.weight[c].copy_(w.type(torch.cuda.IntTensor))
-                    _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
-                    _int.mean[c].copy_(m.type(torch.cuda.IntTensor))
-                    _int.weight_divided_by_std[c].copy_(weight_divided_by_std.type(torch.cuda.IntTensor))
+                    #w = quantize_matrix(_fp.norms[c].bn.weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    #b = quantize_matrix(_fp.norms[c].bn.bias, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    #m = quantize_matrix(_fp.norms[c].bn.running_mean, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    #s = quantize_matrix(torch.sqrt(_fp.norms[c].bn.running_var + _fp.norms[c].bn.eps), _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    #weight_divided_by_std = w.div(s).floor()
+                    #_int.bias[c].copy_(b.type(torch.cuda.IntTensor))
+                    #_int.mean[c].copy_(m.type(torch.cuda.IntTensor))
+                    #_int.weight_divided_by_std[c].copy_(weight_divided_by_std.type(torch.cuda.IntTensor))
+                    std = torch.sqrt(_fp.norms[c].bn.running_var + _fp.norms[c].bn.eps)
+                    weight = _fp.norms[c].bn.weight.div(std)
+                    bias = _fp.norms[c].bn.bias - weight * _fp.norms[c].bn.running_mean
+                    weight = quantize_matrix(weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
+                    bias = quantize_matrix(bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
+
+                    _int.weight[c].copy_(weight.type(torch.cuda.IntTensor))
+                    _int.bias[c].copy_(bias.type(torch.cuda.IntTensor))
             else:
-                #w = quantize_matrix(_fp.weight, _int.s2, _int.z2, _fp.w_qmax)
-                #b = quantize_matrix(_fp.bias, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
-                w = quantize_matrix(_fp.bn.weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                b = quantize_matrix(_fp.bn.bias, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                m = quantize_matrix(_fp.bn.running_mean, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                s = quantize_matrix(torch.sqrt(_fp.bn.running_var + _fp.bn.eps), _int.s2[c], _int.z2[c], _fp.w_qmax)
-                weight_divided_by_std = w.div(s).floor()
-                #_int.weight[0].copy_(w.type(torch.cuda.IntTensor))
+                #w = _fp.bn.weight.div(torch.sqrt(_fp.bn.running_var + _fp.bn.eps))
+                #w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
+                #b = quantize_matrix(_fp.bn.bias, _int.s2, _int.z2, _fp.w_qmax)
+                #m = quantize_matrix(_fp.bn.running_mean, _int.s2, _int.z2, _fp.w_qmax)
+                s = torch.sqrt(_fp.bn.running_var + _fp.bn.eps)
+                w = _fp.bn.weight.div(s)
+                b = _fp.bn.bias - _fp.bn.weight * _fp.bn.running_mean / s
+                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
+                b = quantize_matrix(b, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
+
+                _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
                 _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
-                _int.mean[0].copy_(m.type(torch.cuda.IntTensor))
-                _int.weight_divided_by_std[0].copy_(weight_divided_by_std.type(torch.cuda.IntTensor))
+                #_int.mean[0].copy_(m.type(torch.cuda.IntTensor))
         else:
             if _int.layer_type == 'QuantizedConv2d':
                 fp_layer = _fp.conv
