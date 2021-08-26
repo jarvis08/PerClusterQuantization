@@ -7,6 +7,7 @@ from torchsummary import summary
 from utils import *
 from models import *
 from tqdm import tqdm
+from time import time
 
 
 def make_indices_list(train_loader, args, runtime_helper):
@@ -72,11 +73,11 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
     phase2_generator = iter(phase2_loader)
     phase2_data_length = len(phase2_loader)
     phase2_data_iter = 0
-
     model.train()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
+
             # Phase-1
             runtime_helper.get_pcq_batch(input)
             input, target = runtime_helper.sort_by_cluster_info(input, target)
@@ -87,9 +88,6 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
             prec = accuracy(output, target)[0]
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
-
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
             loss.backward()
@@ -105,6 +103,9 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
                 phase2_generator = iter(phase2_loader)
                 phase2_data_iter = 0
             runtime_helper.range_update_phase = False
+
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
@@ -116,6 +117,7 @@ def get_finetuning_model(arg_dict, tools):
 
 
 def _finetune(args, tools):
+    tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
     train_dataset = get_train_dataset(args, normalizer)
     train_loader = get_data_loader(args, train_dataset)
@@ -254,8 +256,9 @@ def _finetune(args, tools):
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             del quantized_model
 
+    tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f}\n'.format(best_score_int))
+        f.write('{:.2f}, {}\n'.format(best_score_int, tuning_time_cost))
 
     with open('./test.txt', 'a') as f:
         for name, param in model.named_parameters():
