@@ -259,6 +259,7 @@ class FusedBnReLU(nn.Module):
         s, z = calc_qparams(conv_range[0], conv_range[1], self.w_qmax)
         m = fake_quantize(mean, s, z, self.w_qmax, use_ste=False)
         std = torch.sqrt(var + self.bn.eps)
+        std = fake_quantize(std, s, z, self.w_qmax, self.use_ste)
         w = fake_quantize(self.bn.weight, s, z, self.w_qmax, self.use_ste)
         b = fake_quantize(self.bn.bias, s, z, self.w_qmax, self.use_ste)
         x = w[None, :, None, None] * (x - m[None, :, None, None]) / std[None, :, None, None] + b[None, :, None, None]
