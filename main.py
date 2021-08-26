@@ -9,6 +9,8 @@ from finetune import _finetune
 from evaluate import _evaluate
 from run_classifier import _run_classifier
 
+from models.bert.quantized_bert import quantized_bert_small, quantize_bert
+
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
@@ -93,7 +95,7 @@ parser.add_argument("--train_batch_size",
                     type=int,
                     help="Total batch size for training.")
 parser.add_argument("--eval_batch_size",
-                    default=8,
+                    default=1,
                     type=int,
                     help="Total batch size for eval.")
 parser.add_argument("--learning_rate",
@@ -173,7 +175,7 @@ def set_func_for_target_arch(arch, is_pcq):
     elif 'ResNet' in arch:
         setattr(tools, 'folder', fold_resnet)
         setattr(tools, 'fuser', set_fused_resnet)
-        setattr(tools, 'quantizer', quantize_resnet)    #
+        setattr(tools, 'quantizer', quantize_resnet)
         if '18' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet18)
             if is_pcq:
@@ -216,6 +218,8 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'fuser', set_fused_bert_small)
         setattr(tools, 'pretrained_model_initializer', bert_small)
         setattr(tools, 'fused_model_initializer', fused_bert_small)
+        setattr(tools, 'quantized_model_initializer', quantized_bert_small)
+        setattr(tools, 'quantizer', quantize_bert)
 
 
     return tools

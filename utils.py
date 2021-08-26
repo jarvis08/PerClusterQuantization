@@ -24,6 +24,10 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.kmeans = None
         self.qn_prob = 0.0
+        self.start_save = False # False
+        self.valid_sequence_len = 0
+        self.token = []
+        self.token_index = 0
 
     def get_pcq_batch(self, input, target):
         input, target, self.batch_cluster = self.kmeans.get_batch(input, target)

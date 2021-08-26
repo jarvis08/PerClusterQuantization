@@ -278,4 +278,3 @@ class FusedLinear(nn.Module):
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
 
-# --task_name MRPC --do_train --do_eval --do_lower_case --data_dir $GLUE_DIR/MRPC/ --bert_model /home/hansung/quantization/bert/pytorch-pretrained-BERT/examples/uncased_L-4_H-512_A-8 --max_seq_length 128 --train_batch_size 8 --learning_rate 2e-5 --num_train_epochs 3.0 --output_dir ./mrpc_output

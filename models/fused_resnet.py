@@ -461,7 +461,7 @@ def modify_fused_resnet_qn_pre_hook(model):
         Copy from pre model's params to fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
-    #model.first_conv.quant_noise = False
+    model.first_conv.quant_noise = False
     # Block 1
     block = model.layer1
     if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
@@ -504,4 +504,6 @@ def modify_fused_resnet_qn_pre_hook(model):
                 block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
 
     # Classifier
-    #model.fc.quant_noise = False
+    model.fc.quant_noise = False
+    model.qn_prob = model.runtime_helper.qn_prob
+    # return model

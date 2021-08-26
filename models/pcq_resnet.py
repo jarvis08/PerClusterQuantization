@@ -429,3 +429,5 @@ def modify_pcq_resnet_qn_pre_hook(model):
 
     # Classifier
     model.fc.quant_noise = False
+
+    return model

@@ -98,7 +98,8 @@ def _finetune(args, tools):
         summary(model, (3, 32, 32))
 
     if args.quant_noise:
-        runtime_helper.qn_prob = args.qn_prob - 0.1
+        # runtime_helper.qn_prob = args.qn_prob - 0.1
+        runtime_helper.qn_prob = args.qn_prob
         tools.shift_qn_prob(model)
 
 
