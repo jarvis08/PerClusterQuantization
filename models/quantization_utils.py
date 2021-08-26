@@ -167,7 +167,7 @@ def shifting(cur, shift, is_conv=False):
     if is_conv:
         total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.LongTensor)
     else:
-        total = ((cur >> shift).add(maskifgreaterthan & one))
+        total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
     return total
 
 
@@ -185,7 +185,7 @@ def shifting2d(cur, shift, is_conv=False):
     if is_conv:
         total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.LongTensor)
     else:
-        total = ((cur >> shift).add(maskifgreaterthan & one))
+        total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
     return total
 
 
@@ -203,7 +203,7 @@ def shifting4d(cur, shift, is_conv=False):
     if is_conv:
         total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.LongTensor)
     else:
-        total = ((cur >> shift).add(maskifgreaterthan & one))
+        total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
     return total
 
 
