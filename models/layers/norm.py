@@ -294,7 +294,7 @@ class FusedBnReLU(nn.Module):
         weight = self.bn.weight.div(std)
         if weight.min() > 0:
             self.s2, self.z2 = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
-        elif w.max() < 0:
+        elif weight.max() < 0:
             self.s2, self.z2 = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
         else:
             self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_qmax)

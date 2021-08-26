@@ -1,6 +1,8 @@
 result/*
 data/*
 runs/*
+exp_results.txt
+test.txt
 
 tags
 .idea

@@ -376,3 +376,12 @@ def load_preprocessed_cifar10_from_darknet():
 #     tensor = torch.tensor(val)
 #     avg_tensor = hvd.allreduce(tensor, name=name)
 #     return avg_tensor.item()
+
+
+def get_time_cost_in_string(t):
+    if t > 3600:
+        return '{:.1f}h'.format(t / 3600)
+    elif t > 60:
+        return '{:.1f}m'.format(t / 60)
+    else:
+        return '{:.1f}s'.format(t)

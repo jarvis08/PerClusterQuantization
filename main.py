@@ -46,7 +46,6 @@ parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise prob
 
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
-parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
 # ### About Bert ###
 # ## Required parameters
@@ -139,7 +138,6 @@ parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
 
 args = parser.parse_args()
-# os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
 print(vars(args))
