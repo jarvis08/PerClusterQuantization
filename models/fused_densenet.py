@@ -25,28 +25,34 @@ class FusedDenseLayer(nn.Module):
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.activation_qmax = 2 ** 32 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
 
         self.bn1 = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
-        self.conv1 = FusedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
+        self.conv1 = FusedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
+                                 arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.bn2 = FusedBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
-        self.conv2 = FusedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
+        self.conv2 = FusedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
+                                 arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
     # torchscript does not yet support *args, so we overload method
     # allowing it to take either a List[Tensor] or single Tensor
-    def forward(self, input):  # noqa: F811
+    def forward(self, input, prev_act_range=None):  # noqa: F811
         if isinstance(input, Tensor):
             prev_features = [input]
         else:
             prev_features = input
 
         x = torch.cat(prev_features, 1)
-        out = self.bn1(x)
+        if prev_act_range is not None:
+            out = self.bn1(x, prev_act_range)
+        else:
+            out = self.bn1(x)
         out = self.conv1(out)
-        out = self.bn2(out)
+        out = self.bn2(out, self.conv1.act_range)
         out = self.conv2(out)
 
         if not self.training:
@@ -81,15 +87,15 @@ class FusedTransition(nn.Sequential):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-
         self.apply_ema = False
 
         self.bn = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
-        self.conv = FusedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
+        self.conv = FusedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
+                                arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
-    def forward(self, x):
-        out = self.bn(x)
+    def forward(self, x, prev_act_range=None):
+        out = self.bn(x, prev_act_range)
         out = self.conv(out)
         out = self.pool(out)
 
@@ -126,6 +132,7 @@ class FusedDenseBlock(nn.ModuleDict):
         bn_size: int,
         growth_rate: int,
         memory_efficient: bool = False,
+        is_first: bool = False
     ) -> None:
         super(FusedDenseBlock, self).__init__()
         self.arg_dict = arg_dict
@@ -133,7 +140,12 @@ class FusedDenseBlock(nn.ModuleDict):
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.is_first_block = is_first
+
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.intermediate_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        if self.is_first_block:
+            self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
 
@@ -147,12 +159,39 @@ class FusedDenseBlock(nn.ModuleDict):
             )
             self.add_module('denselayer%d' % (i + 1), layer)
 
-    def forward(self, init_features: Tensor) -> Tensor:
+    def forward(self, init_features, prev_act_range=None):
+        if self.training and self.is_first_block:
+            if self.apply_ema:
+                self.in_range[0], self.in_range[1] = ema(init_features, self.in_range, self.smooth)
+            else:
+                self.in_range[0] = torch.min(init_features).item()
+                self.in_range[1] = torch.max(init_features).item()
+                self.apply_ema = True
+
         features = [init_features]
         for name, layer in self.items():
-            new_features = layer(features)
+            if name == 'denselayer1':
+                if prev_act_range is None:
+                    new_features = layer(features, self.in_range)
+                else:
+                    new_features = layer(features, prev_act_range)
+            else:
+                new_features = layer(features, self.intermediate_range)
             features.append(new_features)
+            intermediate_out = torch.cat(features, 1)
+            if self.training:
+                if self.apply_ema:
+                    self.intermediate_range[0], self.intermediate_range[1] = ema(intermediate_out, self.intermediate_range, self.smooth)
+                    if self.runtime_helper.apply_fake_quantization:
+                        s, z = calc_qparams(self.intermediate_range[0], self.intermediate_range[1], self.q_max)
+                        _out = fake_quantize(intermediate_out, s, z, self.q_max, self.use_ste)
+                else:
+                    self.intermediate_range[0] = torch.min(intermediate_out).item()
+                    self.intermediate_range[1] = torch.max(intermediate_out).item()
+                    self.apply_ema = True
+
         out = torch.cat(features, 1)
+
         if not self.training:
             return out
 
@@ -190,13 +229,15 @@ class FusedDenseNet(nn.Module):
         self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
+        self.activation_qmax = 2 ** 32 - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
-            ('first_conv', FusedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
+            ('first_conv', FusedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
+                                       arg_dict=arg_dict, act_qmax=self.activation_qmax)),
             ('first_norm', FusedBnReLU(num_init_features, nn.ReLU, arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
@@ -211,6 +252,7 @@ class FusedDenseNet(nn.Module):
                 bn_size=bn_size,
                 growth_rate=growth_rate,
                 memory_efficient=memory_efficient,
+                is_first=True if i == 0 else False
             )
             self.features.add_module('denseblock%d' % (i + 1), block)
             num_features = num_features + num_layers * growth_rate
@@ -235,7 +277,19 @@ class FusedDenseNet(nn.Module):
                 self.in_range[1] = torch.max(x).item()
                 self.apply_ema = True
 
-        out = self.features(x)
+        # out = self.features(x)
+        out = self.features.first_conv(x)
+        out = self.features.first_norm(out, self.features.first_conv.act_range)
+        out = self.features.maxpool(out)
+        out = self.features.denseblock1(out)
+        out = self.features.transition1(out, self.features.denseblock1.act_range)
+        out = self.features.denseblock2(out, self.features.transition1.act_range)
+        out = self.features.transition2(out, self.features.denseblock2.act_range)
+        out = self.features.denseblock3(out, self.features.transition2.act_range)
+        out = self.features.transition3(out, self.features.denseblock3.act_range)
+        out = self.features.denseblock4(out, self.features.transition3.act_range)
+        out = self.features.last_norm(out, self.features.denseblock4.act_range)
+
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)
         out = self.classifier(out)
@@ -290,15 +344,15 @@ def set_fused_densenet(fused, pre):
     return fused
 
 
-def fold_densenet(model):
-    model.features.first_norm.fold_bn()
-    for block_idx in range(1,5):
-        dense_block = getattr(model.features, 'denseblock%d' % block_idx)
-        for i, layer in dense_block.items():
-            layer.bn1.fold_bn()
-            layer.bn2.fold_bn()
-    for tran_idx in range(1,4):
-        getattr(model.features, 'transition%d' % tran_idx).bn.fold_bn()
-    model.features.last_norm.fold_bn()
-    return model
+# def fold_densenet(model):
+#     model.features.first_norm.fold_bn()
+#     for block_idx in range(1,5):
+#         dense_block = getattr(model.features, 'denseblock%d' % block_idx)
+#         for i, layer in dense_block.items():
+#             layer.bn1.fold_bn()
+#             layer.bn2.fold_bn()
+#     for tran_idx in range(1,4):
+#         getattr(model.features, 'transition%d' % tran_idx).bn.fold_bn()
+#     model.features.last_norm.fold_bn()
+#     return model
 

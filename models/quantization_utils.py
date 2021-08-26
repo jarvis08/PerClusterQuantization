@@ -22,7 +22,6 @@ class QuantizationTool(object):
         self.pretrained_model_initializer = None
         self.fused_model_initializer = None
         self.quantized_model_initializer = None
-        self.bn_initializer = None
 
 
 def calc_qparams(_min, _max, q_max):

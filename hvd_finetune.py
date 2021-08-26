@@ -209,10 +209,9 @@ def hvd_finetune(args, tools):
             # for c in range(args.cluster):
             #     cur_dataset = torch.utils.data.Subset(indices_train_loader.dataset, indices_per_cluster[c])
             #     loaders.append(torch.utils.data.DataLoader(cur_dataset, batch_size=8, num_workers=2, shuffle=False))
-            # bn_init_validate(model, loaders, criterion, runtime_helper)
+            # initialize_pcq_model(model, loaders, criterion, runtime_helper)
 
-            model = tools.bn_initialzier(model)
-            runtime_helper.pcq_initialized = True
+    runtime_helper.pcq_initialized = True
 
     hvd.broadcast_parameters(model.state_dict(), root_rank=0)
     hvd.broadcast_optimizer_state(optimizer, root_rank=0)

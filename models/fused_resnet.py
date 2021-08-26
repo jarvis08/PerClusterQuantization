@@ -110,35 +110,41 @@ class FusedBottleneck(nn.Module):
         self._norm_layer = norm_layer
 
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob = \
-            itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
+        self.activation_qmax = 2 ** 32 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.flag_ema_init = False
-        self.flag_fake_quantization = False
-
+        self.apply_ema = False
 
         width = int(planes * (base_width/64.)) * groups
-        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width,
-                                   norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=self.arg_dict)
+        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
+        self.bn1 = FusedBnReLU(width, nn.ReLU, self.arg_dict)
         self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                   norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=self.arg_dict)
-        self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion,
-                                   norm_layer=self._norm_layer, arg_dict=self.arg_dict)
+                                   arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
+        self.bn2 = FusedBnReLU(width, nn.ReLU, self.arg_dict)
+        self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict,
+                                   act_qmax=self.activation_qmax)
+        self.bn3 = FusedBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=False)
-
+        if self.downsample is not None:
+            self.bn_down = FusedBnReLU(planes * self.expansion, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
 
         out = self.conv1(x)
+        out = self.bn1(out, self.conv1.act_range)
         out = self.conv2(out)
+        out = self.bn2(out, self.conv2.act_range)
         out = self.conv3(out)
+        out = self.bn3(out, self.conv3.act_range)
 
         if self.downsample is not None:
             identity = self.downsample(x)
+            identity = self.bn_down(identity, self.downsample.act_range)
 
         out += identity
         out = self.relu(out)
@@ -147,39 +153,34 @@ class FusedBottleneck(nn.Module):
             return out
 
         _out = out
-        if self.flag_ema_init:
+        if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.flag_fake_quantization:
+            if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
                 _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
         else:
             self.act_range[0] = torch.min(out).item()
             self.act_range[1] = torch.max(out).item()
-            self.flag_ema_init = True
+            self.apply_ema = True
         return _out
-
-    def set_block_fq_flag(self):
-        self.flag_fake_quantization = True
-        if self.downsample:
-            self.downsample.flag_fake_quantization = True
-        self.conv1.flag_fake_quantization = True
-        self.conv2.flag_fake_quantization = True
-        self.conv3.flag_fake_quantization = True
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
-            self.downsample.set_qparams(s1, z1)
+            prev_s, prev_z = self.downsample.set_qparams(s1, z1)
+            self.bn_down.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv1.set_qparams(s1, z1)
+        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
-        _, _ = self.conv3.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
+        self.bn3.set_qparams(prev_s, prev_z)
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-
         return self.s3, self.z3
 
 
 class FusedResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, norm_layer=None):
+                 groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FusedResNet, self).__init__()
 
         self.arg_dict = arg_dict
@@ -187,19 +188,17 @@ class FusedResNet(nn.Module):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
+        self.activation_qmax = 2 ** 32 - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
 
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
-
+        self._norm_layer = nn.BatchNorm2d
         self.inplanes = 64
         self.dilation = 1
         self.num_blocks = 4
 
-        self.qn_incre_check = self.quant_noise + self.runtime_helper.qn_prob_increment
+        # self.qn_incre_check = self.quant_noise + self.runtime_helper.qn_prob_increment
 
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -212,7 +211,8 @@ class FusedResNet(nn.Module):
         self.base_width = width_per_group
 
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                      norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=arg_dict)
+                                      arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
+        self.bn1 = FusedBnReLU(self.inplanes, nn.ReLU, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -229,8 +229,8 @@ class FusedResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, bias=False,
-                                       norm_layer=self._norm_layer, arg_dict=self.arg_dict)
+            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict,
+                                       act_qmax=self.activation_qmax)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
@@ -255,6 +255,7 @@ class FusedResNet(nn.Module):
                 self.apply_ema = True
 
         x = self.first_conv(x)
+        x = self.bn1(x, self.first_conv.act_range)
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -275,6 +276,7 @@ class FusedResNet(nn.Module):
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         for i in range(len(self.layer1)):
             prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
         for i in range(len(self.layer2)):
@@ -283,7 +285,7 @@ class FusedResNet(nn.Module):
             prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
         for i in range(len(self.layer4)):
             prev_s, prev_z = self.layer4[i].set_block_qparams(prev_s, prev_z)
-        _, _ = self.fc.set_qparams(prev_s, prev_z)
+        self.fc.set_qparams(prev_s, prev_z)
 
 
 class FusedResNet20(nn.Module):
@@ -396,6 +398,10 @@ def set_fused_resnet(fused, pre):
         block[i].bn2 = copy_bn_from_pretrained(block[i].bn2, pre.layer1[i].bn2)
         block[i].bn1.bn.momentum = bn_momentum
         block[i].bn2.bn.momentum = bn_momentum
+        if type(block[i]) == FusedBottleneck:
+            block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer1[i].conv3)
+            block[i].bn3 = copy_bn_from_pretrained(block[i].bn3, pre.layer1[i].bn3)
+            block[i].bn3.bn.momentum = bn_momentum
 
     # Block 2
     block = fused.layer2
@@ -409,6 +415,10 @@ def set_fused_resnet(fused, pre):
         block[i].bn2 = copy_bn_from_pretrained(block[i].bn2, pre.layer2[i].bn2)
         block[i].bn1.bn.momentum = bn_momentum
         block[i].bn2.bn.momentum = bn_momentum
+        if type(block[i]) == FusedBottleneck:
+            block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer2[i].conv3)
+            block[i].bn3 = copy_bn_from_pretrained(block[i].bn3, pre.layer2[i].bn3)
+            block[i].bn3.bn.momentum = bn_momentum
 
     # Block 3
     block = fused.layer3
@@ -422,6 +432,10 @@ def set_fused_resnet(fused, pre):
         block[i].bn2 = copy_bn_from_pretrained(block[i].bn2, pre.layer3[i].bn2)
         block[i].bn1.bn.momentum = bn_momentum
         block[i].bn2.bn.momentum = bn_momentum
+        if type(block[i]) == FusedBottleneck:
+            block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer3[i].conv3)
+            block[i].bn3 = copy_bn_from_pretrained(block[i].bn3, pre.layer3[i].bn3)
+            block[i].bn3.bn.momentum = bn_momentum
 
     # Block 4
     if fused.num_blocks == 4:
@@ -432,10 +446,13 @@ def set_fused_resnet(fused, pre):
         for i in range(len(block)):
             block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer4[i].conv1)
             block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer4[i].conv2)
+            block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer4[i].conv3)
             block[i].bn1 = copy_bn_from_pretrained(block[i].bn1, pre.layer4[i].bn1)
             block[i].bn2 = copy_bn_from_pretrained(block[i].bn2, pre.layer4[i].bn2)
+            block[i].bn3 = copy_bn_from_pretrained(block[i].bn3, pre.layer4[i].bn3)
             block[i].bn1.bn.momentum = bn_momentum
             block[i].bn2.bn.momentum = bn_momentum
+            block[i].bn3.bn.momentum = bn_momentum
 
     # Classifier
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
