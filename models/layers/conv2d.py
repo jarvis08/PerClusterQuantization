@@ -60,9 +60,20 @@ class QuantizedConv2d(nn.Conv2d):
         if self.padding[0] > 0 or self.padding[1] > 0:
             x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1.item())
         sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
+
+        # _x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1.item())
+        # sum_q1q2 = F.conv2d(_x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
+
+        # fp_x = dequantize_matrix(x, self.s1, self.s2)
+        # w = dequantize_matrix(self.weight, self.s2, self.z2)
+        # b = dequantize_matrix(self.quantized_bias, self.s1 * self.s2, 0)
+        # fp_rst = F.conv2d(fp_x, w, b.squeeze(), self.stride, self.padding, self.dilation, self.groups)
+        # return quantize_matrix(fp_rst, self.s3, self.z3, self.act_qmax)
+
         if self.groups > 1:
             return self.depthwise_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
         return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+        # return self.general_totalsum(_x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
@@ -182,6 +193,10 @@ class QuantizedConv2d(nn.Conv2d):
             total = torch.clamp(total, -32768, 32767)
         elif self.act_qmax == 4294967295:  # INT 32
             total = torch.clamp(total, -2147483648, 2147483647)
+        # rst_int = dequantize_matrix(total.type(torch.cuda.FloatTensor), self.s3, self.z3)
+        # print(rst_int[0])
+        # print(rst_int.shape)
+        # exit()
         return total.type(torch.cuda.FloatTensor)
 
     def depthwise_totalsum(self, x, sum_q1q2):
