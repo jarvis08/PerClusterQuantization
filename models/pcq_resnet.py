@@ -34,7 +34,7 @@ class PCQBasicBlock(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** 16 - 1
+        activation_qmax = 2 ** 32 - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -77,7 +77,7 @@ class PCQBasicBlock(nn.Module):
         if not self.training:
             return out
 
-        if self.runtime_helper.apply_fake_quantization and self.use_ste:
+        if self.runtime_helper.apply_fake_quantization:
             _out = torch.zeros(out.shape).cuda()
         else:
             _out = out
