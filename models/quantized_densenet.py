@@ -158,6 +158,8 @@ class QuantizedDenseNet(nn.Module):
 
         out = self.features(x)
         out = F.adaptive_avg_pool2d(out, (1, 1))
+        out = out.type(torch.cuda.IntTensor)
+        out = out.type(torch.cuda.FloatTensor)
         out = torch.flatten(out, 1)
         out = self.classifier(out)
         return out
