@@ -50,6 +50,10 @@ class RuntimeHelper(object):
         self.batch_cluster = torch.cuda.LongTensor(num_data_per_cluster)
         return input_ordered_by_cluster, target_ordered_by_cluster
 
+    def set_phase2_batch_info(self):
+        bc = [[c, 8] for c in range(self.kmeans.args.cluster)]
+        self.batch_cluster = torch.cuda.LongTensor(bc)
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

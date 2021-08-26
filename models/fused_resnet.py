@@ -40,7 +40,7 @@ class FusedBasicBlock(nn.Module):
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** 32 - 1
+        activation_qmax = 2 ** 16 - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -295,7 +295,7 @@ class FusedResNet20(nn.Module):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False

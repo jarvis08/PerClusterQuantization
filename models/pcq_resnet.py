@@ -34,7 +34,7 @@ class PCQBasicBlock(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** 32 - 1
+        activation_qmax = 2 ** 16 - 1
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -342,7 +342,7 @@ class PCQResNet20(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -570,35 +570,3 @@ def fold_resnet_bn(model):
             block[i].bn2.fold_bn()
     return model
 
-
-def warmup_resnet(model):
-    # First layer
-    model.bn1.train()
-
-    block = model.layer1  # Block 1
-    if block[0].downsample is not None:
-        block[0].bn_down.train()
-    for i in range(len(block)):
-        block[i].bn1.train()
-        block[i].bn2.train()
-
-    # Block 2
-    block = model.layer2  # Block 2
-    block[0].bn_down.train()
-    for i in range(len(block)):
-        block[i].bn1.train()
-        block[i].bn2.train()
-
-    block = model.layer3  # Block 3
-    block[0].bn_down.train()
-    for i in range(len(block)):
-        block[i].bn1.train()
-        block[i].bn2.train()
-
-    if model.num_blocks == 4:  # Block 4
-        block = model.layer4
-        block[0].bn_down.train()
-        for i in range(len(block)):
-            block[i].bn1.train()
-            block[i].bn2.train()
-    return model

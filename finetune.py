@@ -98,6 +98,7 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
             # Phase-2
             runtime_helper.range_update_phase = True
             phase2_input, _ = next(phase2_generator)
+            runtime_helper.set_phase2_batch_info()
             model(phase2_input.cuda())
             phase2_data_iter += 1
             if phase2_data_iter == phase2_data_length:
