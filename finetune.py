@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 import torch
-import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
 from utils import *
@@ -145,8 +144,6 @@ def _finetune(args, tools):
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
-
-    cudnn.benchmark = True
 
     if args.cluster > 1:
         kmeans = KMeans(args)
