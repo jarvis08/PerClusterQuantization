@@ -27,10 +27,10 @@ class FusedDenseLayer(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.activation_qmax = 2 ** 16 - 1
 
-        self.bn1 = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
+        self.bn1 = FusedBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
         self.conv1 = FusedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
                                  arg_dict=arg_dict, act_qmax=self.activation_qmax)
-        self.bn2 = FusedBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
+        self.bn2 = FusedBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict=arg_dict)
         self.conv2 = FusedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
                                  arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.memory_efficient = memory_efficient
@@ -67,7 +67,7 @@ class FusedTransition(nn.Sequential):
         self.q_max = 2 ** self.bit - 1
         self.activation_qmax = 2 ** 16 - 1
 
-        self.bn = FusedBnReLU(num_input_features, nn.ReLU, arg_dict)
+        self.bn = FusedBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
         self.conv = FusedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
                                 arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
@@ -169,7 +169,7 @@ class FusedDenseNet(nn.Module):
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', FusedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
                                        arg_dict=arg_dict, act_qmax=self.activation_qmax)),
-            ('first_norm', FusedBnReLU(num_init_features, nn.ReLU, arg_dict, act_qmax=self.activation_qmax)),
+            ('first_norm', FusedBnReLU(num_init_features, nn.ReLU, act_qmax=self.activation_qmax, arg_dict=arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -191,7 +191,7 @@ class FusedDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', FusedBnReLU(num_features, nn.ReLU, arg_dict))
+        self.features.add_module('last_norm', FusedBnReLU(num_features, nn.ReLU, arg_dict=arg_dict))
         # Linear layer
         self.classifier = FusedLinear(num_features, num_classes, arg_dict=arg_dict)
 
