@@ -106,15 +106,8 @@ class PCQBnReLU(nn.Module):
         self.layer_type = 'PCQBnReLU'
         self.runtime_helper, bit, self.num_clusters = itemgetter('runtime_helper', 'bit', 'cluster')(arg_dict)
 
-        if w_qmax is not None:
-            w_qmax = w_qmax
-        else:
-            w_qmax = 2 ** 8 - 1
-
-        if act_qmax is not None:
-            act_qmax = act_qmax
-        else:
-            act_qmax = 2 ** bit - 1
+        w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
+        act_qmax = act_qmax if act_qmax else 2 ** bit - 1
 
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, \
                                     act_qmax=act_qmax, w_qmax=w_qmax, arg_dict=arg_dict) \
@@ -158,23 +151,16 @@ class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, act_qmax=None, w_qmax=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
-            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
+        momentum, self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
+            itemgetter('bn_momentum', 'bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
-        if w_qmax is not None:
-            self.w_qmax = w_qmax
-        else:
-            self.w_qmax = 2 ** 8 - 1
-
-        if act_qmax is not None:
-            self.act_qmax = act_qmax
-        else:
-            self.act_qmax = 2 ** self.bit - 1
-
+        self.w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
+        self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
         self.is_pcq = True if self.num_clusters > 1 else False
-
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
+
+        self.freeze_running_stats = True if momentum < 0 else False
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
@@ -196,13 +182,21 @@ class FusedBnReLU(nn.Module):
             return self._general_range_update(out, external_range)
 
     def _forward_impl(self, x):
-        x = self.bn(x)
+        if self.training and self.freeze_running_stats:
+            x = self._freezed_bn(x)
+        else:
+            x = self.bn(x)
+
         if self._activation:
             x = self._activation(x)
         return x
 
     def _fake_quantized_bn(self, x):
-        out = self.bn(x)
+        if self.freeze_running_stats:
+            out = self._freezed_bn(x)
+        else:
+            out = self.bn(x)
+
         if self._activation:
             out = self._activation(out)
 
@@ -223,6 +217,14 @@ class FusedBnReLU(nn.Module):
             if self._activation:
                 fake_out = self._activation(fake_out)
         return STE.apply(out, fake_out)
+
+    def _freezed_bn(self, x):
+        mean = self.bn.running_mean.clone()
+        var = self.bn.running_var.clone()
+        x = self.bn(x)
+        self.bn.running_mean = mean
+        self.bn.running_var =  var
+        return x
 
     def _pcq_range_update(self, x, external_range=None):
         if self.runtime_helper.range_update_phase:
