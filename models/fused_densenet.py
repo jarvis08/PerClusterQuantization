@@ -37,17 +37,17 @@ class FusedDenseLayer(nn.Module):
 
     # torchscript does not yet support *args, so we overload method
     # allowing it to take either a List[Tensor] or single Tensor
-    def forward(self, input, prev_act_range):  # noqa: F811
+    def forward(self, input, external_range):  # noqa: F811
         if isinstance(input, Tensor):
             prev_features = [input]
         else:
             prev_features = input
 
         x = torch.cat(prev_features, 1)
-        out = self.bn1(x, prev_act_range)
+        out = self.bn1(x, external_range)
         out = self.conv1(out)
-        out = self.bn2(out, self.conv1.act_range)
-        out = self.conv2(out, prev_act_range)
+        out = self.bn2(out)
+        out = self.conv2(out, external_range)
 
         return out
 
@@ -71,8 +71,8 @@ class FusedTransition(nn.Sequential):
                                 arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
-    def forward(self, x, prev_act_range):
-        out = self.bn(x, prev_act_range)
+    def forward(self, x, external_range):
+        out = self.bn(x, external_range)
         out = self.conv(out)
         out = self.pool(out)
         return out
@@ -116,7 +116,7 @@ class FusedDenseBlock(nn.ModuleDict):
             )
             self.add_module('denselayer%d' % (i + 1), layer)
 
-    def forward(self, init_features, prev_act_range=None):
+    def forward(self, init_features):
         features = [init_features]
         for name, layer in self.items():
             new_features = layer(features, self.act_range)
@@ -130,12 +130,8 @@ class FusedDenseBlock(nn.ModuleDict):
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
         else:
-            if prev_act_range is not None:
-                self.act_range[0] = prev_act_range[0].item()
-                self.act_range[1] = prev_act_range[1].item()
-            else:
-                self.act_range[0] = torch.min(out).item()
-                self.act_range[1] = torch.max(out).item()
+            self.act_range[0] = torch.min(out).item()
+            self.act_range[1] = torch.max(out).item()
             self.apply_ema = True
         return _out
 
@@ -211,9 +207,9 @@ class FusedDenseNet(nn.Module):
 
         # out = self.features(x)
         out = self.features.first_conv(x)
-        out = self.features.first_norm(out, self.features.first_conv.act_range)
+        out = self.features.first_norm(out, self.features.denseblock1.act_range)
         out = self.features.maxpool(out)
-        out = self.features.denseblock1(out, self.features.first_norm.act_range)
+        out = self.features.denseblock1(out)
         out = self.features.transition1(out, self.features.denseblock1.act_range)
         out = self.features.denseblock2(out)
         out = self.features.transition2(out, self.features.denseblock2.act_range)
@@ -230,8 +226,8 @@ class FusedDenseNet(nn.Module):
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         prev_s, prev_z = self.features.first_conv.set_qparams(self.scale, self.zero_point)
-        _, _ = self.features.first_norm.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.denseblock1.set_block_qparams()
+        _, _ = self.features.first_norm.set_qparams(prev_s, prev_z)
         _, _ = self.features.transition1.set_transition_qparams(prev_s, prev_z)
         prev_s, prev_z = self.features.denseblock2.set_block_qparams()
         _, _ = self.features.transition2.set_transition_qparams(prev_s, prev_z)
