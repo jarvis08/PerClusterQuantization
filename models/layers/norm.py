@@ -106,11 +106,11 @@ class PCQBnReLU(nn.Module):
         self.layer_type = 'PCQBnReLU'
         self.runtime_helper, bit, self.num_clusters = itemgetter('runtime_helper', 'bit', 'cluster')(arg_dict)
 
-        w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
-        act_qmax = act_qmax if act_qmax else 2 ** bit - 1
+        self.w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
+        self.act_qmax = act_qmax if act_qmax else 2 ** bit - 1
 
         self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, \
-                                    act_qmax=act_qmax, w_qmax=w_qmax, arg_dict=arg_dict) \
+                                    act_qmax=self.act_qmax, w_qmax=self.w_qmax, arg_dict=arg_dict) \
                                     for _ in range(self.num_clusters)])
 
     def forward(self, x, external_range=None):
