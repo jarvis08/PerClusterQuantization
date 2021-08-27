@@ -21,7 +21,7 @@ def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, activation=None, ac
 class PCQBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, arg_dict=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, activation_qmax=None, arg_dict=None):
         super(PCQBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -34,7 +34,10 @@ class PCQBasicBlock(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** 32 - 1
+        if activation_qmax:
+            activation_qmax = activation_qmax
+        else:
+            activation_qmax = self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -50,14 +53,14 @@ class PCQBasicBlock(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        out = self.bn1(out, self.conv1.act_range)
+        out = self.bn1(out)
 
         out = self.conv2(out)
-        out = self.bn2(out, self.conv2.act_range)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.bn_down(identity, self.downsample.act_range)
+            identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -120,7 +123,7 @@ class PCQBottleneck(nn.Module):
 
     def __init__(
             self, inplanes: int, planes: int, stride: int = 1, downsample = None,
-            groups: int = 1, base_width: int = 64,dilation: int = 1, arg_dict = None
+            groups: int = 1, base_width: int = 64,dilation: int = 1, activation_qmax=None, arg_dict = None
     ) -> None:
         super(PCQBottleneck, self).__init__()
 
@@ -132,7 +135,10 @@ class PCQBottleneck(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        if activation_qmax:
+            activation_qmax = activation_qmax
+        else:
+            activation_qmax = self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -153,15 +159,15 @@ class PCQBottleneck(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        out = self.b1(out, self.conv1.act_range)
+        out = self.b1(out)
         out = self.conv2(out)
-        out = self.bn2(out, self.conv2.act_range)
+        out = self.bn2(out)
         out = self.conv3(out)
-        out = self.bn3(out, self.conv3.act_range)
+        out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.bn_down(identity, self.downsample.act_range)
+            identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -228,7 +234,7 @@ class PCQResNet(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -267,12 +273,12 @@ class PCQResNet(nn.Module):
                                      act_qmax=self.activation_qmax)
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                            self.base_width, previous_dilation, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, stride, downsample, self.groups, self.base_width,
+                            previous_dilation, activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, arg_dict=self.arg_dict))
+                                dilation=self.dilation, activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -304,7 +310,7 @@ class PCQResNet(nn.Module):
                 done += n
 
         x = self.first_conv(x)
-        x = self.bn1(x, self.first_conv.act_range)
+        x = self.bn1(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -364,10 +370,10 @@ class PCQResNet20(nn.Module):
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, stride, downsample, activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, arg_dict=self.arg_dict))
+            layers.append(block(self.inplanes, planes, activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -399,8 +405,7 @@ class PCQResNet20(nn.Module):
                 done += n
 
         x = self.first_conv(x)
-        x = self.bn1(x, self.first_conv.act_range)
-
+        x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
