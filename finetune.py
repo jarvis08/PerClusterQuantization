@@ -261,14 +261,14 @@ def _finetune(args, tools):
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, tuning_time_cost))
 
-    with open('./test.txt', 'a') as f:
-        for name, param in model.named_parameters():
-            if 'act_range' in name:
-                f.write('{}\n'.format(name))
-                if 'norm' in name:
-                    for c in range(args.cluster):
-                        f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
-                else:
-                    for c in range(args.cluster):
-                        f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
+    # with open('./test.txt', 'a') as f:
+    #     for name, param in model.named_parameters():
+    #         if 'act_range' in name:
+    #             f.write('{}\n'.format(name))
+    #             if 'norm' in name:
+    #                 for c in range(args.cluster):
+    #                     f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+    #             else:
+    #                 for c in range(args.cluster):
+    #                     f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)
