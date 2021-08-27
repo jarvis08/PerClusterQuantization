@@ -162,7 +162,11 @@ class FusedBnReLU(nn.Module):
         elif not self.training:
             return self._forward_impl(x)
 
-        out = self._fake_quantized_bn(x, conv_range)
+        if self.runtime_helper.apply_fake_quantization:
+            out = self._fake_quantized_bn(x, conv_range)
+        else:
+            out = self._forward_impl(x)
+
         if self.is_pcq:
             return self._pcq(out)
         else:

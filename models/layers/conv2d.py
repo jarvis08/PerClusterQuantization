@@ -361,10 +361,11 @@ class FusedConv2d(nn.Module):
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False,
-                 norm_layer=None, activation=None, act_qmax=None, arg_dict=None):
+                 norm_layer=None, activation=None, act_qmax=None, arg_dict=None, is_dense=False):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.groups = groups
+        self.is_dense = is_dense
 
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.folded_fq, self.use_ste, self.runtime_helper, self.quant_noise\
@@ -387,7 +388,7 @@ class FusedConv2d(nn.Module):
         self._activation = activation(inplace=False) if activation else None
         self.out_channels = out_channels
 
-    def forward(self, x):
+    def forward(self, x, prev_act_range=None):
         if not self.training:
             x = self.conv(x)
             if self._norm_layer:
@@ -399,9 +400,11 @@ class FusedConv2d(nn.Module):
         if self.folded_fq:
             return self._norm_folded(x)
         else:
+            if prev_act_range is not None:
+                return self._general(x, prev_act_range)
             return self._general(x)
 
-    def _general(self, x):
+    def _general(self, x, prev_act_range=None):
         w = self.conv.weight
         if not self.quant_noise:
             s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
@@ -414,6 +417,11 @@ class FusedConv2d(nn.Module):
             x = self._activation(x)
 
         out = x
+        if prev_act_range is not None:
+            s, z = calc_qparams(prev_act_range[0], prev_act_range[1], self.q_max)
+            out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+            return out
+
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
@@ -473,10 +481,14 @@ class FusedConv2d(nn.Module):
             self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
         self._norm_layer = nn.Identity()
 
-    def set_qparams(self, s1, z1):
+    def set_qparams(self, s1, z1, pass_s=None, pass_z=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+        if pass_s is not None and pass_z is not None:
+            self.s3, self.z3 = pass_s, pass_z
+        else:
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
+
         return self.s3, self.z3
 
