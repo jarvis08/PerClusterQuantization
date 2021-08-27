@@ -24,7 +24,7 @@ class FusedBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 norm_layer=None, arg_dict=None):
+                 norm_layer=None, activation_qmax=None, arg_dict=None):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -33,14 +33,14 @@ class FusedBasicBlock(nn.Module):
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.downsample = downsample
         self.stride = stride
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
 
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** 32 - 1
+        if activation_qmax:
+            activation_qmax = activation_qmax
+        else:
+            activation_qmax = self.q_max
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -55,14 +55,15 @@ class FusedBasicBlock(nn.Module):
 
     def forward(self, x):
         identity = x
+
         out = self.conv1(x)
-        out = self.bn1(out, self.conv1.act_range)
+        out = self.bn1(out)
         out = self.conv2(out)
-        out = self.bn2(out, self.conv2.act_range)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.bn_down(identity, self.downsample.act_range)
+            identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -99,7 +100,7 @@ class FusedBottleneck(nn.Module):
 
     def __init__(self, inplane:int, planes:int, stride:int=1, downsample=None,
                  groups: int = 1, base_width:int =64, dilation:int =1,
-                 norm_layer=None, arg_dict=None) -> None:
+                 norm_layer=None, activation_qmax=None, arg_dict=None) -> None:
         super(FusedBottleneck, self).__init__()
 
         self.downsample = downsample
@@ -113,19 +114,22 @@ class FusedBottleneck(nn.Module):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        if activation_qmax:
+            activation_qmax = activation_qmax
+        else:
+            activation_qmax = self.q_max
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
 
         width = int(planes * (base_width/64.)) * groups
-        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
+        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, act_qmax=activation_qmax)
         self.bn1 = FusedBnReLU(width, nn.ReLU, self.arg_dict)
         self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                   arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
+                                   arg_dict=self.arg_dict, act_qmax=activation_qmax)
         self.bn2 = FusedBnReLU(width, nn.ReLU, self.arg_dict)
         self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict,
-                                   act_qmax=self.activation_qmax)
+                                   act_qmax=activation_qmax)
         self.bn3 = FusedBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
@@ -134,15 +138,15 @@ class FusedBottleneck(nn.Module):
     def forward(self, x):
         identity = x
         out = self.conv1(x)
-        out = self.bn1(out, self.conv1.act_range)
+        out = self.bn1(out)
         out = self.conv2(out)
-        out = self.bn2(out, self.conv2.act_range)
+        out = self.bn2(out)
         out = self.conv3(out)
-        out = self.bn3(out, self.conv3.act_range)
+        out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.bn_down(identity, self.downsample.act_range)
+            identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -186,7 +190,7 @@ class FusedResNet(nn.Module):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -234,11 +238,12 @@ class FusedResNet(nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
                             base_width=self.base_width, dilation=previous_dilation,
-                            norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+                            norm_layer=self._norm_layer, activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+                                dilation=self.dilation, norm_layer=self._norm_layer,
+                                activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
@@ -254,7 +259,7 @@ class FusedResNet(nn.Module):
                 self.apply_ema = True
 
         x = self.first_conv(x)
-        x = self.bn1(x, self.first_conv.act_range)
+        x = self.bn1(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -294,7 +299,7 @@ class FusedResNet20(nn.Module):
             = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.arg_dict = arg_dict
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 32 - 1
+        self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -306,7 +311,8 @@ class FusedResNet20(nn.Module):
 
         self.arg_dict = arg_dict
 
-        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=arg_dict, act_qmax=self.activation_qmax)
+        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
+                                      arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.bn1 = FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
@@ -317,13 +323,15 @@ class FusedResNet20(nn.Module):
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
+            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride,
+                                       arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample,
-                            norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+                            norm_layer=self._norm_layer, activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer,
+                                activation_qmax=self.activation_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -339,7 +347,7 @@ class FusedResNet20(nn.Module):
                 self.apply_ema = True
 
         x = self.first_conv(x)
-        x = self.bn1(x, self.first_conv.act_range)
+        x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
