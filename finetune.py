@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 import torch
-import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
 from utils import *
@@ -146,8 +145,6 @@ def _finetune(args, tools):
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
-    cudnn.benchmark = True
-
     if args.cluster > 1:
         kmeans = KMeans(args)
         if not args.kmeans_path:
@@ -259,7 +256,6 @@ def _finetune(args, tools):
             del quantized_model
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
-    method = None
     if args.cluster > 1:
         if args.quant_noise:
             method = 'QN+PCQ'

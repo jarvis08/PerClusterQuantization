@@ -5,6 +5,7 @@ import torch.nn as nn
 from .layers.conv2d import *
 from .layers.linear import *
 from .layers.norm import *
+from .quant_noise import _quant_noise
 from .quantization_utils import *
 
 
@@ -570,3 +571,54 @@ def fold_resnet_bn(model):
             block[i].bn2.fold_bn()
     return model
 
+def modify_pcq_resnet_qn_pre_hook(model):
+    """
+        Copy from pre model's params to fused layers.
+        Use fused architecture, but not really fused (use CONV & BN seperately)
+    """
+    model.first_conv.quant_noise = False
+    # Block 1
+    block = model.layer1
+    if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
+        m = block[0].downsample
+        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, q_max=m.q_max)
+    for i in range(len(block)):
+        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        if type(block[i]) == PCQBottleneck:
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+
+    # Block 2
+    block = model.layer2
+    block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
+                                            1, q_max=block[0].downsample.q_max)
+    for i in range(len(block)):
+        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        if type(block[i]) == PCQBottleneck:
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+
+    # Block 3
+    block = model.layer3
+    block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
+                                            1, q_max=block[0].downsample.q_max)
+    for i in range(len(block)):
+        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        if type(block[i]) == PCQBottleneck:
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+    # Block 4
+    if model.num_blocks == 4:
+        block = model.layer4
+        block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
+                                                1, q_max=block[0].downsample.q_max)
+        for i in range(len(block)):
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            if type(block[i]) == PCQBottleneck:
+                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+
+    # Classifier
+    model.fc.quant_noise = False
+
+    return model
