@@ -228,8 +228,8 @@ class PCQBottleneck(nn.Module):
 
 
 class PCQResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 arg_dict=None):
+    def __init__(self, block, layers, arg_dict, num_classes=1000, groups=1, \
+                 width_per_group=64, replace_stride_with_dilation=None):
         super(PCQResNet, self).__init__()
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\

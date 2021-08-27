@@ -11,8 +11,9 @@ class QuantizedBn2d(nn.Module):
         super(QuantizedBn2d, self).__init__()
         self.layer_type = 'QuantizedBn2d'
         self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
         self.num_features = num_features
+        self.q_max = 2 ** self.bit - 1
+        self.act_qmax = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -64,10 +65,14 @@ class QuantizedBn2d(nn.Module):
             total[pos] = shifting4d(multiplied, s)
         total = total.add(z3)
 
-        if self.bit == 4:
+        if self.act_qmax == 15:
             total = torch.clamp(total, 0, 15)
-        else:
+        elif self.act_qmax == 255:
             total = torch.clamp(total, -128, 127)
+        elif self.act_qmax == 65535:  # INT 16
+            total = torch.clamp(total, -32768, 32767)
+        elif self.act_qmax == 4294967295:  # INT 32
+            total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
     def _general(self, x):
@@ -84,20 +89,35 @@ class QuantizedBn2d(nn.Module):
             total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.bit == 4:
+        if self.act_qmax == 15:
             total = torch.clamp(total, 0, 15)
-        else:
+        elif self.act_qmax == 255:
             total = torch.clamp(total, -128, 127)
+        elif self.act_qmax == 65535:  # INT 16
+            total = torch.clamp(total, -32768, 32767)
+        elif self.act_qmax == 4294967295:  # INT 32
+            total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
 
 class PCQBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, arg_dict=None):
+    def __init__(self, num_features, activation=None, act_qmax=None, w_qmax=None, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
-        self.runtime_helper, self.num_clusters = itemgetter('runtime_helper', 'cluster')(arg_dict)
+        self.runtime_helper, bit, self.num_clusters = itemgetter('runtime_helper', 'bit', 'cluster')(arg_dict)
 
-        self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, arg_dict=arg_dict)\
+        if w_qmax is not None:
+            w_qmax = w_qmax
+        else:
+            w_qmax = 2 ** 8 - 1
+
+        if act_qmax is not None:
+            act_qmax = act_qmax
+        else:
+            act_qmax = 2 ** bit - 1
+
+        self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, \
+                                    act_qmax=act_qmax, w_qmax=w_qmax, arg_dict=arg_dict) \
                                     for _ in range(self.num_clusters)])
 
     def forward(self, x, external_range=None):
@@ -135,16 +155,22 @@ class PCQBnReLU(nn.Module):
 
 
 class FusedBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, arg_dict=None, act_qmax=None):
+    def __init__(self, num_features, activation=None, act_qmax=None, w_qmax=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
-        self.w_qmax = 2 ** 8 - 1
+
+        if w_qmax is not None:
+            self.w_qmax = w_qmax
+        else:
+            self.w_qmax = 2 ** 8 - 1
+
         if act_qmax is not None:
-            self.q_max = act_qmax
-        else:    
-            self.q_max = 2 ** self.bit - 1
+            self.act_qmax = act_qmax
+        else:
+            self.act_qmax = 2 ** self.bit - 1
+
         self.is_pcq = True if self.num_clusters > 1 else False
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -163,11 +189,7 @@ class FusedBnReLU(nn.Module):
         elif not self.training:
             return self._forward_impl(x)
 
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantized_bn(x)
-        else:
-            out = self._forward_impl(x)
-
+        out = self._fake_quantized_bn(x)
         if self.is_pcq:
             return self._pcq_range_update(out, external_range)
         else:
@@ -231,11 +253,11 @@ class FusedBnReLU(nn.Module):
 
     def _fake_quantize_without_range_update(self, x, external_range=None):
         if external_range is None:
-            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-            out = fake_quantize(x, s, z, self.q_max, self.use_ste)
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+            out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
         else:
-            s, z = calc_qparams(external_range[0], external_range[1], self.q_max)
-            out = fake_quantize(x, s, z, self.q_max, self.use_ste)
+            s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
+            out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
         return out
 
     def _update_range_and_fake_quantize(self, x, external_range=None):
@@ -243,8 +265,8 @@ class FusedBnReLU(nn.Module):
             return self._fake_quantize_without_range_update(x, external_range)
 
         self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, self.use_ste)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+        return fake_quantize(x, s, z, self.act_qmax, self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
@@ -258,7 +280,7 @@ class FusedBnReLU(nn.Module):
             self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_qmax)
 
         if s_external is None:
-            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
         else:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
 
