@@ -146,10 +146,10 @@ class PCQBottleneck(nn.Module):
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
-        self.bn1 = PCQBnReLU(width, nn.ReLU, arg_dict)
+        self.bn1 = PCQBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
         self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation,
                                  arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
-        self.bn2 = PCQBnReLU(width, nn.ReLU, arg_dict)
+        self.bn2 = PCQBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
         self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=self.activation_qmax)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=True)
