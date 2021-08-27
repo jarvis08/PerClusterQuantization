@@ -382,10 +382,11 @@ class FusedConv2d(nn.Module):
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=False,
-                 norm_layer=None, activation=None, act_qmax=None, arg_dict=None):
+                 norm_layer=None, activation=None, act_qmax=None, arg_dict=None, is_dense=False):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.groups = groups
+        self.is_dense = is_dense
 
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.folded_fq, self.use_ste, self.runtime_helper, self.quant_noise\

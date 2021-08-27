@@ -164,6 +164,7 @@ class FusedBnReLU(nn.Module):
             out = self._fake_quantized_bn(x)
         else:
             out = self._forward_impl(x)
+
         if self.is_pcq:
             return self._pcq_range_update(out, external_range)
         else:
