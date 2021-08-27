@@ -135,13 +135,16 @@ class PCQBnReLU(nn.Module):
 
 
 class FusedBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, arg_dict=None):
+    def __init__(self, num_features, activation=None, arg_dict=None, act_qmax=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
         self.w_qmax = 2 ** 8 - 1
-        self.q_max = 2 ** self.bit - 1
+        if act_qmax is not None:
+            self.q_max = act_qmax
+        else:    
+            self.q_max = 2 ** self.bit - 1
         self.is_pcq = True if self.num_clusters > 1 else False
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)

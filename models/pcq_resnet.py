@@ -137,9 +137,9 @@ class PCQBottleneck(nn.Module):
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         if activation_qmax:
-            activation_qmax = activation_qmax
+            self.activation_qmax = activation_qmax
         else:
-            activation_qmax = self.q_max
+            self.activation_qmax = self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
@@ -234,6 +234,7 @@ class PCQResNet(nn.Module):
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+            
         self.q_max = 2 ** self.bit - 1
         self.activation_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
@@ -439,7 +440,7 @@ def pcq_resnet18(arg_dict, **kwargs):
 
 
 def pcq_resnet50(arg_dict, **kwargs):
-    return PCQResNet(PCQBottleneck, [3, 4, 6, 3], arg_dict, **kwargs)
+    return PCQResNet(PCQBottleneck, [3, 4, 6, 3], arg_dict=arg_dict, **kwargs)
 
 
 def pcq_resnet20(arg_dict):
