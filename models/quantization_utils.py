@@ -210,7 +210,7 @@ def transfer_qparams(_fp, _int):
     _int.z3 = torch.nn.Parameter(_fp.z3, requires_grad=False)
     _int.M0 = torch.nn.Parameter(_fp.M0, requires_grad=False)
     _int.shift = torch.nn.Parameter(_fp.shift, requires_grad=False)
-    if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear']:
+    if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d']:
         _int.act_qmax = nn.Parameter(torch.tensor(_fp.act_qmax), requires_grad=False)
     return _int
 
