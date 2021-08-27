@@ -104,17 +104,17 @@ class QuantizedConv2d(nn.Conv2d):
         for out_c in range(filter_batch):
             sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[:, out_c].reshape(bc.shape[0], 1, 1))
 
-        total = torch.zeros(sum_q1q2.shape, dtype=torch.int64).cuda()
+        total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
         pos = (shift >= 0).nonzero(as_tuple=True)[0]
         if len(neg) > 0:
             s = - shift[neg].reshape(neg.shape[0], 1, 1, 1)
             subsum = multiply_M((sum_q1q2[neg].type(torch.cuda.LongTensor) << s), M0[neg])
-            total[neg] = shifting(subsum, 0, is_conv=True)
+            total[neg] = shifting(subsum, 0)
         if len(pos) > 0:
             s = shift[pos].reshape(pos.shape[0], 1, 1, 1)
             subsum = multiply_M(sum_q1q2[pos].type(torch.cuda.LongTensor), M0[pos])
-            total[pos] = shifting4d(subsum, s, is_conv=True)
+            total[pos] = shifting4d(subsum, s)
         total = total.add(z3)
 
         if self.act_qmax == 15:
@@ -158,10 +158,10 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
-            total = shifting(multiplied, 0, is_conv=True)
+            total = shifting(multiplied, 0)
         else:
             multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-            total = shifting(multiplied, self.shift.item(), is_conv=True)
+            total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
         if self.activation is not None:
@@ -210,10 +210,10 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
-            total = shifting(multiplied, 0, is_conv=True)
+            total = shifting(multiplied, 0)
         else:
             multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-            total = shifting(multiplied, self.shift.item(), is_conv=True)
+            total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
         if self.activation is not None:
@@ -260,11 +260,11 @@ class PCQConv2d(nn.Module):
 
         self._activation = activation(inplace=False) if activation else None
 
-    def forward(self, x):
+    def forward(self, x, external_range=None):
         if not self.runtime_helper.pcq_initialized:
             # PCQ initialization
             out = self._general_conv(x)
-            self._update_range_without_fq(out)
+            self._update_range_without_fq(out, external_range)
             return out
 
         elif not self.training:
@@ -275,14 +275,14 @@ class PCQConv2d(nn.Module):
             if self.runtime_helper.range_update_phase:
                 # Phase-2
                 if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_and_update_range(out)
+                    return self._fake_quantize_and_update_range(out, external_range)
                 else:
-                    self._update_range_without_fq(out)
+                    self._update_range_without_fq(out, external_range)
                     return out
             else:
                 # Phase-1
                 if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_without_range_update(out)
+                    return self._fake_quantize_without_range_update(out, external_range)
                 else:
                     return out
 
@@ -303,18 +303,31 @@ class PCQConv2d(nn.Module):
             out = self._activation(out)
         return out
 
-    def _fake_quantize_without_range_update(self, x):
-        out = torch.zeros(x.shape).cuda()
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0]
-            n = self.runtime_helper.batch_cluster[i][1]
-            s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-            out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
-            done += n
+    def _fake_quantize_without_range_update(self, x, external_range=None):
+        if external_range is None:
+            out = torch.zeros(x.shape).cuda()
+            done = 0
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
+                s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
+                done += n
+        else:
+            out = torch.zeros(x.shape).cuda()
+            done = 0
+            for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                c = self.runtime_helper.batch_cluster[i][0]
+                n = self.runtime_helper.batch_cluster[i][1]
+                s, z = calc_qparams(external_range[c][0], external_range[c][1], self.act_qmax)
+                out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
+                done += n
         return out
 
-    def _fake_quantize_and_update_range(self, x):
+    def _fake_quantize_and_update_range(self, x, external_range=None):
+        if external_range is not None:
+            return self._fake_quantize_without_range_update(x, external_range)
+
         out = torch.zeros(x.shape).cuda()
         done = 0
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
@@ -326,7 +339,9 @@ class PCQConv2d(nn.Module):
             done += n
         return out
 
-    def _update_range_without_fq(self, x):
+    def _update_range_without_fq(self, x, external_range=None):
+        if external_range is not None:
+            return x
         # Used in PCQ initialization & Phase-2
         done = 0
         for i in range(self.runtime_helper.batch_cluster.shape[0]):
@@ -341,7 +356,7 @@ class PCQConv2d(nn.Module):
             done += n
         return x
 
-    def set_qparams(self, s1, z1):
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
 
         self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
@@ -350,9 +365,15 @@ class PCQConv2d(nn.Module):
         self.z3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        for c in range(self.num_clusters):
-            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-            self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
+        if s_external is None:
+            for c in range(self.num_clusters):
+                self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
+                self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
+        else:
+            for c in range(self.num_clusters):
+                self.s3[c], self.z3[c] = nn.Parameter(s_external[c], requires_grad=False),\
+                                         nn.Parameter(z_external[c], requires_grad=False)
+                self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 
 
@@ -387,7 +408,7 @@ class FusedConv2d(nn.Module):
         self._activation = activation(inplace=False) if activation else None
         self.out_channels = out_channels
 
-    def forward(self, x):
+    def forward(self, x, external_range=None):
         if not self.training:
             x = self.conv(x)
             if self._norm_layer:
@@ -397,11 +418,11 @@ class FusedConv2d(nn.Module):
             return x
 
         if self.folded_fq:
-            return self._norm_folded(x)
+            return self._norm_folded(x, external_range)
         else:
-            return self._general(x)
+            return self._general(x, external_range)
 
-    def _general(self, x):
+    def _general(self, x, external_range=None):
         w = self.conv.weight
         if not self.quant_noise:
             s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
@@ -414,18 +435,23 @@ class FusedConv2d(nn.Module):
             x = self._activation(x)
 
         out = x
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+        if external_range is None:
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+                    out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+            else:
+                self.act_range[0] = torch.min(x).item()
+                self.act_range[1] = torch.max(x).item()
+                self.apply_ema = True
         else:
-            self.act_range[0] = torch.min(x).item()
-            self.act_range[1] = torch.max(x).item()
-            self.apply_ema = True
+            if self.runtime_helper.apply_fake_quantization:
+                s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
+                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
         return out
 
-    def _norm_folded(self, x):
+    def _norm_folded(self, x, external_range=None):
         general_out = self.conv(x)
         general_out = self._norm_layer(general_out)
         if self._activation:
@@ -450,15 +476,20 @@ class FusedConv2d(nn.Module):
             if self._activation:
                 folded_out = self._activation(folded_out)
 
-            if self.apply_ema:
-                self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-                    folded_out = fake_quantize(folded_out, s, z, self.act_qmax, use_ste=False)
+            if external_range is None:
+                if self.apply_ema:
+                    self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
+                    if self.runtime_helper.apply_fake_quantization:
+                        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+                        folded_out = fake_quantize(folded_out, s, z, self.act_qmax, use_ste=False)
+                else:
+                    self.act_range[0] = torch.min(folded_out).item()
+                    self.act_range[1] = torch.max(folded_out).item()
+                    self.apply_ema = True
             else:
-                self.act_range[0] = torch.min(folded_out).item()
-                self.act_range[1] = torch.max(folded_out).item()
-                self.apply_ema = True
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
+                    folded_out = fake_quantize(folded_out, s, z, self.act_qmax, use_ste=False)
         return STE.apply(general_out, folded_out)
 
     def fold_conv_and_bn(self):
@@ -473,10 +504,15 @@ class FusedConv2d(nn.Module):
             self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
         self._norm_layer = nn.Identity()
 
-    def set_qparams(self, s1, z1):
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+
+        if s_external is None:
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+        else:
+            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
+
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
 
