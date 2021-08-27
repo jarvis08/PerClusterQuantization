@@ -5,14 +5,10 @@ from PerClusterQuantization.models.bert.fused_bert import fused_bert_small, set_
 from PerClusterQuantization.models.bert.quantized_bert import quantized_bert_small, quantize_bert
 from PerClusterQuantization.run_classifier import _run_classifier
 from models import *
-# from models.bert.bert import bert_small
-# from models.bert.fused_bert import fused_bert_small, set_fused_bert
-# from models.bert.fused_bert import fused_bert_small
 from pretrain import _pretrain
 from finetune import _finetune
 #from hvd_finetune import hvd_finetune
 from evaluate import _evaluate
-# from run_classifier import _run_classifier
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")

@@ -180,30 +180,16 @@ class BertEmbeddings(nn.Module):
         self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob, self.runtime_helper = \
             itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob', 'runtime_helper')(arg_dict)
 
-        self.kmeans = joblib.load('/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans/vocab_word_embeddings_checkpoint.pkl')
-        # vocab_word_embeddings_checkpoint.pkl
-        # vacab_input_ids_checkpoint.pkl
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
     def forward(self, input_ids, token_type_ids=None):
         seq_length = input_ids.size(1)
         position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-
-        # np_input_ids = np.array(input_ids).reshape(1, -1)
-        # cluster = self.kmeans.predict(np_input_ids)
-        # cluster = cluster[0]
-        # with open('./vocab_input_ids_{}cluster'.format(cluster), 'a') as f:
-        #     for ids in input_ids:
-        #         f.write('{}, '.format(ids))
-        #     f.write('\n')
-
-
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
         words_embeddings = self.word_embeddings(input_ids)
-
 
         num_clustering = 8
         size = int(words_embeddings.data.shape[2] / num_clustering) # data -> (batch, max_sequence, hidden state)
@@ -221,27 +207,9 @@ class BertEmbeddings(nn.Module):
                     target.append(m)
                     target.append(M)
 
-                """
-                # Hidden 2 file
-                with open('./vocab_word_embedddings_clustering.txt', 'a') as f:
-                    for val in target:
-                        f.write('{},'.format(val))
-                    f.write('\n')
-                target.clear()
-                """
                 np_target = np.array(target).reshape(1, -1)
                 cluster = self.kmeans.predict(np_target)
                 cluster = cluster[0]
-
-                with open('vocab_word_embedding_{}cluster_partition_mM.txt'.format(cluster), 'a') as f:
-                    for val in target:
-                        f.write('{},\n'.format(val))
-                    f.write('\n')
-
-                # with open('vocab_word_embedding_{}cluster_total_mM.txt'.format(cluster), 'a') as f:
-                #     m = torch.min(words_embeddings).item()
-                #     M = torch.max(words_embeddings).item()
-                #     f.write('{}, {}\n'.format(m, M))
 
                 target = []
                 np_target = None
@@ -291,26 +259,6 @@ class FusedBertSelfAttention(nn.Module):
         return x.permute(0, 2, 1, 3)
 
     def forward(self, hidden_states, attention_mask):
-        # num_clustering = 8
-        # size = int(hidden_states.shape[2] / num_clustering)
-        #
-        # target = []
-        # for sentence in hidden_states:
-        #     tmp = torch.zeros(hidden_states.shape[2]).cuda()
-        #     for word in sentence:
-        #         tmp += word
-        #
-        #     tmp = tmp / hidden_states.shape[1]
-        #     for i in range(num_clustering):
-        #         partition = tmp[(i*size) : (i+1)*size -1]
-        #         m = torch.min(partition).item()
-        #         M = torch.max(partition).item()
-        #         target.append(m)
-        #         target.append(M)
-
-        # kmeans = joblib.load('/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans/checkpoint.pkl')
-        # cluster = kmeans.predict(target.reshape(1, -1))
-
         mixed_query_layer = self.query(hidden_states)
         mixed_key_layer = self.key(hidden_states)
         mixed_value_layer = self.value(hidden_states)
@@ -370,16 +318,6 @@ class FusedBertAttention(nn.Module):
         attention_output = self.output(self_output, input_tensor)
 
         _attention_output = attention_output
-
-        # if self.apply_ema:
-        #     self.act_range[0], self.act_range[1] = ema(attention_output, self.act_range, self.smooth)
-        #     if self.runtime_helper.apply_fake_quantization:
-        #         s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-        #         _attention_output = fake_quantize(attention_output, s, z, self.q_max, self.use_ste)
-        # else:
-        #     self.act_range[0] = torch.min(attention_output).item()
-        #     self.act_range[1] = torch.max(attention_output).item()
-        #     self.runtime_helper.apply_fake_quantization = True
 
         return _attention_output
 
@@ -463,21 +401,14 @@ class FusedBertLayer(nn.Module):
             itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        # self.kmeans = joblib.load('/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans/checkpoint.pkl')
         # self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         # self.apply_ema = False
-
-        # self.act_range = torch.zeros([9,3], dtype=torch.float,requires_grad=False)
-        # self.act_range = ((torch.zeros((8, 3), dtype=torch.float, requires_grad=False)))
 
         self.this_layer_act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.act_range = []
         for i in range(8):
             self.act_range.append([0.0, 0.0, 0.0])
-        # self.act_range = nn.Parameter(self.act_range, requires_grad=False)
-        # self.act_range =
-        # self.apply_ema = torch.ones(8, dtype=torch.bool, requires_grad=False)
         self.apply_ema = [False, False, False, False, False, False, False, False]
 
     def forward(self, hidden_states, attention_mask):
@@ -505,7 +436,6 @@ class FusedBertLayer(nn.Module):
         prev_s, prev_z = self.intermediate.set_qparams(prev_s, prev_z)
         _, _ = self.output.set_qparams(prev_s, prev_z)
 
-        # 잠시 act_range를 this_act_range로 변환
         self.s3, self.z3 = calc_qparams(self.this_layer_act_range[0], self.this_layer_act_range[1], self.q_max)
         return self.s3, self.z3
 
@@ -515,8 +445,6 @@ class FusedBertLayer(nn.Module):
         self.act_range[cluster][2] += 1
         m = self.act_range[cluster][0]
         M = self.act_range[cluster][1]
-        # with open('mrpc_{}_layer_cluster{}_mM.txt'.format(num_layer, cluster), 'a') as f:
-        #     f.write('m:{:.5f}\t, M:{:.5f}\n'.format(m, M))
 
     def set_ema_value(self, min ,max, cluster, num_layer):
         self.act_range[cluster][0] = min
@@ -525,8 +453,6 @@ class FusedBertLayer(nn.Module):
         self.apply_ema[cluster] = True
         m = self.act_range[cluster][0]
         M = self.act_range[cluster][1]
-        # with open('mrpc_{}_layer_cluster{}_mM.txt'.format(num_layer, cluster), 'a') as f:
-        #     f.write('m:{:.5f}\t, M:{:.5f}\n'.format(m, M))
 
     def get_act_range(self):
         return self.act_range[0], self.act_range[1], self.act_range[2]
@@ -548,129 +474,14 @@ class FusedBertEncoder(nn.Module):
         self.act_range = (torch.zeros((8, 3), requires_grad=False))  # 3:data count, 0:m, 1:M
         self.act_range = nn.Parameter(self.act_range, requires_grad=False)
         self.apply_ema = torch.zeros(8, dtype=torch.bool, requires_grad=False)
-        #self.kmeans = joblib.load('/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans/checkpoint.pkl')
-        self.kmeans = joblib.load('/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans/'
-             'vocab_word_embeddings_checkpoint.pkl')
-        # np_mnli_128_checkpoint.pkl
-        # np_mrpc_128_checkpoint.pkl
-        # mrpc_word_embeddings_checkpoint.pkl
+
 
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
         all_encoder_layers = []
-        # for layer_module in (self.layer):
-        # for clustering information extract part
-
-        # num_clustering = 8
-        # size = int(hidden_states.shape[2] / num_clustering)
-        # target = []
-        # tmp = None
-        # for sentence in hidden_states:
-        #     tmp = torch.zeros(hidden_states.shape[2]).cuda()
-        #     for word in sentence:
-        #         tmp += word
-        #
-        #     tmp = tmp / hidden_states.shape[1]
-        #     for i in range(num_clustering):
-        #         partition = tmp[(i * size): (i + 1) * size]
-        #         m = torch.min(partition).item()
-        #         M = torch.max(partition).item()
-        #         target.append(m)
-        #         target.append(M)
-
-        num_clustering = 8
-        size = int(hidden_states.shape[2] / num_clustering)
-        seq = 0
-        for sentence in hidden_states:
-            target = []
-            # tmp = torch.zeros(words_embeddings.shape[2]).cuda()
-            for word in sentence[:self.runtime_helper.valid_sequence_len[seq]]:
-                seq += 1
-                for i in range(num_clustering):
-                    partition = word[(i * size): (i + 1) * size]
-                    m = torch.min(partition).item()
-                    M = torch.max(partition).item()
-                    target.append(m)
-                    target.append(M)
-
-                np_target = np.array(target).reshape(1, -1)
-                cluster = self.kmeans.predict(np_target)
-                cluster = cluster[0]
-
-
-                """
-                target = np.array(target).reshape(1, -1)
-                cluster = self.kmeans.predict(target)  # use cluster[0]
-                cluster = cluster[0]
-                """
-                with open('./vocab_layer_output_clustering8_hiddenstate_mM.txt', 'a') as f:
-                    m = torch.min(hidden_states).item()
-                    M = torch.max(hidden_states).item()
-                    f.write('{}, {}\n'.format(m, M))
-
 
         for num_layer in range(4):
             layer_module = self.layer[num_layer]
-            hidden_states = self.layer[num_layer](hidden_states, attention_mask)
-            # hidden_states = layer_module(hidden_states, attention_mask)
-
-            seq = 0
-            for sentence in hidden_states:
-                target = []
-                for word in sentence[:self.runtime_helper.valid_sequence_len[seq]]:
-                    seq += 1
-                    if self.runtime_helper.start_save:
-                        with open('./vocab_transformer_{}_output_total_mM.txt'.format(num_layer), 'a') as f:
-                            _m = torch.min(word).item()
-                            _M = torch.max(word).item()
-                            f.write('{}, {}\n'.format(_m, _M))
-
-                    for i in range(num_clustering):
-                        partition = word[(i * size): (i + 1) * size]
-                        m = torch.min(partition).item()
-                        M = torch.max(partition).item()
-                        target.append(m)
-                        target.append(M)
-
-                    if self.runtime_helper.start_save:
-                        with open('./vacab_transformer_{}_output_per_{}cluster_mM.txt'.format(num_layer, cluster), 'a') as f:
-                            for val in target:
-                                f.write('{},'.format(val))
-                            f.write('\n')
-                    target.clear()
-            """
-            # When KMeans model is valid to turn on the below code
-            if self.runtime_helper.start_save:
-                if layer_module.apply_ema[cluster]:
-                    # _min, _max = ema(hidden_states, layer_module.act_range[cluster], self.smooth)    # MNLI
-                    _min, _max = torch.min(hidden_states).item(), torch.max(hidden_states).item()    # MRPC
-                    layer_module.set_act_range(_min, _max, cluster, num_layer)
-                    if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                        _layer_output = fake_quantize(hidden_states, s, z, self.q_max, self.use_ste)
-                else:
-                    layer_module.set_ema_value(min=torch.min(hidden_states).item(),
-                                               max=torch.max(hidden_states).item(),
-                                               cluster=cluster,
-                                               num_layer=num_layer)
-                    # self.runtime_helper.apply_fake_quantization = True
-           """
-           
-                # with open('./mrpc_validset_activation_{}_layer_output_cluster{}_mM.txt'.format(num_layer, cluster), 'a') as f:
-                #     f.write(
-                #        'm:{:.5f}, \t M:{:.5f}\t, index:{:.1f}\n'.format(layer_module.act_range[cluster][0], layer_module.act_range[cluster][1],
-                #                                             layer_module.act_range[cluster][2]))
-
-            # _hidden_states = hidden_states
-            # if self.training:
-            #     if self.apply_ema:
-            #         self.act_range[0], self.act_range[1] = ema(hidden_states, self.act_range, self.smooth)
-            #         if self.runtime_helper.apply_fake_quantization:
-            #             s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-            #             _hidden_states = fake_quantize(hidden_states, s, z, self.q_max, self.use_ste)
-            #     else:
-            #         self.act_range[0] = torch.min(hidden_states).item()
-            #         self.act_range[1] = torch.max(hidden_states).item()
-            #         self.apply_ema = True
+            hidden_states = layer_module(hidden_states, attention_mask)
 
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
@@ -935,7 +746,6 @@ class FusedBertModel(PreTrainedBertModel):
         prev_s, prev_z = None, None
         for layer in self.encoder.layer:
             prev_s, prev_z = layer.set_qparams(self.scale, self.zero_point)
-        # prev_s, prev_z = self.encoder.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.pooler.set_qparams(prev_s, prev_z)
 
         return prev_s, prev_z
@@ -1017,8 +827,6 @@ class FusedBertForSequenceClassification(PreTrainedBertModel):
             return logits
 
     def set_quantization_params(self):
-        ## 여기서 in_range는 Embedding layer에 대해서 최종 ouput(hiddenstate-512)에 대해서 적용을 해야함.
-        # self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
         # Bert
         self.bert.set_quantization_params()
         # prev_s_q, prev_z_q = self.scale, self.zero_point

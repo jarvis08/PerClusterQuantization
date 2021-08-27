@@ -169,7 +169,7 @@ class BertLayerNorm(nn.Module):
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings.
     """
-    def __init__(self, config, arg_dict=None):
+    def __init__(self, config):
         super(BertEmbeddings, self).__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
@@ -180,13 +180,6 @@ class BertEmbeddings(nn.Module):
         self.LayerNorm = BertLayerNorm(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-        self.arg_dict =arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-
-        self.kmeans = joblib.load('/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans'
-                                  '/vocab_word_embeddings_checkpoint.pkl')
-
     def forward(self, input_ids, token_type_ids=None):
         seq_length = input_ids.size(1)
         position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
@@ -195,34 +188,6 @@ class BertEmbeddings(nn.Module):
             token_type_ids = torch.zeros_like(input_ids)
 
         words_embeddings = self.word_embeddings(input_ids)
-
-        num_clustering = 8
-        size = int(words_embeddings.shape[2] / num_clustering)
-        seq = 0
-        for sentence in words_embeddings:
-            target = []
-            # for word in sentence[:self.runtime_helper.valid_sequence_len[seq]]:
-            for word in sentence[:self.runtime_helper.valid_sequence_len]:          #vocab test
-                for i in range(num_clustering):
-                    partition = word[(i * size): (i + 1) * size]
-                    m = torch.min(partition).item()
-                    M = torch.max(partition).item()
-                    target.append(m)
-                    target.append(M)
-
-                np_target = np.array(target).reshape(1, -1)
-                # cluster = self.kmeans.predict(np_target)
-                # cluster = cluster[0]
-                with open('./whole_vocab_word_distributed_cluster.txt', 'a') as f:
-                    # items = self.runtime_helper.token[self.runtime_helper.token_index]
-                    # self.runtime_helper.token_index += 1
-                    # print('Token idx ->', self.runtime_helper.token_index)
-                    for val in target:
-                        f.write('{}, '.format(val))
-                    f.write('\n')
-                seq += 1
-                target.clear()
-
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
@@ -350,64 +315,10 @@ class BertEncoder(nn.Module):
         layer = BertLayer(config)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
 
-        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-
-        self.kmeans = joblib.load(
-            '/home/hansung/quantization/fixed_before/PerClusterQuantization/result/pretrained_models/bert/kmeans/'
-            'origin_mrpc_word_embeddings_checkpoint.pkl')
-        # origin_mrpc_word_embeddings_checkpoint.pkl
-        # vocab_word_embeddings_checkpoint.pkl
-
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
         all_encoder_layers = []
-        # for layer_module in self.layer:
-        for num_layer in range(4):
-            layer_module = self.layer[num_layer]
+        for layer_module in self.layer:
             hidden_states = layer_module(hidden_states, attention_mask)
-
-            # num_clustering = 8
-            # size = int(hidden_states.shape[2] / num_clustering)
-            # seq = 0
-            # for sentence in hidden_states:
-            #     predict_cluster = [0, 0, 0, 0, 0, 0, 0, 0]
-            #     target_cluster = None
-            #     target = []
-            #
-            #     avg_sentence = torch.zeros(hidden_states.shape[2], requires_grad=False).cuda()
-            #     for word in sentence[:self.runtime_helper.valid_sequence_len[seq]]:
-            #         avg_sentence += word
-            #         for i in range(num_clustering):
-            #             partition = word[(i * size): (i + 1) * size]
-            #             m = torch.min(partition).item()
-            #             M = torch.max(partition).item()
-            #             target.append(m)
-            #             target.append(M)
-            #
-            #         np_target = np.array(target).reshape(1, -1)
-            #         cluster = self.kmeans.predict(np_target)
-            #         cluster = cluster[0]
-            #         predict_cluster[cluster] += 1
-            #         target.clear()
-            #
-            #     target_cluster = max_index(predict_cluster)
-            #     avg_sentence = avg_sentence / self.runtime_helper.valid_sequence_len[seq]
-            #     seq += 1
-            #     if self.runtime_helper.start_save:
-            #         with open('./origin_mrpc_test_{}layer_output_{}cluster_partition_mM.txt'.format(num_layer, target_cluster), 'a' ) as f:
-            #             for i in range(num_clustering):
-            #                 partition = avg_sentence[(i*size) : (i+1)*size]
-            #                 _m = torch.min(partition).item()
-            #                 _M = torch.max(partition).item()
-            #                 f.write('{}, {},'.format(_m, _M))
-            #             f.write('\n')
-            #
-            #         with open('./origin_mrpc_test_{}layer_output_{}cluster_total_mM.txt'.format(num_layer, target_cluster), 'a') as f:
-            #             m = torch.min(avg_sentence).item()
-            #             M = torch.max(avg_sentence).item()
-            #             f.write('{}, {}\n'.format(m, M))
-
-
 
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
@@ -596,10 +507,10 @@ class BertModel(PreTrainedBertModel):
     ```
     """
 
-    def __init__(self, config, arg_dict=None):
+    def __init__(self, config):
         super(BertModel, self).__init__(config)
-        self.embeddings = BertEmbeddings(config, arg_dict=arg_dict)
-        self.encoder = BertEncoder(config, arg_dict=arg_dict)
+        self.embeddings = BertEmbeddings(config)
+        self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
         self.apply(self.init_bert_weights)
 
@@ -679,17 +590,14 @@ class BertForSequenceClassification(PreTrainedBertModel):
     logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    def __init__(self, config, num_labels=3, arg_dict = None):               # Custom each dataset num_labels
+    def __init__(self, config, num_labels=3):               # Custom each dataset num_labels
         super(BertForSequenceClassification, self).__init__(config)
         self.num_labels = num_labels
-        self.bert = BertModel(config, arg_dict=arg_dict)
+        self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
 
-        self.arg_dict = arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None):
         _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
