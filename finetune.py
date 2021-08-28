@@ -248,18 +248,20 @@ def _finetune(args, tools):
             del quantized_model
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
+    method = ''
+    if args.quant_noise:
+        method += 'QN{:.1f}+'.format(args.qn_prob)
     if args.cluster > 1:
-        if args.quant_noise:
-            method = 'QN+PCQ'
-        else:
-            method = 'PCQ'
-    elif args.quant_noise:
-        method = 'QN'
-    else:
-        method = 'QAT'
+            method += 'PCQ'
+    elif not args.quant_noise:
+        method += 'QAT'
+    
+    bn = '' 
+    if args.bn_mementum < 0.1:
+        bn += 'bn{:.3f}, '.format(args.bn_momentum)
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, tuning_time_cost))
+        f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, {}Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, bn, tuning_time_cost))
 
     # with open('./test.txt', 'a') as f:
     #     for name, param in model.named_parameters():
