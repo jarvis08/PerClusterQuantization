@@ -160,7 +160,7 @@ class PCQBottleneck(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        out = self.b1(out)
+        out = self.bn1(out)
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.conv3(out)
