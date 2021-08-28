@@ -80,8 +80,8 @@ class FusedTransition(nn.Sequential):
 
     def set_transition_qparams(self, s1, z1, next_block_s, next_block_z):
         prev_s, prev_z = self.bn.set_qparams(s1, z1)
-        _, _ = self.conv.set_qparams(prev_s, prev_z, next_block_s, next_block_z)
-        return next_block_s, next_block_z
+        self.s3, self.z3 = self.conv.set_qparams(prev_s, prev_z, next_block_s, next_block_z)
+        return self.s3, self.z3
 
 
 class FusedDenseBlock(nn.ModuleDict):
