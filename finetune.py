@@ -258,7 +258,7 @@ def _finetune(args, tools):
     
     bn = '' 
     if args.bn_mementum < 0.1:
-        bn += 'bn{:.3f}, '.format(args.bn_momentum)
+        bn += 'BN{:.3f}, '.format(args.bn_momentum)
 
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, {}Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, bn, tuning_time_cost))
