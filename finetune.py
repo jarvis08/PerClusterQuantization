@@ -266,11 +266,9 @@ def _finetune(args, tools):
     if args.bn_momentum < 0.1:
         bn += 'BN{:.3f}, '.format(args.bn_momentum)
 
-    gpu = ''
-    if args.gpu > 0:
-        gpu = '-gpu' + args.gpu
-    with open('./exp_results{}.txt'.format(gpu), 'a') as f:
-        f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, {}Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, bn, tuning_time_cost))
+    with open('./exp_results.txt', 'a') as f:
+        f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, {}Time {}, Path {}\n'
+                .format(best_score_int, args.arch, method, args.batch, best_epoch, bn, tuning_time_cost, save_path_fp))
 
     # with open('./test.txt', 'a') as f:
     #     for name, param in model.named_parameters():
