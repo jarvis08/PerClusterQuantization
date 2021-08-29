@@ -87,7 +87,7 @@ class PCQAlexNetSmall(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** self.bit - 1
+        act_qmax = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -95,18 +95,18 @@ class PCQAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv4 = PCQConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
-        self.fc1 = PCQLinear(256, 4096, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
-        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
-        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict, act_qmax=activation_qmax)
+                               activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.fc1 = PCQLinear(256, 4096, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict, act_qmax=act_qmax)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

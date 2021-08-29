@@ -42,6 +42,23 @@ def calc_qparams(_min, _max, q_max):
         return s, z
 
 
+def calc_qparams_per_cluster(ranges, q_max):
+    s = ranges[:, 1].sub(ranges[:, 0]).div(q_max)
+
+    if q_max == 15:
+        z = - torch.round(ranges[:, 0] / s)
+        return s, torch.clamp(z, 0, 15)
+    elif q_max == 255:
+        z = -128 - torch.round(ranges[:, 0] / s)
+        return s, torch.clamp(z, -128, 127)
+    elif q_max == 65535:
+        z = -32768 - torch.round(ranges[:, 0] / s)
+        return s, torch.clamp(z, -32768, 32767)
+
+    # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
+    return torch.nn.Parameter(s, requires_grad=False), torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False)
+
+
 def ema(x, averaged, smooth):
     _min = torch.min(x).item()
     _max = torch.max(x).item()
@@ -68,6 +85,44 @@ def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
         _x = (torch.clamp(torch.round(_x / scale + zero_point), -2147483648, 2147483647) - zero_point) * scale
     else:
         _x = (torch.round(_x / scale + zero_point) - zero_point) * scale
+    if use_ste:
+        return STE.apply(x, _x)
+    return _x
+
+
+def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
+    _x = x.detach()
+    s = torch.index_select(scale, 0, cluster_per_data)[:, None]
+    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
+    if q_max == 15:
+        _qmin, _qmax = 0, 15
+    elif q_max == 255:
+        _qmin, _qmax = -128, 127
+    elif q_max == 65535:
+        _qmin, _qmax = -32768, 32767
+    elif q_max == 4294967295:
+        _qmin, _qmax = -2147483648, 2147483647
+
+    _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
+    if use_ste:
+        return STE.apply(x, _x)
+    return _x
+
+
+def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
+    _x = x.detach()
+    s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
+    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
+    if q_max == 15:
+        _qmin, _qmax = 0, 15
+    elif q_max == 255:
+        _qmin, _qmax = -128, 127
+    elif q_max == 65535:
+        _qmin, _qmax = -32768, 32767
+    elif q_max == 4294967295:
+        _qmin, _qmax = -2147483648, 2147483647
+
+    _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
