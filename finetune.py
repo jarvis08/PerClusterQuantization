@@ -17,7 +17,7 @@ def make_indices_list(train_loader, args, runtime_helper):
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Indices per Cluster")
-                runtime_helper.get_pcq_batch(input)
+                runtime_helper.set_cluster_information_of_batch(input)
                 for c in runtime_helper.batch_cluster:
                     total_list[c].append(idx)
                     idx += 1
@@ -78,8 +78,7 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
-            runtime_helper.get_pcq_batch(input)
-            input, target = runtime_helper.sort_by_cluster_info(input, target)
+            runtime_helper.set_cluster_information_of_batch(input)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -96,7 +95,8 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
             runtime_helper.range_update_phase = True
             phase2_input, _ = next(phase2_generator)
             runtime_helper.set_phase2_batch_info()
-            model(phase2_input.cuda())
+            with torch.no_grad():
+                model(phase2_input.cuda())
             phase2_data_iter += 1
             if phase2_data_iter == phase2_data_length:
                 phase2_generator = iter(phase2_loader)
@@ -112,7 +112,7 @@ def get_finetuning_model(arg_dict, tools):
     pretrained_model = load_dnn_model(arg_dict, tools)
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
-    return fused_model, arg_dict
+    return fused_model
 
 
 def _finetune(args, tools):
@@ -123,11 +123,13 @@ def _finetune(args, tools):
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
+    runtime_helper.set_pcq_arguments(args)
+
     arg_dict = deepcopy(vars(args))
-    if runtime_helper:
-        arg_dict['runtime_helper'] = runtime_helper
-    model, arg_dict = get_finetuning_model(arg_dict, tools)
+    arg_dict['runtime_helper'] = runtime_helper
+    model = get_finetuning_model(arg_dict, tools)
     model.cuda()
+
     # if args.dataset == 'imagenet':
     #    summary(model, (3, 224, 224))
     # else:
@@ -145,7 +147,9 @@ def _finetune(args, tools):
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
+    phase2_loader = None
     if args.cluster > 1:
+        # Set K-means model
         kmeans = KMeans(args)
         if not args.kmeans_path:
             kmeans_train_loader = get_data_loader(args, train_dataset, usage='kmeans')
@@ -154,28 +158,30 @@ def _finetune(args, tools):
         else:
             kmeans.load_kmeans_model()
         runtime_helper.kmeans = kmeans
-    # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+        # check_cluster_distribution(runtime_helper.kmeans, train_loader)
 
-    non_augmented_loader = None
-    if args.cluster > 1:
+        # Make non-augmented dataset/loader for Phase-2 training
         non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
         non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
         indices_per_cluster, min_count = make_indices_list(non_augmented_loader, args, runtime_helper)
-        # Load Minimum number of images
+
         list_with_minimum = []
+        n = args.data_per_cluster
         done = 0
-        for loops in range(min_count // 8):
+        for loops in range(min_count // n):
             for c in range(args.cluster):
-                list_with_minimum += indices_per_cluster[c][done:done + 8]
-            done += 8
-        sorted_dataset = torch.utils.data.Subset(non_augmented_dataset, list_with_minimum)
-        sorted_loader = torch.utils.data.DataLoader(sorted_dataset, batch_size=64, num_workers=2, shuffle=False)
-        bc = []
-        for c in range(args.cluster):
-            tmp = [c, 8]
-            bc.append(tmp)
-        runtime_helper.batch_cluster = torch.cuda.LongTensor(bc)
-        initialize_pcq_model(model, sorted_loader, criterion)
+                list_with_minimum += indices_per_cluster[c][done:done +  n]
+            done += n
+        phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_with_minimum)
+        if args.dataset == 'imagenet':
+            n_worker = 32
+        else:
+            n_worker = 4
+        phase2_loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=n * args.cluster,
+                                                    num_workers=n_worker, shuffle=False)
+        if args.pcq_initialization:
+            runtime_helper.set_phase2_batch_info()
+            initialize_pcq_model(model, phase2_loader, criterion)
 
     runtime_helper.pcq_initialized = True
     save_path_fp = set_save_dir(args)
@@ -192,13 +198,13 @@ def _finetune(args, tools):
             tools.qn_forward_pre_hooker(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, train_loader, non_augmented_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
 
         if args.cluster > 1:
-            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger, sort_input=True)
+            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
         else:
             fp_score = validate(model, test_loader, criterion, logger)
 
@@ -252,11 +258,11 @@ def _finetune(args, tools):
     if args.quant_noise:
         method += 'QN{:.1f}+'.format(args.qn_prob)
     if args.cluster > 1:
-            method += 'PCQ'
+        method += 'PCQ'
     elif not args.quant_noise:
         method += 'QAT'
-    
-    bn = '' 
+
+    bn = ''
     if args.bn_mementum < 0.1:
         bn += 'BN{:.3f}, '.format(args.bn_momentum)
 
