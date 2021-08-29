@@ -263,7 +263,7 @@ def _finetune(args, tools):
         method += 'QAT'
 
     bn = ''
-    if args.bn_mementum < 0.1:
+    if args.bn_momentum < 0.1:
         bn += 'BN{:.3f}, '.format(args.bn_momentum)
 
     gpu = ''
