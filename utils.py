@@ -32,27 +32,22 @@ class RuntimeHelper(object):
         self.pcq_initialized = False
         self.range_update_phase = False
 
-    def get_pcq_batch(self, input):
-        self.batch_cluster = self.kmeans.get_batch(input)
+        self.num_clusters = None
+        self.data_per_cluster = None
 
-    def sort_by_cluster_info(self, input, target):
-        num_data_per_cluster = []
-        input_ordered_by_cluster = torch.zeros(input.shape)
-        target_ordered_by_cluster = torch.zeros(target.shape, dtype=torch.long)
-        existing_clusters, counts = torch.unique(self.batch_cluster, return_counts=True)
-        done = 0
-        for cluster, n in zip(existing_clusters, counts):
-            num_data_per_cluster.append([cluster, n])
-            data_indices = (self.batch_cluster == cluster).nonzero(as_tuple=True)[0]
-            input_ordered_by_cluster[done:done + n] = input[data_indices]
-            target_ordered_by_cluster[done:done + n] = target[data_indices]
-            done += n
-        self.batch_cluster = torch.cuda.LongTensor(num_data_per_cluster)
-        return input_ordered_by_cluster, target_ordered_by_cluster
+    def set_cluster_information_of_batch(self, input):
+        self.batch_cluster = self.kmeans.predict_cluster_of_batch(input)
 
     def set_phase2_batch_info(self):
-        bc = [[c, 8] for c in range(self.kmeans.args.cluster)]
+        bc = []
+        for c in range(self.num_clusters):
+            per_cluster = [c for _ in range(self.data_per_cluster)]
+            bc += per_cluster
         self.batch_cluster = torch.cuda.LongTensor(bc)
+
+    def set_pcq_arguments(self, args):
+        self.num_clusters = args.cluster
+        self.data_per_cluster = args.data_per_cluster
 
 
 class AverageMeter(object):
@@ -154,7 +149,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sort_input=False, hvd=None):
+def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -163,9 +158,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, sor
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                runtime_helper.get_pcq_batch(input)
-                if sort_input:
-                    input, target = runtime_helper.sort_by_cluster_info(input, target)
+                runtime_helper.set_cluster_information_of_batch(input)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -288,19 +281,19 @@ def get_train_dataset_without_augmentation(args, normalizer):
 def get_data_loader(args, dataset, usage=None):
     if usage == 'kmeans':
         if args.dataset == 'imagenet':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=10)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=32)
         else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=2)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=4)
     elif usage == 'initializer':
         if args.dataset == 'imagenet':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=10)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=32)
         else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=False, num_workers=2)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=False, num_workers=4)
     else:
         if args.dataset == 'imagenet':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=10)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=32)
         else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=4)
     return loader
 
 
