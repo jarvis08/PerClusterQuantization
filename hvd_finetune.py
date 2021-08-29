@@ -18,7 +18,7 @@ def make_indices_list(train_loader, args, runtime_helper):
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Indices per Cluster")
-                runtime_helper.get_pcq_batch(input)
+                runtime_helper.set_cluster_information_of_batch(input)
                 for c in runtime_helper.batch_cluster:
                     total_list[c].append(idx)
                     idx += 1
@@ -94,7 +94,7 @@ def pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, epoch, 
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
-            runtime_helper.get_pcq_batch(input)
+            runtime_helper.set_cluster_information_of_batch(input)
             input, target = runtime_helper.sort_by_cluster_info(input, target)
             input, target = input.cuda(), target.cuda()
             output = model(input)
