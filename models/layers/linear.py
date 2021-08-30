@@ -254,7 +254,7 @@ class FusedLinear(nn.Module):
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         if self.quant_noise:
-            self.fc = _quant_noise(self.fc, self.qn_prob + self.runtime_helper.qn_prob_increment, 1, q_max=self.q_max)
+            self.fc = _quant_noise(self.fc, self.qn_prob, 1, q_max=self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):

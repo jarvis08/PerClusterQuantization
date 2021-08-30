@@ -136,7 +136,7 @@ def _finetune(args, tools):
 
     if args.quant_noise:
         runtime_helper.qn_prob = args.qn_prob - 0.1
-        tools.qn_forward_pre_hooker(model)
+        tools.shift_qn_prob(model)
 
     epoch_to_start = 1
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -218,9 +218,14 @@ def _finetune(args, tools):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
+        # TODO: Quantnoise prob-increasing method
+        if args.quant_noise and e % args.qn_increment_epoch == 1:
+            model.runtime_helper.qn_prob += 0.1
+            tools.shift_qn_prob(model)
+
         if args.quant_noise and e % 3 == 1:
             runtime_helper.qn_prob += 0.1
-            tools.qn_forward_pre_hooker(model)
+            tools.shift_qn_prob(model)
 
         if args.cluster > 1:
             pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
