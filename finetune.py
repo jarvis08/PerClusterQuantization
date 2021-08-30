@@ -22,37 +22,54 @@ def make_indices_list(train_loader, args, runtime_helper):
                     total_list[c].append(idx)
                     idx += 1
                 t.set_postfix()
-    # shuffle list
-    min_cnt = 99999999999999999
+    # Cluster length list
+    len_per_cluster = []
     for c in range(args.cluster):
-        print("Cluster {} counts {}".format(c, len(total_list[c])))
-        if min_cnt > len(total_list[c]):
-            min_cnt = len(total_list[c])
-    return total_list, min_cnt
+        len_per_cluster.append(len(total_list[c]))
+    return total_list, len_per_cluster
 
 
-def make_phase2_list(args, list_per_cluster, min_cnt):
+def make_phase2_list(args, indices_per_cluster, len_per_cluster):
     for c in range(args.cluster):
-        random.shuffle(list_per_cluster[c])
-    # Make a list with minimum data size
-    list_with_minimum = []
+        random.shuffle(indices_per_cluster[c])
+    min_count = min(len_per_cluster)
+    max_count = max(len_per_cluster)
+
+    cluster_cross_sorted = []
     n = args.data_per_cluster
-    done = 0
-    for loops in range(min_cnt // n):
-        for c in range(args.cluster):
-            list_with_minimum += list_per_cluster[c][done:done + n]
-        done += n
-    return list_with_minimum
+    if args.use_max_cnt:
+        cur_idx = [0 for _ in range(args.cluster)]
+        for loops in range(max_count // n):
+            for c in range(args.cluster):
+                end = cur_idx[c] + n
+                share = end // len_per_cluster[c]
+                remainder = end % len_per_cluster[c]
+                if share < 1:
+                    cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
+                    cur_idx[c] += n
+                else:
+                    cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c]]
+                    random.shuffle(indices_per_cluster[c])
+                    cluster_cross_sorted += indices_per_cluster[c][:remainder]
+                    cur_idx[c] = remainder
+    else:
+        done = 0
+        for loops in range(min_count // n):
+            for c in range(args.cluster):
+                cluster_cross_sorted += indices_per_cluster[c][done:done + n]
+            done += n
+
+    return cluster_cross_sorted
 
 
-def save_indices_list(args, indices_list_per_cluster, min_cnt):
+def save_indices_list(args, indices_list_per_cluster, len_per_cluster):
     path = add_path('', 'result')
     path = add_path(path, 'indices')
     path = add_path(path, args.dataset)
     path = add_path(path, "{}data_per_cluster".format(args.data_per_cluster))
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
-        indices_args = {'indices_list': indices_list_per_cluster, 'min_count': min_cnt,
+        indices_args = {'indices_list': indices_list_per_cluster, 'len_per_cluster': len_per_cluster,
                         'data_per_cluster': args.data_per_cluster, 'dataset': args.dataset}
         json.dump(indices_args, f, indent=4)
 
@@ -66,7 +83,7 @@ def load_indices_list(args):
     assert args.data_per_cluster == saved_args['data_per_cluster'], \
         "Data per cluster should be same. \n" \
         "Model's arg: {}, Loaded arg: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
-    return saved_args['indices_list'], saved_args['min_count']
+    return saved_args['indices_list'], saved_args['len_per_cluster']
 
 
 def initialize_pcq_model(model, loader, criterion):
@@ -103,13 +120,10 @@ def initialize_pcq_model(model, loader, criterion):
     return top1.avg
 
 
-def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
+def pcq_epoch(model, phase1_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    phase2_generator = iter(phase2_loader)
-    phase2_data_length = len(phase2_loader)
-    phase2_data_iter = 0
     model.train()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
@@ -131,14 +145,14 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
 
             # Phase-2
             runtime_helper.range_update_phase = True
-            phase2_input, _ = next(phase2_generator)
+            phase2_input, _ = next(runtime_helper.phase2_generator)
             runtime_helper.set_phase2_batch_info()
             with torch.no_grad():
                 model(phase2_input.cuda())
-            phase2_data_iter += 1
-            if phase2_data_iter == phase2_data_length:
-                phase2_generator = iter(phase2_loader)
-                phase2_data_iter = 0
+
+            runtime_helper.phase2_iterated += 1
+            if runtime_helper.phase2_iterated == runtime_helper.len_phase2_loader:
+                runtime_helper.initialize_phase2_generator()
             runtime_helper.range_update_phase = False
 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
@@ -185,7 +199,6 @@ def _finetune(args, tools):
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
-    phase2_loader = None
     if args.cluster > 1:
         # Set K-means model
         kmeans = KMeans(args)
@@ -201,23 +214,28 @@ def _finetune(args, tools):
         # Make non-augmented dataset/loader for Phase-2 training
         non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
         if args.indices_path:
-            indices_per_cluster, min_cnt = load_indices_list(args)
+            indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
-            indices_per_cluster, min_cnt = make_indices_list(non_augmented_loader, args, runtime_helper)
-            save_indices_list(args, indices_per_cluster, min_cnt)
+            indices_per_cluster, len_per_cluster = make_indices_list(non_augmented_loader, args, runtime_helper)
+            save_indices_list(args, indices_per_cluster, len_per_cluster)
 
-        list_for_phase2 = make_phase2_list(args, indices_per_cluster, min_cnt)
+        list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
+
         if args.dataset == 'imagenet':
             n_worker = 32
         else:
             n_worker = 4
+
         phase2_loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
-                                                    num_workers=n_worker, shuffle=False)
+                                             num_workers=n_worker, shuffle=False)
+        runtime_helper.set_phase2_data_loader(phase2_loader)
+        runtime_helper.initialize_phase2_generator()
+
         if args.pcq_initialization:
             runtime_helper.set_phase2_batch_info()
-            initialize_pcq_model(model, phase2_loader, criterion)
+            initialize_pcq_model(model, runtime_helper.phase2_loader, criterion)
 
     runtime_helper.pcq_initialized = True
     save_path_fp = set_save_dir(args)
@@ -234,7 +252,7 @@ def _finetune(args, tools):
             tools.qn_forward_pre_hooker(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()

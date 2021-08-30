@@ -29,8 +29,14 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.kmeans = None
         self.qn_prob = 0.0
-        self.pcq_initialized = False
+
         self.range_update_phase = False
+        self.pcq_initialized = False
+        self.phase2_loader = False
+        self.phase2_generator = False
+        self.len_phase2_loader = False
+        self.phase2_iterated = 0
+        self.phase2_cluster_info_of_batch = None
 
         self.num_clusters = None
         self.data_per_cluster = None
@@ -39,15 +45,24 @@ class RuntimeHelper(object):
         self.batch_cluster = self.kmeans.predict_cluster_of_batch(input)
 
     def set_phase2_batch_info(self):
-        bc = []
-        for c in range(self.num_clusters):
-            per_cluster = [c for _ in range(self.data_per_cluster)]
-            bc += per_cluster
-        self.batch_cluster = torch.cuda.LongTensor(bc)
+        self.batch_cluster = self.phase2_cluster_info_of_batch
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
         self.data_per_cluster = args.data_per_cluster
+
+    def set_phase2_data_loader(self, loader):
+        self.phase2_loader = loader
+        self.len_phase2_loader = len(loader)
+        bc = []
+        for c in range(self.num_clusters):
+            per_cluster = [c for _ in range(self.data_per_cluster)]
+            bc += per_cluster
+        self.phase2_cluster_info_of_batch = torch.cuda.LongTensor(bc)
+
+    def initialize_phase2_generator(self):
+        self.phase2_generator = iter(self.phase2_loader)
+        self.phase2_iterated = 0
 
 
 class AverageMeter(object):
