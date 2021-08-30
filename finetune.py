@@ -71,7 +71,7 @@ def initialize_pcq_model(model, loader, criterion):
     return top1.avg
 
 
-def pcq_epoch(model, phase1_loader, criterion, optimizer, runtime_helper, epoch, logger):
+def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -96,8 +96,8 @@ def pcq_epoch(model, phase1_loader, criterion, optimizer, runtime_helper, epoch,
 
             # Phase-2
             runtime_helper.range_update_phase = True
-            phase2_input, _ = runtime_helper.get_next_phase2_data()
-            runtime_helper.set_phase2_batch_info()
+            phase2_input, _ = phase2_loader.get_next_data()
+            runtime_helper.batch_cluster = phase2_loader.batch_cluster
             with torch.no_grad():
                 model(phase2_input.cuda())
             runtime_helper.range_update_phase = False
@@ -146,6 +146,7 @@ def _finetune(args, tools):
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
+    phase2_loader = None
     if args.cluster > 1:
         # Set K-means model
         kmeans = KMeans(args)
@@ -199,14 +200,13 @@ def _finetune(args, tools):
         else:
             n_worker = 4
 
-        pahse2_loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=n * args.cluster,
+        loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=n * args.cluster,
                                              num_workers=n_worker, shuffle=False)
-        runtime_helper.set_phase2_data_loader(pahse2_loader)
-        runtime_helper.initialize_phase2_generator()
+        phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
 
         if args.pcq_initialization:
-            runtime_helper.set_phase2_batch_info()
-            initialize_pcq_model(model, runtime_helper.phase2_loader, criterion)
+            runtime_helper.batch_cluster = phase2_loader.batch_cluster
+            initialize_pcq_model(model, phase2_loader.data_loader, criterion)
 
     runtime_helper.pcq_initialized = True
     save_path_fp = set_save_dir(args)
@@ -223,7 +223,7 @@ def _finetune(args, tools):
             tools.qn_forward_pre_hooker(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, train_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
