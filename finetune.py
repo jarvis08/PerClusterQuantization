@@ -28,7 +28,13 @@ def make_indices_list(train_loader, args, runtime_helper):
         if min_count > len(total_list[c]):
             min_count = len(total_list[c])
         random.shuffle(total_list[c])
-    return total_list, min_count
+
+    max_count = -1
+    for c in range(args.cluster):
+        if max_count < len(total_list[c]):
+            max_count = len(total_list[c])
+        random.shuffle(total_list[c])
+    return total_list, min_count, max_count
 
 
 def initialize_pcq_model(model, loader, criterion):
@@ -163,16 +169,39 @@ def _finetune(args, tools):
         # Make non-augmented dataset/loader for Phase-2 training
         non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
         non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
-        indices_per_cluster, min_count = make_indices_list(non_augmented_loader, args, runtime_helper)
+        indices_per_cluster, min_count, max_count = make_indices_list(non_augmented_loader, args, runtime_helper)
 
-        list_with_minimum = []
-        n = args.data_per_cluster
-        done = 0
-        for loops in range(min_count // n):
+        if args.use_max_cnt:
+            len_per_cluster = []
             for c in range(args.cluster):
-                list_with_minimum += indices_per_cluster[c][done:done +  n]
-            done += n
-        phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_with_minimum)
+                len_per_cluster.append(len(indices_per_cluster[c]))
+
+            cluster_cross_sorted = []
+            cur_idx = [0 for _ in range(args.cluster)]
+            n = args.data_per_cluster
+            for loops in range(max_count // n):
+                for c in range(args.cluster):
+                    end = cur_idx[c] + n
+                    share = end // len_per_cluster[c]
+                    remainder = end % len_per_cluster[c]
+                    if share < 1:
+                        cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
+                        cur_idx[c] += n
+                    else:
+                        cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c] - remainder]
+                        random.shuffle(indices_per_cluster[c])
+                        cluster_cross_sorted += indices_per_cluster[c][:remainder]
+                        cur_idx[c] = remainder
+            phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, cluster_cross_sorted)
+        else:
+            cluster_cross_sorted = []
+            n = args.data_per_cluster
+            done = 0
+            for loops in range(min_count // n):
+                for c in range(args.cluster):
+                    cluster_cross_sorted += indices_per_cluster[c][done:done + n]
+                done += n
+            phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, cluster_cross_sorted)
         if args.dataset == 'imagenet':
             n_worker = 32
         else:
