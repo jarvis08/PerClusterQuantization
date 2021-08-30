@@ -42,6 +42,7 @@ parser.add_argument('--kmeans_epoch', default=100, type=int, help='Max epoch of 
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
 parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
 parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
+parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
 parser.add_argument('--use_max_cnt', default=True, type=bool, help="In Phase-2, use max-length of cluster to make data loader")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
