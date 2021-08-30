@@ -76,7 +76,7 @@ class FusedAlexNetSmall(nn.Module):
         super(FusedAlexNetSmall, self).__init__()
         self.bit, self.smooth, self.runtime_helper = itemgetter('bit', 'smooth', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        activation_qmax = 2 ** self.bit - 1
+        act_qmax = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -85,18 +85,18 @@ class FusedAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv4 = FusedConv2d(384, 384, kernel_size=3, stride=1, padding=1, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
         self.conv5 = FusedConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
-                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
-        self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
-        self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=activation_qmax)
-        self.fc3 = FusedLinear(4096, num_classes, bias=True, arg_dict=arg_dict, act_qmax=activation_qmax)
+                                 activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.fc3 = FusedLinear(4096, num_classes, bias=True, arg_dict=arg_dict, act_qmax=act_qmax)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

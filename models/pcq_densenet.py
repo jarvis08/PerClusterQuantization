@@ -17,7 +17,7 @@ class PCQDenseLayer(nn.Module):
         num_input_features: int,
         growth_rate: int,
         bn_size: int,
-        memory_efficient: bool = False,
+        memory_efficient: bool = False
     ) -> None:
         super(PCQDenseLayer, self).__init__()
         self.arg_dict = arg_dict
@@ -25,15 +25,16 @@ class PCQDenseLayer(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 16 - 1
+        # self.act_qmax = 2 ** 32 - 1
+        self.act_qmax = 2 ** 16 - 1
 
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
 
         self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
-                               arg_dict=arg_dict, act_qmax=self.activation_qmax)
-        self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict=arg_dict)
+                               arg_dict=arg_dict, act_qmax=self.act_qmax)
+        self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
                                arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.memory_efficient = memory_efficient
@@ -188,7 +189,9 @@ class PCQDenseNet(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 16 - 1
+        # self.act_qmax = 2 ** 32 - 1
+        self.act_qmax = 2 ** 16 - 1
+
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -196,8 +199,9 @@ class PCQDenseNet(nn.Module):
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
-                                     arg_dict=arg_dict, act_qmax=self.activation_qmax)),
-            ('first_norm', PCQBnReLU(num_init_features, nn.ReLU, act_qmax=self.activation_qmax, arg_dict=arg_dict)),
+                                     arg_dict=arg_dict, act_qmax=self.act_qmax)),
+            ('first_norm', PCQBnReLU(num_init_features, nn.ReLU, act_qmax=self.act_qmax, arg_dict=arg_dict)),
+            # ('first_norm', PCQBnReLU(num_init_features, nn.ReLU, arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 

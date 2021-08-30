@@ -152,45 +152,35 @@ class PCQLinear(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        if act_qmax is not None:
-            self.act_qmax = act_qmax
-        else:
-            self.act_qmax = 2 ** self.bit - 1
+        self.act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
-        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
+        self.apply_ema = False
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         if self.quant_noise:
             self.fc = _quant_noise(self.fc, self.qn_prob, 1, self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
-    def forward(self, x):
+    def forward(self, x, external_range=None):
+        if not self.training:
+            return self._forward_impl(x)
+
         if not self.runtime_helper.pcq_initialized:
-            # PCQ initialization
-            out = self._general_fc(x)
-            self._update_range_without_fq(out)
+            out = self._forward_impl(x)
+            self._update_activation_ranges(out, external_range)
             return out
 
-        elif not self.training:
-            return self._general_fc(x)
+        out = self._fake_quantized_fc(x)
 
+        if self.runtime_helper.range_update_phase:  # Phase-2
+            self._update_activation_ranges(out, external_range)
+
+        if self.runtime_helper.apply_fake_quantization:
+            return self._fake_quantize_activation(out, external_range)
         else:
-            out = self._fake_quantized_fc(x)
-            if self.runtime_helper.range_update_phase:
-                # Phase-2
-                if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_and_update_range(out)
-                else:
-                    self._update_range_without_fq(out)
-                    return out
-            else:
-                # Phase-1
-                if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_without_range_update(out)
-                else:
-                    return out
+            return out
 
-    def _general_fc(self, x):
+    def _forward_impl(self, x):
         x = self.fc(x)
         if self._activation:
             x = self._activation(x)
@@ -207,55 +197,41 @@ class PCQLinear(nn.Module):
             out = self._activation(out)
         return out
 
-    def _fake_quantize_without_range_update(self, x):
-        out = torch.zeros(x.shape).cuda()
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0]
-            n = self.runtime_helper.batch_cluster[i][1]
-            s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-            out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
-            done += n
-        return out
+    def _fake_quantize_activation(self, x, external_range=None):
+        if external_range:
+            s, z = calc_qparams_per_cluster(external_range, self.act_qmax)
+        else:
+            s, z = calc_qparams_per_cluster(self.act_range, self.act_qmax)
+        return fake_quantize_per_cluster_2d(x, s, z, self.act_qmax, self.runtime_helper.batch_cluster, self.use_ste)
 
-    def _fake_quantize_and_update_range(self, x):
-        out = torch.zeros(x.shape).cuda()
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0]
-            n = self.runtime_helper.batch_cluster[i][1]
-            self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
-            s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
-            out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.act_qmax, self.use_ste)
-            done += n
-        return out
+    def _update_activation_ranges(self, x, external_range=None):
+        if external_range:
+            return None
+        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        # (number of data per cluster in batch) == (args.data_per_cluster)
+        n = self.runtime_helper.data_per_cluster
+        if self.apply_ema:
+            for c in range(self.num_clusters):
+                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+        else:
+            for c in range(self.num_clusters):
+                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
+                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
+            self.apply_ema = True
 
-    def _update_range_without_fq(self, x):
-        # Used in PCQ initialization & Phase-2
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0]
-            n = self.runtime_helper.batch_cluster[i][1]
-            if self.apply_ema[c]:
-                self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
-            else:
-                self.act_range[c][0] = torch.min(x[done:done + n]).item()
-                self.act_range[c][1] = torch.max(x[done:done + n]).item()
-                self.apply_ema[c] = True
-            done += n
-        return x
-
-    def set_qparams(self, s1, z1):
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
 
         self.s2, self.z2 = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
 
-        self.s3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.z3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        if s_external:
+            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False),\
+                               nn.Parameter(z_external, requires_grad=False)
+        else:
+            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.act_qmax)
         for c in range(self.num_clusters):
-            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.act_qmax)
             self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 
@@ -272,10 +248,7 @@ class FusedLinear(nn.Module):
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        if act_qmax is not None:
-            self.act_qmax = act_qmax
-        else:
-            self.act_qmax = 2 ** self.bit - 1
+        self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
@@ -312,9 +285,14 @@ class FusedLinear(nn.Module):
             self.apply_ema = True
         return out
 
-    def set_qparams(self, s1, z1):
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+
+        if s_external:
+            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
+        else:
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
