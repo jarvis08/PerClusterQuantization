@@ -127,9 +127,9 @@ class PCQBnReLU(nn.Module):
         if not self.training:
             return out
 
-        if not self.runtime_helper.pcq_initialized:
-            self._update_activation_ranges(out, external_range)
-            return out
+        # if not self.runtime_helper.pcq_initialized:
+        #     self._update_activation_ranges(out, external_range)
+        #     return out
 
         if self.runtime_helper.range_update_phase:
             self._update_activation_ranges(out, external_range)
@@ -205,8 +205,8 @@ class FusedBnReLU(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        if not self.runtime_helper.pcq_initialized:
-            return self._forward_impl(x)
+        # if not self.runtime_helper.pcq_initialized:
+        #     return self._forward_impl(x)
 
         out = self._fake_quantized_bn(x)
         if self.is_pcq:

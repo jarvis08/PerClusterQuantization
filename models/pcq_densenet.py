@@ -46,20 +46,18 @@ class PCQDenseLayer(nn.Module):
             prev_features = [input]
         else:
             prev_features = input
-
         x = torch.cat(prev_features, 1)
         out = self.bn1(x)
         out = self.conv1(out)
         out = self.bn2(out)
         out = self.conv2(out, external_range)
-
         return out
 
     def set_layer_qparams(self, s1, z1):
         prev_s, prev_z = self.bn1.set_qparams(s1, z1)
         prev_s, prev_z = self.conv1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
-        _, _ = self.conv2.set_qparams(prev_s, prev_z, s1, z1)
+        self.conv2.set_qparams(prev_s, prev_z, s1, z1)
 
 
 class PCQTransition(nn.Sequential):
@@ -84,7 +82,7 @@ class PCQTransition(nn.Sequential):
 
     def set_transition_qparams(self, s1, z1, next_block_s, next_block_z):
         prev_s, prev_z = self.bn.set_qparams(s1, z1)
-        _, _ = self.conv.set_qparams(prev_s, prev_z, next_block_s, next_block_z)
+        self.conv.set_qparams(prev_s, prev_z, next_block_s, next_block_z)
         return next_block_s, next_block_z
 
 
@@ -128,46 +126,43 @@ class PCQDenseBlock(nn.ModuleDict):
             features.append(new_features)
         out = torch.cat(features, 1)
 
-        if not self.runtime_helper.pcq_initialized:
-            done = 0
-            for c in range(self.num_clusters):
-                if self.apply_ema[c]:
-                    self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + 8], self.act_range[c], self.smooth)
-                else:
-                    self.act_range[c][0] = torch.min(out[done:done + 8]).item()
-                    self.act_range[c][1] = torch.max(out[done:done + 8]).item()
-                    self.apply_ema[c] = True
-                done += 8
-            return out
-
         if not self.training:
             return out
 
-        # if self.runtime_helper.apply_fake_quantization and self.use_ste:
-        #     _out = torch.zeros(out.shape).cuda()
-        # else:
-        #     _out = out
-        _out = out
+        if not self.runtime_helper.pcq_initialized:
+            # PCQ initialization
+            self._update_activation_ranges(out)
+            return out
 
-        done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0].item()
-            n = self.runtime_helper.batch_cluster[i][1].item()
-            if self.apply_ema[c]:
-                self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
-            else:
-                self.act_range[c][0] = torch.min(out).item()
-                self.act_range[c][1] = torch.max(out).item()
-                self.apply_ema[c] = True
-            done += n
-        return _out
+        # Phase-2
+        if self.runtime_helper.range_update_phase:
+            self._update_activation_ranges(out)
+
+        # Phase-1&2
+        if self.runtime_helper.apply_fake_quantization:
+            return self._fake_quantize_activation(out)
+        else:
+            return out
+
+    def _fake_quantize_activation(self, x):
+        s, z = calc_qparams_per_cluster(self.act_range, self.q_max)
+        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster, self.use_ste)
+
+    def _update_activation_ranges(self, x):
+        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        # (number of data per cluster in batch) == (args.data_per_cluster)
+        n = self.runtime_helper.data_per_cluster
+        if self.apply_ema:
+            for c in range(self.num_clusters):
+                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+        else:
+            for c in range(self.num_clusters):
+                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
+                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
+            self.apply_ema = True
 
     def set_block_qparams(self, prev_s, prev_z):
-        self.s3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.z3 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        for c in range(self.num_clusters):
-            self.s3[c], self.z3[c] = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.activation_qmax)
-
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.activation_qmax)
         for name, layer in self.items():
             prev_s, prev_z = layer.set_layer_qparams(prev_s, prev_z)
         return self.s3, self.z3
@@ -228,32 +223,11 @@ class PCQDenseNet(nn.Module):
         self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
-        if not self.runtime_helper.pcq_initialized:
-            done = 0
-            for c in range(self.num_clusters):
-                if self.apply_ema[c]:
-                    self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + 8], self.in_range[c], self.smooth)
-                else:
-                    self.in_range[c][0] = torch.min(x[done:done + 8]).item()
-                    self.in_range[c][1] = torch.max(x[done:done + 8]).item()
-                    self.apply_ema[c] = True
-                done += 8
-
-        elif self.training:
-            done = 0
-            for i in range(self.runtime_helper.batch_cluster.shape[0]):
-                c = self.runtime_helper.batch_cluster[i][0].item()
-                n = self.runtime_helper.batch_cluster[i][1].item()
-                if self.apply_ema[c]:
-                    self.in_range[c][0], self.in_range[c][1] = ema(x[done:done + n], self.in_range[c], self.smooth)
-                    if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
-                        x[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max)
-                else:
-                    self.in_range[c][0] = torch.min(x).item()
-                    self.in_range[c][1] = torch.max(x).item()
-                    self.apply_ema[c] = True
-                done += n
+        if self.training:
+            if self.runtime_helper.range_update_phase:
+                self._update_input_ranges(x)
+            if self.runtime_helper.apply_fake_quantization:
+                x = self._fake_quantize_input(x)
 
         # out = self.features(x)
         out = self.features.first_conv(x)
@@ -273,11 +247,25 @@ class PCQDenseNet(nn.Module):
         out = self.classifier(out)
         return out
 
+    def _fake_quantize_input(self, x):
+        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
+        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
+
+    def _update_input_ranges(self, x):
+        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        # (number of data per cluster in batch) == (args.data_per_cluster)
+        n = self.runtime_helper.data_per_cluster
+        if self.apply_ema:
+            for c in range(self.num_clusters):
+                self.in_range[c][0], self.in_range[c][1] = ema(x[c * n: (c + 1) * n], self.in_range[c], self.smooth)
+        else:
+            for c in range(self.num_clusters):
+                self.in_range[c][0] = x[c * n: (c + 1) * n].min().item()
+                self.in_range[c][1] = x[c * n: (c + 1) * n].max().item()
+            self.apply_ema = True
+
     def set_quantization_params(self):
-        self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        for c in range(self.num_clusters):
-            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         conv_s, conv_z = self.features.first_conv.set_qparams(self.scale, self.zero_point)
         block1_s, block1_z = self.features.denseblock1.set_block_qparams()
         block2_s, block2_z = self.features.denseblock2.set_block_qparams()
@@ -288,7 +276,7 @@ class PCQDenseNet(nn.Module):
         self.features.transition2.set_transition_qparams(block2_s, block2_z, block3_s, block3_z)
         self.features.transition3.set_transition_qparams(block3_s, block3_z, block4_s, block4_z)
         prev_s, prev_z = self.features.last_norm.set_qparams(block4_s, block4_z)
-        _, _ = self.classifier.set_qparams(prev_s, prev_z)
+        self.classifier.set_qparams(prev_s, prev_z)
 
 
 def pcq_densenet(arg_dict: dict, **kwargs):

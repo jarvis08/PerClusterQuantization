@@ -260,10 +260,10 @@ class PCQConv2d(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        if not self.runtime_helper.pcq_initialized:      # PCQ initialization
-            out = self._forward_impl(x)
-            self._update_activation_ranges(out, external_range)
-            return out
+        # if not self.runtime_helper.pcq_initialized:      # PCQ initialization
+        #     out = self._forward_impl(x)
+        #     self._update_activation_ranges(out, external_range)
+        #     return out
 
         out = self._fake_quantized_conv(x)
 
