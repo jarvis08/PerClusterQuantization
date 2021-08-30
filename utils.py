@@ -64,6 +64,13 @@ class RuntimeHelper(object):
         self.phase2_generator = iter(self.phase2_loader)
         self.phase2_iterated = 0
 
+    def get_next_phase2_data(self):
+        input, target = next(self.phase2_generator)
+        self.phase2_iterated += 1
+        if self.phase2_iterated == self.len_phase2_loader:
+            self.initialize_phase2_generator()
+        return input, target
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

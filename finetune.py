@@ -96,14 +96,10 @@ def pcq_epoch(model, phase1_loader, criterion, optimizer, runtime_helper, epoch,
 
             # Phase-2
             runtime_helper.range_update_phase = True
-            phase2_input, _ = next(runtime_helper.phase2_generator)
+            phase2_input, _ = runtime_helper.get_next_phase2_data()
             runtime_helper.set_phase2_batch_info()
             with torch.no_grad():
                 model(phase2_input.cuda())
-
-            runtime_helper.phase2_iterated += 1
-            if runtime_helper.phase2_iterated == runtime_helper.len_phase2_loader:
-                runtime_helper.initialize_phase2_generator()
             runtime_helper.range_update_phase = False
 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
