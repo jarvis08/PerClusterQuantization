@@ -188,7 +188,7 @@ def _finetune(args, tools):
                         cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
                         cur_idx[c] += n
                     else:
-                        cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c] - remainder]
+                        cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c]]
                         random.shuffle(indices_per_cluster[c])
                         cluster_cross_sorted += indices_per_cluster[c][:remainder]
                         cur_idx[c] = remainder
