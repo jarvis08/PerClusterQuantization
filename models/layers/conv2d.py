@@ -19,6 +19,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
+        self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -34,7 +35,6 @@ class QuantizedConv2d(nn.Conv2d):
         self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-
         self.activation = activation
 
     def forward(self, x):
@@ -67,7 +67,6 @@ class QuantizedConv2d(nn.Conv2d):
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
-        bias = torch.index_select(self.quantized_bias, 0, bc)
         z1 = torch.index_select(self.z1, 0, bc)
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
@@ -78,8 +77,10 @@ class QuantizedConv2d(nn.Conv2d):
             self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
-        for output_ch in range(filter_batch):
-            sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add_(bias[:, output_ch].reshape(bc.shape[0], 1, 1))
+        if self.is_bias:
+            bias = torch.index_select(self.quantized_bias, 0, bc)
+            for output_ch in range(filter_batch):
+                sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add_(bias[:, output_ch].reshape(bc.shape[0], 1, 1))
 
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
@@ -132,8 +133,9 @@ class QuantizedConv2d(nn.Conv2d):
         filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
         stride = self.stride[0]
 
-        for output_ch in range(filter_batch):
-            sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
+        if self.is_bias:
+            for output_ch in range(filter_batch):
+                sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
@@ -260,10 +262,10 @@ class PCQConv2d(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        # if not self.runtime_helper.pcq_initialized:      # PCQ initialization
-        #     out = self._forward_impl(x)
-        #     self._update_activation_ranges(out, external_range)
-        #     return out
+        if not self.runtime_helper.pcq_initialized:      # PCQ initialization
+            out = self._forward_impl(x)
+            self._update_activation_ranges(out, external_range)
+            return out
 
         out = self._fake_quantized_conv(x)
 

@@ -310,6 +310,7 @@ def quantize_layer_and_transfer(_fp, _int):
 
             _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
             if fp_layer.bias is not None:
+                _int.is_bias = nn.Parameter(torch.tensor(True, dtype=torch.bool), requires_grad=False)
                 if _int.num_clusters > 1:
                     for c in range(_int.num_clusters):
                         _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0, 2 ** 32 - 1))
