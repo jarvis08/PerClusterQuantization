@@ -127,9 +127,9 @@ class PCQBnReLU(nn.Module):
         if not self.training:
             return out
 
-        # if not self.runtime_helper.pcq_initialized:
-        #     self._update_activation_ranges(out, external_range)
-        #     return out
+        if not self.runtime_helper.pcq_initialized:
+            self._update_activation_ranges(out, external_range)
+            return out
 
         if self.runtime_helper.range_update_phase:
             self._update_activation_ranges(out, external_range)
@@ -205,8 +205,8 @@ class FusedBnReLU(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        # if not self.runtime_helper.pcq_initialized:
-        #     return self._forward_impl(x)
+        if not self.runtime_helper.pcq_initialized:
+            return self._forward_impl(x)
 
         out = self._fake_quantized_bn(x)
         if self.is_pcq:
@@ -233,16 +233,17 @@ class FusedBnReLU(nn.Module):
             mean = x.detach().mean(dim=(0, 2, 3))
             var = x.detach().var(dim=(0, 2, 3), unbiased=False)
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
+            bias = self.bn.bias - weight * mean
             if weight.min() > 0:
                 s, z = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
             elif weight.max() < 0:
                 s, z = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
             else:
                 s, z = calc_qparams(weight.min(), weight.max(), self.w_qmax)
-            w = fake_quantize(weight, s, z, self.w_qmax, use_ste=False)
-            b = self.bn.bias - w * mean
 
-            fake_out = x * w[None, :, None, None] + b[None, :, None, None]
+            weight = fake_quantize(weight, s, z, self.w_qmax, use_ste=False)
+
+            fake_out = x * weight[None, :, None, None] + bias[None, :, None, None]
             if self._activation:
                 fake_out = self._activation(fake_out)
         return STE.apply(out, fake_out)
