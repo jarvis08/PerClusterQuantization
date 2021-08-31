@@ -300,20 +300,15 @@ def get_train_dataset_without_augmentation(args, normalizer):
 
 def get_data_loader(args, dataset, usage=None):
     if usage == 'kmeans':
-        if args.dataset == 'imagenet':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=32)
-        else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=4)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=args.worker)
     elif usage == 'initializer':
         if args.dataset == 'imagenet':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=32)
+            batch = 128
         else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=False, num_workers=4)
+            batch = 256
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
     else:
-        if args.dataset == 'imagenet':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=32)
-        else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=4)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
     return loader
 
 
@@ -326,7 +321,7 @@ def get_test_loader(args, normalizer):
                                                             transforms.ToTensor(),
                                                             normalizer,
                                                         ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False, num_workers=10)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=args.worker)
     else:
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -336,7 +331,7 @@ def get_test_loader(args, normalizer):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.val_batch, shuffle=False, num_workers=2)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
     return test_loader
 
 

@@ -14,6 +14,7 @@ parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
+parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
@@ -58,6 +59,7 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
+    args.worker = 32
 print(vars(args))
 
 
