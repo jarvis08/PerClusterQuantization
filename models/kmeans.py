@@ -73,7 +73,7 @@ class KMeans(object):
         for trial in range(1, 11):
             model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
             early_stopped = False
-            t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc='Epoch', position=0, ncols=90)
+            t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
             for e in range(self.args.kmeans_epoch):
                 for image, _ in train_loader:
                     train_data = self.get_partitioned_batch(image)
@@ -93,7 +93,7 @@ class KMeans(object):
                     break
             t_epoch.close()
             if early_stopped:
-                print("Early stop training trial-{}'s kmeans model".format(trial))
+                print("Early stop training trial-{} kmeans model".format(trial))
         joblib.dump(best_model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
         self.model = best_model
         check_cluster_distribution(self, train_loader)
