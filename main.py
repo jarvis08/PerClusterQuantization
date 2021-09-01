@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
+parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
@@ -39,8 +39,9 @@ parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize
 parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
-parser.add_argument('--kmeans_epoch', default=100, type=int, help='Max epoch of K-means model to train')
+parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
+parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model multiple times, and use the best model")
 parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
 parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
 parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
@@ -59,7 +60,11 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
-    args.worker = 32
+if not args.worker:
+    if args.dataset == 'imagenet':
+        args.worker = 32
+    else:
+        args.worker = 4
 print(vars(args))
 
 
