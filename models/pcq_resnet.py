@@ -66,10 +66,10 @@ class PCQBasicBlock(nn.Module):
         if not self.training:
             return out
 
-        # if not self.runtime_helper.pcq_initialized:
-        #     # PCQ initialization
-        #     self._update_activation_ranges(out)
-        #     return out
+        if not self.runtime_helper.pcq_initialized:
+            # PCQ initialization
+            self._update_activation_ranges(out)
+            return out
 
         # Phase-2
         if self.runtime_helper.range_update_phase:
@@ -364,18 +364,18 @@ class PCQResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # if not self.runtime_helper.pcq_initialized:
-        #     self._update_input_ranges(x)
-        # elif self.training:
-        #     if self.runtime_helper.range_update_phase:
-        #         self._update_input_ranges(x)
-        #     if self.runtime_helper.apply_fake_quantization:
-        #         x = self._fake_quantize_input(x)
-        if self.training:
+        if not self.runtime_helper.pcq_initialized:
+            self._update_input_ranges(x)
+        elif self.training:
             if self.runtime_helper.range_update_phase:
                 self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
+        #if self.training:
+        #    if self.runtime_helper.range_update_phase:
+        #        self._update_input_ranges(x)
+        #    if self.runtime_helper.apply_fake_quantization:
+        #        x = self._fake_quantize_input(x)
         x = self.first_conv(x)
         x = self.bn1(x)
         x = self.layer1(x)
