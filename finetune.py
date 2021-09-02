@@ -324,8 +324,8 @@ def _finetune(args, tools):
 
     range_fname = None
     for i in range(9999999):
-        range_fname = './range-{}-{}-Batch{}-FQ{}-{}-{}.txt'.format(args.arch, method, args.batch, args.fq, n_cluster, i)
-        if not check_file_exist:
+        range_fname = './range-{}-{}-Batch{}-FQ{}-K{}-{}.txt'.format(args.arch, method, args.batch, args.fq, args.cluster, i)
+        if not check_file_exist(range_fname):
             break
     with open(range_fname, 'a') as f:
         for name, param in model.named_parameters():
