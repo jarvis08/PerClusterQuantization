@@ -221,7 +221,6 @@ def _finetune(args, tools):
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
             indices_per_cluster, len_per_cluster = make_indices_list(non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
-            exit()
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
