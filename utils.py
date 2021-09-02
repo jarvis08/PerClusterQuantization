@@ -335,6 +335,10 @@ def get_test_loader(args, normalizer):
     return test_loader
 
 
+def check_file_exist(path):
+    return os.path.isfile(path) 
+
+
 def add_path(prev_path, to_add):
     path = os.path.join(prev_path, to_add)
     if not os.path.exists(path):
