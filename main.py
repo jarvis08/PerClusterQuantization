@@ -45,7 +45,7 @@ parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means m
 parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
 parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
 parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
-parser.add_argument('--use_max_cnt', default=True, type=bool, help="In Phase-2, use max-length of cluster to make data loader")
+parser.add_argument('--phase2_len_loader', default='mean', type=str, help="Lenght of data loader of Phase-2, fitting to cluster of mean/min/max length")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
