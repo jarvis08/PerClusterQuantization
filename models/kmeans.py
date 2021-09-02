@@ -64,7 +64,6 @@ class KMeans(object):
                 return False
             return True
 
-
         prev_centers = None
         is_converged = False
         best_model = None
@@ -96,12 +95,10 @@ class KMeans(object):
                 print("Early stop training trial-{} kmeans model".format(trial))
         joblib.dump(best_model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
         self.model = best_model
-        check_cluster_distribution(self, train_loader)
 
 
 def check_cluster_distribution(kmeans, train_loader):
-    #n_data = kmeans.args.batch * len(train_loader)
-    n_data = 50000 # CIFAR-10 train dataset
+    n_data = kmeans.args.data_per_cluster * kmeans.args.cluster * len(train_loader)
     n_data_per_cluster = dict()
     for c in range(kmeans.args.cluster):
         n_data_per_cluster[c] = 0
