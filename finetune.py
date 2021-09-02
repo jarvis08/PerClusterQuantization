@@ -66,11 +66,13 @@ def save_indices_list(args, indices_list_per_cluster, len_per_cluster):
     path = add_path('', 'result')
     path = add_path(path, 'indices')
     path = add_path(path, args.dataset)
+    path = add_path(path, "Partition{}".format(args.partition))
     path = add_path(path, "{}data_per_cluster".format(args.data_per_cluster))
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
         indices_args = {'indices_list': indices_list_per_cluster, 'len_per_cluster': len_per_cluster,
-                        'data_per_cluster': args.data_per_cluster, 'dataset': args.dataset}
+                        'data_per_cluster': args.data_per_cluster, 'dataset': args.dataset,
+                        'partition': args.partition}
         json.dump(indices_args, f, indent=4)
 
 
@@ -79,10 +81,13 @@ def load_indices_list(args):
         saved_args = json.load(f)
     assert args.dataset == saved_args['dataset'], \
         "Dataset should be same. \n" \
-        "Model's dataset: {}, Loaded dataset: {}".format(saved_args['dataset'], args.dataset)
+        "Loaded dataset: {}, Current dataset: {}".format(saved_args['dataset'], args.dataset)
+    assert args.partition == saved_args['partition'], \
+        "partition should be same. \n" \
+        "Loaded partition: {}, Current partition: {}".format(saved_args['partition'], args.partition)
     assert args.data_per_cluster == saved_args['data_per_cluster'], \
         "Data per cluster should be same. \n" \
-        "Model's arg: {}, Loaded arg: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
+        "Loaded data per cluster: {}, current data per cluster: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
     return saved_args['indices_list'], saved_args['len_per_cluster']
 
 
@@ -216,6 +221,7 @@ def _finetune(args, tools):
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
             indices_per_cluster, len_per_cluster = make_indices_list(non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
+            exit()
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
