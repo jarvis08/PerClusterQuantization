@@ -7,7 +7,7 @@ from torchsummary import summary
 from utils import *
 from models import *
 from tqdm import tqdm
-
+from time import time
 
 def get_train_loader(args, normalizer, hvd=None):
     if args.dataset == 'imagenet':
@@ -73,6 +73,7 @@ def get_finetuning_model(arg_dict, tools):
 
 
 def _finetune(args, tools):
+    tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
     if args.horovod:
         import horovod.torch as hvd
@@ -113,7 +114,7 @@ def _finetune(args, tools):
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
-    cudnn.benchmark = True
+    #cudnn.benchmark = True
 
     if args.cluster > 1:
         kmeans = KMeans(args)
@@ -133,6 +134,7 @@ def _finetune(args, tools):
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
     best_score_int = 0
+    best_epoch = 0
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
@@ -176,6 +178,7 @@ def _finetune(args, tools):
                 val_score = validate(quantized_model, test_loader, criterion, logger)
 
             if val_score > best_score_int:
+                best_epoch = e
                 # Save best model's FP model
                 with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
                     tmp = vars(args)
@@ -195,7 +198,30 @@ def _finetune(args, tools):
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             del quantized_model
 
-    with open('./exp_results.txt', 'a') as f:
-        f.write('{:.3f}\n'.format(best_score_int))
+    tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
+    method = None
+    if args.cluster > 1:
+        if args.quant_noise:
+            method = 'QN+PCQ'
+        else:
+            method = 'PCQ'
+    elif args.quant_noise:
+        method = 'QN'
+    else:
+        method = 'QAT'
 
+    with open('./exp_results.txt', 'a') as f:
+        f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, tuning_time_cost))
+
+    with open('./test.txt', 'a') as f:
+        for name, param in model.named_parameters():
+            if 'act_range' in name:
+                f.write('{}\n'.format(name))
+                if 'norm' in name:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+                else:
+                    for c in range(args.cluster):
+                        f.write('{}\n'.format(param))
+                        #f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)
