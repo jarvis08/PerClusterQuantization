@@ -146,6 +146,58 @@ class BertConfig(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
+class FusedBertLayerNorm(nn.Module):
+    def __init__(self, config, variance_epsilon=1e-12, arg_dict=None):
+        """Construct a layernorm module in the TF style (epsilon inside the square root).
+        """
+        super(FusedBertLayerNorm, self).__init__()
+        self.gamma = nn.Parameter(torch.ones(config.hidden_size))
+        self.beta = nn.Parameter(torch.zeros(config.hidden_size))
+        self.variance_epsilon = variance_epsilon
+
+        self.arg_dict = arg_dict
+        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.q_max= 2 ** self.bit - 1
+
+        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.apply_ema = False
+
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        # self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+
+    def forward(self, x):
+
+        if self.apply_ema:
+            self.in_range[0], self.in_range = ema(x, self.in_range, self.smooth)
+        else:
+            self.in_range[0] = torch.min(x).item()
+            self.in_range[0] = torch.max(x).item()
+            # self.apply_ema = True
+
+        u = x.mean(-1, keepdim=True)
+        s = (x - u).pow(2).mean(-1, keepdim=True)
+        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
+
+        _out = self.gamma * x + self.beta
+
+        if self.apply_ema:
+            self.act_range[0], self.act_range[1] = ema(_out, self.act_range, self.smooth)
+        else:
+            self.act_range[0] = torch.min(_out).item()
+            self.act_range[1] = torch.max(_out).item()
+            self.apply_ema = True
+
+        return _out
+
+    def set_qparams(self, s1, z1):
+        self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
+        self.s2, self.z2 = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+
+        return self.s3, self.z3
+
+
 class BertLayerNorm(nn.Module):
     def __init__(self, config, variance_epsilon=1e-12):
         """Construct a layernorm module in the TF style (epsilon inside the square root).
@@ -179,8 +231,6 @@ class BertEmbeddings(nn.Module):
 
         self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob, self.runtime_helper = \
             itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob', 'runtime_helper')(arg_dict)
-
-        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
     def forward(self, input_ids, token_type_ids=None):
         seq_length = input_ids.size(1)
@@ -221,7 +271,10 @@ class BertEmbeddings(nn.Module):
         embeddings = words_embeddings + position_embeddings + token_type_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
+
         return embeddings
+
+
 
 
 class FusedBertSelfAttention(nn.Module):
@@ -287,14 +340,12 @@ class FusedBertSelfAttention(nn.Module):
         return context_layer
 
     def set_qparams(self, s1, z1):
+        self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         prev_s_q, prev_z_q = self.query.set_qparams(s1, z1)
         prev_s_k, prev_z_k = self.key.set_qparams(s1, z1)
         prev_s_v, prev_z_v = self.value.set_qparams(s1, z1)
 
-        prev_s = prev_s_q * prev_s_k * prev_s_v
-        prev_z = prev_z_q * prev_z_k * prev_z_v
-
-        return prev_s, prev_z
+        # return prev_s, prev_z
 
 
 
@@ -417,17 +468,7 @@ class FusedBertLayer(nn.Module):
         layer_output = self.output(intermediate_output, attention_output)
 
         _layer_output = layer_output
-        # make EMA Code
-        if self.training:
-            if self.apply_ema:
-                self.this_layer_act_range[0], self.this_layer_act_range[1] = ema(layer_output, self.this_layer_act_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.this_layer_act_range[0], self.this_layer_act_range[1], self.q_max)
-                    _layer_output = fake_quantize(layer_output, s, z, self.q_max, self.use_ste)
-            else:
-                self.this_layer_act_range[0] = torch.min(layer_output).item()
-                self.this_layer_act_range[1] = torch.max(layer_output).item()
-                self.apply_ema = True
+
 
         return _layer_output
 
@@ -463,25 +504,35 @@ class FusedBertEncoder(nn.Module):
         layer = FusedBertLayer(config, arg_dict=arg_dict)       # BertAttention, BertIntermediate, BertOuput
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
 
-        # self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        # self.apply_ema = False
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.apply_ema = False
 
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.use_ste, self.quant_noise, self.qn_prob, self.runtime_helper = \
             itemgetter('bit', 'smooth', 'ste', 'quant_noise', 'qn_prob', 'runtime_helper')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.act_range = (torch.zeros((8, 3), requires_grad=False))  # 3:data count, 0:m, 1:M
-        self.act_range = nn.Parameter(self.act_range, requires_grad=False)
-        self.apply_ema = torch.zeros(8, dtype=torch.bool, requires_grad=False)
+        # self.act_range = (torch.zeros((8, 3), requires_grad=False))  # 3:data count, 0:m, 1:M
+        # self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        # self.apply_ema = torch.zeros(8, dtype=torch.bool, requires_grad=False)
 
 
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
         all_encoder_layers = []
 
         for num_layer in range(4):
-            layer_module = self.layer[num_layer]
-            hidden_states = layer_module(hidden_states, attention_mask)
+            # layer_module = self.layer[num_layer]
+            hidden_states = self.layer[num_layer](hidden_states, attention_mask)
+
+            if self.training:
+                if self.layer[num_layer].apply_ema:
+                    self.layer[num_layer].act_range[0], self.layer[num_layer].act_range[1] = ema(hidden_states,
+                                                                                                 self.layer[num_layer].act_range, self.smooth)
+                else:
+                    self.layer[num_layer].act_range[0] = torch.min(hidden_states).item()
+                    self.layer[num_layer].act_range[1] = torch.max(hidden_states).item()
+                    self.layer[num_layer].apply_ema = True
+
 
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
@@ -490,13 +541,6 @@ class FusedBertEncoder(nn.Module):
 
         return all_encoder_layers
 
-    def set_qparams(self, s1, z1):
-        prev_s, prev_z = s1, z1
-        for transformer in self.layer:
-            prev_s, prev_z = transformer.set_qparams(prev_s, prev_z)
-
-        # self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-        return prev_s, prev_z
 
 
 
@@ -741,15 +785,11 @@ class FusedBertModel(PreTrainedBertModel):
             encoded_layers = encoded_layers[-1]
         return encoded_layers, pooled_output
 
-    def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-        prev_s, prev_z = None, None
-        for layer in self.encoder.layer:
-            prev_s, prev_z = layer.set_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.pooler.set_qparams(prev_s, prev_z)
+    def set_qparams(self):
 
-        return prev_s, prev_z
 
+
+        return
 
 
 class FusedBertForSequenceClassification(PreTrainedBertModel):
@@ -828,7 +868,9 @@ class FusedBertForSequenceClassification(PreTrainedBertModel):
 
     def set_quantization_params(self):
         # Bert
-        self.bert.set_quantization_params()
+        prev_s, prev_z = self.bert.set_quantization_params()
+        _, _ = self.classifier.set_qparams(prev_s, prev_z)
+
         # prev_s_q, prev_z_q = self.scale, self.zero_point
         # prev_s_k, prev_z_k = self.scale, self.zero_point
         # prev_s_v, prev_z_v = self.scale, self.zero_point

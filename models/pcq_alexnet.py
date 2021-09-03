@@ -112,6 +112,7 @@ class PCQAlexNetSmall(nn.Module):
         if self.training:
             done = 0
             for i in range(self.runtime_helper.batch_cluster.shape[0]):
+                print('\n',self.runtime_helper.batch_cluster)
                 c = self.runtime_helper.batch_cluster[i][0]
                 n = self.runtime_helper.batch_cluster[i][1]
                 if self.apply_ema[c]:
