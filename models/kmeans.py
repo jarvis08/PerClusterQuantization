@@ -35,9 +35,9 @@ class KMeans(object):
                     rst = torch.cat([rst, tmp], dim=-1)
         return rst.view(rst.size(0), -1).numpy()
 
-    def load_kmeans_model(self):
+    def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
-        with open(os.path.join(self.args.kmeans_path, 'params.json'), 'r') as f:
+        with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             saved_args = json.load(f)
         assert self.args.cluster == saved_args['k'], \
             "Current model's target # of clusters must be same with K-means model's it" \
@@ -45,14 +45,14 @@ class KMeans(object):
         assert self.args.partition == saved_args['num_partitions'], \
             "Current model's target # of partitions to divide an channel must be same with K-means model's it" \
             "\n(K-means model's = {}, Current model's = {}".format(saved_args['num_partitions'], self.args.partition)
-        self.model = joblib.load(os.path.join(self.args.kmeans_path, 'checkpoint.pkl'))
+        self.model = joblib.load(os.path.join(self.args.clustering_path, 'checkpoint.pkl'))
     
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
         return torch.cuda.LongTensor(cluster_info)
 
-    def train_kmeans_model(self, train_loader):
+    def train_clustering_model(self, train_loader):
         def check_convergence(prev, cur, tol):
             """
                 Relative tolerance with regards to Frobenius norm of the difference in the cluster centers
@@ -93,7 +93,7 @@ class KMeans(object):
             t_epoch.close()
             if early_stopped:
                 print("Early stop training trial-{} kmeans model".format(trial))
-        joblib.dump(best_model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
+        joblib.dump(best_model, os.path.join(self.args.clustering_path + '/checkpoint.pkl'))
         self.model = best_model
 
 

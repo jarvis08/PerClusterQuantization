@@ -12,6 +12,7 @@ from .fused_alexnet import *
 from .fused_densenet import *
 
 from .kmeans import *
+from .birch import *
 from .pcq_alexnet import *
 from .pcq_resnet import *
 from .pcq_densenet import *

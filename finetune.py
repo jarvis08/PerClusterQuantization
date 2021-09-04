@@ -9,7 +9,7 @@ from tqdm import tqdm
 from time import time
 
 
-def make_indices_list(train_loader, args, runtime_helper):
+def make_indices_list(clustering_model, train_loader, args, runtime_helper):
     total_list = [[] for _ in range(args.cluster)]
 
     idx = 0
@@ -17,7 +17,7 @@ def make_indices_list(train_loader, args, runtime_helper):
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Indices per Cluster")
-                runtime_helper.set_cluster_information_of_batch(input)
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 for c in runtime_helper.batch_cluster:
                     total_list[c].append(idx)
                     idx += 1
@@ -34,9 +34,9 @@ def make_phase2_list(args, indices_per_cluster, len_per_cluster):
         random.shuffle(indices_per_cluster[c])
 
     n = args.data_per_cluster
-    if args.phase2_len_loader == 'mean':
+    if args.phase2_loader_strategy == 'mean':
         counted = sum(len_per_cluster) // args.cluster
-    elif args.phase2_len_loader == 'min':
+    elif args.phase2_loader_strategy == 'min':
         counted = min(len_per_cluster)
     else:
         counted = max(len_per_cluster)
@@ -123,7 +123,8 @@ def initialize_pcq_model(model, loader, criterion):
     return top1.avg
 
 
-def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
+#def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
+def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -133,7 +134,8 @@ def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
-            runtime_helper.set_cluster_information_of_batch(input)
+            #runtime_helper.set_cluster_information_of_batch(input, clustering_model)
+            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -199,17 +201,19 @@ def _finetune(args, tools):
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
     phase2_loader = None
+    clustering_model = None
     if args.cluster > 1:
         # Set K-means model
-        kmeans = KMeans(args)
-        if not args.kmeans_path:
-            kmeans_train_loader = get_data_loader(args, train_dataset, usage='kmeans')
-            args.kmeans_path = set_kmeans_dir(args)
-            kmeans.train_kmeans_model(kmeans_train_loader)
+        #kmeans = KMeans(args)
+        clustering_model = tools.clustering_method(args)
+        if not args.clustering_path:
+            clustering_train_loader = get_data_loader(args, train_dataset, usage='clustering')
+            args.clustering_path = set_clustering_dir(args)
+            clustering_model.train_clustering_model(clustering_train_loader)
         else:
-            kmeans.load_kmeans_model()
-        runtime_helper.kmeans = kmeans
-        # check_cluster_distribution(runtime_helper.kmeans, train_loader)
+            clustering_model.load_clustering_model()
+        #runtime_helper.kmeans = kmeans
+        #check_cluster_distribution(runtime_helper.kmeans, train_loader)
 
         # Make non-augmented dataset/loader for Phase-2 training
         non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
@@ -217,8 +221,10 @@ def _finetune(args, tools):
             indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
-            indices_per_cluster, len_per_cluster = make_indices_list(non_augmented_loader, args, runtime_helper)
+            indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
+            #check_cluster_distribution(runtime_helper.kmeans, non_augmented_loader)
+            check_cluster_distribution(clustering_model, non_augmented_loader)
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
@@ -251,13 +257,14 @@ def _finetune(args, tools):
             tools.shift_qn_prob(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
+            #pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
 
         if args.cluster > 1:
-            fp_score = pcq_validate(model, test_loader, criterion, runtime_helper, logger)
+            fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
         else:
             fp_score = validate(model, test_loader, criterion, logger)
 
@@ -281,7 +288,7 @@ def _finetune(args, tools):
             del folded_model
 
             if args.cluster > 1:
-                val_score = pcq_validate(quantized_model, test_loader, criterion, runtime_helper, logger)
+                val_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
             else:
                 val_score = validate(quantized_model, test_loader, criterion, logger)
 
@@ -311,7 +318,7 @@ def _finetune(args, tools):
     if args.quant_noise:
         method += 'QN{:.1f}+'.format(args.qn_prob)
     if args.cluster > 1:
-        method += 'PCQ'
+        method += 'PCQ({})'.format(args.clustering_method)
     elif not args.quant_noise:
         method += 'QAT'
 
@@ -324,8 +331,8 @@ def _finetune(args, tools):
         n_cluster += 'K: {}, '.format(args.cluster)
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, Path: {}\n'
-                .format(best_score_int, args.arch, method, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, save_path_fp))
+        f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, Path: {}\n'
+                .format(best_score_int, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, save_path_fp))
 
     range_fname = None
     for i in range(9999999):

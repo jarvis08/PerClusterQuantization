@@ -27,7 +27,6 @@ class RuntimeHelper(object):
     def __init__(self):
         self.apply_fake_quantization = False
         self.batch_cluster = None
-        self.kmeans = None
         self.qn_prob = 0.0
 
         self.range_update_phase = False
@@ -35,9 +34,6 @@ class RuntimeHelper(object):
 
         self.num_clusters = None
         self.data_per_cluster = None
-
-    def set_cluster_information_of_batch(self, input):
-        self.batch_cluster = self.kmeans.predict_cluster_of_batch(input)
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
@@ -67,6 +63,9 @@ class Phase2DataLoader(object):
         self.iterated += 1
         if self.iterated == self.len_loader:
             self.initialize_phase2_generator()
+            if len(input) < 64:
+                input, target = next(self.generator)
+                self.iterated += 1
         return input, target
 
 
@@ -169,7 +168,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
+def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -178,7 +177,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, hvd
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                runtime_helper.set_cluster_information_of_batch(input)
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -299,8 +298,11 @@ def get_train_dataset_without_augmentation(args, normalizer):
 
 
 def get_data_loader(args, dataset, usage=None):
-    if usage == 'kmeans':
+    if usage == 'clustering':
+        if args.clustering_method == 'kmeans':
             loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=args.worker)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=50000, shuffle=True, num_workers=args.worker)
     elif usage == 'initializer':
         if args.dataset == 'imagenet':
             batch = 128
@@ -346,15 +348,18 @@ def add_path(prev_path, to_add):
     return path
 
 
-def set_kmeans_dir(args):
+def set_clustering_dir(args):
     path = add_path('', 'result')
-    path = add_path(path, 'kmeans')
+    path = add_path(path, args.clustering_method)
     path = add_path(path, args.dataset)
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
-        kmeans_args = {'k': args.cluster, 'num_partitions': args.partition,
-                       'epoch': args.kmeans_epoch, 'batch': args.batch}
-        json.dump(kmeans_args, f, indent=4)
+        if args.clustering_method == 'kmeans':
+            args_to_save = {'k': args.cluster, 'num_partitions': args.partition,
+                            'epoch': args.kmeans_epoch, 'batch': args.batch}
+        else:
+            args_to_save = {'k': args.cluster, 'num_partitions': args.partition}
+        json.dump(args_to_save, f, indent=4)
     return path
 
 
