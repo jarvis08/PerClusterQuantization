@@ -45,8 +45,7 @@ def get_train_loader(args, normalizer):
 
 
 def _pretrain(args, tools):
-    # model = tools.pretrained_model_initializer()
-    model = vision_models.densenet121(pretrained=True)
+    model = tools.pretrained_model_initializer()
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
