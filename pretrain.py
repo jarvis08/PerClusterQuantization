@@ -70,6 +70,12 @@ def _pretrain(args, tools):
         opt_scheduler.step()
         prec = validate(model, test_loader, criterion, logger)
         is_best = prec > best_prec
+        if is_best:
+            with open(os.path.join(save_path, "params.json"), 'w') as f:
+                tmp = vars(args)
+                tmp['best_epoch'] = e
+                tmp['best_score'] = prec
+                json.dump(tmp, f, indent=4)
         best_prec = max(prec, best_prec)
         print('best acc: {:1f}'.format(best_prec))
         save_checkpoint({
