@@ -278,7 +278,7 @@ def get_train_dataset(args, normalizer):
     else:
         train_dataset = torchvision.datasets.SVHN(
             root='./data',
-            train=True,
+            split='train',
             download=True,
             transform=transforms.Compose([
                 transforms.RandomCrop(32, padding=4),
@@ -307,7 +307,7 @@ def get_train_dataset_without_augmentation(args, normalizer):
     else:
         train_dataset = torchvision.datasets.SVHN(
             root='./data',
-            train=True,
+            split='train',
             download=True,
             transform=transforms.Compose([
                 transforms.ToTensor(),
@@ -355,7 +355,7 @@ def get_test_loader(args, normalizer):
     else:
         test_dataset = torchvision.datasets.SVHN(
             root='./data',
-            train=False,
+            split='test',
             download=True,
             transform=transforms.Compose([
                 transforms.ToTensor(),

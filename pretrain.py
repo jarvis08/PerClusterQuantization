@@ -32,7 +32,7 @@ def get_train_loader(args, normalizer):
     else:
         train_dataset = torchvision.datasets.SVHN(
             root='./data',
-            train=True,
+            split='train',
             download=True,
             transform=transforms.Compose([
                 transforms.RandomCrop(32, padding=4),
