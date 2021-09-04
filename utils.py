@@ -394,6 +394,7 @@ def set_clustering_dir(args):
 def set_save_dir(args):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
+    path = add_path(path, args.dataset)
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
