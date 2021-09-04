@@ -334,18 +334,18 @@ def _finetune(args, tools):
         f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, Path: {}\n'
                 .format(best_score_int, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, save_path_fp))
 
-    range_fname = None
-    for i in range(9999999):
-        range_fname = './range-{}-{}-Batch{}-FQ{}-K{}-{}.txt'.format(args.arch, method, args.batch, args.fq, args.cluster, i)
-        if not check_file_exist(range_fname):
-            break
-    with open(range_fname, 'a') as f:
-        for name, param in model.named_parameters():
-            if 'act_range' in name:
-                f.write('{}\n'.format(name))
-                if 'norm' in name:
-                    f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
-                else:
-                    for c in range(args.cluster):
-                        f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
+    # range_fname = None
+    # for i in range(9999999):
+    #     range_fname = './range-{}-{}-Batch{}-FQ{}-K{}-{}.txt'.format(args.arch, method, args.batch, args.fq, args.cluster, i)
+    #     if not check_file_exist(range_fname):
+    #         break
+    # with open(range_fname, 'a') as f:
+    #     for name, param in model.named_parameters():
+    #         if 'act_range' in name:
+    #             f.write('{}\n'.format(name))
+    #             if 'norm' in name:
+    #                 f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+    #             else:
+    #                 for c in range(args.cluster):
+    #                     f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)
