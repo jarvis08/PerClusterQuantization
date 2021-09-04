@@ -265,8 +265,18 @@ def get_train_dataset(args, normalizer):
                                                              transforms.RandomHorizontalFlip(),
                                                              transforms.ToTensor(),
                                                              normalizer]))
-    else:
+    elif args.dataset == 'cifar':
         train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer]))
+    else:
+        train_dataset = torchvision.datasets.SVHN(
             root='./data',
             train=True,
             download=True,
@@ -286,8 +296,16 @@ def get_train_dataset_without_augmentation(args, normalizer):
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
                                                             normalizer]))
-    else:
+    elif args.dataset == 'cifar':
         train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer]))
+    else:
+        train_dataset = torchvision.datasets.SVHN(
             root='./data',
             train=True,
             download=True,
@@ -324,8 +342,18 @@ def get_test_loader(args, normalizer):
                                                             normalizer,
                                                         ]))
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=args.worker)
-    else:
+    elif args.dataset == 'cifar':
         test_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=False,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
+    else:
+        test_dataset = torchvision.datasets.SVHN(
             root='./data',
             train=False,
             download=True,

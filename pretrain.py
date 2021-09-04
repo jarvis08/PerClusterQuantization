@@ -17,8 +17,20 @@ def get_train_loader(args, normalizer):
                                                             normalizer,
                                                         ]))
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
-    else:
+    elif args.dataset == 'cifar':
         train_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
+    else:
+        train_dataset = torchvision.datasets.SVHN(
             root='./data',
             train=True,
             download=True,
