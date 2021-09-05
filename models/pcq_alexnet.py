@@ -17,7 +17,7 @@ class PCQAlexNet(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
+        self.apply_ema = False
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -96,7 +96,7 @@ class PCQAlexNetSmall(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-        self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
+        self.apply_ema = False
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
