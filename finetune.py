@@ -251,7 +251,7 @@ def _finetune(args, tools):
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
-            check_cluster_distribution(clustering_model, non_augmented_loader)
+            #check_cluster_distribution(clustering_model, non_augmented_loader)
             if args.visualize_clustering:
                 visualize_clustering_res(non_augmented_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
 
