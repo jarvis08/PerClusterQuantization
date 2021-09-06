@@ -48,6 +48,7 @@ parser.add_argument('--indices_path', default='', type=str, help="Path to load i
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
 parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model multiple times, and use the best model")
+parser.add_argument('--visualize_clustering', default=False, type=bool, help="Visualize clustering result with PCA-ed training dataset")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
