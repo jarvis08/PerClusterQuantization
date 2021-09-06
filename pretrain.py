@@ -78,9 +78,13 @@ def _pretrain(args, tools):
                 json.dump(tmp, f, indent=4)
         best_prec = max(prec, best_prec)
         print('best acc: {:1f}'.format(best_prec))
-        save_checkpoint({
+        if e % 10 == 0:
+            periodic = e
+        else:
+            periodic = None
+        save_pretraining_model_checkpoint({
             'epoch': e,
             'state_dict': model.state_dict(),
             'best_prec': best_prec,
             'optimizer': optimizer.state_dict(),
-        }, is_best, save_path)
+        }, is_best, save_path, periodic)

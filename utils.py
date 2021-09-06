@@ -103,6 +103,16 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
+def save_pretraining_model_checkpoint(state, is_best, path, epoch=None):
+    if epoch is not None:
+        filepath = os.path.join(path, 'checkpoint_{}.pth'.format(epoch))
+    else:
+        filepath = os.path.join(path, 'checkpoint.pth')
+    torch.save(state, filepath)
+    if is_best:
+        shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
+
+
 def save_checkpoint(state, is_best, path):
     filepath = os.path.join(path, 'checkpoint.pth')
     torch.save(state, filepath)
@@ -253,8 +263,10 @@ def load_optimizer(optim, path):
 def get_normalizer(dataset):
     if dataset == 'imagenet':
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    else:
+    elif dataset == 'cifar':
         return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    else:
+        return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
 
 def get_train_dataset(args, normalizer):
