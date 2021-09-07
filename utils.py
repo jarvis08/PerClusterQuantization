@@ -212,7 +212,6 @@ def validate_darknet_dataset(model, test_loader, criterion):
 
     model.eval()
     with torch.no_grad():
-        # for i in range(1000):
         for i in range(1):
             _in = test_loader[0][i]
             _targ = test_loader[1][i]
@@ -338,12 +337,6 @@ def get_data_loader(args, dataset, usage=None):
             batch = 128
         else:
             batch = 256
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
-    elif usage == 'visualizer':
-        if args.dataset == 'imagenet':
-            batch = 128
-        else:
-            batch = 50000
         loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
     else:
         loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)

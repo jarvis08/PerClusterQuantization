@@ -36,7 +36,7 @@ parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be 
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
 parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
-parser.add_argument('--clustering_method', default='birch', type=str, help="Clustering method(BIRCH/K-means) to use in PCQ")
+parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means/BIRCH) to use in PCQ")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
 parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
@@ -48,6 +48,7 @@ parser.add_argument('--indices_path', default='', type=str, help="Path to load i
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
 parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model multiple times, and use the best model")
+parser.add_argument('--visualize_clustering', default=False, type=bool, help="Visualize clustering result with PCA-ed training dataset")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')

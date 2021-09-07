@@ -151,7 +151,6 @@ def initialize_pcq_model(model, loader, criterion):
     return top1.avg
 
 
-#def pcq_epoch(model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
 def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -196,6 +195,39 @@ def get_finetuning_model(arg_dict, tools):
     return fused_model
 
 
+def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster, len_per_cluster, num_clusters):
+    import sklearn
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+
+    pca = sklearn.decomposition.PCA(n_components=2)
+
+    images = []
+    for image, _ in data_loader:
+        images.append(image)
+
+    data = clustering_model.get_partitioned_batch(torch.cat(images))
+    pca.fit(data)
+    centroids = clustering_model.model.cluster_centers_
+    pca_data = pca.transform(data)
+    pca_centroids = pca.transform(centroids)
+
+    plt.figure(figsize=(8, 8))
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan', 'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
+    for i in range(num_clusters):
+        plt.scatter(pca_data[indices_per_cluster[i], 0], pca_data[indices_per_cluster[i], 1], c=colors[i], s=10,
+                    label='cluster {} - {}'.format(i, len_per_cluster[i]), alpha=0.7, edgecolors='none')
+    plt.legend()
+    for i in range(num_clusters):
+        plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i], s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
+    plt.suptitle('Train Dataset')
+    plt.xlabel('Component 1')
+    plt.ylabel('Component 2')
+    plt.show()
+    plt.savefig("k-means clustering trial 1.png")
+
+
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
@@ -231,8 +263,6 @@ def _finetune(args, tools):
     phase2_loader = None
     clustering_model = None
     if args.cluster > 1:
-        # Set K-means model
-        #kmeans = KMeans(args)
         clustering_model = tools.clustering_method(args)
         if not args.clustering_path:
             clustering_train_loader = get_data_loader(args, train_dataset, usage='clustering')
@@ -240,8 +270,6 @@ def _finetune(args, tools):
             clustering_model.train_clustering_model(clustering_train_loader)
         else:
             clustering_model.load_clustering_model()
-        #runtime_helper.kmeans = kmeans
-        #check_cluster_distribution(runtime_helper.kmeans, train_loader)
 
         # Make non-augmented dataset/loader for Phase-2 training
         non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
@@ -251,10 +279,9 @@ def _finetune(args, tools):
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
-            #check_cluster_distribution(runtime_helper.kmeans, non_augmented_loader)
-            # check_cluster_distribution(clustering_model, non_augmented_loader)
-            visual_loader = get_data_loader(args, non_augmented_dataset, usage='visualizer')
-            visualize_clustering_res(visual_loader, indices_per_cluster, len_per_cluster, clustering_model, args.cluster)
+            #check_cluster_distribution(clustering_model, non_augmented_loader)
+            if args.visualize_clustering:
+                visualize_clustering_res(non_augmented_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
@@ -361,8 +388,8 @@ def _finetune(args, tools):
         n_cluster += 'K: {}, '.format(args.cluster)
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, Path: {}\n'
-                .format(best_score_int, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, save_path_fp))
+        f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, GPU: {}, Path: {}\n'
+                .format(best_score_int, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):
