@@ -34,7 +34,7 @@ class PCQDenseLayer(nn.Module):
         self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
                                arg_dict=arg_dict, act_qmax=self.act_qmax)
-        self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict)
+        self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
                                arg_dict=arg_dict, act_qmax=self.activation_qmax)
         self.memory_efficient = memory_efficient
