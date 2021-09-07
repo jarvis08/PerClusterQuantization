@@ -89,6 +89,34 @@ def load_indices_list(args):
     return saved_args['indices_list'], saved_args['len_per_cluster']
 
 
+def visualize_clustering_res(visual_loader, indices_list, len_indices_list, model, num_ctr):
+    import sklearn
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+    pca = sklearn.decomposition.PCA(n_components=2)
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan', 'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
+
+    for image, _ in visual_loader:
+        whole_data = model.get_partitioned_batch(image)
+        pca.fit(whole_data)
+        centroids = model.model.cluster_centers_
+        pca_whole_data = pca.transform(whole_data)
+        pca_centroids = pca.transform(centroids)
+        # plot
+        plt.figure(figsize=(8, 8))
+        for i in range(num_ctr):
+            plt.scatter(pca_whole_data[indices_list[i], 0], pca_whole_data[indices_list[i], 1], c=colors[i], s=10, label='cluster {} - {}'.format(i, len_indices_list[i]), alpha=0.7, edgecolors='none')
+        plt.legend()
+        for i in range(num_ctr):
+            plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i], s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
+        plt.suptitle('Train Dataset')
+        plt.xlabel('Component 1')
+        plt.ylabel('Component 2')
+        plt.savefig("k-means_partition_{}_cluster_{}.png".format(model.args.partition, num_ctr))
+        plt.show()
+
+
 def initialize_pcq_model(model, loader, criterion):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -224,7 +252,9 @@ def _finetune(args, tools):
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
             #check_cluster_distribution(runtime_helper.kmeans, non_augmented_loader)
-            check_cluster_distribution(clustering_model, non_augmented_loader)
+            # check_cluster_distribution(clustering_model, non_augmented_loader)
+            visual_loader = get_data_loader(args, non_augmented_dataset, usage='visualizer')
+            visualize_clustering_res(visual_loader, indices_per_cluster, len_per_cluster, clustering_model, args.cluster)
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)

@@ -339,6 +339,12 @@ def get_data_loader(args, dataset, usage=None):
         else:
             batch = 256
         loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
+    elif usage == 'visualizer':
+        if args.dataset == 'imagenet':
+            batch = 128
+        else:
+            batch = 50000
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
     else:
         loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
     return loader
