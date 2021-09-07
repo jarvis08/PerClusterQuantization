@@ -36,7 +36,7 @@ class PCQDenseLayer(nn.Module):
                                arg_dict=arg_dict, act_qmax=self.act_qmax)
         self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
-                               arg_dict=arg_dict, act_qmax=self.activation_qmax)
+                               arg_dict=arg_dict, act_qmax=self.act_qmax)
         self.memory_efficient = memory_efficient
 
     # torchscript does not yet support *args, so we overload method
@@ -67,11 +67,11 @@ class PCQTransition(nn.Sequential):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 16 - 1
+        self.act_qmax = 2 ** 16 - 1
 
         self.bn = PCQBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
         self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
-                              arg_dict=arg_dict, act_qmax=self.activation_qmax)
+                              arg_dict=arg_dict, act_qmax=self.act_qmax)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x, next_block_range):
@@ -104,7 +104,7 @@ class PCQDenseBlock(nn.ModuleDict):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.activation_qmax = 2 ** 16 - 1
+        self.act_qmax = 2 ** 16 - 1
 
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = np.zeros(self.num_clusters, dtype=bool)
@@ -162,7 +162,7 @@ class PCQDenseBlock(nn.ModuleDict):
             self.apply_ema = True
 
     def set_block_qparams(self, prev_s, prev_z):
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.activation_qmax)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.act_qmax)
         for name, layer in self.items():
             prev_s, prev_z = layer.set_layer_qparams(prev_s, prev_z)
         return self.s3, self.z3
