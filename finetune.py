@@ -210,7 +210,8 @@ def _finetune(args, tools):
     else:
         method = 'QAT'
 
-    with open('./exp_results.txt', 'a') as f:
+   
+    with open('./exp_results-{}.txt'.format(args.gpu), 'a') as f:
         f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, Time {}\n'.format(best_score_int, args.arch, method, args.batch, best_epoch, tuning_time_cost))
 
     with open('./test.txt', 'a') as f:

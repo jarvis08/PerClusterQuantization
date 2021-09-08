@@ -202,14 +202,14 @@ class FusedResNet(nn.Module):
         self.base_width = width_per_group
 
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                      norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=arg_dict, entire=True)
+                                      norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = FusedLinear(512 * block.expansion, num_classes, bias=True, arg_dict=arg_dict, entire=True)
+        self.fc = FusedLinear(512 * block.expansion, num_classes, bias=True, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -466,42 +466,54 @@ def modify_fused_resnet_qn_pre_hook(model):
     block = model.layer1
     if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
         m = block[0].downsample
-        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, q_max=m.q_max)
+        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 4, q_max=m.q_max)
     for i in range(len(block)):
-        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
         if type(block[i]) == FusedBottleneck:
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+        elif type(block[i]) == FusedBasicBlock:
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
 
     # Block 2
     block = model.layer2
     block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            1, q_max=block[0].downsample.q_max)
+                                            4, q_max=block[0].downsample.q_max)
     for i in range(len(block)):
-        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
         if type(block[i]) == FusedBottleneck:
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+        elif type(block[i]) == FusedBasicBlock:
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
 
     # Block 3
     block = model.layer3
     block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            1, q_max=block[0].downsample.q_max)
+                                            4, q_max=block[0].downsample.q_max)
     for i in range(len(block)):
-        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
         if type(block[i]) == FusedBottleneck:
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+        elif type(block[i]) == FusedBasicBlock:
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
     # Block 4
     if model.num_blocks == 4:
         block = model.layer4
         block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
                                                 1, q_max=block[0].downsample.q_max)
         for i in range(len(block)):
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
             if type(block[i]) == FusedBottleneck:
-                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            elif type(block[i]) == FusedBasicBlock:
+                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
 
     # Classifier
     model.fc.quant_noise = False
