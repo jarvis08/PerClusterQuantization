@@ -64,39 +64,48 @@ class KMeans(object):
                 return False
             return True
 
-        model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
-
         prev_centers = None
         is_converged = False
-        t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc='Epoch', position=0, ncols=90)
-        for e in range(self.args.kmeans_epoch):
-            for image, _ in train_loader:
-                train_data = self.get_partitioned_batch(image)
-                model = model.partial_fit(train_data)
+        best_model = None
+        best_model_inertia = 9999999999999999
+        print("Train K-means model 10 times, and choose the best model")
+        for trial in range(1, 11):
+            model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
+            early_stopped = False
+            t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
+            for e in range(self.args.kmeans_epoch):
+                for image, _ in train_loader:
+                    train_data = self.get_partitioned_batch(image)
+                    model = model.partial_fit(train_data)
 
-                if prev_centers is not None:
-                    is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
-                    if is_converged:
-                        break
-                prev_centers = deepcopy(model.cluster_centers_)
-            t_epoch.update(1)
-            if is_converged:
-                print("\nEarly stop training kmeans model")
-                break
-        joblib.dump(model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
-        self.model = model
+                    if prev_centers is not None:
+                        is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
+                        if is_converged:
+                            break
+                    prev_centers = deepcopy(model.cluster_centers_)
+                t_epoch.update(1)
+                if is_converged:
+                    early_stopped = True
+                    if model.inertia_ < best_model_inertia:
+                        best_model = model
+                        best_model_inertia = model.inertia_
+                    break
+            t_epoch.close()
+            if early_stopped:
+                print("Early stop training trial-{} kmeans model".format(trial))
+        joblib.dump(best_model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
+        self.model = best_model
 
 
 def check_cluster_distribution(kmeans, train_loader):
-    #n_data = kmeans.args.batch * len(train_loader)
-    n_data = 50000 # CIFAR-10 train dataset
+    n_data = kmeans.args.data_per_cluster * kmeans.args.cluster * len(train_loader)
     n_data_per_cluster = dict()
     for c in range(kmeans.args.cluster):
         n_data_per_cluster[c] = 0
     for i, (input, target) in enumerate(train_loader):
-        _, _, batch_cluster = kmeans.get_batch(input, target)
-        for c, n in batch_cluster:
-            n_data_per_cluster[c.item()] += n.item()
+        batch_cluster = kmeans.predict_cluster_of_batch(input)
+        for c in batch_cluster:
+            n_data_per_cluster[c.item()] += 1
 
     assert sum(n_data_per_cluster.values()) == n_data,\
         "Total # of data doesn't match (n_data: {}, calc: {})".format(n_data, sum(n_data_per_cluster.values()))

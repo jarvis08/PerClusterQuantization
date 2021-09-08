@@ -16,7 +16,7 @@ def get_train_loader(args, normalizer):
                                                             transforms.ToTensor(),
                                                             normalizer,
                                                         ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=10)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
     else:
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -28,7 +28,7 @@ def get_train_loader(args, normalizer):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
     return train_loader
 
 

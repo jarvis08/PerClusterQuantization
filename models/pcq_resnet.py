@@ -274,12 +274,9 @@ class PCQResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if not self.runtime_helper.pcq_initialized:
-            self._update_input_ranges(x)
-        elif self.training:
+        if self.training:
             if self.runtime_helper.range_update_phase:
                 self._update_input_ranges(x)
-
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -367,18 +364,18 @@ class PCQResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # if not self.runtime_helper.pcq_initialized:
-        #     self._update_input_ranges(x)
-        # elif self.training:
-        #     if self.runtime_helper.range_update_phase:
-        #         self._update_input_ranges(x)
-        #     if self.runtime_helper.apply_fake_quantization:
-        #         x = self._fake_quantize_input(x)
-        if self.training:
+        if not self.runtime_helper.pcq_initialized:
+            self._update_input_ranges(x)
+        elif self.training:
             if self.runtime_helper.range_update_phase:
                 self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
+        #if self.training:
+        #    if self.runtime_helper.range_update_phase:
+        #        self._update_input_ranges(x)
+        #    if self.runtime_helper.apply_fake_quantization:
+        #        x = self._fake_quantize_input(x)
         x = self.first_conv(x)
         x = self.bn1(x)
         x = self.layer1(x)
@@ -407,10 +404,7 @@ class PCQResNet20(nn.Module):
             self.apply_ema = True
 
     def set_quantization_params(self):
-        self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        for c in range(self.num_clusters):
-            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)

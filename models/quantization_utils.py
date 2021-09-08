@@ -75,16 +75,16 @@ def bn_ema(cur, pre, smooth):
 
 def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     _x = x.detach()
-    if q_max == 15:            # UINT 4
-        _x = (torch.clamp(torch.round(_x / scale + zero_point), 0, q_max) - zero_point) * scale
-    elif q_max == 255:         # INT 8
-        _x = (torch.clamp(torch.round(_x / scale + zero_point), -128, 127) - zero_point) * scale
-    elif q_max == 65535:       # INT 16
-        _x = (torch.clamp(torch.round(_x / scale + zero_point), -32768, 32767) - zero_point) * scale
-    elif q_max == 4294967295:  # INT 32
-        _x = (torch.clamp(torch.round(_x / scale + zero_point), -2147483648, 2147483647) - zero_point) * scale
+    if q_max == 15:
+        _qmin, _qmax = 0, 15
+    elif q_max == 255:
+        _qmin, _qmax = -128, 127
+    elif q_max == 65535:
+        _qmin, _qmax = -32768, 32767
     else:
-        _x = (torch.round(_x / scale + zero_point) - zero_point) * scale
+        _qmin, _qmax = -2147483648, 2147483647
+
+    _x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
@@ -100,7 +100,7 @@ def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, 
         _qmin, _qmax = -128, 127
     elif q_max == 65535:
         _qmin, _qmax = -32768, 32767
-    elif q_max == 4294967295:
+    else:
         _qmin, _qmax = -2147483648, 2147483647
 
     _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
@@ -119,7 +119,7 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, 
         _qmin, _qmax = -128, 127
     elif q_max == 65535:
         _qmin, _qmax = -32768, 32767
-    elif q_max == 4294967295:
+    else:
         _qmin, _qmax = -2147483648, 2147483647
 
     _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
@@ -130,48 +130,58 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, 
 
 def quantize_matrix(x, scale, zero_point, q_max=None):
     x = x.detach()
+    quantized = torch.round(x / scale + zero_point)
     if q_max == 15:            # UINT 4
-        return torch.clamp(torch.round(x / scale + zero_point), 0, q_max)
+        return torch.clamp(quantized, 0, 15)
     elif q_max == 255:         # INT 8
-        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+        return torch.clamp(quantized, -128, 127)
     elif q_max == 65535:       # INT 16
-        return torch.clamp(torch.round(x / scale + zero_point), -32768, 32767)
+        return torch.clamp(quantized, -32768, 32767)
     elif q_max == 4294967295:  # INT 32
-        return torch.clamp(torch.round(x / scale + zero_point), -2147483648, 2147483647)
+        return torch.clamp(quantized, -2147483648, 2147483647)
     else:
-        return torch.round(x / scale + zero_point)
+        return quantized
 
 
 def quantize_matrix_2d(x, scale, zero_point, batch_cluster, q_max=None):
-    if q_max is None:
-        return torch.round(x / scale + zero_point)  # sth like bias
-    elif q_max == 255:
-        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+    scale = torch.index_select(scale, 0, batch_cluster)[:, None]
+    zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None]
+    quantized = torch.round(x / scale + zero_point)
+    if q_max == 15:            # UINT 4
+        return torch.clamp(quantized, 0, 15)
+    elif q_max == 255:         # INT 8
+        return torch.clamp(quantized, -128, 127)
+    elif q_max == 65535:       # INT 16
+        return torch.clamp(quantized, -32768, 32767)
+    elif q_max == 4294967295:  # INT 32
+        return torch.clamp(quantized, -2147483648, 2147483647)
     else:
-        s = torch.index_select(scale, 0, batch_cluster).reshape(batch_cluster.shape[0], 1)
-        z = torch.index_select(zero_point, 0, batch_cluster).reshape(batch_cluster.shape[0], 1)
-        return x.div_(s).add_(z).round_().clamp_(0, q_max)
+        return quantized
 
 
 def quantize_matrix_4d(x, scale, zero_point, batch_cluster, q_max=None):
-    if q_max is None:
-        return torch.round(x / scale + zero_point)  # sth like bias
-    elif q_max == 255:
-        return torch.clamp(torch.round(x / scale + zero_point), -128, 127)
+    scale = torch.index_select(scale, 0, batch_cluster)[:, None, None, None]
+    zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
+    quantized = torch.round(x / scale + zero_point)
+    if q_max == 15:            # UINT 4
+        return torch.clamp(quantized, 0, 15)
+    elif q_max == 255:         # INT 8
+        return torch.clamp(quantized, -128, 127)
+    elif q_max == 65535:       # INT 16
+        return torch.clamp(quantized, -32768, 32767)
+    elif q_max == 4294967295:  # INT 32
+        return torch.clamp(quantized, -2147483648, 2147483647)
     else:
-        s = torch.index_select(scale, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
-        z = torch.index_select(zero_point, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
-        return x.div_(s).add_(z).round_().clamp_(0, q_max)
+        return quantized
 
 
 def dequantize_matrix(x, scale, zero_point):
-    x = x.detach()
     return (x - zero_point) * scale
 
 
 def dequantize_matrix_4d(x, scale, zero_point, batch_cluster):
-    s = torch.index_select(scale, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
-    z = torch.index_select(zero_point, 0, batch_cluster).reshape(batch_cluster.shape[0], 1, 1, 1)
+    s = torch.index_select(scale, 0, batch_cluster)[:, None, None, None]
+    z = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
     return x.sub_(z).mul_(s)
 
 
@@ -300,6 +310,7 @@ def quantize_layer_and_transfer(_fp, _int):
 
             _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
             if fp_layer.bias is not None:
+                _int.is_bias = nn.Parameter(torch.tensor(True, dtype=torch.bool), requires_grad=False)
                 if _int.num_clusters > 1:
                     for c in range(_int.num_clusters):
                         _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0, 2 ** 32 - 1))

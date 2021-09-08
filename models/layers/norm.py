@@ -233,16 +233,17 @@ class FusedBnReLU(nn.Module):
             mean = x.detach().mean(dim=(0, 2, 3))
             var = x.detach().var(dim=(0, 2, 3), unbiased=False)
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
+            bias = self.bn.bias - weight * mean
             if weight.min() > 0:
                 s, z = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
             elif weight.max() < 0:
                 s, z = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
             else:
                 s, z = calc_qparams(weight.min(), weight.max(), self.w_qmax)
-            w = fake_quantize(weight, s, z, self.w_qmax, use_ste=False)
-            b = self.bn.bias - w * mean
 
-            fake_out = x * w[None, :, None, None] + b[None, :, None, None]
+            weight = fake_quantize(weight, s, z, self.w_qmax, use_ste=False)
+
+            fake_out = x * weight[None, :, None, None] + bias[None, :, None, None]
             if self._activation:
                 fake_out = self._activation(fake_out)
         return STE.apply(out, fake_out)

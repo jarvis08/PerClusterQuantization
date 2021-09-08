@@ -4,6 +4,7 @@ import argparse
 #from PerClusterQuantization.models.bert.fused_bert import fused_bert_small, set_fused_bert_small
 #from PerClusterQuantization.models.bert.quantized_bert import quantized_bert_small, quantize_bert
 #from PerClusterQuantization.run_classifier import _run_classifier
+from run_classifier import _run_classifier
 from models import *
 from pretrain import _pretrain
 from finetune import _finetune
@@ -14,6 +15,7 @@ parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
+parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
@@ -38,12 +40,13 @@ parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize
 parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
-parser.add_argument('--kmeans_epoch', default=100, type=int, help='Max epoch of K-means model to train')
+parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
+parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model multiple times, and use the best model")
 parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
 parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
 parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
-parser.add_argument('--use_max_cnt', default=True, type=bool, help="In Phase-2, use max-length of cluster to make data loader")
+parser.add_argument('--phase2_len_loader', default='mean', type=str, help="Lenght of data loader of Phase-2, fitting to cluster of mean/min/max length")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
@@ -58,6 +61,11 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
+if not args.worker:
+    if args.dataset == 'imagenet':
+        args.worker = 32
+    else:
+        args.worker = 4
 print(vars(args))
 
 
@@ -126,13 +134,13 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'fused_model_initializer', fused_mobilenet)
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
-    elif arch == 'Bert':
-        # setattr(tools, 'fuser', set_fused_bert)
-        setattr(tools, 'fuser', set_fused_bert_small)
-        setattr(tools, 'pretrained_model_initializer', bert_small)
-        setattr(tools, 'fused_model_initializer', fused_bert_small)
-        setattr(tools, 'quantized_model_initializer', quantized_bert_small)
-        setattr(tools, 'quantizer', quantize_bert)
+    # elif arch == 'Bert':
+    #     # setattr(tools, 'fuser', set_fused_bert)
+    #     setattr(tools, 'fuser', set_fused_bert_small)
+    #     setattr(tools, 'pretrained_model_initializer', bert_small)
+    #     setattr(tools, 'fused_model_initializer', fused_bert_small)
+    #     setattr(tools, 'quantized_model_initializer', quantized_bert_small)
+    #     setattr(tools, 'quantizer', quantize_bert)
 
     elif arch == 'DenseNet121':
         # setattr(tools, 'pretrained_model_initializer', densenet121)

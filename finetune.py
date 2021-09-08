@@ -32,33 +32,31 @@ def make_indices_list(train_loader, args, runtime_helper):
 def make_phase2_list(args, indices_per_cluster, len_per_cluster):
     for c in range(args.cluster):
         random.shuffle(indices_per_cluster[c])
-    min_count = min(len_per_cluster)
-    max_count = max(len_per_cluster)
+
+    n = args.data_per_cluster
+    if args.phase2_len_loader == 'mean':
+        counted = sum(len_per_cluster) // args.cluster
+    elif args.phase2_len_loader == 'min':
+        counted = min(len_per_cluster)
+    else:
+        counted = max(len_per_cluster)
+    len_loader = counted // n
 
     cluster_cross_sorted = []
-    n = args.data_per_cluster
-    if args.use_max_cnt:
-        cur_idx = [0 for _ in range(args.cluster)]
-        for loops in range(max_count // n):
-            for c in range(args.cluster):
-                end = cur_idx[c] + n
-                share = end // len_per_cluster[c]
-                remainder = end % len_per_cluster[c]
-                if share < 1:
-                    cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
-                    cur_idx[c] += n
-                else:
-                    cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c]]
-                    random.shuffle(indices_per_cluster[c])
-                    cluster_cross_sorted += indices_per_cluster[c][:remainder]
-                    cur_idx[c] = remainder
-    else:
-        done = 0
-        for loops in range(min_count // n):
-            for c in range(args.cluster):
-                cluster_cross_sorted += indices_per_cluster[c][done:done + n]
-            done += n
-
+    cur_idx = [0 for _ in range(args.cluster)]
+    for loops in range(len_loader):
+        for c in range(args.cluster):
+            end = cur_idx[c] + n
+            share = end // len_per_cluster[c]
+            remainder = end % len_per_cluster[c]
+            if share < 1:
+                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
+                cur_idx[c] += n
+            else:
+                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c]]
+                random.shuffle(indices_per_cluster[c])
+                cluster_cross_sorted += indices_per_cluster[c][:remainder]
+                cur_idx[c] = remainder
     return cluster_cross_sorted
 
 
@@ -66,11 +64,13 @@ def save_indices_list(args, indices_list_per_cluster, len_per_cluster):
     path = add_path('', 'result')
     path = add_path(path, 'indices')
     path = add_path(path, args.dataset)
+    path = add_path(path, "Partition{}".format(args.partition))
     path = add_path(path, "{}data_per_cluster".format(args.data_per_cluster))
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
         indices_args = {'indices_list': indices_list_per_cluster, 'len_per_cluster': len_per_cluster,
-                        'data_per_cluster': args.data_per_cluster, 'dataset': args.dataset}
+                        'data_per_cluster': args.data_per_cluster, 'dataset': args.dataset,
+                        'partition': args.partition}
         json.dump(indices_args, f, indent=4)
 
 
@@ -79,10 +79,13 @@ def load_indices_list(args):
         saved_args = json.load(f)
     assert args.dataset == saved_args['dataset'], \
         "Dataset should be same. \n" \
-        "Model's dataset: {}, Loaded dataset: {}".format(saved_args['dataset'], args.dataset)
+        "Loaded dataset: {}, Current dataset: {}".format(saved_args['dataset'], args.dataset)
+    assert args.partition == saved_args['partition'], \
+        "partition should be same. \n" \
+        "Loaded partition: {}, Current partition: {}".format(saved_args['partition'], args.partition)
     assert args.data_per_cluster == saved_args['data_per_cluster'], \
         "Data per cluster should be same. \n" \
-        "Model's arg: {}, Loaded arg: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
+        "Loaded data per cluster: {}, current data per cluster: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
     return saved_args['indices_list'], saved_args['len_per_cluster']
 
 
@@ -220,13 +223,8 @@ def _finetune(args, tools):
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
 
-        if args.dataset == 'imagenet':
-            n_worker = 32
-        else:
-            n_worker = 4
-
         loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
-                                             num_workers=n_worker, shuffle=False)
+                                             num_workers=args.worker, shuffle=False)
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
 
         if args.pcq_initialization:
@@ -246,11 +244,7 @@ def _finetune(args, tools):
         # TODO: Quantnoise prob-increasing method
         if args.quant_noise and e % args.qn_increment_epoch == 1:
             model.runtime_helper.qn_prob += 0.1
-            tools.shift_qn_prob(model)
-
-        if args.quant_noise and e % 3 == 1:
-            runtime_helper.qn_prob += 0.1
-            tools.shift_qn_prob(model)
+            model = tools.shift_qn_prob(model)
 
         if args.cluster > 1:
             pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
@@ -319,20 +313,28 @@ def _finetune(args, tools):
 
     bn = ''
     if args.bn_momentum < 0.1:
-        bn += 'BN{:.3f}, '.format(args.bn_momentum)
+        bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
+
+    n_cluster = ''
+    if 'PCQ' in method:
+        n_cluster += 'K: {}, '.format(args.cluster)
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, Batch {}, Best-epoch {}, {}Time {}, Path {}\n'
-                .format(best_score_int, args.arch, method, args.batch, best_epoch, bn, tuning_time_cost, save_path_fp))
+        f.write('{:.2f} # {}, {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, Path: {}\n'
+                .format(best_score_int, args.arch, method, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, save_path_fp))
 
-    # with open('./test.txt', 'a') as f:
-    #     for name, param in model.named_parameters():
-    #         if 'act_range' in name:
-    #             f.write('{}\n'.format(name))
-    #             if 'norm' in name:
-    #                 for c in range(args.cluster):
-    #                     f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
-    #             else:
-    #                 for c in range(args.cluster):
-    #                     f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
+    range_fname = None
+    for i in range(9999999):
+        range_fname = './range-{}-{}-Batch{}-FQ{}-K{}-{}.txt'.format(args.arch, method, args.batch, args.fq, args.cluster, i)
+        if not check_file_exist(range_fname):
+            break
+    with open(range_fname, 'a') as f:
+        for name, param in model.named_parameters():
+            if 'act_range' in name:
+                f.write('{}\n'.format(name))
+                if 'norm' in name:
+                    f.write('{:.4f}, {:.4f}\n'.format(param[0].item(), param[1].item()))
+                else:
+                    for c in range(args.cluster):
+                        f.write('{:.4f}, {:.4f}\n'.format(param[c][0].item(), param[c][1].item()))
     # save_fused_network_in_darknet_form(model, args)

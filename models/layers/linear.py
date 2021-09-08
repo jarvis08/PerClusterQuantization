@@ -22,6 +22,7 @@ class QuantizedLinear(nn.Linear):
         self.act_qmax = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.out_features = out_features
 
+        self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features)), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -49,7 +50,6 @@ class QuantizedLinear(nn.Linear):
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
-        bias = torch.index_select(self.quantized_bias, 0, bc)
         z1 = torch.index_select(self.z1, 0, bc)
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1)
@@ -57,8 +57,11 @@ class QuantizedLinear(nn.Linear):
 
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
         N = x.shape[1]
-        for out_f in range(output_feature):
-            sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add_(bias[:, out_f].type(torch.cuda.IntTensor))
+
+        if self.is_bias:
+            bias = torch.index_select(self.quantized_bias, 0, bc)
+            for out_f in range(output_feature):
+                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add_(bias[:, out_f].type(torch.cuda.IntTensor))
 
         sum_a1 = torch.zeros(input_feature, dtype=torch.int32).cuda()
         sum_a2 = torch.zeros((bc.shape[0], output_feature), dtype=torch.int32).cuda()
@@ -95,8 +98,10 @@ class QuantizedLinear(nn.Linear):
 
     def general_totalsum(self, x, sum_q1q2):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
-        for out_f in range(output_feature):
-            sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add(self.quantized_bias[0][out_f])
+
+        if self.is_bias:
+            for out_f in range(output_feature):
+                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add(self.quantized_bias[0][out_f])
         N = x.shape[1]
 
         sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
