@@ -295,14 +295,14 @@ class PCQConv2d(nn.Module):
         return out
 
     def _fake_quantize_activation(self, x, external_range=None):
-        if external_range:
+        if external_range is not None:
             s, z = calc_qparams_per_cluster(external_range, self.act_qmax)
         else:
             s, z = calc_qparams_per_cluster(self.act_range, self.act_qmax)
         return fake_quantize_per_cluster_4d(x, s, z, self.act_qmax, self.runtime_helper.batch_cluster, self.use_ste)
 
     def _update_activation_ranges(self, x, external_range=None):
-        if external_range:
+        if external_range is not None:
             return None
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
         # (number of data per cluster in batch) == (args.data_per_cluster)
@@ -388,7 +388,7 @@ class FusedConv2d(nn.Module):
             x = self._activation(x)
 
         out = x
-        if external_range:
+        if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
                 out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)

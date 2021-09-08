@@ -27,7 +27,6 @@ class RuntimeHelper(object):
     def __init__(self):
         self.apply_fake_quantization = False
         self.batch_cluster = None
-        self.kmeans = None
         self.qn_prob = 0.0
 
         self.range_update_phase = False
@@ -35,9 +34,6 @@ class RuntimeHelper(object):
 
         self.num_clusters = None
         self.data_per_cluster = None
-
-    def set_cluster_information_of_batch(self, input):
-        self.batch_cluster = self.kmeans.predict_cluster_of_batch(input)
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
@@ -67,6 +63,9 @@ class Phase2DataLoader(object):
         self.iterated += 1
         if self.iterated == self.len_loader:
             self.initialize_phase2_generator()
+            if len(input) < 64:
+                input, target = next(self.generator)
+                self.iterated += 1
         return input, target
 
 
@@ -102,6 +101,16 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
+
+def save_pretraining_model_checkpoint(state, is_best, path, epoch=None):
+    if epoch is not None:
+        filepath = os.path.join(path, 'checkpoint_{}.pth'.format(epoch))
+    else:
+        filepath = os.path.join(path, 'checkpoint.pth')
+    torch.save(state, filepath)
+    if is_best:
+        shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
 
 
 def save_checkpoint(state, is_best, path):
@@ -169,7 +178,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
-def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
+def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -178,7 +187,7 @@ def pcq_validate(model, test_loader, criterion, runtime_helper, logger=None, hvd
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                runtime_helper.set_cluster_information_of_batch(input)
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
                 loss = criterion(output, target)
@@ -203,7 +212,6 @@ def validate_darknet_dataset(model, test_loader, criterion):
 
     model.eval()
     with torch.no_grad():
-        # for i in range(1000):
         for i in range(1):
             _in = test_loader[0][i]
             _targ = test_loader[1][i]
@@ -254,8 +262,10 @@ def load_optimizer(optim, path):
 def get_normalizer(dataset):
     if dataset == 'imagenet':
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    else:
+    elif dataset == 'cifar':
         return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    else:
+        return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
 
 def get_train_dataset(args, normalizer):
@@ -266,10 +276,20 @@ def get_train_dataset(args, normalizer):
                                                              transforms.RandomHorizontalFlip(),
                                                              transforms.ToTensor(),
                                                              normalizer]))
-    else:
+    elif args.dataset == 'cifar':
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
             train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer]))
+    else:
+        train_dataset = torchvision.datasets.SVHN(
+            root='./data',
+            split='train',
             download=True,
             transform=transforms.Compose([
                 transforms.RandomCrop(32, padding=4),
@@ -287,10 +307,18 @@ def get_train_dataset_without_augmentation(args, normalizer):
                                                             transforms.CenterCrop(224),
                                                             transforms.ToTensor(),
                                                             normalizer]))
-    else:
+    elif args.dataset == 'cifar':
         train_dataset = torchvision.datasets.CIFAR10(
             root='./data',
             train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer]))
+    else:
+        train_dataset = torchvision.datasets.SVHN(
+            root='./data',
+            split='train',
             download=True,
             transform=transforms.Compose([
                 transforms.ToTensor(),
@@ -299,8 +327,11 @@ def get_train_dataset_without_augmentation(args, normalizer):
 
 
 def get_data_loader(args, dataset, usage=None):
-    if usage == 'kmeans':
+    if usage == 'clustering':
+        if args.clustering_method == 'kmeans':
             loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=args.worker)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=50000, shuffle=True, num_workers=args.worker)
     elif usage == 'initializer':
         if args.dataset == 'imagenet':
             batch = 128
@@ -322,10 +353,20 @@ def get_test_loader(args, normalizer):
                                                             normalizer,
                                                         ]))
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=args.worker)
-    else:
+    elif args.dataset == 'cifar':
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',
             train=False,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
+    else:
+        test_dataset = torchvision.datasets.SVHN(
+            root='./data',
+            split='test',
             download=True,
             transform=transforms.Compose([
                 transforms.ToTensor(),
@@ -346,21 +387,25 @@ def add_path(prev_path, to_add):
     return path
 
 
-def set_kmeans_dir(args):
+def set_clustering_dir(args):
     path = add_path('', 'result')
-    path = add_path(path, 'kmeans')
+    path = add_path(path, args.clustering_method)
     path = add_path(path, args.dataset)
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
-        kmeans_args = {'k': args.cluster, 'num_partitions': args.partition,
-                       'epoch': args.kmeans_epoch, 'batch': args.batch}
-        json.dump(kmeans_args, f, indent=4)
+        if args.clustering_method == 'kmeans':
+            args_to_save = {'k': args.cluster, 'num_partitions': args.partition, 'tol': args.kmeans_tol,
+                            'n_inits': args.kmeans_init, 'epoch': args.kmeans_epoch, 'batch': args.batch}
+        else:
+            args_to_save = {'k': args.cluster, 'num_partitions': args.partition}
+        json.dump(args_to_save, f, indent=4)
     return path
 
 
 def set_save_dir(args):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
+    path = add_path(path, args.dataset)
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:

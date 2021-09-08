@@ -1,5 +1,5 @@
 import torch
-from sklearn.cluster import MiniBatchKMeans
+from sklearn.cluster import Birch
 import numpy as np
 
 import tqdm
@@ -9,7 +9,7 @@ import json
 import os
 
 
-class KMeans(object):
+class BIRCH(object):
     def __init__(self, args):
         self.args = args
         self.model = None
@@ -40,16 +40,16 @@ class KMeans(object):
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             saved_args = json.load(f)
         assert self.args.cluster == saved_args['k'], \
-            "Current model's target # of clusters must be same with K-means model's it" \
-            "\n(K-means model's = {}, Current model's = {}".format(saved_args['k'], self.args.cluster)
+            "Loaded model's target # of clusters must be same with initialized model" \
+            "\n(Loaded model's = {}, Initialized model's = {}".format(saved_args['k'], self.args.cluster)
         assert self.args.partition == saved_args['num_partitions'], \
-            "Current model's target # of partitions to divide an channel must be same with K-means model's it" \
-            "\n(K-means model's = {}, Current model's = {}".format(saved_args['num_partitions'], self.args.partition)
+            "Loaded model's target # of partitions to divide an channel must be same with initialized model" \
+            "\n(Loaded model's = {}, Initialized model's = {}".format(saved_args['num_partitions'], self.args.partition)
         self.model = joblib.load(os.path.join(self.args.clustering_path, 'checkpoint.pkl'))
     
     def predict_cluster_of_batch(self, input):
-        kmeans_input = self.get_partitioned_batch(input)
-        cluster_info = self.model.predict(kmeans_input)
+        partitioned_input = self.get_partitioned_batch(input)
+        cluster_info = self.model.predict(partitioned_input)
         return torch.cuda.LongTensor(cluster_info)
 
     def train_clustering_model(self, train_loader):
@@ -64,41 +64,23 @@ class KMeans(object):
                 return False
             return True
 
-        prev_centers = None
-        is_converged = False
-        best_model = None
-        best_model_inertia = 9999999999999999
-        print("Train K-means model 10 times, and choose the best model")
-        for trial in range(1, 11):
-            model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
-            early_stopped = False
-            t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
-            for e in range(self.args.kmeans_epoch):
-                for image, _ in train_loader:
-                    train_data = self.get_partitioned_batch(image)
-                    model = model.partial_fit(train_data)
-
-                    if prev_centers is not None:
-                        is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
-                        if is_converged:
-                            break
-                    prev_centers = deepcopy(model.cluster_centers_)
-                t_epoch.update(1)
-                if is_converged:
-                    early_stopped = True
-                    if model.inertia_ < best_model_inertia:
-                        best_model = model
-                        best_model_inertia = model.inertia_
-                    break
+        model = None
+        print("Train BIRCH model")
+        t_epoch = tqdm.tqdm(total=1, desc="BIRCH", position=0, ncols=90)
+        for image, _ in train_loader:
+            train_data = self.get_partitioned_batch(image)
+            model = Birch(n_clusters=self.args.cluster)
+            model.fit(train_data)
+            t_epoch.update(1)
             t_epoch.close()
-            if early_stopped:
-                print("Early stop training trial-{} kmeans model".format(trial))
-        joblib.dump(best_model, os.path.join(self.args.clustering_path + '/checkpoint.pkl'))
-        self.model = best_model
+        print("Birch n_cluster: {}".format(model.subcluster_centers_.shape))
+        #joblib.dump(model, os.path.join(self.args.kmeans_path + '/checkpoint.pkl'))
+        self.model = model
 
 
 def check_cluster_distribution(kmeans, train_loader):
-    n_data = kmeans.args.data_per_cluster * kmeans.args.cluster * len(train_loader)
+    #n_data = kmeans.args.data_per_cluster * kmeans.args.cluster * len(train_loader)
+    n_data = 50000
     n_data_per_cluster = dict()
     for c in range(kmeans.args.cluster):
         n_data_per_cluster[c] = 0
@@ -121,6 +103,6 @@ def check_cluster_distribution(kmeans, train_loader):
     print("{}, {:.2f}, {:.2f}".format(np.mean(d), np.var(d), np.std(d)))
     print(">> [Ratio] Mean, Var, Std")
     print("{:.2f} %, {:.4f}, {:.4f}".format(np.mean(ratio), np.var(ratio), np.std(ratio)))
-    centroids = kmeans.model.cluster_centers_
-    print(">> [Centroids] Var, Std")
-    print("var: {:.4f}, std: {:.4f}".format(np.var(centroids), np.std(centroids)))
+    #centroids = kmeans.model.cluster_centers_
+    #print(">> [Centroids] Var, Std")
+    #print("var: {:.4f}, std: {:.4f}".format(np.var(centroids), np.std(centroids)))

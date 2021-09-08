@@ -37,16 +37,19 @@ parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be 
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
 parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
-parser.add_argument('--kmeans_path', default='', type=str, help="Trained K-means clustering model's path")
+parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means/BIRCH) to use in PCQ")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
+parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
+parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
+parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
+parser.add_argument('--phase2_loader_strategy', default='mean', type=str, help="Making data loader of Phase-2, choose length of data loader per cluster by strategy of mean/min/max length")
+parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
+
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
 parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model multiple times, and use the best model")
-parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
-parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
-parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
-parser.add_argument('--phase2_len_loader', default='mean', type=str, help="Lenght of data loader of Phase-2, fitting to cluster of mean/min/max length")
+parser.add_argument('--visualize_clustering', default=False, type=bool, help="Visualize clustering result with PCA-ed training dataset")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
@@ -69,8 +72,15 @@ if not args.worker:
 print(vars(args))
 
 
-def set_func_for_target_arch(arch, is_pcq):
+def set_func_for_target_arch(arch, clustering_method, is_pcq):
     tools = QuantizationTool()
+
+    if is_pcq:
+        if clustering_method == 'kmeans':
+            setattr(tools, 'clustering_method', KMeans)
+        else:
+            setattr(tools, 'clustering_method', BIRCH)
+
     if 'AlexNet' in arch:
         setattr(tools, 'fuser', set_fused_alexnet)
         setattr(tools, 'folder', None)
@@ -181,7 +191,7 @@ def specify_target_arch(arch, dataset, num_clusters):
         arch = 'DenseNet121'
 
     is_pcq = True if num_clusters > 1 else False
-    model_initializers = set_func_for_target_arch(arch, is_pcq)
+    model_initializers = set_func_for_target_arch(arch, args.clustering_method, is_pcq)
     return arch, model_initializers
 
 
