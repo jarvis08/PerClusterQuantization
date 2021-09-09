@@ -96,25 +96,18 @@ class FusedBottleneck(nn.Module):
     expansion: int = 4
 
     def __init__(self, inplane:int, planes:int, stride:int=1, downsample=None,
-                 groups: int = 1, base_width:int =64, dilation:int =1,
-                 norm_layer=None, act_qmax=None, arg_dict=None) -> None:
+                 groups: int = 1, base_width:int =64, dilation:int =1, act_qmax=None, arg_dict=None) -> None:
         super(FusedBottleneck, self).__init__()
 
         self.downsample = downsample
         self.stride = stride
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
 
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
-        if act_qmax:
-            act_qmax = act_qmax
-        else:
-            act_qmax = self.q_max
+        act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
@@ -192,7 +185,6 @@ class FusedResNet(nn.Module):
 
         self.apply_ema = False
 
-        self._norm_layer = nn.BatchNorm2d
         self.inplanes = 64
         self.dilation = 1
         self.num_blocks = 4
@@ -235,7 +227,7 @@ class FusedResNet(nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
                             base_width=self.base_width, dilation=previous_dilation,
-                            norm_layer=self._norm_layer, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                            act_qmax=self.act_qmax, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
