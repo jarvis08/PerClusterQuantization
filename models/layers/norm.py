@@ -101,28 +101,39 @@ class QuantizedBn2d(nn.Module):
 
 
 class PCQBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, act_qmax=None, w_qmax=None, arg_dict=None):
+    def __init__(self, num_features, momentum=0.1, eps=1e-05, activation=None, act_qmax=None, w_qmax=2 ** 8 - 1, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
-        self.w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
+        self.w_qmax = w_qmax
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
 
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = False
 
-        self.norms = nn.ModuleList([FusedBnReLU(num_features, activation=activation, act_qmax=self.act_qmax,
-                                    w_qmax=self.w_qmax, is_pcq=True, arg_dict=arg_dict)
-                                    for _ in range(self.num_clusters)])
+        self.weights = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=True)
+        self.biases = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=True)
+        self.running_means = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=False)
+        self.running_vars = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=False)
+        self.eps = nn.Parameter(torch.tensor(eps), requires_grad=False)
+        self.momentum = nn.Parameter(torch.tensor(momentum), requires_grad=False)
+
+        self.activation = activation
 
     def forward(self, x, external_range=None):
-        out = torch.zeros(x.shape).cuda()
-        existing_clusters = torch.unique(self.runtime_helper.batch_cluster)
+
+        bc = self.runtime_helper.batch_cluster
+        existing_clusters = torch.unique(bc)
         for c in existing_clusters:
-            indices = (self.runtime_helper.batch_cluster == c).nonzero(as_tuple=True)[0]
+            indices = (bc == c).nonzero(as_tuple=True)[0]
             out[indices] = self.norms[c](x[indices])
+
+        w = torch.index_select(self.weights, 0, bc)
+        b = torch.index_select(self.biases, 0, bc)
+        mean = x.detach().mean(dim=(0, 2, 3))
+        var = x.detach().var(dim=(0, 2, 3), unbiased=False)
 
         if not self.training:
             return out
