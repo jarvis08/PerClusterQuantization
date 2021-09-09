@@ -89,7 +89,6 @@ def _quant_noise(module, p, block_size, q_max):
                 )
                 mask.bernoulli_(p)
                 mask = mask.repeat_interleave(block_size, -1).view(-1, in_features).cuda()
-
                 unmask = torch.ones(mask.shape).cuda() - mask
                 quantized_weight = weight * mask
                 unquantized_weight = weight * unmask
@@ -143,14 +142,12 @@ def _quant_noise(module, p, block_size, q_max):
                     mask = torch.zeros( int(in_channels // block_size * out_channels), device=weight.device)
                     mask.bernoulli_(p)
                     mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
-
                     # adding custom
                     mask = (
                         mask.unsqueeze(2)
                             .unsqueeze(3)
                             .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
                     )
-
                     mask.cuda()
                     quantized_weight = weight.cuda() * mask
                     unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
@@ -162,8 +159,8 @@ def _quant_noise(module, p, block_size, q_max):
                         mask.unsqueeze(2)
                         .unsqueeze(3)
                         .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
-                    ).cuda()
-                    # mask.cuda()
+                    )
+                    mask.cuda()
 
                     quantized_weight = weight.cuda() * mask
                     unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
