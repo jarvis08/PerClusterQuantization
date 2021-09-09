@@ -17,10 +17,10 @@ class QuantizedBn2d(nn.Module):
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.s2 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
         self.s3 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.z2 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
@@ -42,15 +42,14 @@ class QuantizedBn2d(nn.Module):
         bias = torch.index_select(self.bias.repeat_interleave(width * height)
                                   .reshape(self.num_clusters, self.num_features, width, height), 0, bc)
         z1 = torch.index_select(self.z1, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        z2 = torch.index_select(self.z2, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         shift = torch.index_select(self.shift, 0, bc)
 
         q1q2 = x.mul(weight)
-        q1z2 = x.mul(z2)
+        q1z2 = x.mul(self.z2)
         q2z1 = weight.mul(z1)
-        subsum = q1q2 - q1z2 - q2z1 + z1 * z2 + bias
+        subsum = q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
 
         total = torch.zeros(subsum.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
@@ -113,6 +112,8 @@ class PCQBnReLU(nn.Module):
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = False
 
+        self.activation = activation(inplace=True) if activation else None
+
         self.num_features = num_features
 
         self.weights = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=True)
@@ -122,16 +123,16 @@ class PCQBnReLU(nn.Module):
         self.eps = nn.Parameter(torch.tensor(eps), requires_grad=False)
         self.momentum = nn.Parameter(torch.tensor(momentum), requires_grad=False)
 
-        self.activation = activation(inplace=True) if activation else None
+        # Only used in training
+        self._means = torch.zeros(self.num_clusters, self.num_features).cuda()
+        self._vars = torch.zeros(self.num_clusters, self.num_features).cuda()
+        self._vars_stat = torch.zeros(self.num_clusters, 1).cuda()
 
     def forward(self, x, external_range=None):
         if self.training:
             out = self._fake_quantized_bn(x)
         else:
-            out = self._inference(x)
-
-        if not self.training:
-            return out
+            return self._inference(x)
 
         if not self.runtime_helper.pcq_initialized:
             self._update_activation_ranges(out, external_range)
@@ -162,38 +163,23 @@ class PCQBnReLU(nn.Module):
         bc = self.runtime_helper.batch_cluster
         existing_clusters = torch.unique(bc)
 
-        _means = torch.zeros(self.num_clusters, self.num_features).cuda()
-        _vars = torch.zeros(self.num_clusters, self.num_features).cuda()
-        folded_weights = torch.zeros(self.num_clusters, self.num_features).cuda()
-        folded_biases = torch.zeros(self.num_clusters, self.num_features).cuda()
-        scales = torch.zeros(self.num_clusters, self.num_features).cuda()
-        zero_points = torch.zeros(self.num_clusters, self.num_features).cuda()
         with torch.no_grad():
             for c in existing_clusters:
                 indices = (bc == c).nonzero(as_tuple=True)[0]
-                inputs_of_cluster = x[indices]
-                _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
-                _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
-
-                n = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
-                self.running_means[c] = self.running_means[c] * (1 - self.momentum) + _means[c] * self.momentum
-                self.running_vars[c] = self.running_vars[c] * (1 - self.momentum) + _vars[c] * self.momentum * n / (n - 1)
-
-                folded_weights[c] = self.weights[c].div(torch.sqrt(_vars[c] + self.eps))
-                folded_biases[c] = self.biases[c] - folded_weights[c] * _means[c]
-                if folded_weights[c].min() > 0:
-                    scales[c], zero_points[c] = calc_qparams(torch.tensor(0), folded_weights[c].max(), self.w_qmax)
-                elif folded_weights[c].max() < 0:
-                    scales[c], zero_points[c] = calc_qparams(folded_weights[c].min(), folded_weights[c].tensor(0),
-                                                             self.w_qmax)
-                else:
-                    scales[c], zero_points[c] = calc_qparams(folded_weights[c].min(), folded_weights[c].max(),
-                                                             self.w_qmax)
+                inputs_of_cluster = x[indices].detach()
+                self._means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
+                self._vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
+                self._vars_stat[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+            self.running_means[existing_clusters] = self.running_means[c] * (1 - self.momentum) \
+                                                    + self._means[existing_clusters] * self.momentum
+            self.running_vars[existing_clusters] = self.running_vars[c] * (1 - self.momentum) \
+                                                   + self._vars[existing_clusters] * self.momentum \
+                                                   * self._vars_stat[existing_clusters] / (self._vars_stat[existing_clusters] - 1)
 
         w = torch.index_select(self.weights, 0, bc)
         b = torch.index_select(self.biases, 0, bc)
-        m = torch.index_select(_means, 0, bc)
-        v = torch.index_select(_vars, 0, bc)
+        m = torch.index_select(self._means, 0, bc)
+        v = torch.index_select(self._vars, 0, bc)
 
         out = (x - m[:, :, None, None]) / (torch.sqrt(v[:, :, None, None] + self.eps))
         out = out * w[:, :, None, None] + b[:, :, None, None]
@@ -201,7 +187,17 @@ class PCQBnReLU(nn.Module):
             out = self.activation(out)
 
         with torch.no_grad():
-            fake_weights = fake_quantize(folded_weights, scales, zero_points, self.w_qmax, use_ste=False)
+            folded_weights = self.weights.div(torch.sqrt(self._vars + self.eps))
+            folded_biases = self.biases - folded_weights * self._means
+            existing_weights = folded_weights[existing_clusters]
+            if existing_weights.min() > 0:
+                scale, zero_point = calc_qparams(torch.tensor(0), existing_weights.max(), self.w_qmax)
+            elif existing_weights.max() < 0:
+                scale, zero_point = calc_qparams(existing_weights.min(), torch.tensor(0), self.w_qmax)
+            else:
+                scale, zero_point = calc_qparams(existing_weights.min(), existing_weights.max(), self.w_qmax)
+                
+            fake_weights = fake_quantize(folded_weights, scale, zero_point, self.w_qmax, use_ste=False)
 
             w = torch.index_select(fake_weights, 0, bc)
             b = torch.index_select(folded_biases, 0, bc)
@@ -236,16 +232,13 @@ class PCQBnReLU(nn.Module):
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
 
-        self.s2 = nn.Parameter(torch.zeros((self.num_clusters, self.num_features), dtype=torch.float32), requires_grad=False)
-        self.z2 = nn.Parameter(torch.zeros((self.num_clusters, self.num_features), dtype=torch.int32), requires_grad=False)
-        for c in range(self.num_clusters):
-            weight = self.weights[c].div(torch.sqrt(self.running_var[c] + self.eps))
-            if weight.min() > 0:
-                self.s2[c], self.z2[c] = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
-            elif weight.max() < 0:
-                self.s2[c], self.z2[c] = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
-            else:
-                self.s2[c], self.z2[c] = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+        folded_weights = self.weights.div(torch.sqrt(self.running_vars + self.eps))
+        if folded_weights.min() > 0:
+            self.s2, self.z2 = calc_qparams(torch.tensor(0), folded_weights.max(), self.w_qmax)
+        elif folded_weights.max() < 0:
+            self.s2, self.z2 = calc_qparams(folded_weights.min(), torch.tensor(0), self.w_qmax)
+        else:
+            self.s2, self.z2 = calc_qparams(folded_weights.min(), folded_weights.max(), self.w_qmax)
 
         if s_external:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False),\
@@ -256,7 +249,7 @@ class PCQBnReLU(nn.Module):
         self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2[c] / self.s3[c])
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 
 

@@ -285,14 +285,13 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
-                for c in range(_int.num_clusters):
-                    std = torch.sqrt(_fp.running_vars[c] + _fp.eps)
-                    weight = _fp.weights[c].div(std)
-                    bias = _fp.biases[c] - weight * _fp.running_means[c]
-                    weight = quantize_matrix(weight, _int.s2[c], _int.z2[c], _fp.w_qmax)
-                    bias = quantize_matrix(bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
-
-                    _int.weight[c].copy_(weight.type(torch.cuda.IntTensor))
+                std = torch.sqrt(_fp.running_vars + _fp.eps)
+                weight = _fp.weights.div(std)
+                bias = _fp.biases - weight * _fp.running_means
+                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
+                _int.weight.copy_(weight.type(torch.cuda.IntTensor))
+                for c in _int.num_clusters:
+                    bias = quantize_matrix(bias, _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
                     _int.bias[c].copy_(bias.type(torch.cuda.IntTensor))
             else:
                 w = _fp.bn.weight.div(torch.sqrt(_fp.bn.running_var + _fp.bn.eps))
