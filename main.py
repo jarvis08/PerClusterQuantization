@@ -4,6 +4,7 @@ import argparse
 #from PerClusterQuantization.models.bert.fused_bert import fused_bert_small, set_fused_bert_small
 #from PerClusterQuantization.models.bert.quantized_bert import quantized_bert_small, quantize_bert
 #from PerClusterQuantization.run_classifier import _run_classifier
+from run_classifier import _run_classifier
 from models import *
 from pretrain import _pretrain
 from finetune import _finetune
@@ -143,13 +144,13 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
         setattr(tools, 'fused_model_initializer', fused_mobilenet)
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
-    elif arch == 'Bert':
-        # setattr(tools, 'fuser', set_fused_bert)
-        setattr(tools, 'fuser', set_fused_bert_small)
-        setattr(tools, 'pretrained_model_initializer', bert_small)
-        setattr(tools, 'fused_model_initializer', fused_bert_small)
-        setattr(tools, 'quantized_model_initializer', quantized_bert_small)
-        setattr(tools, 'quantizer', quantize_bert)
+    # elif arch == 'Bert':
+    #     # setattr(tools, 'fuser', set_fused_bert)
+    #     setattr(tools, 'fuser', set_fused_bert_small)
+    #     setattr(tools, 'pretrained_model_initializer', bert_small)
+    #     setattr(tools, 'fused_model_initializer', fused_bert_small)
+    #     setattr(tools, 'quantized_model_initializer', quantized_bert_small)
+    #     setattr(tools, 'quantizer', quantize_bert)
 
     elif arch == 'DenseNet121':
         # setattr(tools, 'pretrained_model_initializer', densenet121)

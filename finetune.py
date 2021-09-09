@@ -307,11 +307,7 @@ def _finetune(args, tools):
         # TODO: Quantnoise prob-increasing method
         if args.quant_noise and e % args.qn_increment_epoch == 1:
             model.runtime_helper.qn_prob += 0.1
-            tools.shift_qn_prob(model)
-
-        if args.quant_noise and e % 3 == 1:
-            runtime_helper.qn_prob += 0.1
-            tools.shift_qn_prob(model)
+            model = tools.shift_qn_prob(model)
 
         if args.cluster > 1:
             #pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
