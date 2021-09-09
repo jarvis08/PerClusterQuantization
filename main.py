@@ -161,11 +161,13 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'fuser', set_pcq_densenet)
             # setattr(tools, 'folder', fold_pcq_densenet)
             setattr(tools, 'quantizer', quantize_pcq_densenet)
+            setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
         else:
             setattr(tools, 'fused_model_initializer', fused_densenet)
             setattr(tools, 'fuser', set_fused_densenet)
             # setattr(tools, 'folder', fold_densenet)
             setattr(tools, 'quantizer', quantize_densenet)
+            setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
     return tools
 
 

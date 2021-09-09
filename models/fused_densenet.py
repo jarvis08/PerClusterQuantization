@@ -7,6 +7,7 @@ from typing import List, Tuple
 from torch import Tensor
 
 from .layers import *
+from .quant_noise import _quant_noise
 from .quantization_utils import *
 
 
@@ -273,6 +274,27 @@ def set_fused_densenet(fused, pre):
     # Classifier
     fused.classifier = copy_from_pretrained(fused.classifier, pre.classifier)
     return fused
+
+
+def modify_fused_densenet_qn_pre_hook(model):
+    model.features.first_conv.quant_noise = False
+
+    # dense block & Transition
+    for block_idx in range(1,5):
+        model_block = getattr(model.features, 'denseblock%d' % block_idx)
+        if block_idx < 4:
+            model_trans = getattr(model.features, 'transition%d' % block_idx)
+        # dense layer
+        for layer_idx in range(1, model_block.num_layers+1):
+            model_layer = getattr(model_block,'denselayer%d' % layer_idx)
+            model_layer.conv1 = _quant_noise(model_layer.conv1, model.runtime_helper.qn_prob, 1, model.q_max)
+            model_layer.conv2 = _quant_noise(model_layer.conv2, model.runtime_helper.qn_prob, 1, model.q_max)
+
+        # transition
+        if block_idx < 4:
+            model_trans.conv = _quant_noise(model_trans.conv, model.runtime_helper.qn_prob, 1, model.q_max)
+    # Classifier
+    model.classifier.quant_noise = False
 
 
 # def fold_densenet(model):
