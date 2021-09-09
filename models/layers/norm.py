@@ -236,10 +236,16 @@ class PCQBnReLU(nn.Module):
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
 
-        self.s2 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.z2 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.zeros((self.num_clusters, self.num_features), dtype=torch.float32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.zeros((self.num_clusters, self.num_features), dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.s2[c], self.z2[c] = self.norms[c].get_weight_qparams()
+            weight = self.weights[c].div(torch.sqrt(self.running_var[c] + self.eps))
+            if weight.min() > 0:
+                self.s2[c], self.z2[c] = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
+            elif weight.max() < 0:
+                self.s2[c], self.z2[c] = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
+            else:
+                self.s2[c], self.z2[c] = calc_qparams(weight.min(), weight.max(), self.w_qmax)
 
         if s_external:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False),\
