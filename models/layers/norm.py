@@ -113,6 +113,8 @@ class PCQBnReLU(nn.Module):
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = False
 
+        self.num_features = num_features
+
         self.weights = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=True)
         self.biases = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=True)
         self.running_means = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=False)
@@ -120,20 +122,13 @@ class PCQBnReLU(nn.Module):
         self.eps = nn.Parameter(torch.tensor(eps), requires_grad=False)
         self.momentum = nn.Parameter(torch.tensor(momentum), requires_grad=False)
 
-        self.activation = activation
+        self.activation = activation(inplace=True) if activation else None
 
     def forward(self, x, external_range=None):
-
-        bc = self.runtime_helper.batch_cluster
-        existing_clusters = torch.unique(bc)
-        for c in existing_clusters:
-            indices = (bc == c).nonzero(as_tuple=True)[0]
-            out[indices] = self.norms[c](x[indices])
-
-        w = torch.index_select(self.weights, 0, bc)
-        b = torch.index_select(self.biases, 0, bc)
-        mean = x.detach().mean(dim=(0, 2, 3))
-        var = x.detach().var(dim=(0, 2, 3), unbiased=False)
+        if self.training:
+            out = self._fake_quantized_bn(x)
+        else:
+            out = self._inference(x)
 
         if not self.training:
             return out
@@ -149,6 +144,71 @@ class PCQBnReLU(nn.Module):
             return self._fake_quantize_activation(out, external_range)
         else:
             return out
+
+    def _inference(self, x):
+        bc = self.runtime_helper.batch_cluster
+        w = torch.index_select(self.weights, 0, bc)
+        b = torch.index_select(self.biases, 0, bc)
+        m = torch.index_select(self.running_means, 0, bc)
+        v = torch.index_select(self.running_vars, 0, bc)
+
+        out = (x - m[:, :, None, None]) / (torch.sqrt(v[:, :, None, None] + self.eps))
+        out = out * w[:, :, None, None] + b[:, :, None, None]
+        if self.activation is not None:
+            out = self.activation(out)
+        return out
+
+    def _fake_quantized_bn(self, x):
+        bc = self.runtime_helper.batch_cluster
+        existing_clusters = torch.unique(bc)
+
+        _means = torch.zeros(self.num_clusters, self.num_features).cuda()
+        _vars = torch.zeros(self.num_clusters, self.num_features).cuda()
+        folded_weights = torch.zeros(self.num_clusters, self.num_features).cuda()
+        folded_biases = torch.zeros(self.num_clusters, self.num_features).cuda()
+        scales = torch.zeros(self.num_clusters, self.num_features).cuda()
+        zero_points = torch.zeros(self.num_clusters, self.num_features).cuda()
+        with torch.no_grad():
+            for c in existing_clusters:
+                indices = (bc == c).nonzero(as_tuple=True)[0]
+                inputs_of_cluster = x[indices]
+                _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
+                _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
+
+                n = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+                self.running_means[c] = self.running_means[c] * (1 - self.momentum) + _means[c] * self.momentum
+                self.running_vars[c] = self.running_vars[c] * (1 - self.momentum) + _vars[c] * self.momentum * n / (n - 1)
+
+                folded_weights[c] = self.weights[c].div(torch.sqrt(_vars[c] + self.eps))
+                folded_biases[c] = self.biases[c] - folded_weights[c] * _means[c]
+                if folded_weights[c].min() > 0:
+                    scales[c], zero_points[c] = calc_qparams(torch.tensor(0), folded_weights[c].max(), self.w_qmax)
+                elif folded_weights[c].max() < 0:
+                    scales[c], zero_points[c] = calc_qparams(folded_weights[c].min(), folded_weights[c].tensor(0),
+                                                             self.w_qmax)
+                else:
+                    scales[c], zero_points[c] = calc_qparams(folded_weights[c].min(), folded_weights[c].max(),
+                                                             self.w_qmax)
+
+        w = torch.index_select(self.weights, 0, bc)
+        b = torch.index_select(self.biases, 0, bc)
+        m = torch.index_select(_means, 0, bc)
+        v = torch.index_select(_vars, 0, bc)
+
+        out = (x - m[:, :, None, None]) / (torch.sqrt(v[:, :, None, None] + self.eps))
+        out = out * w[:, :, None, None] + b[:, :, None, None]
+        if self.activation is not None:
+            out = self.activation(out)
+
+        with torch.no_grad():
+            fake_weights = fake_quantize(folded_weights, scales, zero_points, self.w_qmax, use_ste=False)
+
+            w = torch.index_select(fake_weights, 0, bc)
+            b = torch.index_select(folded_biases, 0, bc)
+            fake_out = x * w[:, :, None, None] + b[:, :, None, None]
+            if self.activation is not None:
+                fake_out = self.activation(fake_out)
+        return STE.apply(out, fake_out)
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:

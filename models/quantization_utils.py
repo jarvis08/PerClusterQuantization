@@ -349,6 +349,15 @@ def copy_bn_from_pretrained(_to, _from):
     return _to
 
 
+def copy_pcq_bn_from_pretrained(_to, _from, num_clusters):
+    with torch.no_grad():
+        _to.weights = nn.Parameter(_from.weight.unsqueeze(0).repeat(num_clusters, 1), requires_grad=True)
+        _to.biases = nn.Parameter(_from.bias.unsqueeze(0).repeat(num_clusters, 1), requires_grad=True)
+        _to.running_means = nn.Parameter(_from.running_mean.unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        _to.running_vars = nn.Parameter(_from.running_var.unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+    return _to
+
+
 def copy_weight_from_pretrained(_to, _from):
     # Copy weights from pretrained FP model
     with torch.no_grad():
