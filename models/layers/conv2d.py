@@ -363,12 +363,27 @@ class FusedConv2d(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            x = self.conv(x)
+            # print("Conv Weight min: {} max: {}\n".format(torch.min(self.conv.weight).item(), torch.max(self.conv.weight).item()))
+            w = self.conv.weight
+            s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+            w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
+            x = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation,
+                         self.conv.groups)
+            # x = self.conv(x)
             if self._norm_layer:
                 x = self._norm_layer(x)
             if self._activation:
                 x = self._activation(x)
-            return x
+            # print("Conv Output min: {} max: {}\n".format(torch.min(x).item(),
+            #                                              torch.max(x).item()))
+            if external_range is not None:
+                s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
+                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+            else:
+                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+            return out
 
         if self.folded_fq:
             return self._norm_folded(x, external_range)

@@ -13,6 +13,7 @@ def _evaluate(args, tools):
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
     model = load_dnn_model(arg_dict, tools)
+
     model.cuda()
     if not args.quantized:
         if args.dataset == 'imagenet':

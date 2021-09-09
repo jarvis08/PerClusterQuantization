@@ -264,10 +264,22 @@ class FusedLinear(nn.Module):
 
     def forward(self, x):
         if not self.training:
-            x = self.fc(x)
+            # print("FC Weight min: {} max: {}\n".format(torch.min(self.fc.weight).item(),
+            #                                              torch.max(self.fc.weight).item()))
+            w = self.fc.weight
+            s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
+            w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
+
+            x = F.linear(x, w, self.fc.bias)
             if self._activation:
                 x = self._activation(x)
-            return x
+
+            out = x
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+            out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
+            # print("FC Output min: {} max: {}\n".format(torch.min(x).item(),
+            #                                              torch.max(x).item()))
+            return out
 
         w = self.fc.weight
         if not self.quant_noise:

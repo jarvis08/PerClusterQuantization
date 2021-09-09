@@ -140,8 +140,11 @@ class FusedBottleneck(nn.Module):
 
         out += identity
         out = self.relu(out)
+        # print("Block Output min: {} max: {}\n".format(torch.min(out).item(), torch.max(out).item()))
 
         if not self.training:
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+            _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
             return out
 
         _out = out
@@ -231,8 +234,7 @@ class FusedResNet(nn.Module):
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, norm_layer=self._norm_layer,
-                                act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                                dilation=self.dilation, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
@@ -247,6 +249,10 @@ class FusedResNet(nn.Module):
                 self.in_range[1] = torch.max(x).item()
                 self.apply_ema = True
 
+        else:
+            s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+            x = fake_quantize(x, s, z, self.q_max)
+
         x = self.first_conv(x)
         x = self.bn1(x)
         x = self.maxpool(x)
@@ -259,6 +265,7 @@ class FusedResNet(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
+        # print("Total Output min: {} max: {}\n".format(torch.min(x).item(), torch.max(x).item()))
         return x
 
     def show_params(self):
