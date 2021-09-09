@@ -231,8 +231,7 @@ class FusedResNet(nn.Module):
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, norm_layer=self._norm_layer,
-                                act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                                dilation=self.dilation, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
