@@ -310,6 +310,7 @@ def _finetune(args, tools):
             saved_args = json.load(f)
             best_score_int = saved_args['best_score']
             best_epoch = saved_args['best_epoch']
+            epoch_to_start = best_epoch + 1
         f.close()
 
     for e in range(epoch_to_start, args.epoch + 1):
