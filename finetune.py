@@ -189,6 +189,8 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
 
 
 def get_finetuning_model(arg_dict, tools):
+    if arg_dict['dnn_path'] and arg_dict['fused']:
+        return load_dnn_model(arg_dict, tools)
     pretrained_model = load_dnn_model(arg_dict, tools)
     fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
@@ -300,6 +302,20 @@ def _finetune(args, tools):
     logger = set_logger(save_path_fp)
     best_score_int = 0
     best_epoch = 0
+
+    if args.fused:
+        params_path = arg_dict['dnn_path']
+        params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
+        print(params_path)
+        with open(os.path.join(params_path, "params.json"), 'r') as f:
+            saved_args = json.load(f)
+            best_score_int = saved_args['best_score']
+            best_epoch = saved_args['best_epoch']
+
+        print(best_score_int, best_epoch)
+        f.close()
+        exit()
+
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
