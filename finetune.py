@@ -306,15 +306,11 @@ def _finetune(args, tools):
     if args.fused:
         params_path = arg_dict['dnn_path']
         params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
-        print(params_path)
         with open(os.path.join(params_path, "params.json"), 'r') as f:
             saved_args = json.load(f)
             best_score_int = saved_args['best_score']
             best_epoch = saved_args['best_epoch']
-
-        print(best_score_int, best_epoch)
         f.close()
-        exit()
 
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
