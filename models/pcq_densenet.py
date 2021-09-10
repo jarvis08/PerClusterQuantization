@@ -311,7 +311,9 @@ def set_pcq_densenet(fused, pre):
                 fused_trans.norms[c].bn_momentum = bn_momentum
             fused_trans.conv = copy_from_pretrained(fused_trans.conv, pre_trans.conv)
     # Last BatchNorm
-    fused.features.last_norm = copy_bn_from_pretrained(fused.features.last_norm, pre.features.norm5)
+    for c in range(n):
+        fused.features.last_norm.norms[c] = copy_bn_from_pretrained(fused.features.last_norm.norms[c], pre.features.norm5)
+        fused.features.last_norm.norms[c].bn_momentum = bn_momentum
     # Classifier
     fused.classifier = copy_from_pretrained(fused.classifier, pre.classifier)
     return fused
