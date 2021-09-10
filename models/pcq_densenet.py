@@ -307,8 +307,8 @@ def set_pcq_densenet(fused, pre):
         # transition
         if block_idx < 4:
             for c in range(n):
-                fused_trans.norms[c] = copy_bn_from_pretrained(fused_trans.norms[c], pre_trans.norm)
-                fused_trans.norms[c].bn_momentum = bn_momentum
+                fused_trans.bn.norms[c] = copy_bn_from_pretrained(fused_trans.bn.norms[c], pre_trans.norm)
+                fused_trans.bn.norms[c].bn_momentum = bn_momentum
             fused_trans.conv = copy_from_pretrained(fused_trans.conv, pre_trans.conv)
     # Last BatchNorm
     for c in range(n):
