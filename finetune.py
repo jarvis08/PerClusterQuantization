@@ -161,9 +161,8 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
-            #runtime_helper.set_cluster_information_of_batch(input, clustering_model)
-            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
             input, target = input.cuda(), target.cuda()
+            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
             output = model(input)
 
             loss = criterion(output, target)
@@ -256,8 +255,17 @@ def _finetune(args, tools):
 
     epoch_to_start = 1
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+
+    best_score_int = 0
+    best_epoch = 0
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
+        params_path = arg_dict['dnn_path']
+        params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
+        with open(os.path.join(params_path, "params.json"), 'r') as f:
+            saved_args = json.load(f)
+            best_score_int = saved_args['best_score']
+            best_epoch = saved_args['best_epoch']
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
@@ -296,23 +304,11 @@ def _finetune(args, tools):
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             initialize_pcq_model(model, phase2_loader.data_loader, criterion)
 
+    quantized_model = None
     runtime_helper.pcq_initialized = True
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
-    best_score_int = 0
-    best_epoch = 0
-
-    if args.fused:
-        params_path = arg_dict['dnn_path']
-        params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
-        with open(os.path.join(params_path, "params.json"), 'r') as f:
-            saved_args = json.load(f)
-            best_score_int = saved_args['best_score']
-            best_epoch = saved_args['best_epoch']
-            epoch_to_start = best_epoch + 1
-        f.close()
-
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
@@ -323,7 +319,6 @@ def _finetune(args, tools):
             model = tools.shift_qn_prob(model)
 
         if args.cluster > 1:
-            #pcq_epoch(model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
             pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
@@ -343,15 +338,11 @@ def _finetune(args, tools):
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
-            if tools.folder:
-                folded_model = tools.folder(deepcopy(model))
-            else:
-                folded_model = deepcopy(model)
-            folded_model.set_quantization_params()
-            quantized_model = tools.quantized_model_initializer(arg_dict)
-            quantized_model = tools.quantizer(folded_model, quantized_model)
+            model.set_quantization_params()
+            if quantized_model is None:
+                quantized_model = tools.quantized_model_initializer(arg_dict)
+            quantized_model = tools.quantizer(model, quantized_model)
             quantized_model.cuda()
-            del folded_model
 
             if args.cluster > 1:
                 val_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
@@ -377,7 +368,6 @@ def _finetune(args, tools):
                     json.dump(tmp, f, indent=4)
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
-            del quantized_model
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     method = ''

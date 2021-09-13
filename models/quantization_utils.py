@@ -56,7 +56,7 @@ def calc_qparams_per_cluster(ranges, q_max):
         return s, torch.clamp(z, -32768, 32767)
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
-    return torch.nn.Parameter(s, requires_grad=False), torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False)
+    return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False)
 
 
 def ema(x, averaged, smooth):
@@ -285,15 +285,13 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
+                weight = _fp.weights.div(torch.sqrt(_fp.running_vars + _fp.eps))
+                bias = _fp.biases - weight * _fp.running_means
+                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
+                _int.weight.copy_(weight.type(torch.cuda.IntTensor))
                 for c in range(_int.num_clusters):
-                    std = torch.sqrt(_fp.norms[c].bn.running_var + _fp.norms[c].bn.eps)
-                    weight = _fp.norms[c].bn.weight.div(std)
-                    bias = _fp.norms[c].bn.bias - weight * _fp.norms[c].bn.running_mean
-                    weight = quantize_matrix(weight, _int.s2[c], _int.z2[c], _fp.norms[c].w_qmax)
-                    bias = quantize_matrix(bias, _int.s1[c] * _int.s2[c], 0, 2 ** 32 - 1)
-
-                    _int.weight[c].copy_(weight.type(torch.cuda.IntTensor))
-                    _int.bias[c].copy_(bias.type(torch.cuda.IntTensor))
+                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
+                    _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
             else:
                 w = _fp.bn.weight.div(torch.sqrt(_fp.bn.running_var + _fp.bn.eps))
                 b = _fp.bn.bias - w * _fp.bn.running_mean
@@ -346,6 +344,15 @@ def copy_from_pretrained(_to, _from, norm_layer=None):
 def copy_bn_from_pretrained(_to, _from):
     with torch.no_grad():
         _to.bn = deepcopy(_from)
+    return _to
+
+
+def copy_pcq_bn_from_pretrained(_to, _from, num_clusters):
+    with torch.no_grad():
+        _to.weights = nn.Parameter(_from.weight.unsqueeze(0).repeat(num_clusters, 1), requires_grad=True)
+        _to.biases = nn.Parameter(_from.bias.unsqueeze(0).repeat(num_clusters, 1), requires_grad=True)
+        _to.running_means = nn.Parameter(_from.running_mean.unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        _to.running_vars = nn.Parameter(_from.running_var.unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
     return _to
 
 

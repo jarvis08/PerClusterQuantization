@@ -187,8 +187,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 input, target = input.cuda(), target.cuda()
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 output = model(input)
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
