@@ -239,8 +239,8 @@ class QuantizedResNet20(nn.Module):
 #     return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
 
 
-def quantized_resnet20(arg_dict):
-    return QuantizedResNet20(QuantizedBasicBlock, [3, 3, 3], arg_dict)
+def quantized_resnet20(arg_dict, num_classes=10):
+    return QuantizedResNet20(QuantizedBasicBlock, [3, 3, 3], arg_dict, num_classes=num_classes)
 
 
 def quantized_resnet50(arg_dict, **kwargs):

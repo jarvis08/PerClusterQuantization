@@ -329,5 +329,5 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
     return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
 
 
-def resnet20() -> ResNet20:
-    return ResNet20(BasicBlock, [3, 3, 3])
+def resnet20(num_classes=10) -> ResNet20:
+    return ResNet20(BasicBlock, [3, 3, 3], num_classes=num_classes)

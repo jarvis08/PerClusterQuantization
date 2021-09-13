@@ -19,6 +19,7 @@ parser.add_argument('--worker', default=0, type=int, help='Number of workers for
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
+parser.add_argument('--num_classes', default=10, type=int, help='Cifar-10 or 100')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
@@ -70,7 +71,6 @@ if not args.worker:
     else:
         args.worker = 4
 print(vars(args))
-
 
 def set_func_for_target_arch(arch, clustering_method, is_pcq):
     tools = QuantizationTool()

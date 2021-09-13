@@ -427,8 +427,8 @@ def pcq_resnet50(arg_dict, **kwargs):
     return PCQResNet(PCQBottleneck, [3, 4, 6, 3], arg_dict=arg_dict, **kwargs)
 
 
-def pcq_resnet20(arg_dict):
-    return PCQResNet20(PCQBasicBlock, [3, 3, 3], arg_dict)
+def pcq_resnet20(arg_dict, num_classes=10):
+    return PCQResNet20(PCQBasicBlock, [3, 3, 3], arg_dict, num_classes=num_classes)
 
 
 def set_pcq_resnet(fused, pre):

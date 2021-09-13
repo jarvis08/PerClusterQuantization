@@ -88,5 +88,6 @@ def alexnet(**kwargs: Any) -> AlexNet:
     return AlexNet(**kwargs)
 
 
-def alexnet_small(**kwargs: Any) -> AlexNetSmall:
-    return AlexNetSmall(**kwargs)
+def alexnet_small(num_classes=10, **kwargs: Any) -> AlexNetSmall:
+    return AlexNetSmall(num_classes=num_classes, **kwargs)
+

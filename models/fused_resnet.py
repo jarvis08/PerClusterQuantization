@@ -365,8 +365,8 @@ def fused_resnet50(arg_dict, **kwargs):
     return FusedResNet(FusedBottleneck, [3, 4, 6, 3], arg_dict=arg_dict, **kwargs)
 
 
-def fused_resnet20(arg_dict):
-    return FusedResNet20(FusedBasicBlock, [3, 3, 3], arg_dict)
+def fused_resnet20(arg_dict, num_classes=10):
+    return FusedResNet20(FusedBasicBlock, [3, 3, 3], arg_dict, num_classes=num_classes)
 
 
 def set_fused_resnet(fused, pre):

@@ -102,8 +102,8 @@ def quantized_alexnet(arg_dict: dict, **kwargs: Any) -> QuantizedAlexNet:
     return QuantizedAlexNet(arg_dict, **kwargs)
 
 
-def quantized_alexnet_small(arg_dict: dict, **kwargs: Any) -> QuantizedAlexNetSmall:
-    return QuantizedAlexNetSmall(arg_dict, **kwargs)
+def quantized_alexnet_small(arg_dict: dict, num_classes=10, **kwargs: Any) -> QuantizedAlexNetSmall:
+    return QuantizedAlexNetSmall(arg_dict, num_classes=num_classes, **kwargs)
 
 
 def quantize_alexnet(fp_model, int_model):
