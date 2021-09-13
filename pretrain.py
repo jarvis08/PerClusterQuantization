@@ -18,16 +18,28 @@ def get_train_loader(args, normalizer):
                                                         ]))
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
     elif args.dataset == 'cifar':
-        train_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer,
-            ]))
+        if args.num_classes == 10:
+            train_dataset = torchvision.datasets.CIFAR10(
+                root='./data',
+                train=True,
+                download=True,
+                transform=transforms.Compose([
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    normalizer,
+                ]))
+        else:
+            train_dataset = torchvision.datasets.CIFAR100(
+                root='./data',
+                train=True,
+                download=True,
+                transform=transforms.Compose([
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    normalizer,
+                ]))
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
     else:
         train_dataset = torchvision.datasets.SVHN(
@@ -45,7 +57,7 @@ def get_train_loader(args, normalizer):
 
 
 def _pretrain(args, tools):
-    model = tools.pretrained_model_initializer()
+    model = tools.pretrained_model_initializer(args.num_classes)
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))

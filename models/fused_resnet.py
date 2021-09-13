@@ -231,8 +231,7 @@ class FusedResNet(nn.Module):
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, norm_layer=self._norm_layer,
-                                act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                                dilation=self.dilation, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
@@ -366,8 +365,8 @@ def fused_resnet50(arg_dict, **kwargs):
     return FusedResNet(FusedBottleneck, [3, 4, 6, 3], arg_dict=arg_dict, **kwargs)
 
 
-def fused_resnet20(arg_dict):
-    return FusedResNet20(FusedBasicBlock, [3, 3, 3], arg_dict)
+def fused_resnet20(arg_dict, num_classes=10):
+    return FusedResNet20(FusedBasicBlock, [3, 3, 3], arg_dict, num_classes=num_classes)
 
 
 def set_fused_resnet(fused, pre):

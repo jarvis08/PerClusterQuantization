@@ -240,8 +240,8 @@ class Qn_Conv2d(nn.Module):
         self.conv.bias.data = torch.nn.Parameter(conv.bias.data)
 
 
-def qn_alexnet_small(smooth: float = 0.999, bit: int = 8, noise_prob=0.1, **kwargs:Any) -> Qn_AlexNetSmall:
-    return Qn_AlexNetSmall(smooth=smooth, bit=bit, noise_prob=noise_prob, **kwargs)
+def qn_alexnet_small(smooth: float = 0.999, bit: int = 8, noise_prob=0.1, num_classes=10, **kwargs:Any) -> Qn_AlexNetSmall:
+    return Qn_AlexNetSmall(smooth=smooth, bit=bit, noise_prob=noise_prob, num_classes=num_classes, **kwargs)
 
 def qn_alexnet(smooth: float = 0.999, bit: int =8, noise_prob=0.1, **kwargs:Any) -> Qn_AlexNet:
     return Qn_AlexNet(smooth=smooth, bit=bit, noise_prob=noise_prob, **kwargs)

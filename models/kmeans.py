@@ -33,7 +33,7 @@ class KMeans(object):
                     rst = tmp
                 else:
                     rst = torch.cat([rst, tmp], dim=-1)
-        return rst.view(rst.size(0), -1).numpy()
+        return rst.view(rst.size(0), -1).cpu().numpy()
 
     def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
@@ -50,7 +50,7 @@ class KMeans(object):
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
-        return torch.cuda.LongTensor(cluster_info)
+        return torch.cuda.LongTensor(cluster_info).cuda()
 
     def train_clustering_model(self, train_loader):
         def check_convergence(prev, cur, tol):
