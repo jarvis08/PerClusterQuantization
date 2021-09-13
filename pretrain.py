@@ -57,7 +57,7 @@ def get_train_loader(args, normalizer):
 
 
 def _pretrain(args, tools):
-    if args.dnn_path is None:
+    if args.dnn_path == '':
         model = tools.pretrained_model_initializer(num_classes=args.num_classes)
     else:
         model = tools.pretrained_model_initializer(num_classes=args.num_classes)
@@ -73,7 +73,7 @@ def _pretrain(args, tools):
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     epoch_to_start = 1
     best_prec = 0
-    if args.dnn_path is not None:
+    if args.dnn_path is not '':
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         best_prec = checkpoint['best_prec']
     # optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr, momentum=0.9, alpha=0.9, weight_decay=args.weight_decay)
