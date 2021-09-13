@@ -56,7 +56,7 @@ def calc_qparams_per_cluster(ranges, q_max):
         return s, torch.clamp(z, -32768, 32767)
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
-    return torch.nn.Parameter(s, requires_grad=False), torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False)
+    return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False)
 
 
 def ema(x, averaged, smooth):
@@ -285,14 +285,13 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
-                std = torch.sqrt(_fp.running_vars + _fp.eps)
-                weight = _fp.weights.div(std)
+                weight = _fp.weights.div(torch.sqrt(_fp.running_vars + _fp.eps))
                 bias = _fp.biases - weight * _fp.running_means
                 weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
                 _int.weight.copy_(weight.type(torch.cuda.IntTensor))
-                for c in _int.num_clusters:
-                    bias = quantize_matrix(bias, _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
-                    _int.bias[c].copy_(bias.type(torch.cuda.IntTensor))
+                for c in range(_int.num_clusters):
+                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
+                    _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
             else:
                 w = _fp.bn.weight.div(torch.sqrt(_fp.bn.running_var + _fp.bn.eps))
                 b = _fp.bn.bias - w * _fp.bn.running_mean

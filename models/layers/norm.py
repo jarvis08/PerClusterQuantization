@@ -2,7 +2,7 @@ from operator import itemgetter
 
 import torch.nn as nn
 import torch
-
+import torch.nn.functional as F
 from ..quantization_utils import *
 
 
@@ -100,11 +100,11 @@ class QuantizedBn2d(nn.Module):
 
 
 class PCQBnReLU(nn.Module):
-    def __init__(self, num_features, momentum=0.1, eps=1e-05, activation=None, act_qmax=None, w_qmax=2 ** 8 - 1, arg_dict=None):
+    def __init__(self, num_features, eps=1e-05, activation=None, act_qmax=None, w_qmax=2 ** 8 - 1, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
-        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
-            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
+        self.momentum, self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
+            itemgetter('bn_momentum', 'bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
         self.w_qmax = w_qmax
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
@@ -115,18 +115,16 @@ class PCQBnReLU(nn.Module):
         self.activation = activation(inplace=True) if activation else None
 
         self.num_features = num_features
-
         self.weights = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=True)
         self.biases = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=True)
         self.running_means = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=False)
         self.running_vars = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=False)
         self.eps = nn.Parameter(torch.tensor(eps), requires_grad=False)
-        self.momentum = nn.Parameter(torch.tensor(momentum), requires_grad=False)
 
         # Only used in training
         self._means = torch.zeros(self.num_clusters, self.num_features).cuda()
         self._vars = torch.zeros(self.num_clusters, self.num_features).cuda()
-        self._vars_stat = torch.zeros(self.num_clusters, 1).cuda()
+        self._n = torch.zeros(self.num_clusters, 1).cuda()
 
     def forward(self, x, external_range=None):
         if self.training:
@@ -161,20 +159,24 @@ class PCQBnReLU(nn.Module):
 
     def _fake_quantized_bn(self, x):
         bc = self.runtime_helper.batch_cluster
-        existing_clusters = torch.unique(bc)
+        exists = torch.unique(bc)
+
+        self._means = torch.zeros_like(self._means).cuda()
+        self._vars = torch.zeros_like(self._vars).cuda()
+        self._n = torch.zeros_like(self._n).cuda()
+
+        for c in exists:
+            indices = (bc == c).nonzero(as_tuple=True)[0]
+            inputs_of_cluster = x[indices]
+            self._means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
+            self._vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
+            self._n[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
 
         with torch.no_grad():
-            for c in existing_clusters:
-                indices = (bc == c).nonzero(as_tuple=True)[0]
-                inputs_of_cluster = x[indices].detach()
-                self._means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
-                self._vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
-                self._vars_stat[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
-            self.running_means[existing_clusters] = self.running_means[c] * (1 - self.momentum) \
-                                                    + self._means[existing_clusters] * self.momentum
-            self.running_vars[existing_clusters] = self.running_vars[c] * (1 - self.momentum) \
-                                                   + self._vars[existing_clusters] * self.momentum \
-                                                   * self._vars_stat[existing_clusters] / (self._vars_stat[existing_clusters] - 1)
+            self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
+                                         + self._means[exists] * self.momentum
+            self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
+                                        + self._vars[exists] * self.momentum * self._n[exists] / (self._n[exists] - 1)
 
         w = torch.index_select(self.weights, 0, bc)
         b = torch.index_select(self.biases, 0, bc)
@@ -188,17 +190,17 @@ class PCQBnReLU(nn.Module):
 
         with torch.no_grad():
             folded_weights = self.weights.div(torch.sqrt(self._vars + self.eps))
-            folded_biases = self.biases - folded_weights * self._means
-            existing_weights = folded_weights[existing_clusters]
-            if existing_weights.min() > 0:
-                scale, zero_point = calc_qparams(torch.tensor(0), existing_weights.max(), self.w_qmax)
-            elif existing_weights.max() < 0:
-                scale, zero_point = calc_qparams(existing_weights.min(), torch.tensor(0), self.w_qmax)
+            _min = folded_weights.min()
+            _max = folded_weights.max()
+            if _min > 0:
+                scale, zero_point = calc_qparams(torch.tensor(0), _max, self.w_qmax)
+            elif _max < 0:
+                scale, zero_point = calc_qparams(_min, torch.tensor(0), self.w_qmax)
             else:
-                scale, zero_point = calc_qparams(existing_weights.min(), existing_weights.max(), self.w_qmax)
-                
+                scale, zero_point = calc_qparams(_min, _max, self.w_qmax)
             fake_weights = fake_quantize(folded_weights, scale, zero_point, self.w_qmax, use_ste=False)
 
+            folded_biases = self.biases - folded_weights * self._means
             w = torch.index_select(fake_weights, 0, bc)
             b = torch.index_select(folded_biases, 0, bc)
             fake_out = x * w[:, :, None, None] + b[:, :, None, None]
@@ -233,15 +235,17 @@ class PCQBnReLU(nn.Module):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
 
         folded_weights = self.weights.div(torch.sqrt(self.running_vars + self.eps))
-        if folded_weights.min() > 0:
-            self.s2, self.z2 = calc_qparams(torch.tensor(0), folded_weights.max(), self.w_qmax)
-        elif folded_weights.max() < 0:
-            self.s2, self.z2 = calc_qparams(folded_weights.min(), torch.tensor(0), self.w_qmax)
+        _min = folded_weights.min()
+        _max = folded_weights.max()
+        if _min > 0:
+            self.s2, self.z2 = calc_qparams(torch.tensor(0), _max, self.w_qmax)
+        elif _max < 0:
+            self.s2, self.z2 = calc_qparams(_min, torch.tensor(0), self.w_qmax)
         else:
-            self.s2, self.z2 = calc_qparams(folded_weights.min(), folded_weights.max(), self.w_qmax)
+            self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
 
         if s_external:
-            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False),\
+            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
                                nn.Parameter(z_external, requires_grad=False)
         else:
             self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.act_qmax)
@@ -300,16 +304,19 @@ class FusedBnReLU(nn.Module):
             out = self._activation(out)
 
         with torch.no_grad():
-            mean = x.detach().mean(dim=(0, 2, 3))
-            var = x.detach().var(dim=(0, 2, 3), unbiased=False)
+            _x = x.detach()
+            mean = _x.mean(dim=(0, 2, 3))
+            var = _x.var(dim=(0, 2, 3), unbiased=False)
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
             bias = self.bn.bias - weight * mean
-            if weight.min() > 0:
+            _min = weight.min()
+            _max = weight.max()
+            if _min > 0:
                 s, z = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
-            elif weight.max() < 0:
-                s, z = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
+            elif _max < 0:
+                s, z = calc_qparams(_min, torch.tensor(0), self.w_qmax)
             else:
-                s, z = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+                s, z = calc_qparams(_min, _max, self.w_qmax)
 
             weight = fake_quantize(weight, s, z, self.w_qmax, use_ste=False)
 
