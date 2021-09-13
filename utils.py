@@ -261,7 +261,7 @@ def load_dnn_model(arg_dict, tools):
 def load_optimizer(optim, path):
     checkpoint = torch.load(path)
     optim.load_state_dict(checkpoint['optimizer'])
-    epoch_to_start = checkpoint['epoch']
+    epoch_to_start = checkpoint['epoch'] + 1
     return optim, epoch_to_start
 
 
@@ -441,7 +441,10 @@ def set_clustering_dir(args):
 def set_save_dir(args):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
-    path = add_path(path, args.dataset + '-' + str(args.num_classes))
+    if args.dataset == 'imagenet':
+        path = add_path(path, args.dataset)
+    else:
+        path = add_path(path, args.dataset + '-' + str(args.num_classes))
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:

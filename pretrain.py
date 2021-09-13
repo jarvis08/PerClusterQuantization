@@ -57,14 +57,25 @@ def get_train_loader(args, normalizer):
 
 
 def _pretrain(args, tools):
-    model = tools.pretrained_model_initializer(args.num_classes)
-    model.cuda()
-    if args.dataset == 'imagenet':
-        summary(model, (3, 224, 224))
+    if args.dnn_path is None:
+        model = tools.pretrained_model_initializer(num_classes=args.num_classes)
     else:
-        summary(model, (3, 32, 32))
+        model = tools.pretrained_model_initializer(num_classes=args.num_classes)
+        checkpoint = torch.load(args.dnn_path)
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
+
+    model.cuda()
+    # if args.dataset == 'imagenet':
+    #     summary(model, (3, 224, 224))
+    # else:
+    #     summary(model, (3, 32, 32))
     criterion = torch.nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    epoch_to_start = 1
+    best_prec = 0
+    if args.dnn_path is not None:
+        optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
+        best_prec = checkpoint['best_prec']
     # optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr, momentum=0.9, alpha=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     # opt_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epoch + 1, eta_min=0, last_epoch=-1, verbose=False)
@@ -76,8 +87,8 @@ def _pretrain(args, tools):
 
     save_path = set_save_dir(args)
     logger = set_logger(save_path)
-    best_prec = 0
-    for e in range(1, args.epoch + 1):
+
+    for e in range(epoch_to_start, args.epoch + 1):
         train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
         prec = validate(model, test_loader, criterion, logger)
