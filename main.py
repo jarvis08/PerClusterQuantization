@@ -201,6 +201,6 @@ if __name__=='__main__':
         #else:
         _finetune(args, tools)
     elif args.mode == 'test':
-        #_run_classifier(args, tools)
+        _run_classifier(args, tools)
     else:
         _evaluate(args, tools)

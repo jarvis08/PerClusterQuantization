@@ -28,7 +28,7 @@ def _evaluate(args, tools):
         validate_darknet_dataset(model, darknet_loader, criterion)
 
     else:
-        normalizer = get_normalizer(args.dataset)
+        normalizer = get_normalizer(args.dataset, args.num_classes)
         test_loader = get_test_loader(args, normalizer)
         if args.cluster > 1:
             kmeans = KMeans(args)

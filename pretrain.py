@@ -81,7 +81,7 @@ def _pretrain(args, tools):
     # opt_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epoch + 1, eta_min=0, last_epoch=-1, verbose=False)
     cudnn.benchmark = True
 
-    normalizer = get_normalizer(args.dataset)
+    normalizer = get_normalizer(args.dataset, args.num_classes)
     train_loader = get_train_loader(args, normalizer)
     test_loader = get_test_loader(args, normalizer)
 

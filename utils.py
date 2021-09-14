@@ -265,13 +265,24 @@ def load_optimizer(optim, path):
     return optim, epoch_to_start
 
 
-def get_normalizer(dataset):
+def get_normalizer(dataset, num_classes):
     if dataset == 'imagenet':
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     elif dataset == 'cifar':
-        return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        if num_classes == 10:
+            return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        else:
+            return transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
+
+trainset = datasets.CIFAR10(root='./data', train=True,
+                                        download=True, transform=T.ToTensor())
+print(trainset.data)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
+                                          shuffle=True, num_workers=2)
+for image, _ in trainloader:
+    a = image
 
 
 def get_train_dataset(args, normalizer):
