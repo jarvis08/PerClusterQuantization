@@ -191,7 +191,10 @@ def get_finetuning_model(arg_dict, tools):
     if arg_dict['dnn_path'] and arg_dict['fused']:
         return load_dnn_model(arg_dict, tools)
     pretrained_model = load_dnn_model(arg_dict, tools)
-    fused_model = tools.fused_model_initializer(arg_dict, num_classes=arg_dict['num_classes'])
+    if arg_dict['dataset'] == 'cifar' and arg_dict['num_classes'] == 100:
+        fused_model = tools.fused_model_initializer(arg_dict, num_classes=arg_dict['num_classes'])
+    else:
+        fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
