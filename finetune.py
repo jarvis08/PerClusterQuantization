@@ -234,7 +234,7 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
 
 def _finetune(args, tools):
     tuning_start_time = time()
-    normalizer = get_normalizer(args.dataset)
+    normalizer = get_normalizer(args.dataset, args.num_classes)
     train_dataset = get_train_dataset(args, normalizer)
     train_loader = get_data_loader(args, train_dataset)
     test_loader = get_test_loader(args, normalizer)
