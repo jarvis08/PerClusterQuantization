@@ -200,7 +200,7 @@ if __name__=='__main__':
         #    hvd_finetune(args,tools)
         #else:
         _finetune(args, tools)
-    elif args.mode == 'test':
-        _run_classifier(args, tools)
+    # elif args.mode == 'test':
+        #_run_classifier(args, tools)
     else:
         _evaluate(args, tools)
