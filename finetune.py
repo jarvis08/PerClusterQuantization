@@ -7,6 +7,7 @@ from utils import *
 from models import *
 from tqdm import tqdm
 from time import time
+import torch.cuda.nvtx as nvtx
 
 
 def make_indices_list(clustering_model, train_loader, args, runtime_helper):
@@ -235,10 +236,18 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset, args.num_classes)
+    nvtx.range_push("Get Train/Val Dataset")
     train_dataset, val_dataset = get_train_dataset(args, normalizer)
+    nvtx.range_pop()
+    nvtx.range_push("Get Train DataLoader")
     train_loader = get_data_loader(args, train_dataset)
+    nvtx.range_pop()
+    nvtx.range_push("Get Val DataLoader")
     val_loader = get_data_loader(args, val_dataset)
+    nvtx.range_pop()
+    nvtx.range_push("Get Test DataLoader")
     test_loader = get_test_loader(args, normalizer)
+    nvtx.range_pop()
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -354,6 +363,7 @@ def _finetune(args, tools):
     # Test quantized model, and save if performs the best
     # if last_epoch is not the best epoch, load the best model
     if fp_score < best_score:
+        del model
         model = load_dnn_model(arg_dict, tools, os.path.join(save_path_fp, 'best.pth'))
 
     model.set_quantization_params()
