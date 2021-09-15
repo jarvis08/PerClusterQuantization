@@ -59,6 +59,8 @@ def _quant_noise(module, p, block_size, q_max):
 
     def _forward_pre_hook(mod, input):
         # no noise for evaluation
+        s = None
+        z = None
         if mod.training:
             # P의 확률로 quantize,
             if not is_conv: # Fullty Connected
@@ -165,14 +167,12 @@ def _quant_noise(module, p, block_size, q_max):
                     quantized_weight = weight.cuda() * mask
                     unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
 
-
             # scale weights and apply mask
             # mask = mask.to(
             #     torch.bool
             # )  # x.bool() is not currently supported in TorchScript
             # s = 1 / (1 - p)
             # mod.weight.data = s * weight.masked_fill(mask, 0)
-
 
             quantized_weight = fake_quantize(quantized_weight, s, z, q_max=q_max, use_ste=True)
             mod.weight.data = nn.Parameter(quantized_weight + unquantized_weight)

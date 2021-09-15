@@ -276,8 +276,9 @@ def get_normalizer(dataset, num_classes):
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
-trainset = datasets.CIFAR10(root='./data', train=True,
-                                        download=True, transform=T.ToTensor())
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+                                        download=True, transform=transforms.ToTensor())
+
 print(trainset.data)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
                                           shuffle=True, num_workers=2)
