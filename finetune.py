@@ -354,6 +354,7 @@ def _finetune(args, tools):
     # Test quantized model, and save if performs the best
     # if last_epoch is not the best epoch, load the best model
     if fp_score < best_score:
+        del model
         model = load_dnn_model(arg_dict, tools, os.path.join(save_path_fp, 'best.pth'))
 
     model.set_quantization_params()
