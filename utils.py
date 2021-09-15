@@ -329,7 +329,7 @@ def get_train_dataset(args, normalizer):
 
 def get_train_dataset_without_augmentation(args, normalizer):
     if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+        full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
                                                             transforms.CenterCrop(224),
@@ -337,7 +337,7 @@ def get_train_dataset_without_augmentation(args, normalizer):
                                                             normalizer]))
     elif args.dataset == 'cifar':
         if args.num_classes == 10:
-            train_dataset = torchvision.datasets.CIFAR10(
+            full_dataset = torchvision.datasets.CIFAR10(
                 root='./data',
                 train=True,
                 download=True,
@@ -345,7 +345,7 @@ def get_train_dataset_without_augmentation(args, normalizer):
                     transforms.ToTensor(),
                     normalizer]))
         else:
-            train_dataset = torchvision.datasets.CIFAR100(
+            full_dataset = torchvision.datasets.CIFAR100(
                 root='./data',
                 train=True,
                 download=True,
@@ -354,13 +354,16 @@ def get_train_dataset_without_augmentation(args, normalizer):
                     normalizer]))
 
     else:
-        train_dataset = torchvision.datasets.SVHN(
+        full_dataset = torchvision.datasets.SVHN(
             root='./data',
             split='train',
             download=True,
             transform=transforms.Compose([
                 transforms.ToTensor(),
                 normalizer]))
+    num_data = len(full_dataset)
+    train_size = int(num_data * 0.9)
+    train_dataset, _ = torch.utils.data.random_split(full_dataset, [train_size, num_data - train_size])
     return train_dataset
 
 
@@ -369,7 +372,7 @@ def get_data_loader(args, dataset, usage=None):
         if args.clustering_method == 'kmeans':
             loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=args.worker)
         else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=50000, shuffle=True, num_workers=args.worker)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset), shuffle=True, num_workers=args.worker)
     elif usage == 'initializer':
         if args.dataset == 'imagenet':
             batch = 128
