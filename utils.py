@@ -276,16 +276,6 @@ def get_normalizer(dataset, num_classes):
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                        download=True, transform=transforms.ToTensor())
-
-print(trainset.data)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
-                                          shuffle=True, num_workers=2)
-for image, _ in trainloader:
-    a = image
-
-
 def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
         train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
