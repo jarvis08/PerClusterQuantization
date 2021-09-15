@@ -187,8 +187,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 input, target = input.cuda(), target.cuda()
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 output = model(input)
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
@@ -225,14 +225,14 @@ def validate_darknet_dataset(model, test_loader, criterion):
     return top1.avg
 
 
-def load_dnn_model(arg_dict, tools):
+def load_dnn_model(arg_dict, tools, best_path=None):
     model = None
     if arg_dict['quantized']:
         if arg_dict['dataset'] == 'imagenet':
             model = tools.quantized_model_initializer(arg_dict)
         else:
             model = tools.quantized_model_initializer(arg_dict, num_classes=arg_dict['num_classes'])
-    elif arg_dict['fused']:
+    elif arg_dict['fused'] or best_path is not None:
         if arg_dict['dataset'] == 'imagenet':
             model = tools.fused_model_initializer(arg_dict)
         else:
@@ -253,7 +253,10 @@ def load_dnn_model(arg_dict, tools):
                 exit()
         else:
             model = tools.pretrained_model_initializer(num_classes=arg_dict['num_classes'])
-    checkpoint = torch.load(arg_dict['dnn_path'])
+    if best_path is not None:
+        checkpoint = torch.load(best_path)
+    else:
+        checkpoint = torch.load(arg_dict['dnn_path'])
     model.load_state_dict(checkpoint['state_dict'], strict=False)
     return model
 
@@ -261,22 +264,26 @@ def load_dnn_model(arg_dict, tools):
 def load_optimizer(optim, path):
     checkpoint = torch.load(path)
     optim.load_state_dict(checkpoint['optimizer'])
-    epoch_to_start = checkpoint['epoch']
+    epoch_to_start = checkpoint['epoch'] + 1
     return optim, epoch_to_start
 
 
-def get_normalizer(dataset):
+def get_normalizer(dataset, num_classes):
     if dataset == 'imagenet':
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     elif dataset == 'cifar':
-        return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        if num_classes == 10:
+            return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        else:
+            # [0.50707516 0.48654887 0.44091784] [0.26733429 0.25643846 0.27615047]
+            return transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
 
 def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
-        train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+        full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
                                                          transform=transforms.Compose([
                                                              transforms.RandomResizedCrop(224),
                                                              transforms.RandomHorizontalFlip(),
@@ -284,7 +291,7 @@ def get_train_dataset(args, normalizer):
                                                              normalizer]))
     elif args.dataset == 'cifar':
         if args.num_classes == 10:
-            train_dataset = torchvision.datasets.CIFAR10(
+            full_dataset = torchvision.datasets.CIFAR10(
                 root='./data',
                 train=True,
                 download=True,
@@ -294,7 +301,7 @@ def get_train_dataset(args, normalizer):
                     transforms.ToTensor(),
                     normalizer]))
         else:
-            train_dataset = torchvision.datasets.CIFAR100(
+            full_dataset = torchvision.datasets.CIFAR100(
                 root='./data',
                 train=True,
                 download=True,
@@ -304,7 +311,7 @@ def get_train_dataset(args, normalizer):
                     transforms.ToTensor(),
                     normalizer]))
     else:
-        train_dataset = torchvision.datasets.SVHN(
+        full_dataset = torchvision.datasets.SVHN(
             root='./data',
             split='train',
             download=True,
@@ -313,7 +320,11 @@ def get_train_dataset(args, normalizer):
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalizer]))
-    return train_dataset
+
+    num_data = len(full_dataset)
+    train_size = int(num_data*0.9)
+    train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, num_data-train_size])
+    return train_dataset, val_dataset
 
 
 def get_train_dataset_without_augmentation(args, normalizer):
@@ -341,6 +352,7 @@ def get_train_dataset_without_augmentation(args, normalizer):
                 transform=transforms.Compose([
                     transforms.ToTensor(),
                     normalizer]))
+
     else:
         train_dataset = torchvision.datasets.SVHN(
             root='./data',
@@ -441,7 +453,10 @@ def set_clustering_dir(args):
 def set_save_dir(args):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
-    path = add_path(path, args.dataset + '-' + str(args.num_classes))
+    if args.dataset == 'imagenet':
+        path = add_path(path, args.dataset)
+    else:
+        path = add_path(path, args.dataset + '-' + str(args.num_classes))
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
@@ -476,3 +491,4 @@ def get_time_cost_in_string(t):
         return '{:.1f}m'.format(t / 60)
     else:
         return '{:.1f}s'.format(t)
+
