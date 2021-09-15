@@ -235,8 +235,9 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset, args.num_classes)
-    train_dataset = get_train_dataset(args, normalizer)
+    train_dataset, val_dataset = get_train_dataset(args, normalizer)
     train_loader = get_data_loader(args, train_dataset)
+    val_loader = get_data_loader(args, train_dataset)
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
@@ -259,18 +260,18 @@ def _finetune(args, tools):
     epoch_to_start = 1
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
 
-    best_score_int = 0
+    best_score = 0
     best_epoch = 0
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         params_path = arg_dict['dnn_path']
-        params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
+        # params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
         with open(os.path.join(params_path, "params.json"), 'r') as f:
             saved_args = json.load(f)
-            best_score_int = saved_args['best_score']
+            best_score = saved_args['best_score']
             best_epoch = saved_args['best_epoch']
-    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
+    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
     phase2_loader = None
@@ -328,9 +329,9 @@ def _finetune(args, tools):
         opt_scheduler.step()
 
         if args.cluster > 1:
-            fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
+            fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
         else:
-            fp_score = validate(model, test_loader, criterion, logger)
+            fp_score = validate(model, val_loader, criterion, logger)
 
         state = {
             'epoch': e,
@@ -339,38 +340,45 @@ def _finetune(args, tools):
         }
         save_checkpoint(state, False, save_path_fp)
 
-        # Test quantized model, and save if performs the best
-        if e > args.fq:
-            model.set_quantization_params()
-            if quantized_model is None:
-                quantized_model = tools.quantized_model_initializer(arg_dict)
-            quantized_model = tools.quantizer(model, quantized_model)
-            quantized_model.cuda()
+        if e > args.fq and fp_score > best_score:
+            best_epoch = e
+            best_score = fp_score
+            # Save best model's FP model
+            with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
+                tmp = vars(args)
+                tmp['best_epoch'] = e
+                tmp['best_score'] = fp_score
+                json.dump(tmp, f, indent=4)
+            shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
 
-            if args.cluster > 1:
-                val_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
-            else:
-                val_score = validate(quantized_model, test_loader, criterion, logger)
+    # Test quantized model, and save if performs the best
+    # if last_epoch is not the best epoch, load the best model
+    if fp_score < best_score:
+        model = load_dnn_model(arg_dict, tools, os.path.join(save_path_fp, 'best.pth'))
 
-            if val_score > best_score_int:
-                best_epoch = e
-                # Save best model's FP model
-                with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
-                    tmp = vars(args)
-                    tmp['best_epoch'] = e
-                    tmp['best_score'] = fp_score
-                    json.dump(tmp, f, indent=4)
-                shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
+    model.set_quantization_params()
+    if quantized_model is None:
+        if args.dataset == 'cifar' and args.num_classes == '100':
+            quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+        else:
+            quantized_model = tools.quantized_model_initializer(arg_dict)
+    quantized_model = tools.quantizer(model, quantized_model)
+    quantized_model.cuda()
 
-                # Save best model's INT model
-                best_score_int = val_score
-                with open(os.path.join(save_path_int, "params.json"), 'w') as f:
-                    tmp = vars(args)
-                    tmp['best_epoch'] = e
-                    tmp['best_score'] = best_score_int
-                    json.dump(tmp, f, indent=4)
-                filepath = os.path.join(save_path_int, 'checkpoint.pth')
-                torch.save({'state_dict': quantized_model.state_dict()}, filepath)
+    if args.cluster > 1:
+        int_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
+    else:
+        int_score = validate(quantized_model, test_loader, criterion, logger)
+
+    # Save best model's INT model
+    with open(os.path.join(save_path_int, "params.json"), 'w') as f:
+        tmp = vars(args)
+        tmp['fp_epoch'] = best_epoch
+        tmp['fp_score'] = best_score
+        tmp['int_score'] = int_score
+        json.dump(tmp, f, indent=4)
+    filepath = os.path.join(save_path_int, 'checkpoint.pth')
+    torch.save({'state_dict': quantized_model.state_dict()}, filepath)
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     method = ''
@@ -391,7 +399,7 @@ def _finetune(args, tools):
 
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, GPU: {}, Path: {}\n'
-                .format(best_score_int, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, args.gpu, save_path_fp))
+                .format(int_score, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):
