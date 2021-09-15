@@ -237,7 +237,7 @@ def _finetune(args, tools):
     normalizer = get_normalizer(args.dataset, args.num_classes)
     train_dataset, val_dataset = get_train_dataset(args, normalizer)
     train_loader = get_data_loader(args, train_dataset)
-    val_loader = get_data_loader(args, train_dataset)
+    val_loader = get_data_loader(args, val_dataset)
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
