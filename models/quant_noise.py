@@ -61,121 +61,122 @@ def _quant_noise(module, p, block_size, q_max):
         # no noise for evaluation
         s = None
         z = None
-        if mod.training:
-            # P의 확률로 quantize,
-            if not is_conv: # Fullty Connected
-                # #gather weight and sizes
-                # weight = mod.weight
-                # in_features = weight.size(1)
-                # out_features = weight.size(0)
-                #
-                # # split weight matrix into blocks and randomly drop selected blocks
-                # mask = torch.zeros(
-                #     in_features // block_size * out_features, device=weight.device
-                # )
-                # mask.bernoulli_(p)
-                # mask = mask.repeat_interleave(block_size, -1).view(-1, in_features)
+        with torch.autograd.profiler.profile(use_cuda=True) as prof:
+           if mod.training:
+               # P의 확률로 quantize,
+               if not is_conv: # Fullty Connected
+                   # #gather weight and sizes
+                   # weight = mod.weight
+                   # in_features = weight.size(1)
+                   # out_features = weight.size(0)
+                   #
+                   # # split weight matrix into blocks and randomly drop selected blocks
+                   # mask = torch.zeros(
+                   #     in_features // block_size * out_features, device=weight.device
+                   # )
+                   # mask.bernoulli_(p)
+                   # mask = mask.repeat_interleave(block_size, -1).view(-1, in_features)
 
-                ### Customize Fully Connected
-                weight = mod.weight
-                in_features = weight.size(1)
-                out_features = weight.size(0)
+                   ### Customize Fully Connected
+                   weight = mod.weight
+                   in_features = weight.size(1)
+                   out_features = weight.size(0)
 
-                # fake quantize 하기 위해 필요 요소 구하기
-                w_min = torch.min(weight.data)
-                w_max = torch.max(weight.data)
-                s, z = calc_qparams(w_min, w_max, q_max)
+                   # fake quantize 하기 위해 필요 요소 구하기
+                   w_min = torch.min(weight.data)
+                   w_max = torch.max(weight.data)
+                   s, z = calc_qparams(w_min, w_max, q_max)
 
-                mask = torch.zeros(
-                    in_features // block_size * out_features, device=weight.device
-                )
-                mask.bernoulli_(p)
-                mask = mask.repeat_interleave(block_size, -1).view(-1, in_features).cuda()
-                unmask = torch.ones(mask.shape).cuda() - mask
-                quantized_weight = weight * mask
-                unquantized_weight = weight * unmask
-
-
-                # fake quantization 진행. >> fake vector로하기 for loop X
-                # to_shape = quantized_weight.shape
-                # quantized_weight = quantized_weight.view(-1)
-                # for i in range(len(quantized_weight)):
-                #     quantized_weight[i] = fake_quantize(quantized_weight[i], s, z)
-                # quantized_weight.view(to_shape)
+                   mask = torch.zeros(
+                       in_features // block_size * out_features, device=weight.device
+                   )
+                   mask.bernoulli_(p)
+                   mask = mask.repeat_interleave(block_size, -1).view(-1, in_features).cuda()
+                   unmask = torch.ones(mask.shape).cuda() - mask
+                   quantized_weight = weight * mask
+                   unquantized_weight = weight * unmask
 
 
-            else:           # Convolution
-                # # gather weight and sizes
-                # weight = mod.weight
-                # in_channels = mod.in_channels
-                # out_channels = mod.out_channels
-                #
-                # # split weight matrix into blocks and randomly drop selected blocks
-                # if mod.kernel_size == (1, 1):
-                #     mask = torch.zeros(
-                #         int(in_channels // block_size * out_channels),
-                #         device=weight.device,
-                #     )
-                #     mask.bernoulli_(p)
-                #     mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
-                # else:
-                #     mask = torch.zeros(
-                #         weight.size(0), weight.size(1), device=weight.device
-                #     )
-                #     mask.bernoulli_(p)
-                #     mask = (
-                #         mask.unsqueeze(2)
-                #         .unsqueeze(3)
-                #         .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
-                #     )
-
-                ### Customize Convolution
-                weight = mod.weight
-                in_channels = mod.in_channels
-                out_channels = mod.out_channels
+                   # fake quantization 진행. >> fake vector로하기 for loop X
+                   # to_shape = quantized_weight.shape
+                   # quantized_weight = quantized_weight.view(-1)
+                   # for i in range(len(quantized_weight)):
+                   #     quantized_weight[i] = fake_quantize(quantized_weight[i], s, z)
+                   # quantized_weight.view(to_shape)
 
 
-                w_min = torch.min(weight.data)
-                w_max = torch.max(weight.data)
-                s, z = calc_qparams(w_min, w_max, q_max)
+               else:           # Convolution
+                   # # gather weight and sizes
+                   # weight = mod.weight
+                   # in_channels = mod.in_channels
+                   # out_channels = mod.out_channels
+                   #
+                   # # split weight matrix into blocks and randomly drop selected blocks
+                   # if mod.kernel_size == (1, 1):
+                   #     mask = torch.zeros(
+                   #         int(in_channels // block_size * out_channels),
+                   #         device=weight.device,
+                   #     )
+                   #     mask.bernoulli_(p)
+                   #     mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
+                   # else:
+                   #     mask = torch.zeros(
+                   #         weight.size(0), weight.size(1), device=weight.device
+                   #     )
+                   #     mask.bernoulli_(p)
+                   #     mask = (
+                   #         mask.unsqueeze(2)
+                   #         .unsqueeze(3)
+                   #         .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
+                   #     )
+
+                   ### Customize Convolution
+                   weight = mod.weight
+                   in_channels = mod.in_channels
+                   out_channels = mod.out_channels
 
 
-                if mod.kernel_size == (1, 1):
-                    mask = torch.zeros( int(in_channels // block_size * out_channels), device=weight.device)
-                    mask.bernoulli_(p)
-                    mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
-                    # adding custom
-                    mask = (
-                        mask.unsqueeze(2)
-                            .unsqueeze(3)
-                            .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
-                    )
-                    mask.cuda()
-                    quantized_weight = weight.cuda() * mask
-                    unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
+                   w_min = torch.min(weight.data)
+                   w_max = torch.max(weight.data)
+                   s, z = calc_qparams(w_min, w_max, q_max)
 
-                else:
-                    mask = torch.zeros(weight.size(0), weight.size(1), device=weight.device)
-                    mask.bernoulli_(p)
-                    mask = (
-                        mask.unsqueeze(2)
-                        .unsqueeze(3)
-                        .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
-                    )
-                    mask.cuda()
 
-                    quantized_weight = weight.cuda() * mask
-                    unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
+                   if mod.kernel_size == (1, 1):
+                       mask = torch.zeros( int(in_channels // block_size * out_channels), device=weight.device)
+                       mask.bernoulli_(p)
+                       mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
+                       # adding custom
+                       mask = (
+                           mask.unsqueeze(2)
+                               .unsqueeze(3)
+                               .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
+                       )
+                       mask.cuda()
+                       quantized_weight = weight.cuda() * mask
+                       unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
 
-            # scale weights and apply mask
-            # mask = mask.to(
-            #     torch.bool
-            # )  # x.bool() is not currently supported in TorchScript
-            # s = 1 / (1 - p)
-            # mod.weight.data = s * weight.masked_fill(mask, 0)
+                   else:
+                       mask = torch.zeros(weight.size(0), weight.size(1), device=weight.device)
+                       mask.bernoulli_(p)
+                       mask = (
+                           mask.unsqueeze(2)
+                           .unsqueeze(3)
+                           .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
+                       )
+                       mask.cuda()
 
-            quantized_weight = fake_quantize(quantized_weight, s, z, q_max=q_max, use_ste=True)
-            mod.weight.data = nn.Parameter(quantized_weight + unquantized_weight)
+                       quantized_weight = weight.cuda() * mask
+                       unquantized_weight = weight.cuda() * (torch.ones(mask.shape).cuda() - mask)
 
+               # scale weights and apply mask
+               # mask = mask.to(
+               #     torch.bool
+               # )  # x.bool() is not currently supported in TorchScript
+               # s = 1 / (1 - p)
+               # mod.weight.data = s * weight.masked_fill(mask, 0)
+
+               quantized_weight = fake_quantize(quantized_weight, s, z, q_max=q_max, use_ste=True)
+               mod.weight.data = nn.Parameter(quantized_weight + unquantized_weight)
+        print(prof)
     module.register_forward_pre_hook(_forward_pre_hook)
     return module
