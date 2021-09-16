@@ -258,8 +258,6 @@ class FusedLinear(nn.Module):
         self.apply_ema = False
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        #if self.quant_noise:
-        #    self.fc = _quant_noise(self.fc, self.qn_prob, 1, q_max=self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
@@ -270,16 +268,10 @@ class FusedLinear(nn.Module):
             return x
 
         w = self.fc.weight
-        #if not self.quant_noise:
         s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
         w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
         if self.quant_noise:
-            mask = torch.zeros_like(self.fc.weight)
-            mask.bernoulli_(1-self.qn_prob)
-            noise = (w - self.fc.weight).masked_fill(mask.bool(), 0)
-            clamp_low = -s * z 
-            clamp_high = s * (self.q_max - z)
-            w = torch.clamp(self.fc.weight, clamp_low.item(), clamp_high.item()) + noise.detach()
+            w = apply_qn(fake_quantized_weight=w, origin_weight=self.fc.weight, qn_prob=self.qn_prob)
 
         x = F.linear(x, w, self.fc.bias)
         if self._activation:

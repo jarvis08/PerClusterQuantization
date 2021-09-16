@@ -322,6 +322,35 @@ def quantize(_fp, _int):
     _int = quantize_layer_and_transfer(_fp, _int)
     return _int
 
+def apply_qn(fake_quantized_weight, origin_weight, qn_prob, kernel_size=None, each_channel=False):
+
+    # FC
+    if kernel_size is None:
+        mask = torch.zeros_like(origin_weight)
+        mask.bernoulli_(1 - qn_prob)
+        noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
+        qn_weight = origin_weight + noise.detach()
+
+        return qn_weight
+    # Conv
+    else:
+        if each_channel:
+            mask = torch.zeros(origin_weight.size(0), origin_weight(1))
+            mask.bernoulli_(qn_prob)
+            mask = (mask.unsqueeze(2).unsqueeze(3).repeat(1, 1, kernel_size, kernel_size))
+
+            noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
+            qn_weight = origin_weight + noise.detach()
+
+            return qn_weight
+        else:
+            mask = torch.zeros_like(origin_weight)
+            mask.bernoulli_(1 - qn_prob)
+            noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
+            qn_weight = origin_weight + noise.detach()
+
+            return qn_weight
+
 
 def copy_from_pretrained(_to, _from, norm_layer=None):
     # Copy weights from pretrained FP model
