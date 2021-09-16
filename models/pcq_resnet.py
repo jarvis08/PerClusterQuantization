@@ -7,6 +7,7 @@ from .layers.linear import *
 from .layers.norm import *
 from .quant_noise import _quant_noise
 from .quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, activation=None, act_qmax=None, arg_dict=None):
@@ -153,16 +154,37 @@ class PCQBottleneck(nn.Module):
     def forward(self, x):
         identity = x
 
+        nvtx.range_push("conv1")
         out = self.conv1(x)
+        nvtx.range_pop()
+        
+        nvtx.range_push("bn1")
         out = self.bn1(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("conv2")
         out = self.conv2(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("bn2")
         out = self.bn2(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("conv3")
         out = self.conv3(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("bn3")
         out = self.bn3(out)
+        nvtx.range_pop()
 
         if self.downsample is not None:
+            nvtx.range_push("downsample conv")
             identity = self.downsample(x)
+            nvtx.range_pop()
+            nvtx.range_push("downsample bn")
             identity = self.bn_down(identity)
+            nvtx.range_pop()
 
         out += identity
         out = self.relu(out)
@@ -181,7 +203,11 @@ class PCQBottleneck(nn.Module):
 
         # Phase-1&2
         if self.runtime_helper.apply_fake_quantization:
-            return self._fake_quantize_activation(out)
+            nvtx.range_push("block phase-1")
+            # return self._fake_quantize_activation(out)
+            res = self._fake_quantize_activation(out)
+            nvtx.range_pop()
+            return res
         else:
             return out
 
@@ -192,6 +218,7 @@ class PCQBottleneck(nn.Module):
     def _update_activation_ranges(self, x):
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
         # (number of data per cluster in batch) == (args.data_per_cluster)
+        nvtx.range_push("block phase-2")
         n = self.runtime_helper.data_per_cluster
         if self.apply_ema:
             for c in range(self.num_clusters):
@@ -201,6 +228,7 @@ class PCQBottleneck(nn.Module):
                 self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
                 self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
             self.apply_ema = True
+        nvtx.range_pop()    
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -276,22 +304,37 @@ class PCQResNet(nn.Module):
     def forward(self, x):
         if self.training:
             if self.runtime_helper.range_update_phase:
+                nvtx.range_push("input range update phase")
                 self._update_input_ranges(x)
+                nvtx.range_pop()
             if self.runtime_helper.apply_fake_quantization:
+                nvtx.range_push("FQ input")
                 x = self._fake_quantize_input(x)
+                nvtx.range_pop()
 
         x = self.first_conv(x)
         x = self.bn1(x)
         x = self.maxpool(x)
 
+        nvtx.range_push("BottleNeck1 Forward")
         x = self.layer1(x)
+        nvtx.range_pop()
+        nvtx.range_push("BottleNeck2 Forward")
         x = self.layer2(x)
+        nvtx.range_pop()
+        nvtx.range_push("BottleNeck3 Forward")
         x = self.layer3(x)
+        nvtx.range_pop()
+        nvtx.range_push("BottleNeck4 Forward")
         x = self.layer4(x)
+        nvtx.range_pop()
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
+        
+        nvtx.range_push("FC Forward")
         x = self.fc(x)
+        nvtx.range_pop()
         return x
 
     def _fake_quantize_input(self, x):
@@ -315,14 +358,14 @@ class PCQResNet(nn.Module):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer4[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer4[1].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer1)):
+            prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer2)):
+            prev_s, prev_z = self.layer2[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer3)):
+            prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer4)):
+            prev_s, prev_z = self.layer4[i].set_block_qparams(prev_s, prev_z)
         self.fc.set_qparams(prev_s, prev_z)
 
 

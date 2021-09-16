@@ -158,34 +158,56 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
 
     model.train()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
+        nvtx.range_push("Data Loading")
         for i, (input, target) in enumerate(t):
+            nvtx.range_pop()
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
+            nvtx.range_push("copy data to cuda")
             input, target = input.cuda(), target.cuda()
-            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-            output = model(input)
+            nvtx.range_pop()
 
+            nvtx.range_push("get ctr info of cur batch")
+            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+            nvtx.range_pop()
+
+            nvtx.range_push("Forward start")
+            output = model(input)
             loss = criterion(output, target)
             prec = accuracy(output, target)[0]
+            nvtx.range_pop()
+
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
-
+            
             optimizer.zero_grad()
+            
+            nvtx.range_push("Backward start")
             loss.backward()
             optimizer.step()
+            nvtx.range_pop()
 
             # Phase-2
             runtime_helper.range_update_phase = True
+
+            nvtx.range_push("phase2 next_data")
             phase2_input, _ = phase2_loader.get_next_data()
+            nvtx.range_pop()
+
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
+            
+            nvtx.range_push("phase2 forward start")
             with torch.no_grad():
                 model(phase2_input.cuda())
+            nvtx.range_pop()
+
             runtime_helper.range_update_phase = False
 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
+            break
 
 
 def get_finetuning_model(arg_dict, tools):
@@ -306,16 +328,25 @@ def _finetune(args, tools):
             if args.visualize_clustering:
                 visualize_clustering_res(non_augmented_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
 
+        nvtx.range_push("phase2 list")
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
+        nvtx.range_pop()
+        nvtx.range_push("phase2 dataset")
         phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
-
+        nvtx.range_pop()
+        nvtx.range_push("loader ")
         loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
                                              num_workers=args.worker, shuffle=False)
+        nvtx.range_pop()
+        nvtx.range_push("phase2_loader")
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
+        nvtx.range_pop()
 
         if args.pcq_initialization:
+            nvtx.range_push("initialize_pcq_model")
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             initialize_pcq_model(model, phase2_loader.data_loader, criterion)
+            nvtx.range_pop()
 
     quantized_model = None
     runtime_helper.pcq_initialized = True
@@ -338,7 +369,9 @@ def _finetune(args, tools):
         opt_scheduler.step()
 
         if args.cluster > 1:
+            nvtx.range_push("fused model validate")
             fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+            nvtx.range_pop()
         else:
             fp_score = validate(model, val_loader, criterion, logger)
 
@@ -366,17 +399,23 @@ def _finetune(args, tools):
         del model
         model = load_dnn_model(arg_dict, tools, os.path.join(save_path_fp, 'best.pth'))
 
+    nvtx.range_push("set_quantization_params")
     model.set_quantization_params()
+    nvtx.range_pop()
     if quantized_model is None:
         if args.dataset == 'cifar' and args.num_classes == '100':
             quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
         else:
             quantized_model = tools.quantized_model_initializer(arg_dict)
+    nvtx.range_push("quantize fused model")
     quantized_model = tools.quantizer(model, quantized_model)
+    nvtx.range_pop()
     quantized_model.cuda()
 
     if args.cluster > 1:
+        nvtx.range_push("quantized model validate")
         int_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
+        nvtx.range_pop()
     else:
         int_score = validate(quantized_model, test_loader, criterion, logger)
 

@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from .layers import *
 from .quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 def quantized_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, arg_dict=None):
@@ -89,17 +90,44 @@ class QuantizedBottleneck(nn.Module):
 
     def forward(self, x):
         identity = x
+
+        nvtx.range_push("conv1")
         out = self.conv1(x)
+        nvtx.range_pop()
+        
+        nvtx.range_push("bn1")
         out = self.bn1(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("conv2")
         out = self.conv2(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("bn2")
         out = self.bn2(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("conv3")
         out = self.conv3(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("bn3")
         out = self.bn3(out)
+        nvtx.range_pop()
+
 
         if self.downsample is not None:
+            nvtx.range_push("downsample conv")
             identity = self.downsample(x)
+            nvtx.range_pop()
+            nvtx.range_push("downsample bn")
             identity = self.bn_down(identity)
+            nvtx.range_pop()
+
+        nvtx.range_push("shortcut")
         out = self.shortcut(identity, out)
+        nvtx.range_pop()
+
         return out
 
 
@@ -160,22 +188,38 @@ class QuantizedResNet(nn.Module):
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
+            nvtx.range_push("Quantize input")
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
+            nvtx.range_pop()
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
         x = self.first_conv(x)
         x = self.bn1(x)
         x = self.maxpool(x)
+
+        nvtx.range_push("BottleNeck1 Forward")
         x = self.layer1(x)
+        nvtx.range_pop()
+        nvtx.range_push("BottleNeck2 Forward")
         x = self.layer2(x)
+        nvtx.range_pop()
+        nvtx.range_push("BottleNeck3 Forward")
         x = self.layer3(x)
+        nvtx.range_pop()
+        nvtx.range_push("BottleNeck4 Forward")
         x = self.layer4(x)
+        nvtx.range_pop()
+        
         x = self.avgpool(x)
         x = x.type(torch.cuda.IntTensor)
         x = x.type(torch.cuda.FloatTensor)
         x = torch.flatten(x, 1)
+
+        nvtx.range_push("FC Forward")
         x = self.fc(x)
+        nvtx.range_pop()
+        
         return x
 
 

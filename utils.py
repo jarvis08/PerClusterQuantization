@@ -14,6 +14,7 @@ import json
 import logging
 import random
 from time import time
+import torch.cuda.nvtx as nvtx
 
 
 class RuntimeHelper(object):
@@ -185,17 +186,30 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     model.eval()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
+            nvtx.range_push("Data Loading")
             for i, (input, target) in enumerate(t):
+                nvtx.range_pop()
                 t.set_description("Validate")
+                
+                nvtx.range_push("copy data to cuda")
                 input, target = input.cuda(), target.cuda()
+                nvtx.range_pop()
+
+                nvtx.range_push("get ctr info of cur batch")
                 runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                nvtx.range_pop()
+                
+                nvtx.range_push("Validate start")
                 output = model(input)
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
+                nvtx.range_pop()
+
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+                break
 
     if logger:
         if hvd:
