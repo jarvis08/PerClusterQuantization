@@ -123,31 +123,17 @@ def initialize_pcq_model(model, loader, criterion):
 
     model.train()
     with torch.no_grad():
-        if isinstance(loader, list):
-            for c in range(len(loader)):
-                with tqdm(loader[c], unit="batch", ncols=90) as t:
-                    for i, (input, target) in enumerate(t):
-                        t.set_description("Validate")
-                        input, target = input.cuda(), target.cuda()
-                        output = model(input)
-                        loss = criterion(output, target)
-                        prec = accuracy(output, target)[0]
-                        losses.update(loss.item(), input.size(0))
-                        top1.update(prec.item(), input.size(0))
+        with tqdm(loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Initialize PCQ")
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
 
-                        t.set_postfix(loss=losses.avg, acc=top1.avg)
-        else:
-            with tqdm(loader, unit="batch", ncols=90) as t:
-                for i, (input, target) in enumerate(t):
-                    t.set_description("Initialize PCQ")
-                    input, target = input.cuda(), target.cuda()
-                    output = model(input)
-                    loss = criterion(output, target)
-                    prec = accuracy(output, target)[0]
-                    losses.update(loss.item(), input.size(0))
-                    top1.update(prec.item(), input.size(0))
-
-                    t.set_postfix(loss=losses.avg, acc=top1.avg)
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
     return top1.avg
 
 
@@ -188,11 +174,9 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
 
 
 def get_finetuning_model(arg_dict, tools):
-    if arg_dict['dnn_path'] and arg_dict['fused']:
-        return load_dnn_model(arg_dict, tools)
     pretrained_model = load_dnn_model(arg_dict, tools)
-    if arg_dict['dataset'] == 'cifar' and arg_dict['num_classes'] == 100:
-        fused_model = tools.fused_model_initializer(arg_dict, num_classes=arg_dict['num_classes'])
+    if arg_dict['dataset'] == 'cifar100':
+        fused_model = tools.fused_model_initializer(arg_dict, num_classes=100)
     else:
         fused_model = tools.fused_model_initializer(arg_dict)
     fused_model = tools.fuser(fused_model, pretrained_model)
@@ -234,7 +218,7 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
 
 def _finetune(args, tools):
     tuning_start_time = time()
-    normalizer = get_normalizer(args.dataset, args.num_classes)
+    normalizer = get_normalizer(args.dataset)
     train_dataset, val_dataset = get_train_dataset(args, normalizer)
     train_loader = get_data_loader(args, train_dataset)
     val_loader = get_data_loader(args, val_dataset)
@@ -265,7 +249,6 @@ def _finetune(args, tools):
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         params_path = arg_dict['dnn_path']
-        # params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
         with open(os.path.join(params_path, "params.json"), 'r') as f:
             saved_args = json.load(f)
             best_score = saved_args['best_score']
@@ -359,7 +342,7 @@ def _finetune(args, tools):
 
     model.set_quantization_params()
     if quantized_model is None:
-        if args.dataset == 'cifar' and args.num_classes == '100':
+        if args.dataset == 'cifar100':
             quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
         else:
             quantized_model = tools.quantized_model_initializer(arg_dict)
