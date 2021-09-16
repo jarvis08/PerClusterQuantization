@@ -280,7 +280,6 @@ def get_normalizer(dataset):
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
-
 def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
         full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),

@@ -356,8 +356,8 @@ class FusedConv2d(nn.Module):
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias, dilation=dilation)
-        if self.quant_noise:
-            self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
+        #if self.quant_noise:
+        #    self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
 
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
@@ -379,9 +379,16 @@ class FusedConv2d(nn.Module):
 
     def _general(self, x, external_range=None):
         w = self.conv.weight
-        if not self.quant_noise:
-            s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
-            w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
+        #if not self.quant_noise:
+        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+        w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
+        if self.quant_noise:
+            mask = torch.zeros_like(self.conv.weight)
+            mask.bernoulli_(1-self.qn_prob)
+            noise = (w - self.conv.weight).masked_fill(mask.bool(), 0)
+            clamp_low = -s * z
+            clamp_high = s * (self.q_max - z)
+            w = torch.clamp(self.conv.weight, clamp_low.item(), clamp_high.item()) + noise.detach()
 
         x = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._norm_layer:
