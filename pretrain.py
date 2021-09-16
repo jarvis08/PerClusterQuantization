@@ -57,7 +57,7 @@ def get_train_loader(args, normalizer):
 
 
 def _pretrain(args, tools):
-    model = tools.pretrained_model_initializer(args.num_classes)
+    model = tools.pretrained_model_initializer(num_classes=args.num_classes)
     model.cuda()
     if args.dataset == 'imagenet':
         summary(model, (3, 224, 224))
@@ -70,7 +70,10 @@ def _pretrain(args, tools):
     # opt_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epoch + 1, eta_min=0, last_epoch=-1, verbose=False)
     cudnn.benchmark = True
 
-    normalizer = get_normalizer(args.dataset)
+    if args.num_classes == 100:
+        normalizer = get_normalizer(args.dataset, 100)
+    else:
+        normalizer = get_normalizer(args.dataset)
     train_loader = get_train_loader(args, normalizer)
     test_loader = get_test_loader(args, normalizer)
 
