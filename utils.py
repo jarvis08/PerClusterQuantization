@@ -228,15 +228,15 @@ def validate_darknet_dataset(model, test_loader, criterion):
 def load_dnn_model(arg_dict, tools, best_path=None):
     model = None
     if arg_dict['quantized']:
-        if arg_dict['dataset'] == 'imagenet':
+        if arg_dict['dataset'] == 'cifar100':
+            model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+        else:
             model = tools.quantized_model_initializer(arg_dict)
-        else:
-            model = tools.quantized_model_initializer(arg_dict, num_classes=arg_dict['num_classes'])
     elif arg_dict['fused'] or best_path is not None:
-        if arg_dict['dataset'] == 'imagenet':
-            model = tools.fused_model_initializer(arg_dict)
+        if arg_dict['dataset'] == 'cifar100':
+            model = tools.fused_model_initializer(arg_dict, num_classes=100)
         else:
-            model = tools.fused_model_initializer(arg_dict, num_classes=arg_dict['num_classes'])
+            model = tools.fused_model_initializer(arg_dict)
     else:
         if arg_dict['dataset'] == 'imagenet':
             if arg_dict['arch'] == 'MobileNetV3':
@@ -251,8 +251,10 @@ def load_dnn_model(arg_dict, tools, best_path=None):
                 return vision_models.densenet121(pretrained=True)
             elif arg_dict['arch'] == 'ResNet18':
                 exit()
+        elif arg_dict['dataset'] == 'cifar100':
+            model = tools.pretrained_model_initializer(num_classes=100)
         else:
-            model = tools.pretrained_model_initializer(num_classes=arg_dict['num_classes'])
+            model = tools.pretrained_model_initializer()
     if best_path is not None:
         checkpoint = torch.load(best_path)
     else:
@@ -268,18 +270,15 @@ def load_optimizer(optim, path):
     return optim, epoch_to_start
 
 
-def get_normalizer(dataset, num_classes):
+def get_normalizer(dataset):
     if dataset == 'imagenet':
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     elif dataset == 'cifar':
-        if num_classes == 10:
-            return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        else:
-            # [0.50707516 0.48654887 0.44091784] [0.26733429 0.25643846 0.27615047]
-            return transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+        return transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    elif dataset == 'cifar100':
+        return transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
-
 
 def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
@@ -290,26 +289,25 @@ def get_train_dataset(args, normalizer):
                                                              transforms.ToTensor(),
                                                              normalizer]))
     elif args.dataset == 'cifar':
-        if args.num_classes == 10:
-            full_dataset = torchvision.datasets.CIFAR10(
-                root='./data',
-                train=True,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalizer]))
-        else:
-            full_dataset = torchvision.datasets.CIFAR100(
-                root='./data',
-                train=True,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalizer]))
+        full_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer]))
+    elif args.dataset == 'cifar100':
+        full_dataset = torchvision.datasets.CIFAR100(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalizer]))
     else:
         full_dataset = torchvision.datasets.SVHN(
             root='./data',
@@ -336,23 +334,21 @@ def get_train_dataset_without_augmentation(args, normalizer):
                                                             transforms.ToTensor(),
                                                             normalizer]))
     elif args.dataset == 'cifar':
-        if args.num_classes == 10:
-            full_dataset = torchvision.datasets.CIFAR10(
-                root='./data',
-                train=True,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    normalizer]))
-        else:
-            full_dataset = torchvision.datasets.CIFAR100(
-                root='./data',
-                train=True,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    normalizer]))
-
+        full_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer]))
+    elif args.dataset == 'cifar100':
+        full_dataset = torchvision.datasets.CIFAR100(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer]))
     else:
         full_dataset = torchvision.datasets.SVHN(
             root='./data',
@@ -394,26 +390,25 @@ def get_test_loader(args, normalizer):
                                                             normalizer,
                                                         ]))
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=args.worker)
+        return test_loader
     elif args.dataset == 'cifar':
-        if args.num_classes == 10:
-            test_dataset = torchvision.datasets.CIFAR10(
-                root='./data',
-                train=False,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    normalizer,
-                ]))
-        else:
-            test_dataset = torchvision.datasets.CIFAR100(
-                root='./data',
-                train=False,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    normalizer,
-                ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
+        test_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=False,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+    elif args.dataset == 'cifar100':
+        test_dataset = torchvision.datasets.CIFAR100(
+            root='./data',
+            train=False,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
     else:
         test_dataset = torchvision.datasets.SVHN(
             root='./data',
@@ -423,12 +418,12 @@ def get_test_loader(args, normalizer):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
     return test_loader
 
 
 def check_file_exist(path):
-    return os.path.isfile(path) 
+    return os.path.isfile(path)
 
 
 def add_path(prev_path, to_add):
@@ -456,10 +451,7 @@ def set_clustering_dir(args):
 def set_save_dir(args):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
-    if args.dataset == 'imagenet':
-        path = add_path(path, args.dataset)
-    else:
-        path = add_path(path, args.dataset + '-' + str(args.num_classes))
+    path = add_path(path, args.dataset)
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
     with open(os.path.join(path, "params.json"), 'w') as f:
@@ -494,4 +486,3 @@ def get_time_cost_in_string(t):
         return '{:.1f}m'.format(t / 60)
     else:
         return '{:.1f}s'.format(t)
-

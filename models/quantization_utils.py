@@ -47,16 +47,16 @@ def calc_qparams_per_cluster(ranges, q_max):
 
     if q_max == 15:
         z = - torch.round(ranges[:, 0] / s)
-        return s, torch.clamp(z, 0, 15)
+        return s, torch.clamp(z, 0, 15).cuda()
     elif q_max == 255:
         z = -128 - torch.round(ranges[:, 0] / s)
-        return s, torch.clamp(z, -128, 127)
+        return s, torch.clamp(z, -128, 127).cuda()
     elif q_max == 65535:
         z = -32768 - torch.round(ranges[:, 0] / s)
-        return s, torch.clamp(z, -32768, 32767)
+        return s, torch.clamp(z, -32768, 32767).cuda()
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
-    return torch.nn.Parameter(s, requires_grad=False), torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False)
+    return torch.nn.Parameter(s, requires_grad=False), torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False).cuda()
 
 
 def ema(x, averaged, smooth):
