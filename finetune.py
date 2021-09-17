@@ -239,10 +239,21 @@ def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
-    train_dataset = get_train_dataset(args, normalizer)
-    train_loader = get_data_loader(args, train_dataset)
-    val_loader = get_val_loader(args, normalizer)
-    test_loader = get_test_loader(args, normalizer)
+
+    augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
+    non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+
+    test_loader = None
+    if args.dataset != 'imagenet':
+        train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset)
+        non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset)
+        test_dataset = get_test_dataset(args, normalizer)
+        test_loader = get_sequential_loader(args, test_dataset)
+        train_loader = get_shuffled_loader(args, train_dataset)
+    else:
+        val_dataset = get_test_dataset(args, normalizer)
+        train_loader = get_shuffled_loader(args, augmented_train_dataset)
+    val_loader = get_sequential_loader(args, val_dataset)
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -282,27 +293,25 @@ def _finetune(args, tools):
     if args.cluster > 1:
         clustering_model = tools.clustering_method(args)
         if not args.clustering_path:
-            clustering_train_loader = get_data_loader(args, train_dataset, usage='clustering')
             args.clustering_path = set_clustering_dir(args)
-            clustering_model.train_clustering_model(clustering_train_loader)
+            clustering_model.train_clustering_model(train_loader)
         else:
             clustering_model.load_clustering_model()
 
         # Make non-augmented dataset/loader for Phase-2 training
-        non_augmented_dataset = get_train_dataset_without_augmentation(args, normalizer)
         if args.indices_path:
             indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
-            non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
+            sequential_non_aug_loader = get_shuffled_loader(args, non_augmented_train_dataset)
             # test_augmented_clustering(clustering_model, non_augmented_loader, train_loader)
-            indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, non_augmented_loader, args, runtime_helper)
+            indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, sequential_non_aug_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
-            #check_cluster_distribution(clustering_model, non_augmented_loader)
+            # check_cluster_distribution(clustering_model, non_augmented_loader)
             if args.visualize_clustering:
-                visualize_clustering_res(non_augmented_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
+                visualize_clustering_res(sequential_non_aug_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
-        phase2_dataset = torch.utils.data.Subset(non_augmented_dataset, list_for_phase2)
+        phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
 
         loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
                                              num_workers=args.worker, shuffle=False)
@@ -334,10 +343,12 @@ def _finetune(args, tools):
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
 
-        if args.cluster > 1:
-            fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
-        else:
-            fp_score = validate(model, val_loader, criterion, logger)
+        fp_score = 0
+        if args.dataset != 'imagenet':
+            if args.cluster > 1:
+                fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+            else:
+                fp_score = validate(model, val_loader, criterion, logger)
 
         state = {
             'epoch': e,
@@ -386,6 +397,9 @@ def _finetune(args, tools):
     # Test quantized model which scored the best with validation dataset
     arg_dict['quantized'] = True
     quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
+
+    if args.dataset == 'imagenet':
+        test_loader = val_loader
 
     if args.cluster > 1:
         test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)

@@ -282,191 +282,82 @@ def get_normalizer(dataset):
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
 
-def get_train_dataset(args, normalizer):
+def split_dataset_into_train_and_val(full_dataset):
+        n_data = len(full_dataset)
+        train_size = int(n_data * 0.9)
+
+        indices = list(range(n_data))
+        train_idx = indices[:train_size]
+        val_idx = indices[train_size:]
+
+        train_dataset = torch.utils.data.Subset(full_dataset, train_idx)
+        val_dataset = torch.utils.data.Subset(full_dataset, val_idx)
+        return train_dataset, val_dataset
+
+
+def get_augmented_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
-        full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                         transform=transforms.Compose([
-                                                             transforms.RandomResizedCrop(224),
-                                                             transforms.RandomHorizontalFlip(),
-                                                             transforms.ToTensor(),
-                                                             normalizer]))
-    elif args.dataset == 'cifar':
-        full_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer]))
-    elif args.dataset == 'cifar100':
-        full_dataset = torchvision.datasets.CIFAR100(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer]))
+        transformer = transforms.Compose([transforms.RandomResizedCrop(224),
+                                         transforms.RandomHorizontalFlip(),
+                                         transforms.ToTensor(),
+                                         normalizer])
+        return torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'), transform=transformer)
     else:
-        full_dataset = torchvision.datasets.SVHN(
-            root='./data',
-            split='train',
-            download=True,
-            transform=transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalizer]))
-
-    num_data = len(full_dataset)
-    train_size = int(num_data*0.9)
-    train_dataset, _ = torch.utils.data.dataset.random_split(full_dataset, [train_size, num_data-train_size])
-    return train_dataset
-
-
-def get_train_dataset_without_augmentation(args, normalizer):
-    if args.dataset == 'imagenet':
-        full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                        transform=transforms.Compose([
-                                                            transforms.Resize(256),
-                                                            transforms.CenterCrop(224),
-                                                            transforms.ToTensor(),
-                                                            normalizer]))
-    elif args.dataset == 'cifar':
-        full_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer]))
-    elif args.dataset == 'cifar100':
-        full_dataset = torchvision.datasets.CIFAR100(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer]))
-    else:
-        full_dataset = torchvision.datasets.SVHN(
-            root='./data',
-            split='train',
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer]))
-    num_data = len(full_dataset)
-    train_size = int(num_data * 0.9)
-    train_dataset, _ = torch.utils.data.random_split(full_dataset, [train_size, num_data - train_size])
-    return train_dataset
-
-
-def get_data_loader(args, dataset, usage=None):
-    if usage == 'clustering':
-        if args.clustering_method == 'kmeans':
-            loader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True, num_workers=args.worker)
+        transformer = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                          transforms.RandomHorizontalFlip(),
+                                          transforms.ToTensor(),
+                                          normalizer])
+        if args.dataset == 'cifar':
+            dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transformer)
+        elif args.dataset == 'cifar100':
+            dataset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transformer)
         else:
-            loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset), shuffle=True, num_workers=args.worker)
-    elif usage == 'initializer':
-        if args.dataset == 'imagenet':
-            batch = 128
+            dataset = torchvision.datasets.SVHN(root='./data', split='train', download=True, transform=transformer)
+    return dataset
+
+
+def get_non_augmented_train_dataset(args, normalizer):
+    if args.dataset == 'imagenet':
+        transformer = transforms.Compose([transforms.Resize(256),
+                                          transforms.CenterCrop(224),
+                                          transforms.ToTensor(),
+                                          normalizer])
+        return torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'), transform=transformer)
+    else:
+        transformer = transforms.Compose([transforms.ToTensor(), normalizer])
+        if args.dataset == 'cifar':
+            dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transformer)
+        elif args.dataset == 'cifar100':
+            dataset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transformer)
         else:
-            batch = 256
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
-    else:
-        loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
-    return loader
+            dataset = torchvision.datasets.SVHN(root='./data', split='train', download=True, transform=transformer)
+    return dataset
 
 
-def get_val_loader(args, normalizer):
-    batch = 256
+def get_test_dataset(args, normalizer):
     if args.dataset == 'imagenet':
-        batch = 128
-        full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
-                                                        transform=transforms.Compose([
-                                                            transforms.Resize(256),
-                                                            transforms.CenterCrop(224),
-                                                            transforms.ToTensor(),
-                                                            normalizer,
-                                                        ]))
-    elif args.dataset == 'cifar':
-        full_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer,
-            ]))
-    elif args.dataset == 'cifar100':
-        full_dataset = torchvision.datasets.CIFAR100(
-            root='./data',
-            train=True,
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer,
-            ]))
+        transformer = transforms.Compose([transforms.Resize(256),
+                                          transforms.CenterCrop(224),
+                                          transforms.ToTensor(),
+                                          normalizer])
+        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'test'), transform=transformer)
     else:
-        full_dataset = torchvision.datasets.SVHN(
-            root='./data',
-            split='train',
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer,
-            ]))
-    num_data = len(full_dataset)
-    val_size = int(num_data * 0.1)
-    val_dataset, _ = torch.utils.data.random_split(full_dataset, [val_size, num_data - val_size])
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
-    return val_loader
+        transformer = transforms.Compose([transforms.ToTensor(), normalizer])
+        if args.dataset == 'cifar':
+            test_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transformer)
+        elif args.dataset == 'cifar100':
+            test_dataset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transformer)
+        else:
+            test_dataset = torchvision.datasets.SVHN(root='./data', split='test', download=True, transform=transformer)
+    return test_dataset
 
 
-def get_test_loader(args, normalizer):
-    batch = 256
-    if args.dataset == 'imagenet':
-        batch = 128
-        test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'val'),
-                                                        transform=transforms.Compose([
-                                                            transforms.Resize(256),
-                                                            transforms.CenterCrop(224),
-                                                            transforms.ToTensor(),
-                                                            normalizer,
-                                                        ]))
-    elif args.dataset == 'cifar':
-        test_dataset = torchvision.datasets.CIFAR10(
-            root='./data',
-            train=False,
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer,
-            ]))
-    elif args.dataset == 'cifar100':
-        test_dataset = torchvision.datasets.CIFAR100(
-            root='./data',
-            train=False,
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer,
-            ]))
-    else:
-        test_dataset = torchvision.datasets.SVHN(
-            root='./data',
-            split='test',
-            download=True,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                normalizer,
-            ]))
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
-    return test_loader
+def get_sequential_loader(args, dataset):
+    return torch.utils.data.DataLoader(dataset, batch_size=args.val_batch, shuffle=False, num_workers=args.worker)
+
+
+def get_shuffled_loader(args, dataset):
+    return torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
 
 
 def check_file_exist(path):
