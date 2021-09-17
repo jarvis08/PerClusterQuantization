@@ -27,10 +27,10 @@ class PCQDenseLayer(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
 
-        self.bn1 = PCQBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
+        self.bn1 = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
                                arg_dict=arg_dict, act_qmax=self.act_qmax)
-        self.bn2 = PCQBnReLU(bn_size * growth_rate, nn.ReLU, arg_dict=arg_dict)
+        self.bn2 = PCQBnReLU(bn_size * growth_rate, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
                                arg_dict=arg_dict, act_qmax=self.act_qmax)
         self.memory_efficient = memory_efficient
@@ -66,7 +66,7 @@ class PCQTransition(nn.Sequential):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
 
-        self.bn = PCQBnReLU(num_input_features, nn.ReLU, arg_dict=arg_dict)
+        self.bn = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
                               arg_dict=arg_dict, act_qmax=self.act_qmax)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
@@ -189,7 +189,7 @@ class PCQDenseNet(nn.Module):
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
                                      arg_dict=arg_dict, act_qmax=self.act_qmax)),
-            ('first_norm', PCQBnReLU(num_init_features, nn.ReLU, act_qmax=self.act_qmax, arg_dict=arg_dict)),
+            ('first_norm', PCQBnReLU(num_init_features, activation=nn.ReLU, act_qmax=self.act_qmax, arg_dict=arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -211,13 +211,15 @@ class PCQDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', PCQBnReLU(num_features, nn.ReLU, arg_dict=arg_dict))
+        self.features.add_module('last_norm', PCQBnReLU(num_features, activation=nn.ReLU, arg_dict=arg_dict))
         # Linear layer
         self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
-        if self.training:
-            if self.runtime_helper.range_update_phase:
+        if not self.training and not self.runtime_helper.range_update_phase:
+            pass
+        else:
+            if not self.training:
                 self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)

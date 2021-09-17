@@ -168,22 +168,20 @@ class PCQLinear(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            return self._forward_impl(x)
-
-        if not self.runtime_helper.pcq_initialized:
-            out = self._forward_impl(x)
-            self._update_activation_ranges(out, external_range)
+            if self.runtime_helper.range_update_phase:  # Phase-2
+                out = self._fake_quantized_fc(x)
+                self._update_activation_ranges(out, external_range)
+                if self.runtime_helper.apply_fake_quantization:
+                    out = self._fake_quantize_activation(out, external_range)
+            else:
+                out = self._forward_impl(x)
             return out
 
+        # Phase-1
         out = self._fake_quantized_fc(x)
-
-        if self.runtime_helper.range_update_phase:  # Phase-2
-            self._update_activation_ranges(out, external_range)
-
         if self.runtime_helper.apply_fake_quantization:
-            return self._fake_quantize_activation(out, external_range)
-        else:
-            return out
+            out = self._fake_quantize_activation(out, external_range)
+        return out
 
     def _forward_impl(self, x):
         x = self.fc(x)
@@ -192,7 +190,7 @@ class PCQLinear(nn.Module):
         return x
 
     def _fake_quantized_fc(self, x):
-        is_phase1 = self.use_ste and not self.runtime_helper.range_update_phase
+        is_phase1 = not self.runtime_helper.range_update_phase
         w = self.fc.weight
         if not self.quant_noise:
             s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
