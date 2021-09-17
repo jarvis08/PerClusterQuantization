@@ -280,6 +280,7 @@ def get_normalizer(dataset):
     else:
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
+
 def get_train_dataset(args, normalizer):
     if args.dataset == 'imagenet':
         full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
@@ -321,8 +322,8 @@ def get_train_dataset(args, normalizer):
 
     num_data = len(full_dataset)
     train_size = int(num_data*0.9)
-    train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, num_data-train_size])
-    return train_dataset, val_dataset
+    train_dataset, _ = torch.utils.data.dataset.random_split(full_dataset, [train_size, num_data-train_size])
+    return train_dataset
 
 
 def get_train_dataset_without_augmentation(args, normalizer):
@@ -380,8 +381,55 @@ def get_data_loader(args, dataset, usage=None):
     return loader
 
 
-def get_test_loader(args, normalizer):
+def get_val_loader(args, normalizer):
+    batch = 256
     if args.dataset == 'imagenet':
+        batch = 128
+        full_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'),
+                                                        transform=transforms.Compose([
+                                                            transforms.Resize(256),
+                                                            transforms.CenterCrop(224),
+                                                            transforms.ToTensor(),
+                                                            normalizer,
+                                                        ]))
+    elif args.dataset == 'cifar':
+        full_dataset = torchvision.datasets.CIFAR10(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+    elif args.dataset == 'cifar100':
+        full_dataset = torchvision.datasets.CIFAR100(
+            root='./data',
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+    else:
+        full_dataset = torchvision.datasets.SVHN(
+            root='./data',
+            split='train',
+            download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalizer,
+            ]))
+    num_data = len(full_dataset)
+    val_size = int(num_data * 0.1)
+    val_dataset, _ = torch.utils.data.random_split(full_dataset, [val_size, num_data - val_size])
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
+    return val_loader
+
+
+def get_test_loader(args, normalizer):
+    batch = 256
+    if args.dataset == 'imagenet':
+        batch = 128
         test_dataset = torchvision.datasets.ImageFolder(root=os.path.join(args.imagenet, 'val'),
                                                         transform=transforms.Compose([
                                                             transforms.Resize(256),
@@ -389,8 +437,6 @@ def get_test_loader(args, normalizer):
                                                             transforms.ToTensor(),
                                                             normalizer,
                                                         ]))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=args.worker)
-        return test_loader
     elif args.dataset == 'cifar':
         test_dataset = torchvision.datasets.CIFAR10(
             root='./data',
@@ -418,7 +464,7 @@ def get_test_loader(args, normalizer):
                 transforms.ToTensor(),
                 normalizer,
             ]))
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=args.worker)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch, shuffle=False, num_workers=args.worker)
     return test_loader
 
 
