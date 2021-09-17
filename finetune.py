@@ -141,12 +141,12 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    model.train()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
+            model.train()
             input, target = input.cuda(), target.cuda()
             runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
             output = model(input)
@@ -161,6 +161,7 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             optimizer.step()
 
             # Phase-2
+            model.eval()
             runtime_helper.range_update_phase = True
             phase2_input, _ = phase2_loader.get_next_data()
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
@@ -241,9 +242,11 @@ def _finetune(args, tools):
         runtime_helper.qn_prob = args.qn_prob - 0.1
         tools.shift_qn_prob(model)
 
-    epoch_to_start = 1
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    criterion = torch.nn.CrossEntropyLoss().cuda()
 
+    epoch_to_start = 1
     best_score_int = 0
     best_epoch = 0
     if args.fused:
@@ -254,9 +257,6 @@ def _finetune(args, tools):
             saved_args = json.load(f)
             best_score_int = saved_args['best_score']
             best_epoch = saved_args['best_epoch']
-
-    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
-    criterion = torch.nn.CrossEntropyLoss().cuda()
 
     phase2_loader = None
     clustering_model = None
@@ -292,11 +292,12 @@ def _finetune(args, tools):
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             initialize_pcq_model(model, phase2_loader.data_loader, criterion)
 
-    quantized_model = None
-    runtime_helper.pcq_initialized = True
     save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
+
+    quantized_model = None
+    runtime_helper.pcq_initialized = True
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
@@ -383,17 +384,13 @@ def _finetune(args, tools):
     if args.quant_noise:
         method += 'QN{:.1f}+'.format(args.qn_prob)
     if args.cluster > 1:
-        method += 'PCQ({})'.format(args.clustering_method)
+        method += 'PCQ({}), K: {}'.format(args.clustering_method, args.cluster)
     elif not args.quant_noise:
         method += 'QAT'
 
     bn = ''
     if args.bn_momentum < 0.1:
         bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
-
-    n_cluster = ''
-    if 'PCQ' in method:
-        n_cluster += 'K: {}, '.format(args.cluster)
 
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, GPU: {}, Path: {}\n'

@@ -285,16 +285,16 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
-                weight = _fp.weights.div(torch.sqrt(_fp.running_vars + _fp.eps))
-                bias = _fp.biases - weight * _fp.running_means
+                weight = _fp.weights.clone().detach().div(torch.sqrt(_fp.running_vars.clone().detach() + _fp.eps))
+                bias = _fp.biases.clone().detach() - weight * _fp.running_means.clone().detach()
                 weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
                 _int.weight.copy_(weight.type(torch.cuda.IntTensor))
                 for c in range(_int.num_clusters):
                     b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
                     _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
             else:
-                w = _fp.bn.weight.div(torch.sqrt(_fp.bn.running_var + _fp.bn.eps))
-                b = _fp.bn.bias - w * _fp.bn.running_mean
+                w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
+                b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
                 w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
                 b = quantize_matrix(b, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
 
@@ -306,14 +306,16 @@ def quantize_layer_and_transfer(_fp, _int):
             else:
                 fp_layer = _fp.fc
 
-            _int.weight.data.copy_(quantize_matrix(fp_layer.weight, _int.s2, _int.z2, _int.q_max))
+            _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.q_max))
             if fp_layer.bias is not None:
                 _int.is_bias = nn.Parameter(torch.tensor(True, dtype=torch.bool), requires_grad=False)
                 if _int.num_clusters > 1:
                     for c in range(_int.num_clusters):
-                        _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0, 2 ** 32 - 1))
+                        _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
+                                                                     _int.s1[c] * _int.s2, 0, 2 ** 32 - 1))
                 else:
-                    _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0, 2 ** 32 - 1))
+                    _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
+                                                                 _int.s1 * _int.s2, 0, 2 ** 32 - 1))
     return _int
 
 
@@ -378,10 +380,16 @@ def copy_bn_from_pretrained(_to, _from):
 
 def copy_pcq_bn_from_pretrained(_to, _from, num_clusters):
     with torch.no_grad():
-        _to.weights = nn.Parameter(_from.weight.unsqueeze(0).repeat(num_clusters, 1), requires_grad=True)
-        _to.biases = nn.Parameter(_from.bias.unsqueeze(0).repeat(num_clusters, 1), requires_grad=True)
-        _to.running_means = nn.Parameter(_from.running_mean.unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
-        _to.running_vars = nn.Parameter(_from.running_var.unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        _to.weights = nn.Parameter(_from.weight.clone().detach().unsqueeze(0)
+                                   .repeat(num_clusters, 1), requires_grad=True)
+        _to.biases = nn.Parameter(_from.bias.clone().detach().unsqueeze(0)
+                                  .repeat(num_clusters, 1), requires_grad=True)
+        _to.running_means = nn.Parameter(_from.running_mean.clone().detach()
+                                         .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        _to.running_vars = nn.Parameter(_from.running_var.clone().detach()
+                                        .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        #_to.running_means = _from.running_mean.clone().detach().unsqueeze(0).repeat(num_clusters, 1).cuda()
+        #_to.running_vars = _from.running_var.clone().detach().unsqueeze(0).repeat(num_clusters, 1).cuda()
     return _to
 
 

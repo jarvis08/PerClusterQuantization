@@ -46,10 +46,14 @@ class QuantizedConv2d(nn.Conv2d):
     def pcq(self, x):
         if self.padding[0] > 0 or self.padding[1] > 0:
             bc = self.runtime_helper.batch_cluster
-            z1 = torch.index_select(self.z1, 0, bc)
+            exists = torch.unique(bc)
             padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding[0] * 2, x.shape[3] + self.padding[1] * 2)).cuda()
-            for i in range(len(self.runtime_helper.batch_cluster)):
-                padded[i] = F.pad(x[i], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=z1[i])
+            for c in exists:
+                indices = (bc == c).nonzero(as_tuple=True)[0]
+                padded[indices] = F.pad(x[indices], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1[c])
+            #z1 = torch.index_select(self.z1, 0, bc)
+            #for i in range(len(self.runtime_helper.batch_cluster)):
+            #    padded[i] = F.pad(x[i], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=z1[i])
             sum_q1q2 = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
             return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
         else:
@@ -260,22 +264,20 @@ class PCQConv2d(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            return self._forward_impl(x)
+            if self.runtime_helper.range_update_phase:  # Phase-2
+                out = self._fake_quantized_conv(x)
+                self._update_activation_ranges(out, external_range)
+                if self.runtime_helper.apply_fake_quantization:
+                    out = self._fake_quantize_activation(out, external_range)
+                return out
+            else:
+                return self._forward_impl(x)
 
-        if not self.runtime_helper.pcq_initialized:      # PCQ initialization
-            out = self._forward_impl(x)
-            self._update_activation_ranges(out, external_range)
-            return out
-
+        # Phase-1
         out = self._fake_quantized_conv(x)
-
-        if self.runtime_helper.range_update_phase:       # Phase-2
-            self._update_activation_ranges(out, external_range)
-
-        if self.runtime_helper.apply_fake_quantization:  # Phase-1 & 2
-            return self._fake_quantize_activation(out, external_range)
-        else:
-            return out
+        if self.runtime_helper.apply_fake_quantization:
+            out = self._fake_quantize_activation(out, external_range)
+        return out
 
     def _forward_impl(self, x):
         x = self.conv(x)
@@ -284,7 +286,7 @@ class PCQConv2d(nn.Module):
         return x
 
     def _fake_quantized_conv(self, x):
-        is_phase1 = self.use_ste and not self.runtime_helper.range_update_phase
+        is_phase1 = not self.runtime_helper.range_update_phase
         w = self.conv.weight
         if not self.quant_noise:
             s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
