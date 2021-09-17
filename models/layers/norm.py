@@ -100,7 +100,7 @@ class QuantizedBn2d(nn.Module):
 
 
 class PCQBnReLU(nn.Module):
-    def __init__(self, num_features, eps=1e-5, activation=None, act_qmax=None, w_qmax=2 ** 8 - 1, arg_dict=None):
+    def __init__(self, num_features, eps=0.00001, activation=None, act_qmax=None, w_qmax=2 ** 8 - 1, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
         self.momentum, self.bit, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
@@ -119,7 +119,7 @@ class PCQBnReLU(nn.Module):
         self.biases = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=True)
         self.running_means = nn.Parameter(torch.zeros(self.num_clusters, num_features), requires_grad=False)
         self.running_vars = nn.Parameter(torch.ones(self.num_clusters, num_features), requires_grad=False)
-        self.eps = nn.Parameter(torch.tensor(eps), requires_grad=False)
+        self.eps = 0.00001
 
     def forward(self, x, external_range=None):
         if not self.training:

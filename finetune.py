@@ -239,9 +239,9 @@ def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
-    train_dataset, val_dataset = get_train_dataset(args, normalizer)
+    train_dataset = get_train_dataset(args, normalizer)
     train_loader = get_data_loader(args, train_dataset)
-    val_loader = get_data_loader(args, val_dataset)
+    val_loader = get_val_loader(args, normalizer)
     test_loader = get_test_loader(args, normalizer)
 
     runtime_helper = RuntimeHelper()
@@ -271,9 +271,10 @@ def _finetune(args, tools):
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         params_path = arg_dict['dnn_path']
+        params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
         with open(os.path.join(params_path, "params.json"), 'r') as f:
             saved_args = json.load(f)
-            best_score = saved_args['best_score']
+            best_score_int = saved_args['best_score']
             best_epoch = saved_args['best_epoch']
 
     phase2_loader = None
@@ -327,7 +328,8 @@ def _finetune(args, tools):
             tools.shift_qn_prob(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e,
+                      logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
@@ -344,46 +346,58 @@ def _finetune(args, tools):
         }
         save_checkpoint(state, False, save_path_fp)
 
-        if e > args.fq and fp_score > best_score:
-            best_epoch = e
-            best_score = fp_score
-            # Save best model's FP model
-            with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
-                tmp = vars(args)
-                tmp['best_epoch'] = e
-                tmp['best_score'] = fp_score
-                json.dump(tmp, f, indent=4)
-            shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
+        # Test quantized model, and save if performs the best
+        if e > args.fq:
+            model.set_quantization_params()
+            if quantized_model is None:
+                if args.dataset == 'cifar100':
+                    quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+                else:
+                    quantized_model = tools.quantized_model_initializer(arg_dict)
+            quantized_model = tools.quantizer(model, quantized_model)
+            quantized_model.cuda()
 
-    # Test quantized model, and save if performs the best
-    # if last_epoch is not the best epoch, load the best model
-    if fp_score < best_score:
-        del model
-        model = load_dnn_model(arg_dict, tools, os.path.join(save_path_fp, 'best.pth'))
+            if args.cluster > 1:
+                int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
+                                         logger)
+            else:
+                int_score = validate(quantized_model, val_loader, criterion, logger)
 
-    model.set_quantization_params()
-    if quantized_model is None:
-        if args.dataset == 'cifar100':
-            quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
-        else:
-            quantized_model = tools.quantized_model_initializer(arg_dict)
-    quantized_model = tools.quantizer(model, quantized_model)
-    quantized_model.cuda()
+            if int_score > best_score_int:
+                best_epoch = e
+                # Save best model's FP model
+                with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
+                    tmp = vars(args)
+                    tmp['best_epoch'] = e
+                    tmp['best_score'] = fp_score
+                    json.dump(tmp, f, indent=4)
+                shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
+
+                # Save best model's INT model
+                best_score_int = int_score
+                with open(os.path.join(save_path_int, "params.json"), 'w') as f:
+                    tmp = vars(args)
+                    tmp['best_epoch'] = e
+                    tmp['best_score'] = best_score_int
+                    json.dump(tmp, f, indent=4)
+                filepath = os.path.join(save_path_int, 'checkpoint.pth')
+                torch.save({'state_dict': quantized_model.state_dict()}, filepath)
+
+    # Test the best quantized model
+    quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
 
     if args.cluster > 1:
-        int_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
+        test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
     else:
-        int_score = validate(quantized_model, test_loader, criterion, logger)
+        test_score = validate(quantized_model, test_loader, criterion, logger)
 
     # Save best model's INT model
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
-        tmp['fp_epoch'] = best_epoch
-        tmp['fp_score'] = best_score
-        tmp['int_score'] = int_score
+        tmp['best_epoch'] = best_epoch
+        tmp['best_score'] = best_score_int
+        tmp['test_score'] = test_score
         json.dump(tmp, f, indent=4)
-    filepath = os.path.join(save_path_int, 'checkpoint.pth')
-    torch.save({'state_dict': quantized_model.state_dict()}, filepath)
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     method = ''
@@ -399,8 +413,8 @@ def _finetune(args, tools):
         bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, {}FQ: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(best_score_int, args.arch, method, args.lr, args.epoch, args.batch, bn, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
+        f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, GPU: {}, Path: {}\n'
+                .format(test_score, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):

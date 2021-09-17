@@ -133,10 +133,10 @@ class PCQBottleneck(nn.Module):
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
-        self.bn1 = PCQBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
+        self.bn1 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation,
                                  arg_dict=self.arg_dict, act_qmax=self.act_qmax)
-        self.bn2 = PCQBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
+        self.bn2 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=True)
@@ -230,7 +230,7 @@ class PCQResNet(nn.Module):
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
                                     arg_dict=arg_dict, act_qmax=self.act_qmax)
-        self.bn1 = PCQBnReLU(self.inplanes, nn.ReLU, arg_dict=self.arg_dict)
+        self.bn1 = PCQBnReLU(self.inplanes, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -260,8 +260,10 @@ class PCQResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.training:
-            if self.runtime_helper.range_update_phase:
+        if not self.training and not self.runtime_helper.range_update_phase:
+            pass
+        else:
+            if not self.training:
                 self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)

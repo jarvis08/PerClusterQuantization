@@ -324,8 +324,7 @@ def quantize(_fp, _int):
     _int = quantize_layer_and_transfer(_fp, _int)
     return _int
 
-def apply_qn(fake_quantized_weight, origin_weight, qn_prob, kernel_size=None, each_channel=False):
-
+def apply_qn(fake_quantized_weight, origin_weight, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
     # FC
     if kernel_size is None:
         mask = torch.zeros_like(origin_weight)
@@ -337,9 +336,10 @@ def apply_qn(fake_quantized_weight, origin_weight, qn_prob, kernel_size=None, ea
     # Conv
     else:
         if each_channel:
-            mask = torch.zeros(origin_weight.size(0), origin_weight(1))
+            mask = torch.zeros(in_feature, out_feature).cuda()
             mask.bernoulli_(qn_prob)
-            mask = (mask.unsqueeze(2).unsqueeze(3).repeat(1, 1, kernel_size, kernel_size))
+            mask = mask.view(-1, in_feature)
+            mask = (mask.unsqueeze(2).unsqueeze(3).repeat(1, 1, kernel_size[0], kernel_size[1]))
 
             noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
             qn_weight = origin_weight + noise.detach()
