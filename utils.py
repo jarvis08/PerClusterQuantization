@@ -44,12 +44,13 @@ class Phase2DataLoader(object):
     def __init__(self, loader, num_clusters, num_data_per_cluster):
         self.data_loader = loader
         self.len_loader = len(loader)
+        self.batch_size = num_clusters * num_data_per_cluster
 
         bc = []
         for c in range(num_clusters):
             per_cluster = [c for _ in range(num_data_per_cluster)]
             bc += per_cluster
-        self.batch_cluster = torch.cuda.LongTensor(bc)
+        self.batch_cluster = torch.cuda.LongTensor(bc).cuda()
 
         self.generator = iter(self.data_loader)
         self.iterated = 0
@@ -59,13 +60,15 @@ class Phase2DataLoader(object):
         self.iterated = 0
 
     def get_next_data(self):
-        input, target = next(self.generator)
-        self.iterated += 1
         if self.iterated == self.len_loader:
             self.initialize_phase2_generator()
-            if len(input) < 64:
-                input, target = next(self.generator)
-                self.iterated += 1
+
+        input, target = next(self.generator)
+        if len(input) < self.batch_size:
+            self.initialize_phase2_generator()
+            input, target = next(self.generator)
+
+        self.iterated += 1
         return input, target
 
 
@@ -261,7 +264,7 @@ def load_dnn_model(arg_dict, tools):
 def load_optimizer(optim, path):
     checkpoint = torch.load(path)
     optim.load_state_dict(checkpoint['optimizer'])
-    epoch_to_start = checkpoint['epoch']
+    epoch_to_start = checkpoint['epoch'] + 1
     return optim, epoch_to_start
 
 
