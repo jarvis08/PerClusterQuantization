@@ -383,7 +383,8 @@ def _finetune(args, tools):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
 
-    # Test the best quantized model
+    # Test quantized model which scored the best with validation dataset
+    arg_dict['quantized'] = True
     quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
 
     if args.cluster > 1:
@@ -391,7 +392,6 @@ def _finetune(args, tools):
     else:
         test_score = validate(quantized_model, test_loader, criterion, logger)
 
-    # Save best model's INT model
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
         tmp['best_epoch'] = best_epoch
@@ -413,8 +413,8 @@ def _finetune(args, tools):
         bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, LR: {}, Epoch: {}, Batch: {}, FQ: {}, {}Best-epoch: {}, {}Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.arch, method, args.lr, args.epoch, args.batch, args.fq, n_cluster, best_epoch, bn, tuning_time_cost, args.gpu, save_path_fp))
+        f.write('{:.2f} # {}, {}, LR: {}, {}Epoch: {}, Batch: {}, FQ: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(test_score, args.arch, method, args.lr, bn, args.epoch, args.batch, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):

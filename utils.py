@@ -228,14 +228,14 @@ def validate_darknet_dataset(model, test_loader, criterion):
     return top1.avg
 
 
-def load_dnn_model(arg_dict, tools, best_path=None):
+def load_dnn_model(arg_dict, tools, path=None):
     model = None
     if arg_dict['quantized']:
         if arg_dict['dataset'] == 'cifar100':
             model = tools.quantized_model_initializer(arg_dict, num_classes=100)
         else:
             model = tools.quantized_model_initializer(arg_dict)
-    elif arg_dict['fused'] or best_path is not None:
+    elif arg_dict['fused']:
         if arg_dict['dataset'] == 'cifar100':
             model = tools.fused_model_initializer(arg_dict, num_classes=100)
         else:
@@ -252,14 +252,12 @@ def load_dnn_model(arg_dict, tools, best_path=None):
                 return vision_models.resnet50(pretrained=True)
             elif arg_dict['arch'] == 'DenseNet121':
                 return vision_models.densenet121(pretrained=True)
-            elif arg_dict['arch'] == 'ResNet18':
-                exit()
         elif arg_dict['dataset'] == 'cifar100':
             model = tools.pretrained_model_initializer(num_classes=100)
         else:
             model = tools.pretrained_model_initializer()
-    if best_path is not None:
-        checkpoint = torch.load(best_path)
+    if path is not None:
+        checkpoint = torch.load(path)
     else:
         checkpoint = torch.load(arg_dict['dnn_path'])
     model.load_state_dict(checkpoint['state_dict'], strict=False)
