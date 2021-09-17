@@ -360,6 +360,7 @@ class FusedConv2d(nn.Module):
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
         self.out_channels = out_channels
+        self.in_channels = in_channels
 
     def forward(self, x, external_range=None):
         if not self.training:
@@ -380,8 +381,9 @@ class FusedConv2d(nn.Module):
         s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
         w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
         if self.quant_noise:
-            w = apply_qn(fake_quantized_weight=w, origin_weight=self.conv.weight, qn_prob=self.qn_prob,
-                         kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel)
+            w = apply_qn(fake_quantized_weight=w, origin_weight=self.conv.weight.detach(), qn_prob=self.qn_prob,
+                         kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
+                         in_feature=self.in_channels, out_feature=self.out_channels)
 
         x = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._norm_layer:
