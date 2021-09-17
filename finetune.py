@@ -266,7 +266,7 @@ def _finetune(args, tools):
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
     epoch_to_start = 1
-    best_score_int = 0
+    best_int_val_score = 0
     best_epoch = 0
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
@@ -274,7 +274,7 @@ def _finetune(args, tools):
         params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
         with open(os.path.join(params_path, "params.json"), 'r') as f:
             saved_args = json.load(f)
-            best_score_int = saved_args['best_score']
+            best_int_val_score = saved_args['best_int_val_score']
             best_epoch = saved_args['best_epoch']
 
     phase2_loader = None
@@ -363,7 +363,7 @@ def _finetune(args, tools):
             else:
                 int_score = validate(quantized_model, val_loader, criterion, logger)
 
-            if int_score > best_score_int:
+            if int_score > best_int_val_score:
                 best_epoch = e
                 # Save best model's FP model
                 with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
@@ -374,11 +374,11 @@ def _finetune(args, tools):
                 shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
 
                 # Save best model's INT model
-                best_score_int = int_score
+                best_int_val_score = int_score
                 with open(os.path.join(save_path_int, "params.json"), 'w') as f:
                     tmp = vars(args)
                     tmp['best_epoch'] = e
-                    tmp['best_score'] = best_score_int
+                    tmp['best_int_val_score'] = best_int_val_score
                     json.dump(tmp, f, indent=4)
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
@@ -395,8 +395,8 @@ def _finetune(args, tools):
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
         tmp['best_epoch'] = best_epoch
-        tmp['best_score'] = best_score_int
-        tmp['test_score'] = test_score
+        tmp['best_int_val_score'] = best_int_val_score
+        tmp['int_test_score'] = test_score
         json.dump(tmp, f, indent=4)
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
