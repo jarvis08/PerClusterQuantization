@@ -217,6 +217,25 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
     plt.savefig("k-means clustering trial 1.png")
 
 
+def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
+    non_aug_indices = []
+    for i, (input, target) in enumerate(non_augmented_loader):
+        batch_cluster = model.predict_cluster_of_batch(input)
+        non_aug_indices.extend(batch_cluster.tolist())
+
+    aug_indices = []
+    for i, (input, target) in enumerate(augmented_loader):
+        batch_cluster = model.predict_cluster_of_batch(input)
+        aug_indices.extend(batch_cluster.tolist())
+
+    cnt_data_assigned_to_different_cluster = 0
+    for i in range(len(non_aug_indices)):
+        if non_aug_indices[i] != aug_indices[i]:
+            cnt_data_assigned_to_different_cluster += 1
+    print("Datum assigned to different cluster = {}".format(cnt_data_assigned_to_different_cluster))
+    exit()
+
+
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
@@ -274,6 +293,7 @@ def _finetune(args, tools):
             indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
             non_augmented_loader = get_data_loader(args, non_augmented_dataset, usage='initializer')
+            # test_augmented_clustering(clustering_model, non_augmented_loader, train_loader)
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, non_augmented_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
             #check_cluster_distribution(clustering_model, non_augmented_loader)
