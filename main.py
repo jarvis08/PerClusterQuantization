@@ -65,12 +65,14 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
+    args.val_batch = 128
 if not args.worker:
     if args.dataset == 'imagenet':
         args.worker = 32
     else:
         args.worker = 4
 print(vars(args))
+
 
 def set_func_for_target_arch(arch, clustering_method, is_pcq):
     tools = QuantizationTool()
