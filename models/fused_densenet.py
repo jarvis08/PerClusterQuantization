@@ -287,12 +287,12 @@ def modify_fused_densenet_qn_pre_hook(model):
         # dense layer
         for layer_idx in range(1, model_block.num_layers+1):
             model_layer = getattr(model_block,'denselayer%d' % layer_idx)
-            model_layer.conv1 = _quant_noise(model_layer.conv1, model.runtime_helper.qn_prob, 1, model.q_max)
-            model_layer.conv2 = _quant_noise(model_layer.conv2, model.runtime_helper.qn_prob, 1, model.q_max)
+            model_layer.conv1.conv = _quant_noise(model_layer.conv1.conv, model.runtime_helper.qn_prob, 1, model.q_max)
+            model_layer.conv2.conv = _quant_noise(model_layer.conv2.conv, model.runtime_helper.qn_prob, 1, model.q_max)
 
         # transition
         if block_idx < 4:
-            model_trans.conv = _quant_noise(model_trans.conv, model.runtime_helper.qn_prob, 1, model.q_max)
+            model_trans.conv.conv = _quant_noise(model_trans.conv.conv, model.runtime_helper.qn_prob, 1, model.q_max)
     # Classifier
     model.classifier.quant_noise = False
 

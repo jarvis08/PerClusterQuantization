@@ -347,8 +347,8 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.folded_fq, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'folded_fq', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.folded_fq, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
+            = itemgetter('bit', 'smooth', 'folded_fq', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
 
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
@@ -358,8 +358,7 @@ class FusedConv2d(nn.Module):
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias, dilation=dilation)
-        if self.quant_noise:
-            self.conv = _quant_noise(self.conv, self.qn_prob, 1, q_max=self.q_max)
+
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
         self.out_channels = out_channels
@@ -380,9 +379,11 @@ class FusedConv2d(nn.Module):
 
     def _general(self, x, external_range=None):
         w = self.conv.weight
-        if not self.quant_noise:
-            s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
-            w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
+        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+        w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
+        if self.quant_noise:
+            w = apply_qn(fake_quantized_weight=w, origin_weight=self.conv.weight, qn_prob=self.qn_prob,
+                         kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel)
 
         x = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._norm_layer:

@@ -301,14 +301,14 @@ class PCQResNet(nn.Module):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer1[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer2[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer3[1].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer4[0].set_block_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.layer4[1].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer1)):
+            prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer2)):
+            prev_s, prev_z = self.layer2[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer3)):
+            prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
+        for i in range(len(self.layer4)):
+            prev_s, prev_z = self.layer4[i].set_block_qparams(prev_s, prev_z)
         self.fc.set_qparams(prev_s, prev_z)
 
 

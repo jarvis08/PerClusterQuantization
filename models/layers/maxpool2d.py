@@ -28,10 +28,11 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
     def pcq(self, x):
         bc = self.runtime_helper.batch_cluster
         exists = torch.unique(bc)
-        padded = torch.zeros((x.shape[0], x.shpae[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2))
+        padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2))
         for c in exists:
             indices = (bc == c).nonzero(as_tuple=True)[0]
-            padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_points[c])
+            padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding),
+                                          mode='constant', value=self.zero_point[c])
         return self.maxpool(padded)
 
     def general(self, x):
