@@ -216,8 +216,10 @@ class PCQDenseNet(nn.Module):
         self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
-        if self.training:
-            if self.runtime_helper.range_update_phase:
+        if not self.training and not self.runtime_helper.range_update_phase:
+            pass
+        else:
+            if not self.training:
                 self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
