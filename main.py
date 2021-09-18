@@ -18,7 +18,7 @@ parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's
 parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
-parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
+parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
