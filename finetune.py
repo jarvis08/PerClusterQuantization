@@ -245,8 +245,8 @@ def _finetune(args, tools):
 
     test_loader = None
     if args.dataset != 'imagenet':
-        train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset)
-        non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset)
+        train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
+        non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
         test_dataset = get_test_dataset(args, normalizer)
         test_loader = get_sequential_loader(args, test_dataset)
         train_loader = get_shuffled_loader(args, train_dataset)
