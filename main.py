@@ -66,6 +66,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
     args.val_batch = 128
+if args.dataset == 'cifar':
+    args.dataset = 'cifar10'
 if not args.worker:
     if args.dataset == 'imagenet':
         args.worker = 32
