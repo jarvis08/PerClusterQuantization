@@ -302,7 +302,7 @@ def _finetune(args, tools):
         if args.indices_path:
             indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
-            sequential_non_aug_loader = get_shuffled_loader(args, non_augmented_train_dataset)
+            sequential_non_aug_loader = get_sequential_loader(args, non_augmented_train_dataset)
             # test_augmented_clustering(clustering_model, non_augmented_loader, train_loader)
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, sequential_non_aug_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
