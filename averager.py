@@ -17,7 +17,7 @@ with open('exp_results.txt') as f:
         cnt += 1
         exp.append(float(splitted[0]))
         if cnt == 5:
-            print(' '.join(splitted[1:]))
+            print(' '.join(splitted[1:-2]))
             print('min: {:.2f}, max: {:.2f}, mean: {:.2f}, std: {:.4f}\n'.format(min(exp), max(exp), sum(exp) / 5, np.std(exp)))
             cnt = 0
             exp = []
