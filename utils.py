@@ -271,6 +271,16 @@ def load_optimizer(optim, path):
     return optim, epoch_to_start
 
 
+def load_tuning_info(path):
+    dir_path = path.replace('/checkpoint.pth', '')
+    int_params_path = os.path.join(dir_path, 'quantized/params.json')
+    with open(int_params_path, 'r') as f:
+        saved_args = json.load(f)
+        best_epoch = saved_args['best_epoch']
+        best_int_val_score = saved_args['best_int_val_score']
+    return dir_path, best_epoch, best_int_val_score
+
+
 def get_normalizer(dataset):
     if dataset == 'imagenet':
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

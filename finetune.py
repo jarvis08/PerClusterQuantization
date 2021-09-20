@@ -175,12 +175,17 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
 
 
 def get_finetuning_model(arg_dict, tools):
-    pretrained_model = load_dnn_model(arg_dict, tools)
     if arg_dict['dataset'] == 'cifar100':
         fused_model = tools.fused_model_initializer(arg_dict, num_classes=100)
     else:
         fused_model = tools.fused_model_initializer(arg_dict)
-    fused_model = tools.fuser(fused_model, pretrained_model)
+
+    if arg_dict['fused']:
+        checkpoint = torch.load(arg_dict['dnn_path'])
+        fused_model.load_state_dict(checkpoint['state_dict'], strict=False)
+    else:
+        pretrained_model = load_dnn_model(arg_dict, tools)
+        fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
 
@@ -268,25 +273,21 @@ def _finetune(args, tools):
     # else:
     #    summary(model, (3, 32, 32))
 
-    if args.quant_noise:
-        runtime_helper.qn_prob = args.qn_prob - 0.1
-        tools.shift_qn_prob(model)
-
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
+    save_path_fp = ''
     epoch_to_start = 1
-    best_int_val_score = 0
     best_epoch = 0
+    best_int_val_score = 0
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
-        params_path = arg_dict['dnn_path']
-        params_path = ('/').join(params_path.split('/')[:-1]) + '/quantized'
-        with open(os.path.join(params_path, "params.json"), 'r') as f:
-            saved_args = json.load(f)
-            best_int_val_score = saved_args['best_int_val_score']
-            best_epoch = saved_args['best_epoch']
+        save_path_fp, best_epoch, best_int_val_score = load_tuning_info(args.dnn_path)
+
+    if args.quant_noise:
+        runtime_helper.qn_prob = args.qn_prob - 0.1
+        tools.shift_qn_prob(model)
 
     phase2_loader = None
     clustering_model = None
@@ -312,7 +313,6 @@ def _finetune(args, tools):
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
-
         loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
                                              num_workers=args.worker, shuffle=False)
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
@@ -321,7 +321,8 @@ def _finetune(args, tools):
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             initialize_pcq_model(model, phase2_loader.data_loader, criterion)
 
-    save_path_fp = set_save_dir(args)
+    if not save_path_fp:
+        save_path_fp = set_save_dir(args)
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
 
