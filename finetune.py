@@ -394,6 +394,7 @@ def _finetune(args, tools):
                     json.dump(tmp, f, indent=4)
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
+            print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
     # Test quantized model which scored the best with validation dataset
     arg_dict['quantized'] = True
