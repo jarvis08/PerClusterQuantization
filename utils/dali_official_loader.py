@@ -64,22 +64,24 @@ def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=Fa
 
 
 def get_dali_loader(args, mode):
-    local_rank = 0  # for Distributed Training
-    world_size = 0  # for Distributed Training
+    local_rank = 0  # need to be changed for Distributed Training
+    world_size = 1  # need to be changed for Distributed Training
     if args.dataset == 'imagenet':
         crop_size = 224
         val_size = 256
         pipe = create_dali_pipeline(batch_size=args.batch if mode == 'train' else args.val_batch,
-                                    num_threads=args.workers,
+                                    num_threads=args.worker,
                                     device_id=local_rank,
                                     seed=12 + local_rank,
                                     data_dir=os.path.join(args.imagenet, mode),
                                     crop=crop_size,
                                     size=val_size,
-                                    dali_cpu=False,
+                                    # dali_cpu=False,
+                                    dali_cpu=True,
                                     shard_id=local_rank,
                                     num_shards=world_size,
-                                    is_training=True)
+                                    is_training=True if mode == 'train' else False)
         pipe.build()
         loader = DALIClassificationIterator(pipe, reader_name="Reader", last_batch_policy=LastBatchPolicy.PARTIAL)
         return loader
+

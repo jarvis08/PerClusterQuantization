@@ -72,7 +72,7 @@ if args.dataset == 'cifar':
     args.dataset = 'cifar10'
 if not args.worker:
     if args.dataset == 'imagenet':
-        args.worker = 32
+        args.worker = 4
     else:
         args.worker = 4
 print(vars(args))

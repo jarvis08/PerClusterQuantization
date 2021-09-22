@@ -15,7 +15,7 @@ def dali_train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
-        for i, data in enumerate(train_loader):
+        for i, data in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
             input = data[0]["data"]
             target = data[0]["label"].squeeze(-1).long()
@@ -409,8 +409,10 @@ def _finetune_with_dali(args, tools):
             pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e,
                       logger)
         else:
-            train_epoch(model, train_loader, criterion, optimizer, e, logger)
+            dali_train_epoch(model, train_loader, criterion, optimizer, e, logger)
+
         opt_scheduler.step()
+        train_loader.reset()
 
         fp_score = 0
         if args.dataset != 'imagenet':
@@ -463,6 +465,7 @@ def _finetune_with_dali(args, tools):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
+            val_loader.reset()
 
     # Test quantized model which scored the best with validation dataset
     arg_dict['quantized'] = True
