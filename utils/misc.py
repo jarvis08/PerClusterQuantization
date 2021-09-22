@@ -58,17 +58,10 @@ class Phase2DataLoader(object):
         self.iterated = 0
 
     def get_next_data(self):
-        # if self.iterated == self.len_loader:
-        #     self.initialize_phase2_generator()
-        # input, _ = next(self.generator)
-        # self.iterated += 1
-
-        data = next(self.generator)
-        if isinstance(data[0], dict):
-            input = data[0]['data'].cuda(non_blocking=True)
-        else:
-            input = data[0].cuda(non_blocking=True)
-
+        if self.iterated == self.len_loader:
+            self.initialize_phase2_generator()
+        input, _ = next(self.generator)
+        self.iterated += 1
         return input
 
 

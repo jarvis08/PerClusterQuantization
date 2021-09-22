@@ -202,7 +202,7 @@ if __name__=='__main__':
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
-        if args.dali:
+        if args.dali and args.dataset == 'imagenet':
             _finetune_with_dali(args, tools)
         #if args.horovod:
         #    hvd_finetune(args,tools)
