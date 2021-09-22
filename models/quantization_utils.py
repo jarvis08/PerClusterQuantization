@@ -388,8 +388,6 @@ def copy_pcq_bn_from_pretrained(_to, _from, num_clusters):
                                          .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
         _to.running_vars = nn.Parameter(_from.running_var.clone().detach()
                                         .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
-        #_to.running_means = _from.running_mean.clone().detach().unsqueeze(0).repeat(num_clusters, 1).cuda()
-        #_to.running_vars = _from.running_var.clone().detach().unsqueeze(0).repeat(num_clusters, 1).cuda()
     return _to
 
 
