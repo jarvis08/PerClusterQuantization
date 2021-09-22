@@ -301,29 +301,6 @@ def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
 
 def _finetune_with_dali(args, tools):
     tuning_start_time = time()
-
-    # dali_train_helper = None
-    # dali_val_helper = None
-    # dali_test_helper = None
-    # if args.dataset != 'imagenet':
-    #     pip_train = HybridTrainPipeCifar10(batch_size=args.batch, num_threads=8, device_id=0, data_dir='./data')
-    #     pip_var = HybridTestPipeCifar10(mode='val', batch_size=args.val_batch, num_threads=8, device_id=0, data_dir='./data')
-    #     pip_test = HybridTestPipeCifar10(mode='test', batch_size=args.val_batch, num_threads=8, device_id=0, data_dir='./data')
-    #     train_loader = DALIDataloader(pipeline=pip_train, size=45000, batch_size=args.batch, onehot_label=True)
-    #     var_loader = DALIDataloader(pipeline=pip_var, size=5000, batch_size=args.val_batch, onehot_label=True)
-    #     test_loader = DALIDataloader(pipeline=pip_test, size=10000, batch_size=args.val_batch, onehot_label=True)
-    # else:
-    #     dali_train_helper = ImageNetLoader(args.imagenet,
-    #                                   args.batch,
-    #                                   mode='train',
-    #                                   use_dali=True,
-    #                                   workers=args.worker)
-    #     dali_val_helper = ImageNetLoader(args.imagenet,
-    #                                 args.batch,
-    #                                 mode='val',
-    #                                 use_dali=False,
-    #                                 batch_size=args.val_batch,
-    #                                 workers=args.worker)
     train_loader = get_dali_loader(args, 'train')
     val_loader = get_dali_loader(args, 'val')
     test_loader = None

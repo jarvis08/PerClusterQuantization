@@ -165,7 +165,8 @@ class ImageNetLoader():
         if self.mode == 'train' or self.mode == 'phase2':
             self.data_loader = iterator_train(pipelines=self.pipe, size=self.get_nb_train() / self.world_size, mean=self.mean, std=self.std, pin_memory=self.pin_memory_dali)
         else:
-            self.data_loader = iterator_val(pipelines=self.pipe, size=self.get_nb_val() / self.world_size, mean=self.mean, std=self.std, pin_memory=self.pin_memory_dali)
+            print("No Validation with Dali")
+            exit()
 
     def _get_torchvision_loader(self, loader):
         return TorchvisionIterator(loader=loader, mean=self.mean, std=self.std)
