@@ -163,7 +163,7 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             # Phase-2
             model.eval()
             runtime_helper.range_update_phase = True
-            phase2_input, _ = phase2_loader.get_next_data()
+            phase2_input = phase2_loader.get_next_data()
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             with torch.no_grad():
                 model(phase2_input.cuda())
