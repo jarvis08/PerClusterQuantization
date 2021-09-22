@@ -397,16 +397,16 @@ def _finetune(args, tools):
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
     # Test quantized model which scored the best with validation dataset
-    arg_dict['quantized'] = True
-    quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
-
-    if args.dataset == 'imagenet':
-        test_loader = val_loader
-
-    if args.cluster > 1:
-        test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
+    if test_loader is None:
+        test_score = best_int_val_score
     else:
-        test_score = validate(quantized_model, test_loader, criterion, logger)
+        arg_dict['quantized'] = True
+        quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
+
+        if args.cluster > 1:
+            test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
+        else:
+            test_score = validate(quantized_model, test_loader, criterion, logger)
 
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
