@@ -15,10 +15,10 @@ def dali_train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
-        for i, data in enumerate(t):
+        for i, data in enumerate(train_loader):
             t.set_description("Epoch {}".format(epoch))
-            input = data[0]
-            target = data[1]
+            input = data[0]["data"]
+            target = data[0]["label"].squeeze(-1).long()
             output = model(input)
             loss = criterion(output, target)
             prec = accuracy(output, target)[0]
@@ -45,8 +45,8 @@ def dali_validate(model, test_loader, criterion, logger=None):
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, data in enumerate(t):
                 t.set_description("Validate")
-                input = data[0]
-                target = data[1]
+                input = data[0]["data"]
+                target = data[0]["label"].squeeze(-1).long()
                 output = model(input)
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
@@ -302,28 +302,31 @@ def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
 def _finetune_with_dali(args, tools):
     tuning_start_time = time()
 
-    dali_train_helper = None
-    dali_val_helper = None
-    dali_test_helper = None
-    if args.dataset != 'imagenet':
-        pip_train = HybridTrainPipeCifar10(batch_size=args.batch, num_threads=8, device_id=0, data_dir='./data')
-        pip_var = HybridTestPipeCifar10(mode='val', batch_size=args.val_batch, num_threads=8, device_id=0, data_dir='./data')
-        pip_test = HybridTestPipeCifar10(mode='test', batch_size=args.val_batch, num_threads=8, device_id=0, data_dir='./data')
-        train_loader = DALIDataloader(pipeline=pip_train, size=45000, batch_size=args.batch, onehot_label=True)
-        var_loader = DALIDataloader(pipeline=pip_var, size=5000, batch_size=args.val_batch, onehot_label=True)
-        test_loader = DALIDataloader(pipeline=pip_test, size=10000, batch_size=args.val_batch, onehot_label=True)
-    else:
-        dali_train_helper = ImageNetLoader(args.imagenet,
-                                      args.batch,
-                                      mode='train',
-                                      use_dali=True,
-                                      workers=args.worker)
-        dali_val_helper = ImageNetLoader(args.imagenet,
-                                    args.batch,
-                                    mode='val',
-                                    use_dali=False,
-                                    batch_size=args.val_batch,
-                                    workers=args.worker)
+    # dali_train_helper = None
+    # dali_val_helper = None
+    # dali_test_helper = None
+    # if args.dataset != 'imagenet':
+    #     pip_train = HybridTrainPipeCifar10(batch_size=args.batch, num_threads=8, device_id=0, data_dir='./data')
+    #     pip_var = HybridTestPipeCifar10(mode='val', batch_size=args.val_batch, num_threads=8, device_id=0, data_dir='./data')
+    #     pip_test = HybridTestPipeCifar10(mode='test', batch_size=args.val_batch, num_threads=8, device_id=0, data_dir='./data')
+    #     train_loader = DALIDataloader(pipeline=pip_train, size=45000, batch_size=args.batch, onehot_label=True)
+    #     var_loader = DALIDataloader(pipeline=pip_var, size=5000, batch_size=args.val_batch, onehot_label=True)
+    #     test_loader = DALIDataloader(pipeline=pip_test, size=10000, batch_size=args.val_batch, onehot_label=True)
+    # else:
+    #     dali_train_helper = ImageNetLoader(args.imagenet,
+    #                                   args.batch,
+    #                                   mode='train',
+    #                                   use_dali=True,
+    #                                   workers=args.worker)
+    #     dali_val_helper = ImageNetLoader(args.imagenet,
+    #                                 args.batch,
+    #                                 mode='val',
+    #                                 use_dali=False,
+    #                                 batch_size=args.val_batch,
+    #                                 workers=args.worker)
+    train_loader = get_dali_loader(args, 'train')
+    val_loader = get_dali_loader(args, 'val')
+    test_loader = None
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -402,8 +405,6 @@ def _finetune_with_dali(args, tools):
             model.runtime_helper.qn_prob += 0.1
             tools.shift_qn_prob(model)
 
-        train_loader = dali_train_helper.get_data_loader()
-
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e,
                       logger)
@@ -413,7 +414,6 @@ def _finetune_with_dali(args, tools):
 
         fp_score = 0
         if args.dataset != 'imagenet':
-            val_loader = dali_val_helper.get_data_loader()
             if args.cluster > 1:
                 fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
             else:
@@ -436,10 +436,6 @@ def _finetune_with_dali(args, tools):
                     quantized_model = tools.quantized_model_initializer(arg_dict)
             quantized_model = tools.quantizer(model, quantized_model)
             quantized_model.cuda()
-
-            if args.dataset != 'imagenet':
-                dali_val_helper.reset()
-            val_loader = dali_val_helper.get_data_loader()
 
             if args.cluster > 1:
                 int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
@@ -467,9 +463,7 @@ def _finetune_with_dali(args, tools):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
-            dali_val_helper.reset()
-        dali_train_helper.reset()
-            
+
     # Test quantized model which scored the best with validation dataset
     arg_dict['quantized'] = True
     quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()

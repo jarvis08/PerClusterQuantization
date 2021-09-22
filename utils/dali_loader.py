@@ -112,6 +112,7 @@ class ImageNetLoader():
 
             # Standard torchvision dataloader
             if self.use_dali:
+                print('Use Dali dataloader')
                 self._build_dali_pipeline()
             else:
                 print('Using torchvision dataloader')
