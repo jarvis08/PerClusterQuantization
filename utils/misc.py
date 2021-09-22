@@ -338,3 +338,197 @@ def get_time_cost_in_string(t):
         return '{:.1f}m'.format(t / 60)
     else:
         return '{:.1f}s'.format(t)
+
+def make_indices_list(clustering_model, train_loader, args, runtime_helper):
+    total_list = [[] for _ in range(args.cluster)]
+
+    idx = 0
+    with torch.no_grad():
+        with tqdm(train_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Indices per Cluster")
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                for c in runtime_helper.batch_cluster:
+                    total_list[c].append(idx)
+                    idx += 1
+                t.set_postfix()
+    # Cluster length list
+    len_per_cluster = []
+    for c in range(args.cluster):
+        len_per_cluster.append(len(total_list[c]))
+    return total_list, len_per_cluster
+
+
+def make_phase2_list(args, indices_per_cluster, len_per_cluster):
+    for c in range(args.cluster):
+        random.shuffle(indices_per_cluster[c])
+
+    n = args.data_per_cluster
+    if args.phase2_loader_strategy == 'mean':
+        counted = sum(len_per_cluster) // args.cluster
+    elif args.phase2_loader_strategy == 'min':
+        counted = min(len_per_cluster)
+    else:
+        counted = max(len_per_cluster)
+    len_loader = counted // n
+
+    cluster_cross_sorted = []
+    cur_idx = [0 for _ in range(args.cluster)]
+    for loops in range(len_loader):
+        for c in range(args.cluster):
+            end = cur_idx[c] + n
+            share = end // len_per_cluster[c]
+            remainder = end % len_per_cluster[c]
+            if share < 1:
+                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
+                cur_idx[c] += n
+            else:
+                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c]]
+                random.shuffle(indices_per_cluster[c])
+                cluster_cross_sorted += indices_per_cluster[c][:remainder]
+                cur_idx[c] = remainder
+    return cluster_cross_sorted
+
+
+def save_indices_list(args, indices_list_per_cluster, len_per_cluster):
+    path = add_path('', 'result')
+    path = add_path(path, 'indices')
+    path = add_path(path, args.dataset)
+    path = add_path(path, "Partition{}".format(args.partition))
+    path = add_path(path, "{}data_per_cluster".format(args.data_per_cluster))
+    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
+    with open(os.path.join(path, "params.json"), 'w') as f:
+        indices_args = {'indices_list': indices_list_per_cluster, 'len_per_cluster': len_per_cluster,
+                        'data_per_cluster': args.data_per_cluster, 'dataset': args.dataset,
+                        'partition': args.partition}
+        json.dump(indices_args, f, indent=4)
+
+
+def load_indices_list(args):
+    with open(os.path.join(args.indices_path, 'params.json'), 'r') as f:
+        saved_args = json.load(f)
+    assert args.dataset == saved_args['dataset'], \
+        "Dataset should be same. \n" \
+        "Loaded dataset: {}, Current dataset: {}".format(saved_args['dataset'], args.dataset)
+    assert args.partition == saved_args['partition'], \
+        "partition should be same. \n" \
+        "Loaded partition: {}, Current partition: {}".format(saved_args['partition'], args.partition)
+    assert args.data_per_cluster == saved_args['data_per_cluster'], \
+        "Data per cluster should be same. \n" \
+        "Loaded data per cluster: {}, current data per cluster: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
+    return saved_args['indices_list'], saved_args['len_per_cluster']
+
+
+def visualize_clustering_res(visual_loader, indices_list, len_indices_list, model, num_ctr):
+    import sklearn
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+    pca = sklearn.decomposition.PCA(n_components=2)
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan', 'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
+
+    for image, _ in visual_loader:
+        whole_data = model.get_partitioned_batch(image)
+        pca.fit(whole_data)
+        centroids = model.model.cluster_centers_
+        pca_whole_data = pca.transform(whole_data)
+        pca_centroids = pca.transform(centroids)
+        # plot
+        plt.figure(figsize=(8, 8))
+        for i in range(num_ctr):
+            plt.scatter(pca_whole_data[indices_list[i], 0], pca_whole_data[indices_list[i], 1], c=colors[i], s=10, label='cluster {} - {}'.format(i, len_indices_list[i]), alpha=0.7, edgecolors='none')
+        plt.legend()
+        for i in range(num_ctr):
+            plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i], s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
+        plt.suptitle('Train Dataset')
+        plt.xlabel('Component 1')
+        plt.ylabel('Component 2')
+        plt.savefig("k-means_partition_{}_cluster_{}.png".format(model.args.partition, num_ctr))
+        plt.show()
+
+
+def initialize_pcq_model(model, loader, criterion):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    model.train()
+    with torch.no_grad():
+        with tqdm(loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Initialize PCQ")
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
+
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
+    return top1.avg
+
+
+def get_finetuning_model(arg_dict, tools):
+    if arg_dict['dataset'] == 'cifar100':
+        fused_model = tools.fused_model_initializer(arg_dict, num_classes=100)
+    else:
+        fused_model = tools.fused_model_initializer(arg_dict)
+
+    if arg_dict['fused']:
+        checkpoint = torch.load(arg_dict['dnn_path'])
+        fused_model.load_state_dict(checkpoint['state_dict'], strict=False)
+    else:
+        pretrained_model = load_dnn_model(arg_dict, tools)
+        fused_model = tools.fuser(fused_model, pretrained_model)
+    return fused_model
+
+
+def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster, len_per_cluster, num_clusters):
+    import sklearn
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+
+    pca = sklearn.decomposition.PCA(n_components=2)
+
+    images = []
+    for image, _ in data_loader:
+        images.append(image)
+
+    data = clustering_model.get_partitioned_batch(torch.cat(images))
+    pca.fit(data)
+    centroids = clustering_model.model.cluster_centers_
+    pca_data = pca.transform(data)
+    pca_centroids = pca.transform(centroids)
+
+    plt.figure(figsize=(8, 8))
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan', 'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
+    for i in range(num_clusters):
+        plt.scatter(pca_data[indices_per_cluster[i], 0], pca_data[indices_per_cluster[i], 1], c=colors[i], s=10,
+                    label='cluster {} - {}'.format(i, len_per_cluster[i]), alpha=0.7, edgecolors='none')
+    plt.legend()
+    for i in range(num_clusters):
+        plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i], s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
+    plt.suptitle('Train Dataset')
+    plt.xlabel('Component 1')
+    plt.ylabel('Component 2')
+    plt.show()
+    plt.savefig("k-means clustering trial 1.png")
+
+
+def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
+    non_aug_indices = []
+    for i, (input, target) in enumerate(non_augmented_loader):
+        batch_cluster = model.predict_cluster_of_batch(input)
+        non_aug_indices.extend(batch_cluster.tolist())
+
+    aug_indices = []
+    for i, (input, target) in enumerate(augmented_loader):
+        batch_cluster = model.predict_cluster_of_batch(input)
+        aug_indices.extend(batch_cluster.tolist())
+
+    cnt_data_assigned_to_different_cluster = 0
+    for i in range(len(non_aug_indices)):
+        if non_aug_indices[i] != aug_indices[i]:
+            cnt_data_assigned_to_different_cluster += 1
+    print("Datum assigned to different cluster = {}".format(cnt_data_assigned_to_different_cluster))
+    exit()
