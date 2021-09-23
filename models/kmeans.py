@@ -24,14 +24,14 @@ class KMeans(object):
             r_start = n_data * i
             for j in range(n_part):
                 c_start = n_data * j
-                #_min = torch.topk(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], k=2, dim=-1, largest=False, sorted=False).values
-                #_max = torch.topk(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], k=2, dim=-1, largest=True, sorted=False).values
-                #_min = _min.reshape(_min.shape[0], _min.shape[1], -1)
-                #_max = _max.reshape(_max.shape[0], _max.shape[1], -1)
-                #_min = torch.topk(_min, k=2, dim=2, largest=False, sorted=False).values
-                #_max = torch.topk(_max, k=2, dim=2, largest=True, sorted=False).values
-                #_min = torch.mean(_min, dim=2, keepdim=True)
-                #_max = torch.mean(_max, dim=2, keepdim=True)
+                # _min = torch.topk(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], k=6, dim=-1, largest=False, sorted=False).values
+                # _max = torch.topk(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], k=6, dim=-1, largest=True, sorted=False).values
+                # _min = _min.reshape(_min.shape[0], _min.shape[1], -1)
+                # _max = _max.reshape(_max.shape[0], _max.shape[1], -1)
+                # _min = torch.topk(_min, k=6, dim=2, largest=False, sorted=False).values
+                # _max = torch.topk(_max, k=6, dim=2, largest=True, sorted=False).values
+                # _min = torch.mean(_min, dim=2, keepdim=True)
+                # _max = torch.mean(_max, dim=2, keepdim=True)
                 _min = torch.min(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], -1).values
                 _max = torch.max(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], -1).values
                 _min = torch.min(_min, -1, keepdim=True).values

@@ -8,6 +8,7 @@ import argparse
 from models import *
 from pretrain import _pretrain
 from finetune import _finetune
+from finetune_with_dali import _finetune_with_dali
 #from hvd_finetune import hvd_finetune
 from evaluate import _evaluate
 
@@ -18,7 +19,8 @@ parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's
 parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
-parser.add_argument('--dataset', default='cifar', type=str, help='Dataset to use')
+parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
+parser.add_argument('--dali', default=False, type=bool, help='Use GPU data augmentation DALI')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
@@ -65,12 +67,16 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
+    args.val_batch = 128
+if args.dataset == 'cifar':
+    args.dataset = 'cifar10'
 if not args.worker:
     if args.dataset == 'imagenet':
-        args.worker = 32
+        args.worker = 4
     else:
         args.worker = 4
 print(vars(args))
+
 
 def set_func_for_target_arch(arch, clustering_method, is_pcq):
     tools = QuantizationTool()
@@ -196,10 +202,12 @@ if __name__=='__main__':
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
+        if args.dali and args.dataset == 'imagenet':
+            _finetune_with_dali(args, tools)
         #if args.horovod:
         #    hvd_finetune(args,tools)
-        #else:
-        _finetune(args, tools)
+        else:
+            _finetune(args, tools)
     # elif args.mode == 'test':
         #_run_classifier(args, tools)
     else:

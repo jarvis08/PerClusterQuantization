@@ -1,7 +1,4 @@
-from copy import deepcopy
-
 import torch
-from torchsummary import summary
 
 from utils import *
 from models import *
@@ -9,17 +6,67 @@ from tqdm import tqdm
 from time import time
 
 
-def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
+def dali_train_epoch(model, train_loader, criterion, optimizer, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
+    model.train()
+    with tqdm(train_loader, unit="batch", ncols=90) as t:
+        for i, data in enumerate(t):
+            t.set_description("Epoch {}".format(epoch))
+            input = data[0]["data"]
+            target = data[0]["label"].squeeze(-1).long()
+            output = model(input)
+            loss = criterion(output, target)
+            prec = accuracy(output, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec.item(), input.size(0))
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+
+def dali_validate(model, test_loader, criterion, logger=None):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    model.eval()
+    with torch.no_grad():
+        with tqdm(test_loader, unit="batch", ncols=90) as t:
+            for i, data in enumerate(t):
+                t.set_description("Validate")
+                input = data[0]["data"]
+                target = data[0]["label"].squeeze(-1).long()
+                output = model(input)
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
+
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+    if logger is not None:
+        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    return top1.avg
+
+
+def dali_pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch,
+                   logger):
+    losses = AverageMeter()
+    top1 = AverageMeter()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
-        for i, (input, target) in enumerate(t):
+        for i, data in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
             model.train()
-            input, target = input.cuda(), target.cuda()
+            input = data[0]["data"]
+            target = data[0]["label"].squeeze(-1).long()
             runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
             output = model(input)
 
@@ -46,24 +93,36 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
-def _finetune(args, tools):
+def dali_pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    model.eval()
+    with torch.no_grad():
+        with tqdm(test_loader, unit="batch", ncols=90) as t:
+            for i, data in enumerate(t):
+                t.set_description("Validate")
+                input = data[0]["data"]
+                target = data[0]["label"].squeeze(-1).long()
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                output = model(input)
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
+
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+    if logger is not None:
+        logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    return top1.avg
+
+
+def _finetune_with_dali(args, tools):
     tuning_start_time = time()
-    normalizer = get_normalizer(args.dataset)
-
-    augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
-    non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
-
+    train_loader = get_dali_loader(args, 'train')
+    val_loader = get_dali_loader(args, 'val')
     test_loader = None
-    if args.dataset != 'imagenet':
-        train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
-        non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
-        test_dataset = get_test_dataset(args, normalizer)
-        test_loader = get_sequential_loader(args, test_dataset)
-        train_loader = get_shuffled_loader(args, train_dataset)
-    else:
-        val_dataset = get_test_dataset(args, normalizer)
-        train_loader = get_shuffled_loader(args, augmented_train_dataset)
-    val_loader = get_sequential_loader(args, val_dataset)
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -72,11 +131,6 @@ def _finetune(args, tools):
     arg_dict['runtime_helper'] = runtime_helper
     model = get_finetuning_model(arg_dict, tools)
     model.cuda()
-
-    # if args.dataset == 'imagenet':
-    #    summary(model, (3, 224, 224))
-    # else:
-    #    summary(model, (3, 32, 32))
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -103,7 +157,9 @@ def _finetune(args, tools):
             clustering_model.train_clustering_model(train_loader)
         else:
             clustering_model.load_clustering_model()
-
+    
+        normalizer = get_normalizer(args.dataset)
+        non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
         # Make non-augmented dataset/loader for Phase-2 training
         if args.indices_path:
             indices_per_cluster, len_per_cluster = load_indices_list(args)
@@ -115,13 +171,13 @@ def _finetune(args, tools):
             # check_cluster_distribution(clustering_model, non_augmented_loader)
             if args.visualize_clustering:
                 visualize_clustering_res(sequential_non_aug_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
-
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
+        
         phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
         loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
                                              num_workers=args.worker, shuffle=False)
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
-
+    
         if args.pcq_initialization:
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             initialize_pcq_model(model, phase2_loader.data_loader, criterion)
@@ -143,18 +199,13 @@ def _finetune(args, tools):
             tools.shift_qn_prob(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e,
-                      logger)
+            dali_pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper,
+                           e, logger)
         else:
-            train_epoch(model, train_loader, criterion, optimizer, e, logger)
-        opt_scheduler.step()
+            dali_train_epoch(model, train_loader, criterion, optimizer, e, logger)
 
-        fp_score = 0
-        if args.dataset != 'imagenet':
-            if args.cluster > 1:
-                fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
-            else:
-                fp_score = validate(model, val_loader, criterion, logger)
+        opt_scheduler.step()
+        train_loader.reset()
 
         state = {
             'epoch': e,
@@ -175,43 +226,38 @@ def _finetune(args, tools):
             quantized_model.cuda()
 
             if args.cluster > 1:
-                int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
+                int_score = dali_pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
                                          logger)
             else:
-                int_score = validate(quantized_model, val_loader, criterion, logger)
+                int_score = dali_validate(quantized_model, val_loader, criterion, logger)
 
             if int_score > best_int_val_score:
                 best_epoch = e
-                # Save best model's FP model
-                with open(os.path.join(save_path_fp, "params.json"), 'w') as f:
-                    tmp = vars(args)
-                    tmp['best_epoch'] = e
-                    tmp['best_score'] = fp_score
-                    json.dump(tmp, f, indent=4)
                 shutil.copyfile(os.path.join(save_path_fp, 'checkpoint.pth'), os.path.join(save_path_fp, 'best.pth'))
 
                 # Save best model's INT model
                 best_int_val_score = int_score
                 with open(os.path.join(save_path_int, "params.json"), 'w') as f:
                     tmp = vars(args)
-                    tmp['best_epoch'] = e
+                    tmp['best_epoch'] = best_epoch
                     tmp['best_int_val_score'] = best_int_val_score
                     json.dump(tmp, f, indent=4)
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
+            val_loader.reset()
 
     # Test quantized model which scored the best with validation dataset
-    if test_loader is None:
-        test_score = best_int_val_score
-    else:
-        arg_dict['quantized'] = True
-        quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
+    arg_dict['quantized'] = True
+    quantized_model = load_dnn_model(arg_dict, tools, os.path.join(save_path_int, 'checkpoint.pth')).cuda()
 
-        if args.cluster > 1:
-            test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
-        else:
-            test_score = validate(quantized_model, test_loader, criterion, logger)
+    if args.dataset == 'imagenet':
+        test_loader = val_loader
+
+    if args.cluster > 1:
+        test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
+    else:
+        test_score = validate(quantized_model, test_loader, criterion, logger)
 
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
