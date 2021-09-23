@@ -267,9 +267,10 @@ class FusedLinear(nn.Module):
 
         w = self.fc.weight
         s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
-        w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
-        if self.quant_noise:
-            w = apply_qn(fake_quantized_weight=w, origin_weight=self.fc.weight.detach(), qn_prob=self.qn_prob)
+        if not self.quant_noise:
+            w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
+        else:
+            w = apply_qn(self.fc.weight, s, z, self.q_max, qn_prob=self.qn_prob)
 
         x = F.linear(x, w, self.fc.bias)
         if self._activation:

@@ -381,9 +381,10 @@ class FusedConv2d(nn.Module):
     def _general(self, x, external_range=None):
         w = self.conv.weight
         s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
-        w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
-        if self.quant_noise:
-            w = apply_qn(fake_quantized_weight=w, origin_weight=self.conv.weight.detach(), qn_prob=self.qn_prob,
+        if not self.quant_noise :
+            w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
+        else:
+            w = apply_qn(self.conv.weight, s, z, self.q_max, qn_prob=self.qn_prob,
                          kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
                          in_feature=self.in_channels, out_feature=self.out_channels)
 
