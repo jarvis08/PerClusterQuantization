@@ -107,7 +107,6 @@ class PCQBasicBlock(nn.Module):
 
 class PCQBottleneck(nn.Module):
     expansion: int = 4
-    batch_cluster = None
 
     def __init__(
             self, inplanes: int, planes: int, stride: int = 1, downsample = None,
@@ -123,10 +122,7 @@ class PCQBottleneck(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        if act_qmax:
-            self.act_qmax = act_qmax
-        else:
-            self.act_qmax = self.q_max
+        self.act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = False
 
@@ -139,7 +135,7 @@ class PCQBottleneck(nn.Module):
         self.bn2 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
             self.bn_down = PCQBnReLU(planes * self.expansion, arg_dict=arg_dict)
 
