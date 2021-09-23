@@ -109,7 +109,7 @@ class PCQBnReLU(nn.Module):
         self.w_qmax = w_qmax
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
 
-        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False).cuda()
         self.apply_ema = False
 
         self.activation = activation(inplace=True) if activation else None
@@ -228,13 +228,13 @@ class PCQBnReLU(nn.Module):
         # (number of data per cluster in batch) == (args.data_per_cluster)
         n = self.runtime_helper.data_per_cluster
         if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = \
-                    ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+            ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
+            _x = x.view(self.num_clusters, -1)
+            _min = _x.min(-1, keepdim=True).values
+            _max = _x.max(-1, keepdim=True).values
+            batch_range = torch.cat([_min, _max], 1)
+            self.act_range.data = batch_range
             self.apply_ema = True
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):

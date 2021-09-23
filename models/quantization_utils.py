@@ -67,6 +67,14 @@ def ema(x, averaged, smooth):
     return rst_min, rst_max
 
 
+def ema_per_cluster(x, averaged_ranges, num_clusters, smooth):
+    _x = x.view(num_clusters, -1)
+    _min = _x.min(-1, keepdim=True).values
+    _max = _x.max(-1, keepdim=True).values
+    batch_range = torch.cat([_min, _max], 1)
+    averaged_ranges.mul_(smooth).add_(batch_range * (1 - smooth))
+
+
 def bn_ema(cur, pre, smooth):
     mean = pre[0] * smooth + cur[0].running_mean * (1 - smooth)
     var = pre[1] * smooth + cur[1].running_var * (1 - smooth)
