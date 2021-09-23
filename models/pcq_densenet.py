@@ -8,6 +8,7 @@ from torch import Tensor
 
 from .layers import *
 from .quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 class PCQDenseLayer(nn.Module):
@@ -44,10 +45,18 @@ class PCQDenseLayer(nn.Module):
             prev_features = input
 
         x = torch.cat(prev_features, 1)
+        nvtx.range_push("LY bn")
         out = self.bn1(x)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv1")
         out = self.conv1(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY bn2")
         out = self.bn2(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv2")
         out = self.conv2(out, external_range)
+        nvtx.range_pop()
         return out
 
     def set_layer_qparams(self, s1, z1):
@@ -72,9 +81,15 @@ class PCQTransition(nn.Sequential):
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x, next_block_range):
+        nvtx.range_push("TR bn")
         out = self.bn(x)
+        nvtx.range_pop()
+        nvtx.range_push("TR conv")
         out = self.conv(out, next_block_range)
+        nvtx.range_pop()
+        nvtx.range_push("TR avgpool")
         out = self.pool(out)
+        nvtx.range_pop()
         return out
 
     def set_transition_qparams(self, s1, z1, next_block_s, next_block_z):
@@ -117,27 +132,36 @@ class PCQDenseBlock(nn.ModuleDict):
             self.add_module('denselayer%d' % (i + 1), layer)
 
     def forward(self, init_features: Tensor) -> Tensor:
+        nvtx.range_push("concat output of each layer")
         features = [init_features]
         for name, layer in self.items():
             new_features = layer(features, self.act_range)
             features.append(new_features)
         out = torch.cat(features, 1)
+        nvtx.range_pop()
 
         if not self.training:
             return out
 
         if not self.runtime_helper.pcq_initialized:
             # PCQ initialization
+            nvtx.range_push("pcq initialization")
             self._update_activation_ranges(out)
+            nvtx.range_pop()
             return out
 
         # Phase-2
         if self.runtime_helper.range_update_phase:
+            nvtx.range_push("update activation range")
             self._update_activation_ranges(out)
+            nvtx.range_pop()
 
         # Phase-1&2
         if self.runtime_helper.apply_fake_quantization:
-            return self._fake_quantize_activation(out)
+            nvtx.range_push("FQ activation")
+            res = self._fake_quantize_activation(out)
+            nvtx.range_pop()
+            return res
         else:
             return out
 
@@ -220,26 +244,58 @@ class PCQDenseNet(nn.Module):
             pass
         else:
             if not self.training:
+                nvtx.range_push("update input range")
                 self._update_input_ranges(x)
+                nvtx.range_pop()
             if self.runtime_helper.apply_fake_quantization:
+                nvtx.range_push("FQ input")
                 x = self._fake_quantize_input(x)
+                nvtx.range_pop()
 
         # out = self.features(x)
+        nvtx.range_push("First conv")
         out = self.features.first_conv(x)
+        nvtx.range_pop()
+        nvtx.range_push("First Norm")
         out = self.features.first_norm(out, self.features.denseblock1.act_range)
+        nvtx.range_pop()
+        nvtx.range_push("Maxpool")
         out = self.features.maxpool(out)
+        nvtx.range_pop()
+        nvtx.range_push("block 1")
         out = self.features.denseblock1(out)
+        nvtx.range_pop()
+        nvtx.range_push("Transition 1")
         out = self.features.transition1(out, self.features.denseblock2.act_range)
+        nvtx.range_pop()
+        nvtx.range_push("block 2")
         out = self.features.denseblock2(out)
+        nvtx.range_pop()
+        nvtx.range_push("Transition 2")
         out = self.features.transition2(out, self.features.denseblock3.act_range)
+        nvtx.range_pop()
+        nvtx.range_push("block 3")
         out = self.features.denseblock3(out)
+        nvtx.range_pop()
+        nvtx.range_push("Transition 3")
         out = self.features.transition3(out, self.features.denseblock4.act_range)
+        nvtx.range_pop()
+        nvtx.range_push("block 4")
         out = self.features.denseblock4(out)
+        nvtx.range_pop()
+        nvtx.range_push("last norm")
         out = self.features.last_norm(out)
+        nvtx.range_pop()
 
+        nvtx.range_push("avgpool")
         out = F.adaptive_avg_pool2d(out, (1, 1))
+        nvtx.range_pop()
+        nvtx.range_push("Flattening")
         out = torch.flatten(out, 1)
+        nvtx.range_pop()
+        nvtx.range_push("FC layer")
         out = self.classifier(out)
+        nvtx.range_pop()
         return out
 
     def _fake_quantize_input(self, x):
@@ -260,6 +316,7 @@ class PCQDenseNet(nn.Module):
             self.apply_ema = True
 
     def set_quantization_params(self):
+        nvtx.range_push("set params")
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         conv_s, conv_z = self.features.first_conv.set_qparams(self.scale, self.zero_point)
         block1_s, block1_z = self.features.denseblock1.set_block_qparams()
@@ -272,7 +329,7 @@ class PCQDenseNet(nn.Module):
         self.features.transition3.set_transition_qparams(block3_s, block3_z, block4_s, block4_z)
         prev_s, prev_z = self.features.last_norm.set_qparams(block4_s, block4_z)
         self.classifier.set_qparams(prev_s, prev_z)
-
+        nvtx.range_pop()
 
 def pcq_densenet(arg_dict: dict, **kwargs):
     return PCQDenseNet(32, (6, 12, 24, 16), 64, arg_dict, **kwargs)

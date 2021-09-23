@@ -7,51 +7,79 @@ from utils import *
 from models import *
 from tqdm import tqdm
 from time import time
+import torch.cuda.nvtx as nvtx
 
 
 def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
+    nvtx.range_push("pcq training")
     losses = AverageMeter()
     top1 = AverageMeter()
 
+    model.train()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
+        nvtx.range_push("Data Loading")
         for i, (input, target) in enumerate(t):
+            nvtx.range_pop()
             t.set_description("Epoch {}".format(epoch))
 
             # Phase-1
-            model.train()
+            nvtx.range_push("copy data to cuda")
             input, target = input.cuda(), target.cuda()
-            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-            output = model(input)
+            nvtx.range_pop()
 
+            nvtx.range_push("get ctr info of cur batch")
+            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+            nvtx.range_pop()
+
+            nvtx.range_push("Forward start")
+            output = model(input)
+            nvtx.range_pop()
             loss = criterion(output, target)
             prec = accuracy(output, target)[0]
+
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
             optimizer.zero_grad()
+
+            nvtx.range_push("Backward start")
             loss.backward()
+            nvtx.range_pop()
             optimizer.step()
 
             # Phase-2
-            model.eval()
             runtime_helper.range_update_phase = True
-            phase2_input = phase2_loader.get_next_data()
+
+            nvtx.range_push("phase2 next_data")
+            phase2_input, _ = phase2_loader.get_next_data()
+            nvtx.range_pop()
+
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
+
+            nvtx.range_push("phase2 forward start")
             with torch.no_grad():
                 model(phase2_input.cuda())
+            nvtx.range_pop()
+
             runtime_helper.range_update_phase = False
 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
+            if i == 4: break
+    nvtx.range_pop()
 
 
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
 
+    nvtx.range_push("Get augmented train dataset")
     augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
+    nvtx.range_pop()
+    nvtx.range_push("Get non-augmented train dataset")
     non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+    nvtx.range_pop()
 
     test_loader = None
     if args.dataset != 'imagenet':
@@ -61,9 +89,15 @@ def _finetune(args, tools):
         test_loader = get_sequential_loader(args, test_dataset)
         train_loader = get_shuffled_loader(args, train_dataset)
     else:
+        nvtx.range_push("get test dataset")
         val_dataset = get_test_dataset(args, normalizer)
+        nvtx.range_pop()
+        nvtx.range_push("get train loader")
         train_loader = get_shuffled_loader(args, augmented_train_dataset)
+        nvtx.range_pop()
+    nvtx.range_push("get val loader")
     val_loader = get_sequential_loader(args, val_dataset)
+    nvtx.range_pop()
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -116,15 +150,23 @@ def _finetune(args, tools):
             if args.visualize_clustering:
                 visualize_clustering_res(sequential_non_aug_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
 
+        nvtx.range_push("make phase2_list")
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
+        nvtx.range_pop()
+        nvtx.range_push("get subset of dataset with indices")
         phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
+        nvtx.range_pop()
+        nvtx.range_push("make phase2 loader")
         loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
                                              num_workers=args.worker, shuffle=False)
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
+        nvtx.range_pop()
 
         if args.pcq_initialization:
+            nvtx.range_push("pcq initialize")
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
             initialize_pcq_model(model, phase2_loader.data_loader, criterion)
+            nvtx.range_pop()
 
     if not save_path_fp:
         save_path_fp = set_save_dir(args)
@@ -134,6 +176,7 @@ def _finetune(args, tools):
     quantized_model = None
     runtime_helper.pcq_initialized = True
     for e in range(epoch_to_start, args.epoch + 1):
+        nvtx.range_push("Fp training & save checkpoint")
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
@@ -162,16 +205,20 @@ def _finetune(args, tools):
             'optimizer': optimizer.state_dict(),
         }
         save_checkpoint(state, False, save_path_fp)
+        nvtx.range_pop()
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
+            nvtx.range_push("Inference & save checkpoint")
             model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
                 else:
                     quantized_model = tools.quantized_model_initializer(arg_dict)
+            nvtx.range_push("quantize model")
             quantized_model = tools.quantizer(model, quantized_model)
+            nvtx.range_pop()
             quantized_model.cuda()
 
             if args.cluster > 1:
@@ -200,6 +247,7 @@ def _finetune(args, tools):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
+            nvtx.range_pop()
 
     # Test quantized model which scored the best with validation dataset
     if test_loader is None:

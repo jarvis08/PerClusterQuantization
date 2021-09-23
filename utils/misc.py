@@ -12,6 +12,7 @@ import json
 import logging
 import random
 from time import time
+import torch.cuda.nvtx as nvtx
 
 
 class RuntimeHelper(object):
@@ -175,17 +176,26 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
 
 
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
+    nvtx.range_push("Int Val")
     losses = AverageMeter()
     top1 = AverageMeter()
 
     model.eval()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
+            nvtx.range_push("data loading")
             for i, (input, target) in enumerate(t):
+                nvtx.range_pop()
                 t.set_description("Validate")
+                nvtx.range_push("copy data to cuda")
                 input, target = input.cuda(), target.cuda()
+                nvtx.range_pop()
+                nvtx.range_push("get ctr info of cur batch")
                 runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                nvtx.range_pop()
+                nvtx.range_push("Forward")
                 output = model(input)
+                nvtx.range_pop()
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
@@ -199,6 +209,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         else:
             logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    nvtx.range_pop()
     return top1.avg
 
 
@@ -477,8 +488,12 @@ def get_finetuning_model(arg_dict, tools):
         checkpoint = torch.load(arg_dict['dnn_path'])
         fused_model.load_state_dict(checkpoint['state_dict'], strict=False)
     else:
+        nvtx.range_push("load pretrained model")
         pretrained_model = load_dnn_model(arg_dict, tools)
+        nvtx.range_pop()
+        nvtx.range_push("copy params from pre to fused")
         fused_model = tools.fuser(fused_model, pretrained_model)
+        nvtx.range_pop()
     return fused_model
 
 

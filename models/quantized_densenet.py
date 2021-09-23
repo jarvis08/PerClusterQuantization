@@ -8,6 +8,7 @@ from torch import Tensor
 
 from .layers import *
 from .quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 class QuantizedDenseLayer(nn.Module):
@@ -39,10 +40,18 @@ class QuantizedDenseLayer(nn.Module):
             prev_features = input
 
         x = torch.cat(prev_features, 1)
+        nvtx.range_push("LY bn1")
         out = self.bn1(x)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv1")
         out = self.conv1(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY bn2")
         out = self.bn2(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv2")
         out = self.conv2(out)
+        nvtx.range_pop()
         return out
 
 
@@ -58,11 +67,17 @@ class QuantizedTransition(nn.Sequential):
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
+        nvtx.range_push("TR bn")
         out = self.bn(x)
+        nvtx.range_pop()
+        nvtx.range_push("TR conv")
         out = self.conv(out)
+        nvtx.range_pop()
+        nvtx.range_push("TR avgpool")
         out = self.pool(out)
         out = out.type(torch.cuda.IntTensor)
         out = out.type(torch.cuda.FloatTensor)
+        nvtx.range_pop()
         return out
 
 
@@ -95,11 +110,13 @@ class QuantizedDenseBlock(nn.ModuleDict):
             self.add_module('denselayer%d' % (i + 1), layer)
 
     def forward(self, init_features: Tensor) -> Tensor:
+        nvtx.range_push("concat output of each layer")
         features = [init_features]
         for name, layer in self.items():
             new_features = layer(features)
             features.append(new_features)
         out = torch.cat(features, 1)
+        nvtx.range_pop()
         return out
 
 
@@ -154,16 +171,58 @@ class QuantizedDenseNet(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         if self.runtime_helper.batch_cluster is not None:
+            nvtx.range_push("quantize input")
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
+            nvtx.range_pop()
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
-        out = self.features(x)
+        # out = self.features(x)
+        nvtx.range_push("First conv")
+        out = self.features.first_conv(x)
+        nvtx.range_pop()
+        nvtx.range_push("First Norm")
+        out = self.features.first_norm(out)
+        nvtx.range_pop()
+        nvtx.range_push("Maxpool")
+        out = self.features.maxpool(out)
+        nvtx.range_pop()
+        nvtx.range_push("block 1")
+        out = self.features.denseblock1(out)
+        nvtx.range_pop()
+        nvtx.range_push("Transition 1")
+        out = self.features.transition1(out)
+        nvtx.range_pop()
+        nvtx.range_push("block 2")
+        out = self.features.denseblock2(out)
+        nvtx.range_pop()
+        nvtx.range_push("Transition 2")
+        out = self.features.transition2(out)
+        nvtx.range_pop()
+        nvtx.range_push("block 3")
+        out = self.features.denseblock3(out)
+        nvtx.range_pop()
+        nvtx.range_push("Transition 3")
+        out = self.features.transition3(out)
+        nvtx.range_pop()
+        nvtx.range_push("block 4")
+        out = self.features.denseblock4(out)
+        nvtx.range_pop()
+        nvtx.range_push("last norm")
+        out = self.features.last_norm(out)
+        nvtx.range_pop()
+
+        nvtx.range_push("avgpool")
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = out.type(torch.cuda.IntTensor)
         out = out.type(torch.cuda.FloatTensor)
+        nvtx.range_pop()
+        nvtx.range_push("Flattening")
         out = torch.flatten(out, 1)
+        nvtx.range_pop()
+        nvtx.range_push("FC layer")
         out = self.classifier(out)
+        nvtx.range_pop()
         return out
 
 
