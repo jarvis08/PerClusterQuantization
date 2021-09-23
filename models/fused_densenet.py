@@ -9,6 +9,7 @@ from torch import Tensor
 from .layers import *
 from .quant_noise import _quant_noise
 from .quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 class FusedDenseLayer(nn.Module):
@@ -210,7 +211,9 @@ class FusedDenseNet(nn.Module):
 
         # out = self.features(x)
         out = self.features.first_conv(x)
+        nvtx.range_push("first norm")
         out = self.features.first_norm(out, self.features.denseblock1.act_range)
+        nvtx.range_pop()
         out = self.features.maxpool(out)
         out = self.features.denseblock1(out)
         out = self.features.transition1(out, self.features.denseblock2.act_range)

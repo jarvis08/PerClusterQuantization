@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from ..quantization_utils import *
-
+import torch.cuda.nvtx as nvtx
 
 class QuantizedBn2d(nn.Module):
     def __init__(self, num_features, arg_dict=None):
@@ -130,14 +130,24 @@ class PCQBnReLU(nn.Module):
                 if self.runtime_helper.apply_fake_quantization:
                     out = self._fake_quantize_activation(out, external_range)
             else:
+                nvtx.range_push("val impl")
                 out = self._forward_impl(x)
+                nvtx.range_pop()
             return out
 
         # Phase-2
+        nvtx.range_push("batch stat")
         batch_stats = self.get_batch_stats(x)
+        nvtx.range_pop()
+        nvtx.range_push("forward impl")
         out = self._forward_impl(x, batch_stats)
+        nvtx.range_pop()
+        nvtx.range_push("fq bn")
         fake_out = self._fake_quantized_bn(x, batch_stats)
+        nvtx.range_pop()
+        nvtx.range_push("STE apply")
         out = STE.apply(out, fake_out)
+        nvtx.range_pop()
         if self.runtime_helper.apply_fake_quantization:
             return self._fake_quantize_activation(out, external_range)
         return out
@@ -152,7 +162,9 @@ class PCQBnReLU(nn.Module):
             _means = torch.index_select(self.running_means, 0, bc)
             _vars = torch.index_select(self.running_vars, 0, bc)
 
+        nvtx.range_push("weight index select")
         _weights = torch.index_select(self.weights, 0, bc)
+        nvtx.range_pop()
         _biases = torch.index_select(self.biases, 0, bc)
 
         out = (x - _means[:, :, None, None]) / (torch.sqrt(_vars[:, :, None, None] + self.eps)) \
@@ -165,15 +177,21 @@ class PCQBnReLU(nn.Module):
         bc = self.runtime_helper.batch_cluster
         exists = torch.unique(bc)
 
+        nvtx.range_push("running mean detach")
         _means = self.running_means.clone().detach()
+        nvtx.range_pop()
+        nvtx.range_push("running var detach")
         _vars = self.running_vars.clone().detach()
+        nvtx.range_pop()
         _n = torch.ones((self.num_clusters, 1)).cuda() 
+        nvtx.range_push("calculate mean, var")
         for c in exists:
             indices = (bc == c).nonzero(as_tuple=True)[0]
             inputs_of_cluster = x[indices]
             _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
             _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
             _n[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+        nvtx.range_pop()
 
         with torch.no_grad():
             self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
@@ -194,8 +212,12 @@ class PCQBnReLU(nn.Module):
             _vars = self.running_vars
 
         with torch.no_grad():
+            nvtx.range_push("folded weights")
             folded_weights = self.weights.div(torch.sqrt(_vars) + self.eps)
+            nvtx.range_pop()
+            nvtx.range_push("folded bias")
             folded_biases = self.biases - folded_weights * _means
+            nvtx.range_pop()
             _min = folded_weights.min()
             _max = folded_weights.max()
             if _min > 0:
@@ -204,14 +226,22 @@ class PCQBnReLU(nn.Module):
                 scale, zero_point = calc_qparams(_min, torch.tensor(0), self.w_qmax)
             else:
                 scale, zero_point = calc_qparams(_min, _max, self.w_qmax)
+            nvtx.range_push("Fake_quantize")
             fake_weights = fake_quantize(folded_weights, scale, zero_point, self.w_qmax, use_ste=False)
+            nvtx.range_pop()
 
+            nvtx.range_push("weight index select")
             w = torch.index_select(fake_weights, 0, bc)
+            nvtx.range_pop()
             b = torch.index_select(folded_biases, 0, bc)
 
+            nvtx.range_push("out = wx + b")
             out = x * w[:, :, None, None] + b[:, :, None, None]
+            nvtx.range_pop()
             if self.activation is not None:
+                nvtx.range_push("relu")
                 out = self.activation(out)
+                nvtx.range_pop()
         return out
 
     def _fake_quantize_activation(self, x, external_range=None):
@@ -283,16 +313,26 @@ class FusedBnReLU(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            return self._forward_impl(x)
+            nvtx.range_push("val impl")
+            res = self._forward_impl(x)
+            nvtx.range_pop()
+            return res
 
         if not self.runtime_helper.pcq_initialized:
-            return self._forward_impl(x)
+            nvtx.range_push("if not pcq init")
+            res = self._forward_impl(x)
+            nvtx.range_pop()
+            return res
 
+        nvtx.range_push("fq weight")
         out = self._fake_quantized_bn(x)
+        nvtx.range_pop()
         if self.is_pcq:
             return out
 
+        nvtx.range_push("update act range")
         self._update_activation_range(out, external_range)
+        nvtx.range_pop()
         if self.runtime_helper.apply_fake_quantization:
             return self._fake_quantize_activation(out, external_range)
         else:

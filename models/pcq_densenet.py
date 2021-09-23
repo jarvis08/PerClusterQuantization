@@ -8,7 +8,7 @@ from torch import Tensor
 
 from .layers import *
 from .quantization_utils import *
-
+import torch.cuda.nvtx as nvtx
 
 class PCQDenseLayer(nn.Module):
     def __init__(
@@ -226,7 +226,9 @@ class PCQDenseNet(nn.Module):
 
         # out = self.features(x)
         out = self.features.first_conv(x)
+        nvtx.range_push("first_norm")
         out = self.features.first_norm(out, self.features.denseblock1.act_range)
+        nvtx.range_pop()
         out = self.features.maxpool(out)
         out = self.features.denseblock1(out)
         out = self.features.transition1(out, self.features.denseblock2.act_range)
