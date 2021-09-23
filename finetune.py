@@ -44,6 +44,7 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
+            if i ==4: break
 
 
 def _finetune(args, tools):
