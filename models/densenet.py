@@ -7,6 +7,7 @@ from collections import OrderedDict
 from torchvision.models.utils import load_state_dict_from_url
 from torch import Tensor
 from typing import Any, List, Tuple
+import torch.cuda.nvtx as nvtx
 
 
 __all__ = ['DenseNet', 'densenet121']
@@ -47,7 +48,14 @@ class _DenseLayer(nn.Module):
 
     def bn_function(self, inputs: List[Tensor]) -> Tensor:
         concated_features = torch.cat(inputs, 1)
-        bottleneck_output = self.conv1(self.relu1(self.norm1(concated_features)))  # noqa: T484
+        nvtx.range_push("LY bn1")
+        out = self.norm1(concated_features)
+        out = self.relu1(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv1")
+        bottleneck_output = self.conv1(out)
+        nvtx.range_pop()
+        #bottleneck_output = self.conv1(self.relu1(self.norm1(concated_features)))  # noqa: T484
         return bottleneck_output
 
     # todo: rewrite when torchscript supports any
@@ -88,10 +96,19 @@ class _DenseLayer(nn.Module):
         else:
             bottleneck_output = self.bn_function(prev_features)
 
-        new_features = self.conv2(self.relu2(self.norm2(bottleneck_output)))
+        # new_features = self.conv2(self.relu2(self.norm2(bottleneck_output)))
+        nvtx.range_push("LY bn2")
+        out = self.norm2(bottleneck_output)
+        out = self.relu2(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv2")
+        new_features = self.conv2(out)
+        nvtx.range_pop()
+
         if self.drop_rate > 0:
-            new_features = F.dropout(new_features, p=self.drop_rate,
-                                     training=self.training)
+            nvtx.range_push("dropout")
+            new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
+            nvtx.range_pop()
         return new_features
 
 
@@ -129,11 +146,29 @@ class _DenseBlock(nn.ModuleDict):
 class _Transition(nn.Sequential):
     def __init__(self, num_input_features: int, num_output_features: int) -> None:
         super(_Transition, self).__init__()
-        self.add_module('norm', nn.BatchNorm2d(num_input_features))
-        self.add_module('relu', nn.ReLU(inplace=True))
-        self.add_module('conv', nn.Conv2d(num_input_features, num_output_features,
-                                          kernel_size=1, stride=1, bias=False))
-        self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
+        # self.add_module('norm', nn.BatchNorm2d(num_input_features))
+        # self.add_module('relu', nn.ReLU(inplace=True))
+        # self.add_module('conv', nn.Conv2d(num_input_features, num_output_features,
+        #                                   kernel_size=1, stride=1, bias=False))
+        # self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
+        self.norm = nn.BatchNorm2d(num_input_features)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv =  nn.Conv2d(num_input_features, num_output_features,
+                                          kernel_size=1, stride=1, bias=False)
+        self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):
+        nvtx.range_push("TR bn")
+        out = self.norm(x)
+        out = self.relu(out)
+        nvtx.range_pop()
+        nvtx.range_push("TR conv")
+        out = self.conv(out)
+        nvtx.range_pop()
+        nvtx.range_push("TR avgpool")
+        out = self.pool(out)
+        nvtx.range_pop()
+        return out
 
 
 class DenseNet(nn.Module):
@@ -210,7 +245,19 @@ class DenseNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.features(x)
+        # x = self.features(x)
+        out = self.features.conv0(x)
+        out = self.features.norm0(out)
+        out = self.features.relu0(out)
+        out = self.features.pool0(out)
+        out = self.features.denseblock1(out)
+        out = self.features.transition1(out)
+        out = self.features.denseblock2(out)
+        out = self.features.transition2(out)
+        out = self.features.denseblock3(out)
+        out = self.features.transition3(out)
+        out = self.features.denseblock4(out)
+        out = self.features.norm5(out)
         out = F.relu(x, inplace=True)
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = torch.flatten(out, 1)
