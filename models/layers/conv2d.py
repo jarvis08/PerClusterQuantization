@@ -311,8 +311,6 @@ class PCQConv2d(nn.Module):
         if external_range is not None:
             return None
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
         if self.apply_ema:
             ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
         else:
