@@ -165,22 +165,35 @@ class PCQBnReLU(nn.Module):
         bc = self.runtime_helper.batch_cluster
         exists = torch.unique(bc)
 
-        _means = self.running_means.clone().detach()
-        _vars = self.running_vars.clone().detach()
-        _n = torch.ones((self.num_clusters, 1)).cuda() 
-        for c in exists:
-            indices = (bc == c).nonzero(as_tuple=True)[0]
-            inputs_of_cluster = x[indices]
-            _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
-            _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
-            _n[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+        if self.runtime_helper.range_update_phase:
+            d = self.runtime_helper.data_per_cluster
+            _x = x.transpose(0, 1).view(self.num_features, self.num_clusters, d, -1)
+            _means = _x.mean(dim=(2, 3)).transpose(0, 1)
+            _vars = _x.var(dim=(2, 3), unbiased=False).transpose(0, 1)
+            n = x[0].numel() * d / self.num_features
 
-        with torch.no_grad():
-            self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
-                                         + _means[exists] * self.momentum
-            self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
-                                        + _vars[exists] * self.momentum \
-                                        * _n[exists] / (_n[exists] - 1)
+            with torch.no_grad():
+                self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
+                                             + _means[exists] * self.momentum
+                self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
+                                            + _vars[exists] * self.momentum * n / (n - 1)
+        else:
+            _means = self.running_means.clone().detach()
+            _vars = self.running_vars.clone().detach()
+            n = torch.ones((self.num_clusters, 1)).cuda() 
+            for c in exists:
+                indices = (bc == c).nonzero(as_tuple=True)[0]
+                inputs_of_cluster = x[indices]
+                _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
+                _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
+                n[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+
+            with torch.no_grad():
+                self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
+                                             + _means[exists] * self.momentum
+                self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
+                                            + _vars[exists] * self.momentum \
+                                            * n[exists] / (n[exists] - 1)
         return _means, _vars
 
     def _fake_quantized_bn(self, x, batch_stats=None):
