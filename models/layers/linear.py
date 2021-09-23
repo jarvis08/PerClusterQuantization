@@ -162,8 +162,6 @@ class PCQLinear(nn.Module):
         self.apply_ema = False
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        if self.quant_noise:
-            self.fc = _quant_noise(self.fc, self.qn_prob, 1, self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x, external_range=None):
@@ -192,9 +190,12 @@ class PCQLinear(nn.Module):
     def _fake_quantized_fc(self, x):
         is_phase1 = not self.runtime_helper.range_update_phase
         w = self.fc.weight
+        s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
         if not self.quant_noise:
-            s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
             w = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=is_phase1)
+        else:
+            w = apply_qn(self.fc.weight, s, z, self.q_max, qn_prob=self.qn_prob)
+
         out = F.linear(x, w, self.fc.bias)
         if self._activation:
             out = self._activation(out)
@@ -268,9 +269,10 @@ class FusedLinear(nn.Module):
 
         w = self.fc.weight
         s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
-        w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
-        if self.quant_noise:
-            w = apply_qn(fake_quantized_weight=w, origin_weight=self.fc.weight.detach(), qn_prob=self.qn_prob)
+        if not self.quant_noise:
+            w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
+        else:
+            w = apply_qn(self.fc.weight, s, z, self.q_max, qn_prob=self.qn_prob)
 
         x = F.linear(x, w, self.fc.bias)
         if self._activation:
