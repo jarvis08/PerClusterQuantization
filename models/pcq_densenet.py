@@ -45,7 +45,7 @@ class PCQDenseLayer(nn.Module):
             prev_features = input
 
         x = torch.cat(prev_features, 1)
-        nvtx.range_push("LY bn")
+        nvtx.range_push("LY bn1")
         out = self.bn1(x)
         nvtx.range_pop()
         nvtx.range_push("LY conv1")
@@ -132,13 +132,11 @@ class PCQDenseBlock(nn.ModuleDict):
             self.add_module('denselayer%d' % (i + 1), layer)
 
     def forward(self, init_features: Tensor) -> Tensor:
-        nvtx.range_push("concat output of each layer")
         features = [init_features]
         for name, layer in self.items():
             new_features = layer(features, self.act_range)
             features.append(new_features)
         out = torch.cat(features, 1)
-        nvtx.range_pop()
 
         if not self.training:
             return out
@@ -253,49 +251,21 @@ class PCQDenseNet(nn.Module):
                 nvtx.range_pop()
 
         # out = self.features(x)
-        nvtx.range_push("First conv")
         out = self.features.first_conv(x)
-        nvtx.range_pop()
-        nvtx.range_push("First Norm")
         out = self.features.first_norm(out, self.features.denseblock1.act_range)
-        nvtx.range_pop()
-        nvtx.range_push("Maxpool")
         out = self.features.maxpool(out)
-        nvtx.range_pop()
-        nvtx.range_push("block 1")
         out = self.features.denseblock1(out)
-        nvtx.range_pop()
-        nvtx.range_push("Transition 1")
         out = self.features.transition1(out, self.features.denseblock2.act_range)
-        nvtx.range_pop()
-        nvtx.range_push("block 2")
         out = self.features.denseblock2(out)
-        nvtx.range_pop()
-        nvtx.range_push("Transition 2")
         out = self.features.transition2(out, self.features.denseblock3.act_range)
-        nvtx.range_pop()
-        nvtx.range_push("block 3")
         out = self.features.denseblock3(out)
-        nvtx.range_pop()
-        nvtx.range_push("Transition 3")
         out = self.features.transition3(out, self.features.denseblock4.act_range)
-        nvtx.range_pop()
-        nvtx.range_push("block 4")
         out = self.features.denseblock4(out)
-        nvtx.range_pop()
-        nvtx.range_push("last norm")
         out = self.features.last_norm(out)
-        nvtx.range_pop()
 
-        nvtx.range_push("avgpool")
         out = F.adaptive_avg_pool2d(out, (1, 1))
-        nvtx.range_pop()
-        nvtx.range_push("Flattening")
         out = torch.flatten(out, 1)
-        nvtx.range_pop()
-        nvtx.range_push("FC layer")
         out = self.classifier(out)
-        nvtx.range_pop()
         return out
 
     def _fake_quantize_input(self, x):

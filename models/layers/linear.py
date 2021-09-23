@@ -8,6 +8,7 @@ import numpy as np
 from ..quant_noise import _quant_noise
 from ..quantization_utils import *
 from .activation import *
+import torch.cuda.nvtx as nvtx
 
 
 class QuantizedLinear(nn.Linear):
@@ -44,9 +45,15 @@ class QuantizedLinear(nn.Linear):
     def forward(self, x):
         sum_q1q2 = F.linear(x, self.weight, None)
         if self.runtime_helper.batch_cluster is not None:
-            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_push("Quant-Linear totalsum")
+            res = self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_pop()
+            return res
         else:
-            return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_push("Quant-Linear totalsum")
+            res = self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_pop()
+            return res
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
@@ -169,18 +176,30 @@ class PCQLinear(nn.Module):
     def forward(self, x, external_range=None):
         if not self.training:
             if self.runtime_helper.range_update_phase:  # Phase-2
+                nvtx.range_push("Linear phase2 fq weight")
                 out = self._fake_quantized_fc(x)
+                nvtx.range_pop()
+                nvtx.range_push("Linear phase2 update act range")
                 self._update_activation_ranges(out, external_range)
+                nvtx.range_pop()
                 if self.runtime_helper.apply_fake_quantization:
+                    nvtx.range_push("Linear phase2 fq act")
                     out = self._fake_quantize_activation(out, external_range)
+                    nvtx.range_pop()
             else:
+                nvtx.range_push("Linear val")
                 out = self._forward_impl(x)
+                nvtx.range_pop()
             return out
 
         # Phase-1
+        nvtx.range_push("Linear phase1 fq weight")
         out = self._fake_quantized_fc(x)
+        nvtx.range_pop()
         if self.runtime_helper.apply_fake_quantization:
+            nvtx.range_push("Linear phase1 fq act")
             out = self._fake_quantize_activation(out, external_range)
+            nvtx.range_pop()
         return out
 
     def _forward_impl(self, x):
@@ -260,11 +279,14 @@ class FusedLinear(nn.Module):
 
     def forward(self, x):
         if not self.training:
+            nvtx.range_push("Linear val")
             x = self.fc(x)
             if self._activation:
                 x = self._activation(x)
+            nvtx.range_pop()
             return x
 
+        nvtx.range_push("Linear train")
         w = self.fc.weight
         s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
         w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
@@ -285,6 +307,7 @@ class FusedLinear(nn.Module):
             self.act_range[0] = torch.min(x).item()
             self.act_range[1] = torch.max(x).item()
             self.apply_ema = True
+        nvtx.range_pop()
         return out
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):

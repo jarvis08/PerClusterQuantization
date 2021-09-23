@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from ..quant_noise import _quant_noise
 from ..quantization_utils import *
 from .activation import *
+import torch.cuda.nvtx as nvtx
 
 
 class QuantizedConv2d(nn.Conv2d):
@@ -55,10 +56,16 @@ class QuantizedConv2d(nn.Conv2d):
             #for i in range(len(self.runtime_helper.batch_cluster)):
             #    padded[i] = F.pad(x[i], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=z1[i])
             sum_q1q2 = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
-            return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_push("Quant-conv2d Totalsum")
+            res = self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_pop()
+            return res
         else:
             sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
-            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_push("Quant-conv2d Totalsum")
+            res = self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            nvtx.range_pop()
+            return res
 
     def general(self, x):
         if self.padding[0] > 0 or self.padding[1] > 0:
@@ -67,7 +74,10 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.groups > 1:
             return self.depthwise_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
-        return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+        nvtx.range_push("Quant-conv2d Totalsum")
+        res = self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+        nvtx.range_pop()
+        return res
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
@@ -265,18 +275,31 @@ class PCQConv2d(nn.Module):
     def forward(self, x, external_range=None):
         if not self.training:
             if self.runtime_helper.range_update_phase:  # Phase-2
+                nvtx.range_push("conv2d phase2 fq weight")
                 out = self._fake_quantized_conv(x)
+                nvtx.range_pop()
+                nvtx.range_push("conv2d phase2 update act range")
                 self._update_activation_ranges(out, external_range)
+                nvtx.range_pop()
                 if self.runtime_helper.apply_fake_quantization:
+                    nvtx.range_push("conv2d phase2 fq act")
                     out = self._fake_quantize_activation(out, external_range)
+                    nvtx.range_pop()
                 return out
             else:
-                return self._forward_impl(x)
+                nvtx.range_push("conv2d val")
+                res = self._forward_impl(x)
+                nvtx.range_pop()
+                return res
 
         # Phase-1
+        nvtx.range_push("conv2d phase1 fq weight")
         out = self._fake_quantized_conv(x)
+        nvtx.range_pop()
         if self.runtime_helper.apply_fake_quantization:
+            nvtx.range_push("conv2d pahse1 fq act")
             out = self._fake_quantize_activation(out, external_range)
+            nvtx.range_pop()
         return out
 
     def _forward_impl(self, x):
@@ -366,17 +389,25 @@ class FusedConv2d(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
+            nvtx.range_push("conv2d val")
             x = self.conv(x)
             if self._norm_layer:
                 x = self._norm_layer(x)
             if self._activation:
                 x = self._activation(x)
+            nvtx.range_pop()
             return x
 
         if self.folded_fq:
-            return self._norm_folded(x, external_range)
+            nvtx.range_push("conv2d norm folded")
+            res = self._norm_folded(x, external_range)
+            nvtx.range_pop()
+            return res
         else:
-            return self._general(x, external_range)
+            nvtx.range_push("conv2d train")
+            res = self._general(x, external_range)
+            nvtx.range_pop()
+            return res
 
     def _general(self, x, external_range=None):
         w = self.conv.weight

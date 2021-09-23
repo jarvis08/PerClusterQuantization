@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from ..quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 class QuantizedBn2d(nn.Module):
@@ -30,9 +31,15 @@ class QuantizedBn2d(nn.Module):
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
-            return self._pcq(x.type(torch.cuda.LongTensor))
+            nvtx.range_push("Quant BN")
+            res = self._pcq(x.type(torch.cuda.LongTensor))
+            nvtx.range_pop()
+            return res
         else:
-            return self._general(x.type(torch.cuda.LongTensor))
+            nvtx.range_push("Quant BN")
+            res = self._general(x.type(torch.cuda.LongTensor))
+            nvtx.range_pop()
+            return res
 
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
@@ -124,22 +131,41 @@ class PCQBnReLU(nn.Module):
     def forward(self, x, external_range=None):
         if not self.training:
             if self.runtime_helper.range_update_phase:
+                nvtx.range_push("bn phase2 batch stat")
                 batch_stats = self.get_batch_stats(x)
+                nvtx.range_pop()
+                nvtx.range_push("bn phase 2 fq weight")
                 out = self._fake_quantized_bn(x, batch_stats)
+                nvtx.range_pop()
+                nvtx.range_push("bn phase 2 update act range")
                 self._update_activation_ranges(out, external_range)
+                nvtx.range_pop()
                 if self.runtime_helper.apply_fake_quantization:
+                    nvtx.range_push("bn phase 2 fq act")
                     out = self._fake_quantize_activation(out, external_range)
+                    nvtx.range_pop()
             else:
+                nvtx.range_push("Bn val")
                 out = self._forward_impl(x)
+                nvtx.range_pop()
             return out
 
         # Phase-2
+        nvtx.range_push("bn phase1 batch stat")
         batch_stats = self.get_batch_stats(x)
+        nvtx.range_pop()
+        nvtx.range_push("bn phase 1 forward impl")
         out = self._forward_impl(x, batch_stats)
+        nvtx.range_pop()
+        nvtx.range_push("bn phase 1 fq weight")
         fake_out = self._fake_quantized_bn(x, batch_stats)
+        nvtx.range_pop()
         out = STE.apply(out, fake_out)
         if self.runtime_helper.apply_fake_quantization:
-            return self._fake_quantize_activation(out, external_range)
+            nvtx.range_push("bn phase 1 fq act")
+            res = self._fake_quantize_activation(out, external_range)
+            nvtx.range_pop()
+            return res
         return out
 
     def _forward_impl(self, x, batch_stats=None):
@@ -283,18 +309,28 @@ class FusedBnReLU(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            return self._forward_impl(x)
+            nvtx.range_push("bn val")
+            res = self._forward_impl(x)
+            nvtx.range_pop()
+            return res
 
         if not self.runtime_helper.pcq_initialized:
             return self._forward_impl(x)
 
+        nvtx.range_push("bn weight")
         out = self._fake_quantized_bn(x)
+        nvtx.range_pop()
         if self.is_pcq:
             return out
 
+        nvtx.range_push("bn update act range")
         self._update_activation_range(out, external_range)
+        nvtx.range_pop()
         if self.runtime_helper.apply_fake_quantization:
-            return self._fake_quantize_activation(out, external_range)
+            nvtx.range_push("bn fq act")
+            res = self._fake_quantize_activation(out, external_range)
+            nvtx.range_pop()
+            return res
         else:
             return out
 

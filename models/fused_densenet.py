@@ -9,6 +9,7 @@ from torch import Tensor
 from .layers import *
 from .quant_noise import _quant_noise
 from .quantization_utils import *
+import torch.cuda.nvtx as nvtx
 
 
 class FusedDenseLayer(nn.Module):
@@ -45,10 +46,18 @@ class FusedDenseLayer(nn.Module):
             prev_features = input
 
         x = torch.cat(prev_features, 1)
+        nvtx.range_push("LY bn1")
         out = self.bn1(x)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv1")
         out = self.conv1(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY bn2")
         out = self.bn2(out)
+        nvtx.range_pop()
+        nvtx.range_push("LY conv2")
         out = self.conv2(out, external_range)
+        nvtx.range_pop()
 
         return out
 
@@ -74,9 +83,15 @@ class FusedTransition(nn.Sequential):
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x, next_block_range):
+        nvtx.range_push("TR bn")
         out = self.bn(x)
+        nvtx.range_pop()
+        nvtx.range_push("TR conv")
         out = self.conv(out, next_block_range)
+        nvtx.range_pop()
+        nvtx.range_push("TR avgpool")
         out = self.pool(out)
+        nvtx.range_pop()
         return out
 
     def set_transition_qparams(self, s1, z1, next_block_s, next_block_z):
@@ -199,10 +214,12 @@ class FusedDenseNet(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         if self.training:
             if self.apply_ema:
+                nvtx.range_push("Input ema & fq")
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)
+                nvtx.range_pop()
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
