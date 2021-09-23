@@ -202,6 +202,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+                if i==4: break
 
     if logger:
         if hvd:
