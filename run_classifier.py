@@ -28,8 +28,8 @@ from models.bert.optimization import BertAdam
 from models.bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from utils import RuntimeHelper, set_save_dir, add_path, set_logger, save_checkpoint, set_clustering_dir
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt = '%m/%d/%Y %H:%M:%S',

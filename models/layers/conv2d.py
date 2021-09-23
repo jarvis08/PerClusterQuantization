@@ -248,8 +248,8 @@ class PCQConv2d(nn.Module):
         self.out_channels = out_channels
         self.groups = groups
 
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob, self.qn_each_channel\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
@@ -257,10 +257,10 @@ class PCQConv2d(nn.Module):
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias, dilation=dilation)
-        if self.quant_noise:
-            self.conv = _quant_noise(self.conv, self.qn_prob, 1, self.q_max)
 
         self._activation = activation(inplace=False) if activation else None
+        self.out_channels = out_channels
+        self.in_channels = in_channels
 
     def forward(self, x, external_range=None):
         if not self.training:
@@ -288,9 +288,13 @@ class PCQConv2d(nn.Module):
     def _fake_quantized_conv(self, x):
         is_phase1 = not self.runtime_helper.range_update_phase
         w = self.conv.weight
+        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
         if not self.quant_noise:
-            s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
             w = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=is_phase1)
+        else:
+            w = apply_qn(self.conv.weight, scale=s, zero_point=z, q_max=self.q_max, qn_prob=self.qn_prob,
+                         kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
+                         in_feature=self.in_channels, out_feature=self.out_channels)
         out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
             out = self._activation(out)
