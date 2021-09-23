@@ -51,7 +51,7 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             runtime_helper.range_update_phase = True
 
             nvtx.range_push("phase2 next_data")
-            phase2_input, _ = phase2_loader.get_next_data()
+            phase2_input = phase2_loader.get_next_data()
             nvtx.range_pop()
 
             runtime_helper.batch_cluster = phase2_loader.batch_cluster
