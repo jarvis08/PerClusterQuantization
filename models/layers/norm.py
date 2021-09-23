@@ -225,8 +225,6 @@ class PCQBnReLU(nn.Module):
         if external_range is not None:
             return None
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
         if self.apply_ema:
             ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
         else:
@@ -270,12 +268,10 @@ class FusedBnReLU(nn.Module):
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
-        self.is_pcq = is_pcq
         self.w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
-        if not is_pcq:
-            self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
-            self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-            self.apply_ema = False
+        self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.apply_ema = False
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
@@ -289,9 +285,6 @@ class FusedBnReLU(nn.Module):
             return self._forward_impl(x)
 
         out = self._fake_quantized_bn(x)
-        if self.is_pcq:
-            return out
-
         self._update_activation_range(out, external_range)
         if self.runtime_helper.apply_fake_quantization:
             return self._fake_quantize_activation(out, external_range)
