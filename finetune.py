@@ -110,6 +110,7 @@ def _finetune(args, tools):
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
+
     cudnn.benchmark = True
 
     save_path_fp = ''
