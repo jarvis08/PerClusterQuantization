@@ -169,8 +169,6 @@ class PCQLinear(nn.Module):
         self.apply_ema = False
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        if self.quant_noise:
-            self.fc = _quant_noise(self.fc, self.qn_prob, 1, self.q_max)
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x, external_range=None):
@@ -211,9 +209,12 @@ class PCQLinear(nn.Module):
     def _fake_quantized_fc(self, x):
         is_phase1 = not self.runtime_helper.range_update_phase
         w = self.fc.weight
+        s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
         if not self.quant_noise:
-            s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
             w = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=is_phase1)
+        else:
+            w = apply_qn(self.fc.weight, s, z, self.q_max, qn_prob=self.qn_prob)
+
         out = F.linear(x, w, self.fc.bias)
         if self._activation:
             out = self._activation(out)
@@ -230,15 +231,14 @@ class PCQLinear(nn.Module):
         if external_range is not None:
             return None
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
         if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+            ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
+            _x = x.view(self.num_clusters, -1)
+            _min = _x.min(-1, keepdim=True).values
+            _max = _x.max(-1, keepdim=True).values
+            batch_range = torch.cat([_min, _max], 1)
+            self.act_range.data = batch_range
             self.apply_ema = True
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
@@ -289,9 +289,10 @@ class FusedLinear(nn.Module):
         nvtx.range_push("Linear train")
         w = self.fc.weight
         s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
-        w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
-        if self.quant_noise:
-            w = apply_qn(fake_quantized_weight=w, origin_weight=self.fc.weight.detach(), qn_prob=self.qn_prob)
+        if not self.quant_noise:
+            w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
+        else:
+            w = apply_qn(self.fc.weight, s, z, self.q_max, qn_prob=self.qn_prob)
 
         x = F.linear(x, w, self.fc.bias)
         if self._activation:

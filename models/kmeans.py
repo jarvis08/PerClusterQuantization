@@ -14,9 +14,12 @@ class KMeans(object):
         self.args = args
         self.model = None
 
+    @torch.no_grad()
     def get_partitioned_batch(self, data):
         # Under the premise that images are in the form of square matrix
-        _size = data.shape[-1]
+        batch = data.size(0)
+        channel = data.size(1)
+        _size = data.size(2)
         n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3))  # Per row or col
         n_data = int(_size / n_part)  # Per part
         rst = None
@@ -32,15 +35,14 @@ class KMeans(object):
                 # _max = torch.topk(_max, k=6, dim=2, largest=True, sorted=False).values
                 # _min = torch.mean(_min, dim=2, keepdim=True)
                 # _max = torch.mean(_max, dim=2, keepdim=True)
-                _min = torch.min(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], -1).values
-                _max = torch.max(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], -1).values
-                _min = torch.min(_min, -1, keepdim=True).values
-                _max = torch.max(_max, -1, keepdim=True).values
-                tmp = torch.cat([_min, _max], dim=-1)
+                part = data[:, :, r_start:r_start + n_data, c_start:c_start + n_data].reshape(batch, channel, -1)
+                _min = part.min(-1, keepdim=True).values
+                _max = part.max(-1, keepdim=True).values
+                part_range = torch.cat([_min, _max], dim=-1)
                 if rst is None:
-                    rst = tmp
+                    rst = part_range
                 else:
-                    rst = torch.cat([rst, tmp], dim=-1)
+                    rst = torch.cat([rst, part_range], dim=-1)
         return rst.view(rst.size(0), -1).cpu().numpy()
 
     def load_clustering_model(self):

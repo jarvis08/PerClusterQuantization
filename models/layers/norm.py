@@ -116,7 +116,7 @@ class PCQBnReLU(nn.Module):
         self.w_qmax = w_qmax
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
 
-        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False).cuda()
         self.apply_ema = False
 
         self.activation = activation(inplace=True) if activation else None
@@ -150,7 +150,7 @@ class PCQBnReLU(nn.Module):
                 nvtx.range_pop()
             return out
 
-        # Phase-2
+        # Phase-1
         nvtx.range_push("bn phase1 batch stat")
         batch_stats = self.get_batch_stats(x)
         nvtx.range_pop()
@@ -191,22 +191,35 @@ class PCQBnReLU(nn.Module):
         bc = self.runtime_helper.batch_cluster
         exists = torch.unique(bc)
 
-        _means = self.running_means.clone().detach()
-        _vars = self.running_vars.clone().detach()
-        _n = torch.ones((self.num_clusters, 1)).cuda() 
-        for c in exists:
-            indices = (bc == c).nonzero(as_tuple=True)[0]
-            inputs_of_cluster = x[indices]
-            _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
-            _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
-            _n[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+        if self.runtime_helper.range_update_phase:
+            d = self.runtime_helper.data_per_cluster
+            _x = x.transpose(0, 1).view(self.num_features, self.num_clusters, d, -1)
+            _means = _x.mean(dim=(2, 3)).transpose(0, 1)
+            _vars = _x.var(dim=(2, 3), unbiased=False).transpose(0, 1)
+            n = x[0].numel() * d / self.num_features
 
-        with torch.no_grad():
-            self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
-                                         + _means[exists] * self.momentum
-            self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
-                                        + _vars[exists] * self.momentum \
-                                        * _n[exists] / (_n[exists] - 1)
+            with torch.no_grad():
+                self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
+                                             + _means[exists] * self.momentum
+                self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
+                                            + _vars[exists] * self.momentum * n / (n - 1)
+        else:
+            _means = self.running_means.clone().detach()
+            _vars = self.running_vars.clone().detach()
+            n = torch.ones((self.num_clusters, 1)).cuda() 
+            for c in exists:
+                indices = (bc == c).nonzero(as_tuple=True)[0]
+                inputs_of_cluster = x[indices]
+                _means[c] = inputs_of_cluster.mean(dim=(0, 2, 3))
+                _vars[c] = inputs_of_cluster.var(dim=(0, 2, 3), unbiased=False)
+                n[c] = inputs_of_cluster.numel() / inputs_of_cluster.size(1)
+
+            with torch.no_grad():
+                self.running_means[exists] = self.running_means[exists] * (1 - self.momentum) \
+                                             + _means[exists] * self.momentum
+                self.running_vars[exists] = self.running_vars[exists] * (1 - self.momentum) \
+                                            + _vars[exists] * self.momentum \
+                                            * n[exists] / (n[exists] - 1)
         return _means, _vars
 
     def _fake_quantized_bn(self, x, batch_stats=None):
@@ -251,16 +264,14 @@ class PCQBnReLU(nn.Module):
         if external_range is not None:
             return None
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
         if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = \
-                    ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+            ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
+            _x = x.view(self.num_clusters, -1)
+            _min = _x.min(-1, keepdim=True).values
+            _max = _x.max(-1, keepdim=True).values
+            batch_range = torch.cat([_min, _max], 1)
+            self.act_range.data = batch_range
             self.apply_ema = True
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
@@ -296,12 +307,10 @@ class FusedBnReLU(nn.Module):
         self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
-        self.is_pcq = is_pcq
         self.w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
-        if not is_pcq:
-            self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
-            self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-            self.apply_ema = False
+        self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.apply_ema = False
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
@@ -309,19 +318,20 @@ class FusedBnReLU(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            nvtx.range_push("bn val")
+            nvtx.range_push("bn forward impl")
             res = self._forward_impl(x)
             nvtx.range_pop()
             return res
 
         if not self.runtime_helper.pcq_initialized:
-            return self._forward_impl(x)
+            nvtx.range_push("bn pcq init")
+            res = self._forward_impl(x)
+            nvtx.range_pop()
+            return res
 
         nvtx.range_push("bn weight")
         out = self._fake_quantized_bn(x)
         nvtx.range_pop()
-        if self.is_pcq:
-            return out
 
         nvtx.range_push("bn update act range")
         self._update_activation_range(out, external_range)

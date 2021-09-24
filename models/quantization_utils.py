@@ -67,6 +67,14 @@ def ema(x, averaged, smooth):
     return rst_min, rst_max
 
 
+def ema_per_cluster(x, averaged_ranges, num_clusters, smooth):
+    _x = x.view(num_clusters, -1)
+    _min = _x.min(-1, keepdim=True).values
+    _max = _x.max(-1, keepdim=True).values
+    batch_range = torch.cat([_min, _max], 1)
+    averaged_ranges.mul_(smooth).add_(batch_range * (1 - smooth))
+
+
 def bn_ema(cur, pre, smooth):
     mean = pre[0] * smooth + cur[0].running_mean * (1 - smooth)
     var = pre[1] * smooth + cur[1].running_var * (1 - smooth)
@@ -126,6 +134,41 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, 
     if use_ste:
         return STE.apply(x, _x)
     return _x
+
+
+def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
+    _x = x.detach()
+    if q_max == 15:
+        _qmin, _qmax = 0, 15
+    elif q_max == 255:
+        _qmin, _qmax = -128, 127
+    elif q_max == 65535:
+        _qmin, _qmax = -32768, 32767
+    else:
+        _qmin, _qmax = -2147483648, 2147483647
+
+    fq_x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+
+    if kernel_size is None:
+        mask = torch.zeros_like(_x)
+        mask.bernoulli_(1 - qn_prob)
+        noise = (fq_x - _x).masked_fill(mask.bool(), 0)
+        qn_x = _x + noise
+    else:  # Conv
+        if each_channel:
+            mask = torch.zeros(in_feature, out_feature).cuda()
+            mask.bernoulli_(qn_prob)
+            mask = mask.view(-1, in_feature)
+            mask = (mask.unsqueeze(2).unsqueeze(3).repeat(1, 1, kernel_size[0], kernel_size[1]))
+
+            noise = (fq_x - _x).masked_fill(mask.bool(), 0)
+            qn_x = _x + noise
+        else:
+            mask = torch.zeros_like(_x)
+            mask.bernoulli_(1 - qn_prob)
+            noise = (fq_x - _x).masked_fill(mask.bool(), 0)
+            qn_x = _x + noise
+    return STE.apply(x, qn_x)
 
 
 def quantize_matrix(x, scale, zero_point, q_max=None):
@@ -323,35 +366,6 @@ def quantize(_fp, _int):
     _int = transfer_qparams(_fp, _int)
     _int = quantize_layer_and_transfer(_fp, _int)
     return _int
-
-def apply_qn(fake_quantized_weight, origin_weight, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
-    # FC
-    if kernel_size is None:
-        mask = torch.zeros_like(origin_weight)
-        mask.bernoulli_(1 - qn_prob)
-        noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
-        qn_weight = origin_weight + noise.detach()
-
-        return qn_weight
-    # Conv
-    else:
-        if each_channel:
-            mask = torch.zeros(in_feature, out_feature).cuda()
-            mask.bernoulli_(qn_prob)
-            mask = mask.view(-1, in_feature)
-            mask = (mask.unsqueeze(2).unsqueeze(3).repeat(1, 1, kernel_size[0], kernel_size[1]))
-
-            noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
-            qn_weight = origin_weight + noise.detach()
-
-            return qn_weight
-        else:
-            mask = torch.zeros_like(origin_weight)
-            mask.bernoulli_(1 - qn_prob)
-            noise = (fake_quantized_weight - origin_weight).masked_fill(mask.bool(), 0)
-            qn_weight = origin_weight + noise.detach()
-
-            return qn_weight
 
 
 def copy_from_pretrained(_to, _from, norm_layer=None):
