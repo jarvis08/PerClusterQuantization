@@ -24,6 +24,7 @@ class QuantizationTool(object):
         self.quantized_model_initializer = None
 
 
+@torch.no_grad()
 def calc_qparams(_min, _max, q_max):
     s = (_max - _min) / q_max
     if q_max == 15:            # UINT 4
@@ -59,6 +60,7 @@ def calc_qparams_per_cluster(ranges, q_max):
     return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False).cuda()
 
 
+@torch.no_grad()
 def ema(x, averaged, smooth):
     _min = torch.min(x).item()
     _max = torch.max(x).item()
@@ -67,6 +69,7 @@ def ema(x, averaged, smooth):
     return rst_min, rst_max
 
 
+@torch.no_grad()
 def ema_per_cluster(x, averaged_ranges, num_clusters, smooth):
     _x = x.view(num_clusters, -1)
     _min = _x.min(-1, keepdim=True).values

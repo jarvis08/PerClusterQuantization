@@ -64,31 +64,26 @@ class PCQBasicBlock(nn.Module):
         out = self.relu(out)
 
         if not self.training:
-            if self.runtime_helper.range_update_phase:  # Phase-2
-                self._update_activation_ranges(out)
-                if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_activation(out)
             return out
 
+        self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out)
         return out
 
-    def _fake_quantize_activation(self, x):
-        s, z = calc_qparams_per_cluster(self.act_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster, self.use_ste)
-
     def _update_activation_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema:
-            ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
+            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
-            _x = x.view(self.num_clusters, -1)
-            _min = _x.min(-1, keepdim=True).values
-            _max = _x.max(-1, keepdim=True).values
-            batch_range = torch.cat([_min, _max], 1)
-            self.act_range.data = batch_range
+            self.act_range[cluster][0] = torch.min(x).item()
+            self.act_range[cluster][1] = torch.max(x).item()
             self.apply_ema = True
+
+    def _fake_quantize_activation(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -121,18 +116,18 @@ class PCQBottleneck(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.act_qmax = act_qmax if act_qmax else self.q_max
+        act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = False
 
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn1 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation,
-                                 arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+                                 arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn2 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
-        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
@@ -156,31 +151,26 @@ class PCQBottleneck(nn.Module):
         out = self.relu(out)
 
         if not self.training:
-            if self.runtime_helper.range_update_phase:  # Phase-2
-                self._update_activation_ranges(out)
-                if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_activation(out)
             return out
 
+        self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out)
         return out
 
-    def _fake_quantize_activation(self, x):
-        s, z = calc_qparams_per_cluster(self.act_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster, self.use_ste)
-
     def _update_activation_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema:
-            ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
+            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
-            _x = x.view(self.num_clusters, -1)
-            _min = _x.min(-1, keepdim=True).values
-            _max = _x.max(-1, keepdim=True).values
-            batch_range = torch.cat([_min, _max], 1)
-            self.act_range.data = batch_range
+            self.act_range[cluster][0] = torch.min(x).item()
+            self.act_range[cluster][1] = torch.max(x).item()
             self.apply_ema = True
+
+    def _fake_quantize_activation(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -254,11 +244,8 @@ class PCQResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if not self.training and not self.runtime_helper.range_update_phase:
-            pass
-        else:
-            if not self.training:
-                self._update_input_ranges(x)
+        if self.training:
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -276,21 +263,19 @@ class PCQResNet(nn.Module):
         x = self.fc(x)
         return x
 
-    def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
-
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema:
-            ema_per_cluster(x, self.in_range, self.num_clusters, self.smooth)
+            self.in_range[cluster][0], self.in_range[cluster][1] = ema(x, self.in_range[cluster], self.smooth)
         else:
-            _x = x.view(self.num_clusters, -1)
-            _min = _x.min(-1, keepdim=True).values
-            _max = _x.max(-1, keepdim=True).values
-            batch_range = torch.cat([_min, _max], 1)
-            self.in_range.data = batch_range
+            self.in_range[cluster][0] = torch.min(x).item()
+            self.in_range[cluster][1] = torch.max(x).item()
             self.apply_ema = True
+
+    def _fake_quantize_input(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
@@ -363,22 +348,19 @@ class PCQResNet20(nn.Module):
         x = self.fc(x)
         return x
 
-    def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
-
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema:
-            ema_per_cluster(x, self.in_range, self.num_clusters, self.smooth)
+            self.in_range[cluster][0], self.in_range[cluster][1] = ema(x, self.in_range[cluster], self.smooth)
         else:
-            _x = x.view(self.num_clusters, -1)
-            _min = _x.min(-1, keepdim=True).values
-            _max = _x.max(-1, keepdim=True).values
-            batch_range = torch.cat([_min, _max], 1)
-            self.in_range.data = batch_range
+            self.in_range[cluster][0] = torch.min(x).item()
+            self.in_range[cluster][1] = torch.max(x).item()
             self.apply_ema = True
+
+    def _fake_quantize_input(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)

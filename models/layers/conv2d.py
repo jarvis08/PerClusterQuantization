@@ -264,17 +264,10 @@ class PCQConv2d(nn.Module):
 
     def forward(self, x, external_range=None):
         if not self.training:
-            if self.runtime_helper.range_update_phase:  # Phase-2
-                out = self._fake_quantized_conv(x)
-                self._update_activation_ranges(out, external_range)
-                if self.runtime_helper.apply_fake_quantization:
-                    out = self._fake_quantize_activation(out, external_range)
-                return out
-            else:
-                return self._forward_impl(x)
+            return self._forward_impl(x)
 
-        # Phase-1
-        out = self._fake_quantized_conv(x)
+        out = self._pcq(x)
+        self._update_activation_ranges(out, external_range)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -285,12 +278,10 @@ class PCQConv2d(nn.Module):
             x = self._activation(x)
         return x
 
-    def _fake_quantized_conv(self, x):
-        is_phase1 = not self.runtime_helper.range_update_phase
-        w = self.conv.weight
+    def _pcq(self, x):
         s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
         if not self.quant_noise:
-            w = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=is_phase1)
+            w = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=self.use_ste)
         else:
             w = apply_qn(self.conv.weight, scale=s, zero_point=z, q_max=self.q_max, qn_prob=self.qn_prob,
                          kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
@@ -300,26 +291,25 @@ class PCQConv2d(nn.Module):
             out = self._activation(out)
         return out
 
-    def _fake_quantize_activation(self, x, external_range=None):
-        if external_range is not None:
-            s, z = calc_qparams_per_cluster(external_range, self.act_qmax)
-        else:
-            s, z = calc_qparams_per_cluster(self.act_range, self.act_qmax)
-        return fake_quantize_per_cluster_4d(x, s, z, self.act_qmax, self.runtime_helper.batch_cluster, self.use_ste)
-
     def _update_activation_ranges(self, x, external_range=None):
         if external_range is not None:
             return None
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema:
-            ema_per_cluster(x, self.act_range, self.num_clusters, self.smooth)
+            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
-            _x = x.view(self.num_clusters, -1)
-            _min = _x.min(-1, keepdim=True).values
-            _max = _x.max(-1, keepdim=True).values
-            batch_range = torch.cat([_min, _max], 1)
-            self.act_range.data = batch_range
+            self.act_range[cluster][0] = torch.min(x).item()
+            self.act_range[cluster][1] = torch.max(x).item()
             self.apply_ema = True
+
+    def _fake_quantize_activation(self, x, external_range=None):
+        cluster = self.runtime_helper.batch_cluster
+        if external_range is not None:
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.act_qmax)
+        else:
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.act_qmax)
+        return fake_quantize(x, s, z, self.act_qmax, use_ste=self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
@@ -382,7 +372,6 @@ class FusedConv2d(nn.Module):
             return self._general(x, external_range)
 
     def _general(self, x, external_range=None):
-        w = self.conv.weight
         s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
         if not self.quant_noise :
             w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)

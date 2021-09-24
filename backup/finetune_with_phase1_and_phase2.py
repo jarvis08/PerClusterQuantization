@@ -9,14 +9,15 @@ from tqdm import tqdm
 from time import time
 
 
-def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
+def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
+    with tqdm(phase1_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
+            # Phase-1
             model.train()
             input, target = input.cuda(), target.cuda()
             runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
@@ -31,6 +32,15 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             loss.backward()
             optimizer.step()
 
+            # Phase-2
+            model.eval()
+            runtime_helper.range_update_phase = True
+            phase2_input = phase2_loader.get_next_data()
+            runtime_helper.batch_cluster = phase2_loader.batch_cluster
+            with torch.no_grad():
+                model(phase2_input.cuda())
+            runtime_helper.range_update_phase = False
+
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
@@ -40,20 +50,19 @@ def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
 
-    test_loader = None
     augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
+    non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+
+    test_loader = None
     if args.dataset != 'imagenet':
         augmented_train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
-        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
-
-        non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
-        _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
-
+        non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
         test_dataset = get_test_dataset(args, normalizer)
         test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
-    else:
         train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+    else:
         val_dataset = get_test_dataset(args, normalizer)
+        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
 
     runtime_helper = RuntimeHelper()
@@ -80,6 +89,7 @@ def _finetune(args, tools):
         runtime_helper.qn_prob = args.qn_prob - 0.1
         tools.shift_qn_prob(model)
 
+    phase2_loader = None
     clustering_model = None
     if args.cluster > 1:
         clustering_model = tools.clustering_method(args)
@@ -88,6 +98,34 @@ def _finetune(args, tools):
             clustering_model.train_clustering_model(train_loader)
         else:
             clustering_model.load_clustering_model()
+
+        # Make non-augmented dataset/loader for Phase-2 training
+        if args.indices_path:
+            indices_per_cluster, len_per_cluster = load_indices_list(args)
+        else:
+            sequential_non_aug_loader = get_data_loader(non_augmented_train_dataset, batch_size=args.val_batch,
+                                                        shuffle=False, workers=args.worker)
+            check_augmented_clustering = False
+            if check_augmented_clustering:
+                sequential_aug_loader = get_data_loader(augmented_train_dataset, batch_size=256,
+                                                        shuffle=False, workers=args.worker)
+                test_augmented_clustering(clustering_model, sequential_non_aug_loader, sequential_aug_loader)
+                exit()
+            indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, sequential_non_aug_loader, args, runtime_helper)
+            save_indices_list(args, indices_per_cluster, len_per_cluster)
+            # check_cluster_distribution(clustering_model, non_augmented_loader)
+            if args.visualize_clustering:
+                visualize_clustering_res(sequential_non_aug_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
+
+        list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
+        phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
+        loader = get_data_loader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster, shuffle=False,
+                                 workers=args.worker)
+        phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
+
+        if args.pcq_initialization:
+            runtime_helper.batch_cluster = phase2_loader.batch_cluster
+            initialize_pcq_model(model, phase2_loader.data_loader, criterion)
 
     if not save_path_fp:
         save_path_fp = set_save_dir(args)
@@ -106,7 +144,8 @@ def _finetune(args, tools):
             tools.shift_qn_prob(model)
 
         if args.cluster > 1:
-            pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
+            pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper, e,
+                      logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
