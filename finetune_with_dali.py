@@ -69,7 +69,7 @@ def dali_pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, 
             cluster_info = clustering_model.predict_cluster_of_batch(images)
             images, targets = images.cpu(), targets.cpu()
 
-            input, target, runtime_helper.batch_cluster = container.gather_and_get_data(images, targets.cpu(), cluster_info)
+            input, target, runtime_helper.batch_cluster = container.gather_and_get_data(images, targets, cluster_info)
             if input is None:
                 continue
 
