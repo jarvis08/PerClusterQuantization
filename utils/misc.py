@@ -50,7 +50,7 @@ class InputContainer(object):
         next_input = None
         next_target = None
         for c in range(self.num_clusters):
-            indices = (bc == c).nonzero(as_tuple=True)[0]
+            indices = (cluster_info == c).nonzero(as_tuple=True)[0]
             if len(indices):
                 if self.container[c][0] is not None:
                     self.container[c][0] = torch.cat([self.container[c][0], images[indices]])
