@@ -49,8 +49,8 @@ def _pretrain(args, tools):
     train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
     non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
 
-    train_loader = get_shuffled_loader(args, train_dataset)
-    val_loader = get_sequential_loader(args, val_dataset)
+    train_loader = get_data_loader(train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+    val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
 
     save_path = set_save_dir(args)
     logger = set_logger(save_path)

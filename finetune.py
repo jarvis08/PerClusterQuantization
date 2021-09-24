@@ -55,15 +55,15 @@ def _finetune(args, tools):
 
     test_loader = None
     if args.dataset != 'imagenet':
-        train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
+        augmented_train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
         non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
         test_dataset = get_test_dataset(args, normalizer)
-        test_loader = get_sequential_loader(args, test_dataset)
-        train_loader = get_shuffled_loader(args, train_dataset)
+        test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     else:
         val_dataset = get_test_dataset(args, normalizer)
-        train_loader = get_shuffled_loader(args, augmented_train_dataset)
-    val_loader = get_sequential_loader(args, val_dataset)
+        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+    val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -72,11 +72,6 @@ def _finetune(args, tools):
     arg_dict['runtime_helper'] = runtime_helper
     model = get_finetuning_model(arg_dict, tools)
     model.cuda()
-
-    # if args.dataset == 'imagenet':
-    #    summary(model, (3, 224, 224))
-    # else:
-    #    summary(model, (3, 32, 32))
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -108,8 +103,14 @@ def _finetune(args, tools):
         if args.indices_path:
             indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
-            sequential_non_aug_loader = get_sequential_loader(args, non_augmented_train_dataset)
-            # test_augmented_clustering(clustering_model, non_augmented_loader, train_loader)
+            sequential_non_aug_loader = get_data_loader(non_augmented_train_dataset, batch_size=args.val_batch,
+                                                        shuffle=False, workers=args.worker)
+            check_augmented_clustering = False
+            if check_augmented_clustering:
+                sequential_aug_loader = get_data_loader(augmented_train_dataset, batch_size=256,
+                                                        shuffle=False, workers=args.worker)
+                test_augmented_clustering(clustering_model, sequential_non_aug_loader, sequential_aug_loader)
+                exit()
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, sequential_non_aug_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
             # check_cluster_distribution(clustering_model, non_augmented_loader)
@@ -118,8 +119,8 @@ def _finetune(args, tools):
 
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
-        loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
-                                             num_workers=args.worker, shuffle=False)
+        loader = get_data_loader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster, shuffle=False,
+                                 workers=args.worker)
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
 
         if args.pcq_initialization:

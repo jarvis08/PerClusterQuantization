@@ -164,8 +164,9 @@ def _finetune_with_dali(args, tools):
         if args.indices_path:
             indices_per_cluster, len_per_cluster = load_indices_list(args)
         else:
-            sequential_non_aug_loader = get_sequential_loader(args, non_augmented_train_dataset)
-            # test_augmented_clustering(clustering_model, non_augmented_loader, train_loader)
+            sequential_non_aug_loader = get_data_loader(non_augmented_train_dataset, batch_size=args.val_batch,
+                                                        shuffle=False, workers=args.worker)
+            # test_augmented_clustering(clustering_model, sequential_non_aug_loader, train_loader)
             indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, sequential_non_aug_loader, args, runtime_helper)
             save_indices_list(args, indices_per_cluster, len_per_cluster)
             # check_cluster_distribution(clustering_model, non_augmented_loader)
@@ -174,8 +175,8 @@ def _finetune_with_dali(args, tools):
         list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
         
         phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
-        loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
-                                             num_workers=args.worker, shuffle=False)
+        loader = get_data_loader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster, shuffle=False,
+                                 workers=args.worker)
         phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
     
         if args.pcq_initialization:

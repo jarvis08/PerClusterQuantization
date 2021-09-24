@@ -516,19 +516,47 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
 
 
 def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
-    non_aug_indices = []
-    for i, (input, target) in enumerate(non_augmented_loader):
-        batch_cluster = model.predict_cluster_of_batch(input)
-        non_aug_indices.extend(batch_cluster.tolist())
+    print('Check how much does augmentation effect on clustering result..')
+    aug_rst = []
+    with tqdm(augmented_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            batch_cluster = model.predict_cluster_of_batch(input)
+            # aug_rst.extend(batch_cluster.tolist())
+            aug_rst.append(batch_cluster)
 
-    aug_indices = []
-    for i, (input, target) in enumerate(augmented_loader):
-        batch_cluster = model.predict_cluster_of_batch(input)
-        aug_indices.extend(batch_cluster.tolist())
+    non_aug_rst = []
+    with tqdm(non_augmented_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            batch_cluster = model.predict_cluster_of_batch(input)
+            # non_aug_rst.extend(batch_cluster.tolist())
+            non_aug_rst.append(batch_cluster)
 
-    cnt_data_assigned_to_different_cluster = 0
-    for i in range(len(non_aug_indices)):
-        if non_aug_indices[i] != aug_indices[i]:
-            cnt_data_assigned_to_different_cluster += 1
-    print("Datum assigned to different cluster = {}".format(cnt_data_assigned_to_different_cluster))
+    non_aug_rst = torch.cat(non_aug_rst)
+    aug_rst = torch.cat(aug_rst)
+    _, non_aug_cnt = torch.unique(non_aug_rst, return_counts=True)
+    _, aug_cnt = torch.unique(aug_rst, return_counts=True)
+
+    is_equal_per_data = torch.eq(non_aug_rst, aug_rst)
+    not_equal_indices = (is_equal_per_data == False).nonzero(as_tuple=True)[0]
+    _, non_aug_changed_cnt_per_cluster = torch.unique(non_aug_rst[not_equal_indices], return_counts=True)
+
+    print("Datum assigned to different cluster = {}".format(len(not_equal_indices)))
+    print("Num-data per Non-aug. Cluster = {}".format(non_aug_cnt))
+    print("Num-data per Aug. Cluster = {}".format(aug_cnt))
+    print("Changed Count per Cluster = {}".format(non_aug_changed_cnt_per_cluster))
+
+    # nonaug_all_count = [0, 0, 0, 0]
+    # aug_all_count = [0, 0, 0, 0]
+    # changed_cluster_count = [0, 0, 0, 0]
+    # cnt_data_assigned_to_different_cluster = 0
+    # for i in range(len(non_aug_rst)):
+    #     nonaug_all_count[non_aug_rst[i]] += 1
+    #     aug_all_count[aug_rst[i]] += 1
+    #     if non_aug_rst[i] != aug_rst[i]:
+    #         cnt_data_assigned_to_different_cluster += 1
+    #         changed_cluster_count[non_aug_rst[i]] += 1
+    # print("Datum assigned to different cluster = {}".format(cnt_data_assigned_to_different_cluster))
+    # print("Num-data per Non-aug. Cluster = {}".format(nonaug_all_count))
+    # print("Num-data per Aug. Cluster = {}".format(aug_all_count))
+    # print("Changed Count per Cluster = {}".format(changed_cluster_count))
     exit()
