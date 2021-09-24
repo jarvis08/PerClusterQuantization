@@ -59,7 +59,7 @@ def dali_pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, 
 
     losses = AverageMeter()
     top1 = AverageMeter()
-    container = InputContainer()
+    container = InputContainer(runtime_helper.num_clusters, clustering_model.args.batch)
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, data in enumerate(t):
             t.set_description("Epoch {}".format(epoch))

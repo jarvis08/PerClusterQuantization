@@ -39,7 +39,7 @@ class RuntimeHelper(object):
 
 
 class InputContainer(object):
-    def __init__(self, loader, num_clusters, batch_size):
+    def __init__(self, num_clusters, batch_size):
         self.num_clusters = num_clusters
         self.batch_size = batch_size
         self.container = [[None, None] for _ in range(num_clusters)]
