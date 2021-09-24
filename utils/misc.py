@@ -38,6 +38,72 @@ class RuntimeHelper(object):
         self.data_per_cluster = args.data_per_cluster
 
 
+class InputContainer(object):
+    def __init__(self, loader, num_clusters, batch_size):
+        self.num_clusters = num_clusters
+        self.batch_size = batch_size
+        self.container = [[None, None] for _ in range(num_clusters)]
+
+    @torch.no_grad()
+    def gather_and_get_data(self, images, targets, cluster_info):
+        next_cluster = None
+        next_input = None
+        next_target = None
+        for c in range(self.num_clusters):
+            indices = (bc == c).nonzero(as_tuple=True)[0]
+            if len(indices):
+                if self.container[c][0] is not None:
+                    self.container[c][0] = torch.cat([self.container[c][0], images[indices]])
+                    self.container[c][1] = torch.cat([self.container[c][1], targets[indices]])
+                else:
+                    self.container[c][0] = images[indices]
+                    self.container[c][1] = targets[indices]
+
+            if next_cluster is not None or self.container[c][0] is None:
+                continue
+
+            if self.container[c][0].size(0) == self.batch_size:
+                next_input = self.container[c][0]
+                next_target = self.container[c][1]
+                self.container[c][0], self.container[c][1] = None, None
+                next_cluster = c
+            elif self.container[c][0].size(0) > self.batch_size:
+                next_input = self.container[c][0][:self.batch_size]
+                next_target = self.container[c][1][:self.batch_size]
+                self.container[c][0] = self.container[c][0][self.batch_size:]
+                self.container[c][1] = self.container[c][1][self.batch_size:]
+                next_cluster = c
+        return next_input, next_target, next_cluster
+
+    def check_leftover(self):
+        leftover_batch = 0
+        for c in range(self.num_clusters):
+            if self.container[c][0] is not None:
+                leftover_batch += self.container[c][0].size(0) // self.batch_size
+                if self.container[c][0].size(0) % self.batch_size != 0:
+                    leftover_batch += 1
+        return leftover_batch
+
+    def get_leftover(self):
+        next_cluster = None
+        next_input = None
+        next_target = None
+        for c in range(self.num_clusters):
+            if self.container[c][0] is not None:
+                if self.container[c][0].size(0) > self.batch_size:
+                    next_input = self.container[c][0][:self.batch_size]
+                    next_target = self.container[c][1][:self.batch_size]
+                    self.container[c][0] = self.container[c][0][self.batch_size:]
+                    self.container[c][1] = self.container[c][1][self.batch_size:]
+                else:
+                    next_input = self.container[c][0][:self.batch_size]
+                    next_target = self.container[c][1][:self.batch_size]
+                    self.container[c][0], self.container[c][1] = None, None
+                next_cluster = c
+                break
+        return next_input, next_target, next_cluster
+
+
 class Phase2DataLoader(object):
     def __init__(self, loader, num_clusters, num_data_per_cluster):
         self.data_loader = loader
