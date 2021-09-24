@@ -13,7 +13,7 @@ import logging
 import random
 from time import time
 import torch.cuda.nvtx as nvtx
-
+import time
 
 class RuntimeHelper(object):
     """
@@ -125,6 +125,8 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i in range(len(train_loader)):
+            if i ==10:
+                time.sleep(2)
             nvtx.range_push("train data loading")
             input, target = next(train_iter)
             nvtx.range_pop()
@@ -156,7 +158,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-            if i == 4: break
+            if i == 19: break
 
 def validate(model, test_loader, criterion, logger=None, hvd=None):
     losses = AverageMeter()
@@ -167,6 +169,8 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i in range(len(test_loader)):
+                if i==10:
+                    time.sleep(2)
                 nvtx.range_push("inference data loading")
                 input, target = next(test_iter)
                 nvtx.range_pop()
@@ -183,7 +187,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
-                if i==4: break
+                if i==19: break
 
     if logger:
         if hvd:
@@ -203,6 +207,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i in range(len(test_loader)):
+                if i==10:
+                    time.sleep(2)
                 nvtx.range_push("inference data loading")
                 input, target = next(test_iter)
                 nvtx.range_pop()
@@ -222,7 +228,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
-                if i == 4: break
+                if i == 19: break
 
     if logger:
         if hvd:

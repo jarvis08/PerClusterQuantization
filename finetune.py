@@ -8,6 +8,8 @@ from models import *
 from tqdm import tqdm
 from time import time
 import torch.cuda.nvtx as nvtx
+import time
+import torch.backends.cudnn as cudnn
 
 
 def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch, logger):
@@ -18,6 +20,8 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
     model.train()
     with tqdm(phase1_loader, unit="batch", ncols=90) as t:
         for i in range(len(phase1_loader)):
+            if i ==10:
+                time.sleep(2)
             nvtx.range_push("train data Loading")
             input, target = next(phase1_iter)
             nvtx.range_pop()
@@ -67,7 +71,7 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-            if i == 4: break
+            if i == 19: break
 
 
 def _finetune(args, tools):
@@ -105,6 +109,8 @@ def _finetune(args, tools):
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     criterion = torch.nn.CrossEntropyLoss().cuda()
+
+    cudnn.benchmark = True
 
     save_path_fp = ''
     epoch_to_start = 1
