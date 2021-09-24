@@ -75,7 +75,6 @@ def pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, 
 
 
 def _finetune(args, tools):
-    tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
 
     augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
@@ -255,7 +254,6 @@ def _finetune(args, tools):
         tmp['int_test_score'] = test_score
         json.dump(tmp, f, indent=4)
 
-    tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     method = ''
     if args.quant_noise:
         method += 'QN{:.1f}+'.format(args.qn_prob)
@@ -268,9 +266,6 @@ def _finetune(args, tools):
     if args.bn_momentum < 0.1:
         bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
 
-    with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, LR: {}, {}Epoch: {}, Batch: {}, FQ: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.arch, method, args.lr, bn, args.epoch, args.batch, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):
