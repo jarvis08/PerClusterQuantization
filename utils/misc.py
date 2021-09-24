@@ -290,13 +290,6 @@ def set_clustering_dir(args):
     path = add_path(path, args.clustering_method)
     path = add_path(path, args.dataset)
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
-    with open(os.path.join(path, "params.json"), 'w') as f:
-        if args.clustering_method == 'kmeans':
-            args_to_save = {'k': args.cluster, 'num_partitions': args.partition, 'tol': args.kmeans_tol,
-                            'n_inits': args.kmeans_init, 'epoch': args.kmeans_epoch, 'batch': args.batch}
-        else:
-            args_to_save = {'k': args.cluster, 'num_partitions': args.partition}
-        json.dump(args_to_save, f, indent=4)
     return path
 
 

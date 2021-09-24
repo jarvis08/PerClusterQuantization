@@ -20,30 +20,42 @@ class KMeans(object):
         batch = data.size(0)
         channel = data.size(1)
         _size = data.size(2)
-        n_part = int((self.args.partition / 2) if self.args.partition % 2 == 0 else (self.args.partition / 3))  # Per row or col
-        n_data = int(_size / n_part)  # Per part
-        rst = None
-        for i in range(n_part):
-            r_start = n_data * i
-            for j in range(n_part):
-                c_start = n_data * j
-                # _min = torch.topk(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], k=6, dim=-1, largest=False, sorted=False).values
-                # _max = torch.topk(data[:, :, r_start:r_start + n_data, c_start:c_start + n_data], k=6, dim=-1, largest=True, sorted=False).values
-                # _min = _min.reshape(_min.shape[0], _min.shape[1], -1)
-                # _max = _max.reshape(_max.shape[0], _max.shape[1], -1)
-                # _min = torch.topk(_min, k=6, dim=2, largest=False, sorted=False).values
-                # _max = torch.topk(_max, k=6, dim=2, largest=True, sorted=False).values
-                # _min = torch.mean(_min, dim=2, keepdim=True)
-                # _max = torch.mean(_max, dim=2, keepdim=True)
-                part = data[:, :, r_start:r_start + n_data, c_start:c_start + n_data].reshape(batch, channel, -1)
-                _min = part.min(-1, keepdim=True).values
-                _max = part.max(-1, keepdim=True).values
-                part_range = torch.cat([_min, _max], dim=-1)
+        if self.args.partition_method == 'square':
+            n_part = int((self.args.partition / 2)
+                         if self.args.partition % 2 == 0
+                         else (self.args.partition / 3))  # Per row & col
+            n_data = int(_size / n_part)  # Per part
+            rst = None
+            for i in range(n_part):
+                c_start = n_data * i
+                for j in range(n_part):
+                    r_start = n_data * j
+                    part = data[:, :, c_start:c_start + n_data, r_start:r_start + n_data].reshape(batch, channel, -1)
+                    _min = part.min(-1, keepdim=True).values
+                    _max = part.max(-1, keepdim=True).values
+                    part_rst = torch.cat([_min, _max], dim=-1)
+                    if rst is None:
+                        rst = part_rst
+                    else:
+                        rst = torch.cat([rst, part_rst], dim=-1)
+            return rst.view(rst.size(0), -1).cpu().numpy()
+        else:
+            # To make clustering model more robust about augmentation's horizontal flip
+            n_part = 4
+            n_data = int(_size / n_part)
+            rst = None
+            for c in range(n_part):
+                c_start = n_data * c
+                part_data = data[:, :, c_start:c_start + n_data, :].reshape(batch, channel, -1)
+                _min = part_data.min(-1, keepdim=True).values
+                _max = part_data.max(-1, keepdim=True).values
+
+                part_rst = torch.cat([_min, _max], dim=-1)
                 if rst is None:
-                    rst = part_range
+                    rst = part_rst
                 else:
-                    rst = torch.cat([rst, part_range], dim=-1)
-        return rst.view(rst.size(0), -1).cpu().numpy()
+                    rst = torch.cat([rst, part_rst], dim=-1)
+            return rst.view(rst.size(0), -1).cpu().numpy()
 
     def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
@@ -79,7 +91,7 @@ class KMeans(object):
         best_model = None
         best_model_inertia = 9999999999999999
         print("Train K-means model 10 times, and choose the best model")
-        for trial in range(1, 11):
+        for trial in range(1, 2):
             model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
             early_stopped = False
             t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
@@ -103,7 +115,14 @@ class KMeans(object):
             t_epoch.close()
             if early_stopped:
                 print("Early stop training trial-{} kmeans model".format(trial))
-        joblib.dump(best_model, os.path.join(self.args.clustering_path + '/checkpoint.pkl'))
+
+        path = self.args.clustering_path
+        joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
+        with open(os.path.join(path, "params.json"), 'w') as f:
+            args_to_save = {'k': self.args.cluster, 'partition_method': self.args.partition_method,
+                            'num_partitions': self.args.partition, 'tol': self.args.kmeans_tol,
+                            'n_inits': self.args.kmeans_init, 'epoch': self.args.kmeans_epoch, 'batch': self.args.batch}
+            json.dump(args_to_save, f, indent=4)
         self.model = best_model
 
 
