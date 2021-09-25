@@ -253,7 +253,7 @@ class PCQConv2d(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias, dilation=dilation)
@@ -296,12 +296,12 @@ class PCQConv2d(nn.Module):
             return None
 
         cluster = self.runtime_helper.batch_cluster
-        if self.apply_ema:
+        if self.apply_ema[cluster]:
             self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
             self.act_range[cluster][0] = torch.min(x).item()
             self.act_range[cluster][1] = torch.max(x).item()
-            self.apply_ema = True
+            self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster

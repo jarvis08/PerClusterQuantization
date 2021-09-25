@@ -110,7 +110,7 @@ class PCQBnReLU(nn.Module):
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
 
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False).cuda()
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.activation = activation(inplace=True) if activation else None
 
@@ -186,12 +186,12 @@ class PCQBnReLU(nn.Module):
             return None
 
         cluster = self.runtime_helper.batch_cluster
-        if self.apply_ema:
+        if self.apply_ema[cluster]:
             self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
             self.act_range[cluster][0] = torch.min(x).item()
             self.act_range[cluster][1] = torch.max(x).item()
-            self.apply_ema = True
+            self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
@@ -290,16 +290,24 @@ class FusedBnReLU(nn.Module):
                 fake_out = self._activation(fake_out)
         return STE.apply(out, fake_out)
 
+    def _update_activation_ranges(self, x, external_range=None):
+        if external_range is not None:
+            return None
+
+        cluster = self.runtime_helper.batch_cluster
+        if self.apply_ema:
+            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
+        else:
+            self.act_range[cluster][0] = torch.min(x).item()
+            self.act_range[cluster][1] = torch.max(x).item()
+            self.apply_ema = True
+
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
             s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
         else:
             s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
         return fake_quantize(x, s, z, self.act_qmax, self.use_ste)
-
-    def _update_activation_range(self, x, external_range=None):
-        if external_range is None:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)

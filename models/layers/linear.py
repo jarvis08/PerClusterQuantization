@@ -159,7 +159,7 @@ class PCQLinear(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
@@ -197,12 +197,12 @@ class PCQLinear(nn.Module):
             return None
 
         cluster = self.runtime_helper.batch_cluster
-        if self.apply_ema:
+        if self.apply_ema[cluster]:
             self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
             self.act_range[cluster][0] = torch.min(x).item()
             self.act_range[cluster][1] = torch.max(x).item()
-            self.apply_ema = True
+            self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
