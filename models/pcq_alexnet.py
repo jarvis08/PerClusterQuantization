@@ -60,10 +60,15 @@ class PCQAlexNet(nn.Module):
         s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
         return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
 
+    @torch.no_grad()
     def _update_input_ranges(self, x):
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
         if self.apply_ema[cluster]:
-            self.in_range[cluster][0], self.in_range[cluster][1] = ema(x, self.in_range[cluster], self.smooth)
+            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+            _min = data.min(dim=2).values.mean()
+            _max = data.max(dim=2).values.mean()
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
             self.in_range[cluster][0] = torch.min(x).item()
             self.in_range[cluster][1] = torch.max(x).item()
@@ -130,10 +135,15 @@ class PCQAlexNetSmall(nn.Module):
         x = self.fc3(x)
         return x
 
+    @torch.no_grad()
     def _update_input_ranges(self, x):
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
         if self.apply_ema[cluster]:
-            self.in_range[cluster][0], self.in_range[cluster][1] = ema(x, self.in_range[cluster], self.smooth)
+            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+            _min = data.min(dim=2).values.mean()
+            _max = data.max(dim=2).values.mean()
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
             self.in_range[cluster][0] = torch.min(x).item()
             self.in_range[cluster][1] = torch.max(x).item()
