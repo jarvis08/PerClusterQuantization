@@ -63,6 +63,7 @@ class PCQAlexNet(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema[cluster]:
             data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
             _min = data.min(dim=2).values.mean()
@@ -138,6 +139,7 @@ class PCQAlexNetSmall(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
+        cluster = self.runtime_helper.batch_cluster
         if self.apply_ema[cluster]:
             data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
             _min = data.min(dim=2).values.mean()
