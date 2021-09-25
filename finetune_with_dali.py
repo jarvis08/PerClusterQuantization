@@ -56,15 +56,14 @@ def dali_validate(model, test_loader, criterion, logger=None):
 
 
 def dali_pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
-
     losses = AverageMeter()
     top1 = AverageMeter()
+    model.train()
     container = InputContainer(runtime_helper.num_clusters, clustering_model.args.batch)
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, data in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
-            model.train()
             images, targets = data[0]["data"], data[0]["label"].squeeze(-1).long()
             cluster_info = clustering_model.predict_cluster_of_batch(images)
             images, targets = images.cpu(), targets.cpu()
@@ -91,25 +90,26 @@ def dali_pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, 
 
     leftover = container.check_leftover()
     if leftover:
-        with tqdm(total=leftover, unit="batch", ncols=90) as t:
-            t.set_description("Leftover")
-            input, target, runtime_helper.batch_cluster = container.get_leftover()
-            input = input.cuda()
-            target = target.cuda()
-            output = model(input)
+        with tqdm(range(leftover), unit="batch", ncols=90) as t:
+            for _ in t:
+                t.set_description("Leftover")
+                input, target, runtime_helper.batch_cluster = container.get_leftover()
+                input = input.cuda()
+                target = target.cuda()
+                output = model(input)
 
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec.item(), input.size(0))
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-            t.set_postfix(loss=losses.avg, acc=top1.avg)
+                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
     return top1.avg
 
 
