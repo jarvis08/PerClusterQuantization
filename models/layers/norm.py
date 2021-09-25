@@ -297,17 +297,9 @@ class FusedBnReLU(nn.Module):
                 fake_out = self._activation(fake_out)
         return STE.apply(out, fake_out)
 
-    def _update_activation_ranges(self, x, external_range=None):
-        if external_range is not None:
-            return None
-
-        cluster = self.runtime_helper.batch_cluster
-        if self.apply_ema:
-            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
-        else:
-            self.act_range[cluster][0] = torch.min(x).item()
-            self.act_range[cluster][1] = torch.max(x).item()
-            self.apply_ema = True
+    def _update_activation_range(self, x, external_range=None):
+        if external_range is None:
+            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
