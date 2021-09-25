@@ -291,13 +291,20 @@ class PCQConv2d(nn.Module):
             out = self._activation(out)
         return out
 
+    @torch.no_grad()
     def _update_activation_ranges(self, x, external_range=None):
         if external_range is not None:
             return None
 
         cluster = self.runtime_helper.batch_cluster
         if self.apply_ema[cluster]:
-            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
+            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
+            # self.act_range[cluster][0], self.act_range[cluster][1] = ema(x[indices], self.act_range[cluster], self.smooth)
+            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+            _min = data.min(dim=2).values.mean()
+            _max = data.max(dim=2).values.mean()
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
             self.act_range[cluster][0] = torch.min(x).item()
             self.act_range[cluster][1] = torch.max(x).item()

@@ -40,28 +40,28 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
-    leftover = container.check_leftover()
-    if leftover:
-        with tqdm(range(leftover), unit="batch", ncols=90) as t:
-            for _ in t:
-                t.set_description("Leftover")
-                input, target, runtime_helper.batch_cluster = container.get_leftover()
-                input = input.cuda()
-                target = target.cuda()
-                output = model(input)
+    #leftover = container.check_leftover()
+    #if leftover:
+    #    with tqdm(range(leftover), unit="batch", ncols=90) as t:
+    #        for _ in t:
+    #            t.set_description("Leftover")
+    #            input, target, runtime_helper.batch_cluster = container.get_leftover()
+    #            input = input.cuda()
+    #            target = target.cuda()
+    #            output = model(input)
 
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
+    #            loss = criterion(output, target)
+    #            prec = accuracy(output, target)[0]
+    #            losses.update(loss.item(), input.size(0))
+    #            top1.update(prec.item(), input.size(0))
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+    #            optimizer.zero_grad()
+    #            loss.backward()
+    #            optimizer.step()
 
-                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
+    #            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+    #                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+    #            t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 def _finetune(args, tools):
     tuning_start_time = time()
