@@ -63,12 +63,10 @@ class PCQBasicBlock(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if not self.training:
-            return out
-
-        self._update_activation_ranges(out)
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out)
+        if self.training:
+            self._update_activation_ranges(out)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantize_activation(out)
         return out
 
     def _update_activation_ranges(self, x):
@@ -150,12 +148,10 @@ class PCQBottleneck(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if not self.training:
-            return out
-
-        self._update_activation_ranges(out)
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out)
+        if self.training:
+            self._update_activation_ranges(out)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantize_activation(out)
         return out
 
     def _update_activation_ranges(self, x):
@@ -275,7 +271,7 @@ class PCQResNet(nn.Module):
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
+        return fake_quantize(x, s, z, self.q_max, use_ste=False)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
@@ -330,11 +326,8 @@ class PCQResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if not self.training and not self.runtime_helper.range_update_phase:
-            pass
-        else:
-            if not self.training:
-                self._update_input_ranges(x)
+        if self.training:
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -360,7 +353,7 @@ class PCQResNet20(nn.Module):
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
+        return fake_quantize(x, s, z, self.q_max, use_ste=False)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
