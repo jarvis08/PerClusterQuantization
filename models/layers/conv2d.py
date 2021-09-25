@@ -279,7 +279,7 @@ class PCQConv2d(nn.Module):
         return x
 
     def _pcq(self, x):
-        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+        s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
         if not self.quant_noise:
             w = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=self.use_ste)
         else:
@@ -382,7 +382,7 @@ class FusedConv2d(nn.Module):
             return self._general(x, external_range)
 
     def _general(self, x, external_range=None):
-        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+        s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
         if not self.quant_noise :
             w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
         else:
@@ -390,13 +390,10 @@ class FusedConv2d(nn.Module):
                          kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
                          in_feature=self.in_channels, out_feature=self.out_channels)
 
-        x = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-        if self._norm_layer:
-            x = self._norm_layer(x)
+        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
-            x = self._activation(x)
+            out = self._activation(out)
 
-        out = x
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)

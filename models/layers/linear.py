@@ -181,7 +181,7 @@ class PCQLinear(nn.Module):
         return x
 
     def _pcq(self, x):
-        s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
+        s, z = calc_qparams(self.fc.weight.detach().min(), self.fc.weight.detach().max(), self.q_max)
         if not self.quant_noise:
             w = fake_quantize(self.fc.weight, s, z, self.q_max, use_ste=self.use_ste)
         else:
@@ -265,8 +265,7 @@ class FusedLinear(nn.Module):
                 x = self._activation(x)
             return x
 
-        w = self.fc.weight
-        s, z = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
+        s, z = calc_qparams(self.fc.weight.detach().min(), self.fc.weight.detach().max(), self.q_max)
         if not self.quant_noise:
             w = fake_quantize(self.fc.weight, s, z, self.q_max, self.use_ste)
         else:
