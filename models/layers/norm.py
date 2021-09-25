@@ -302,8 +302,14 @@ class FusedBnReLU(nn.Module):
 
     @torch.no_grad()
     def _update_activation_range(self, x, external_range=None):
-        if external_range is None:
+        if external_range is not None:
+            return None
+
+        if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+        else:
+            self.act_range[0], self.act_range[1] = x.min().item(), x.max().item()
+            self.apply_ema = True
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
