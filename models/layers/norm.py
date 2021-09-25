@@ -196,8 +196,11 @@ class PCQBnReLU(nn.Module):
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.act_range[cluster][0] = torch.min(x).item()
-            self.act_range[cluster][1] = torch.max(x).item()
+            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+            _min = data.min(dim=2).values.mean()
+            _max = data.max(dim=2).values.mean()
+            self.act_range[cluster][0] = _min
+            self.act_range[cluster][1] = _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
@@ -297,6 +300,7 @@ class FusedBnReLU(nn.Module):
                 fake_out = self._activation(fake_out)
         return STE.apply(out, fake_out)
 
+    @torch.no_grad()
     def _update_activation_range(self, x, external_range=None):
         if external_range is None:
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)

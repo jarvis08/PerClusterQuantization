@@ -71,8 +71,11 @@ class PCQAlexNet(nn.Module):
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.in_range[cluster][0] = torch.min(x).item()
-            self.in_range[cluster][1] = torch.max(x).item()
+            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+            _min = data.min(dim=2).values.mean()
+            _max = data.max(dim=2).values.mean()
+            self.in_range[cluster][0] = _min
+            self.in_range[cluster][1] = _max
             self.apply_ema[cluster] = True
 
     def set_quantization_params(self):
@@ -147,8 +150,11 @@ class PCQAlexNetSmall(nn.Module):
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.in_range[cluster][0] = torch.min(x).item()
-            self.in_range[cluster][1] = torch.max(x).item()
+            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+            _min = data.min(dim=2).values.mean()
+            _max = data.max(dim=2).values.mean()
+            self.in_range[cluster][0] = _min
+            self.in_range[cluster][1] = _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
