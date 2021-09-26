@@ -401,16 +401,11 @@ def copy_bn_from_pretrained(_to, _from):
     return _to
 
 
-def copy_pcq_bn_from_pretrained(_to, _from, num_clusters):
+def copy_pcq_bn_from_pretrained(_to, _from, num_clusters, momentum):
     with torch.no_grad():
-        _to.weights = nn.Parameter(_from.weight.clone().detach().unsqueeze(0)
-                                   .repeat(num_clusters, 1), requires_grad=True)
-        _to.biases = nn.Parameter(_from.bias.clone().detach().unsqueeze(0)
-                                  .repeat(num_clusters, 1), requires_grad=True)
-        _to.running_means = nn.Parameter(_from.running_mean.clone().detach()
-                                         .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
-        _to.running_vars = nn.Parameter(_from.running_var.clone().detach()
-                                        .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        for c in num_clusters:
+            _to.norms[c] = deepcopy(_from)
+            _to.norms[c].momentum = momentum
     return _to
 
 

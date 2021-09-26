@@ -405,62 +405,63 @@ def set_pcq_resnet(fused, pre):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     n = fused.arg_dict['cluster']
+    momentum = fused.arg_dict['bn_momentum']
     # First layer
     fused.first_conv = copy_weight_from_pretrained(fused.first_conv, pre.conv1)
-    fused.bn1 = copy_pcq_bn_from_pretrained(fused.bn1, pre.bn1, n)
+    fused.bn1 = copy_pcq_bn_from_pretrained(fused.bn1, pre.bn1, n, momentum)
 
     # Block 1
     block = fused.layer1
     if block[0].downsample is not None:
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer1[0].downsample[0])
-        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer1[0].downsample[1], n)
+        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer1[0].downsample[1], n, momentum)
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer1[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer1[i].conv2)
-        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer1[i].bn1, n)
-        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer1[i].bn2, n)
+        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer1[i].bn1, n, momentum)
+        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer1[i].bn2, n, momentum)
         if type(block[i]) == PCQBottleneck:
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer1[i].conv3)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer1[i].bn3, n)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer1[i].bn3, n, momentum)
 
     # Block 2
     block = fused.layer2
     block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0])
-    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer2[0].downsample[1], n)
+    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer2[0].downsample[1], n, momentum)
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer2[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer2[i].conv2)
-        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer2[i].bn1, n)
-        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer2[i].bn2, n)
+        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer2[i].bn1, n, momentum)
+        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer2[i].bn2, n, momentum)
         if type(block[i]) == PCQBottleneck:
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer2[i].conv3)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer2[i].bn3, n)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer2[i].bn3, n, momentum)
 
     # Block 3
     block = fused.layer3
     block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0])
-    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer3[0].downsample[1], n)
+    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer3[0].downsample[1], n, momentum)
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer3[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer3[i].conv2)
-        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer3[i].bn1, n)
-        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer3[i].bn2, n)
+        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer3[i].bn1, n, momentum)
+        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer3[i].bn2, n, momentum)
         if type(block[i]) == PCQBottleneck:
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer3[i].conv3)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer3[i].bn3, n)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer3[i].bn3, n, momentum)
 
     # Block 4
     if fused.num_blocks == 4:
         block = fused.layer4
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0])
-        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer4[0].downsample[1], n)
+        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer4[0].downsample[1], n, momentum)
         for i in range(len(block)):
             block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer4[i].conv1)
             block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer4[i].conv2)
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer4[i].conv3)
-            block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer4[i].bn1, n)
-            block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer4[i].bn2, n)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer4[i].bn3, n)
+            block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer4[i].bn1, n, momentum)
+            block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer4[i].bn2, n, momentum)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer4[i].bn3, n, momentum)
 
     # Classifier
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
