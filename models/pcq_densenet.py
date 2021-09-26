@@ -124,8 +124,6 @@ class PCQDenseBlock(nn.ModuleDict):
 
         if self.training:
             self._update_activation_ranges(out)
-            if self.runtime_helper.apply_fake_quantization:
-                out = self._fake_quantize_activation(out)
         return out
 
     @torch.no_grad()
