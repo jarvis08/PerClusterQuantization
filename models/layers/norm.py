@@ -167,14 +167,10 @@ class PCQBnReLU(nn.Module):
         with torch.no_grad():
             folded_weight = _weight.div(torch.sqrt(_var) + self.eps)
             folded_bias = _bias - folded_weight * _mean
+
             _min = folded_weight.min()
             _max = folded_weight.max()
-            if _min > 0:
-                scale, zero_point = calc_qparams(torch.tensor(0), _max, self.w_qmax)
-            elif _max < 0:
-                scale, zero_point = calc_qparams(_min, torch.tensor(0), self.w_qmax)
-            else:
-                scale, zero_point = calc_qparams(_min, _max, self.w_qmax)
+            scale, zero_point = calc_qparams(_min, _max, self.w_qmax)
             fake_weight = fake_quantize(folded_weight, scale, zero_point, self.w_qmax, use_ste=False)
 
             fake_out = x * fake_weight[None, :, None, None] + folded_bias[None, :, None, None]
@@ -209,12 +205,7 @@ class PCQBnReLU(nn.Module):
         folded_weights = self.weights.clone().detach().div(torch.sqrt(self.running_vars.clone().detach() + self.eps))
         _min = folded_weights.min()
         _max = folded_weights.max()
-        if _min > 0:
-            self.s2, self.z2 = calc_qparams(torch.tensor(0), _max, self.w_qmax)
-        elif _max < 0:
-            self.s2, self.z2 = calc_qparams(_min, torch.tensor(0), self.w_qmax)
-        else:
-            self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
+        self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
 
         if s_external:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
