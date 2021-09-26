@@ -337,12 +337,22 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
-                weight = _fp.weights.clone().detach().div(torch.sqrt(_fp.running_vars.clone().detach() + _fp.eps))
-                bias = _fp.biases.clone().detach() - weight * _fp.running_means.clone().detach()
-                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
-                _int.weight.copy_(weight.type(torch.cuda.IntTensor))
+                _weights = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
+                _biases = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
+                _means = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
+                _vars = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
+                for c in range(_fp.num_clusters):
+                    _weights[c] = _fp.norms[c].weight
+                    _biases[c] = _fp.norms[c].bias
+                    _means[c] = _fp.norms[c].running_mean
+                    _vars[c] = _fp.norms[c].running_var
+
+                w = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
+                b = _biases - w * _means
+                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
+                _int.weight.copy_(w.type(torch.cuda.IntTensor))
                 for c in range(_int.num_clusters):
-                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
+                    b = quantize_matrix(b[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
                     _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
             else:
                 w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
@@ -403,7 +413,7 @@ def copy_bn_from_pretrained(_to, _from):
 
 def copy_pcq_bn_from_pretrained(_to, _from, num_clusters, momentum):
     with torch.no_grad():
-        for c in num_clusters:
+        for c in range(num_clusters):
             _to.norms[c] = deepcopy(_from)
             _to.norms[c].momentum = momentum
     return _to

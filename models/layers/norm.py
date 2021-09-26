@@ -108,14 +108,12 @@ class PCQBnReLU(nn.Module):
 
         self.w_qmax = w_qmax
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
-
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False).cuda()
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
-        self.activation = activation(inplace=True) if activation else None
-
         self.num_features = num_features
         self.norms = nn.ModuleList([nn.BatchNorm2d(num_features) for _ in range(self.num_clusters)])
+        self.activation = activation(inplace=True) if activation else None
 
     def forward(self, x, external_range=None):
         if not self.training:
@@ -130,29 +128,27 @@ class PCQBnReLU(nn.Module):
 
     def _forward_impl(self, x):
         bc = self.runtime_helper.batch_cluster
-        # _means = torch.index_select(self.running_means, 0, bc)
-        # _vars = torch.index_select(self.running_vars, 0, bc)
-        # _weights = torch.index_select(self.weights, 0, bc)
-        # _biases = torch.index_select(self.biases, 0, bc)
-        #
-        # out = (x - _means[:, :, None, None]) / (torch.sqrt(_vars[:, :, None, None] + self.eps)) \
-        #        * _weights[:, :, None, None] + _biases[:, :, None, None]
-        # if self.activation is not None:
-        #     out = self.activation(out)
-        # return out
+        exists = torch.unique(bc)
+        out = torch.zeros(x.shape).cuda()
+        for c in exists:
+            indices = (bc == c).nonzero(as_tuple=True)[0]
+            out[indices] = self.norms[c](x[indices])
+        if self.activation is not None:
+            out = self.activation(out)
+        return out
 
     def _pcq(self, x):
         cluster = self.runtime_helper.batch_cluster
         out = self.norms[cluster](x)
-        if self._activation:
-            out = self._activation(out)
+        if self.activation:
+            out = self.activation(out)
 
         with torch.no_grad():
             _x = x.detach()
             mean = _x.mean(dim=(0, 2, 3))
             var = _x.var(dim=(0, 2, 3), unbiased=False)
 
-            folded_weight = self.norms[cluster].weight.div(torch.sqrt(var) + self.eps)
+            folded_weight = self.norms[cluster].weight.div(torch.sqrt(var) + self.norms[0].eps)
             folded_bias = self.norms[cluster].bias - folded_weight * mean
             _min = folded_weight.min()
             _max = folded_weight.max()
@@ -185,13 +181,19 @@ class PCQBnReLU(nn.Module):
             s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.act_qmax)
         return fake_quantize(x, s, z, self.act_qmax, use_ste=self.use_ste)
 
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
 
-        # folded_weights = self.weights.clone().detach().div(torch.sqrt(self.running_vars.clone().detach() + self.eps))
-        # _min = folded_weights.min()
-        # _max = folded_weights.max()
-        # self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
+        _weights = torch.zeros(self.num_clusters, self.num_features).cuda()
+        _vars = torch.ones(self.num_clusters, self.num_features).cuda()
+        for c in range(self.num_clusters):
+            _weights[c] = self.norms[c].weight
+            _vars[c] = self.norms[c].running_var
+        folded_weights = _weights.div(torch.sqrt(_vars + self.norms[0].eps))
+        _min = folded_weights.min()
+        _max = folded_weights.max()
+        self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
 
         if s_external:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
@@ -199,10 +201,10 @@ class PCQBnReLU(nn.Module):
         else:
             self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.act_qmax)
 
-        # self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        # self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        # for c in range(self.num_clusters):
-        #     self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
+        self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        for c in range(self.num_clusters):
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 
 
