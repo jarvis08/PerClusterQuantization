@@ -169,7 +169,8 @@ class PCQLinear(nn.Module):
             return self._forward_impl(x)
 
         out = self._pcq(x)
-        self._update_activation_ranges(out, external_range)
+        if external_range is None:
+            self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -193,25 +194,16 @@ class PCQLinear(nn.Module):
         return out
 
     @torch.no_grad()
-    def _update_activation_ranges(self, x, external_range=None):
-        if external_range is not None:
-            return None
-
+    def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
-            # self.act_range[cluster][0], self.act_range[cluster][1] = ema(x[indices], self.act_range[cluster], self.smooth)
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.act_range[cluster][0] = _min
-            self.act_range[cluster][1] = _max
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
@@ -273,10 +265,10 @@ class FusedLinear(nn.Module):
 
         out = F.linear(x, w, self.fc.bias)
         if self._activation:
-            out = self._activation(x)
+            out = self._activation(out)
 
         if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
                 out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)

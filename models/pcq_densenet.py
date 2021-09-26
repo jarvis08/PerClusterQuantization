@@ -63,7 +63,6 @@ class PCQTransition(nn.Sequential):
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
 
         self.bn = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
@@ -123,29 +122,23 @@ class PCQDenseBlock(nn.ModuleDict):
             features.append(new_features)
         out = torch.cat(features, 1)
 
-        if not self.training:
-            return out
-
-        self._update_activation_ranges(out)
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out)
+        if self.training:
+            self._update_activation_ranges(out)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantize_activation(out)
         return out
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.act_range[cluster][0] = _min
-            self.act_range[cluster][1] = _max
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):
@@ -216,7 +209,6 @@ class PCQDenseNet(nn.Module):
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
-        # out = self.features(x)
         out = self.features.first_conv(x)
         out = self.features.first_norm(out, self.features.denseblock1.act_range)
         out = self.features.maxpool(out)
@@ -237,24 +229,20 @@ class PCQDenseNet(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.in_range[cluster][0] = _min
-            self.in_range[cluster][1] = _max
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
+        return fake_quantize(x, s, z, self.q_max)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)

@@ -72,20 +72,14 @@ class PCQBasicBlock(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
-            # self.act_range[cluster][0], self.act_range[cluster][1] = ema(x[indices], self.act_range[cluster], self.smooth)
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.act_range[cluster][0] = _min
-            self.act_range[cluster][1] = _max
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):
@@ -167,20 +161,14 @@ class PCQBottleneck(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
-            # self.act_range[cluster][0], self.act_range[cluster][1] = ema(x[indices], self.act_range[cluster], self.smooth)
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.act_range[cluster][0] = _min
-            self.act_range[cluster][1] = _max
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):
@@ -282,26 +270,20 @@ class PCQResNet(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
-            # self.in_range[cluster][0], self.in_range[cluster][1] = ema(x[indices], self.in_range[cluster], self.smooth)
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.in_range[cluster][0] = _min
-            self.in_range[cluster][1] = _max
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=False)
+        return fake_quantize(x, s, z, self.q_max)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
@@ -374,26 +356,20 @@ class PCQResNet20(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         if self.apply_ema[cluster]:
-            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
-            # self.in_range[cluster][0], self.in_range[cluster][1] = ema(x[indices], self.in_range[cluster], self.smooth)
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
-            self.in_range[cluster][0] = _min
-            self.in_range[cluster][1] = _max
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=False)
+        return fake_quantize(x, s, z, self.q_max)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)

@@ -267,7 +267,8 @@ class PCQConv2d(nn.Module):
             return self._forward_impl(x)
 
         out = self._pcq(x)
-        self._update_activation_ranges(out, external_range)
+        if external_range is None:
+            self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -292,21 +293,15 @@ class PCQConv2d(nn.Module):
         return out
 
     @torch.no_grad()
-    def _update_activation_ranges(self, x, external_range=None):
-        if external_range is not None:
-            return None
-
+    def _update_activation_ranges(self, x):
+        data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
+        _min = data.min(dim=2).values.mean()
+        _max = data.max(dim=2).values.mean()
         cluster = self.runtime_helper.batch_cluster
         if self.apply_ema[cluster]:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
-            _min = data.min(dim=2).values.mean()
-            _max = data.max(dim=2).values.mean()
             self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
@@ -378,7 +373,7 @@ class FusedConv2d(nn.Module):
 
     def _general(self, x, external_range=None):
         s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
-        if not self.quant_noise :
+        if not self.quant_noise:
             w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
         else:
             w = apply_qn(self.conv.weight, s, z, self.q_max, qn_prob=self.qn_prob,
@@ -395,7 +390,7 @@ class FusedConv2d(nn.Module):
                 out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
         else:
             if self.apply_ema:
-                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
                     out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)

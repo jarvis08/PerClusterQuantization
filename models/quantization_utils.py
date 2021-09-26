@@ -43,7 +43,6 @@ def calc_qparams(_min, _max, q_max):
         return s, z
 
 
-@torch.no_grad()
 def get_range(x):
     _x = x.detach()
     return _x.min().item(), _x.max().item()
