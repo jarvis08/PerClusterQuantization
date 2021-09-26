@@ -133,8 +133,7 @@ class FusedDenseBlock(nn.ModuleDict):
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
         else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
+            self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema = True
         return _out
 
@@ -204,8 +203,7 @@ class FusedDenseNet(nn.Module):
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)
             else:
-                self.in_range[0] = torch.min(x).item()
-                self.in_range[1] = torch.max(x).item()
+                self.in_range[0], self.in_range[1] = get_range(x)
                 self.apply_ema = True
 
         # out = self.features(x)

@@ -43,6 +43,12 @@ def calc_qparams(_min, _max, q_max):
         return s, z
 
 
+@torch.no_grad()
+def get_range(x):
+    _x = x.detach()
+    return _x.min().item(), _x.max().item()
+
+
 def calc_qparams_per_cluster(ranges, q_max):
     s = ranges[:, 1].sub(ranges[:, 0]).div(q_max)
 
@@ -62,11 +68,10 @@ def calc_qparams_per_cluster(ranges, q_max):
 
 @torch.no_grad()
 def ema(x, averaged, smooth):
-    _min = torch.min(x).item()
-    _max = torch.max(x).item()
-    rst_min = averaged[0] * smooth + _min * (1 - smooth)
-    rst_max = averaged[1] * smooth + _max * (1 - smooth)
-    return rst_min, rst_max
+    _min, _max = torch.min(x).item(), torch.max(x).item()
+    updated_min = averaged[0] * smooth + _min * (1 - smooth)
+    updated_max = averaged[1] * smooth + _max * (1 - smooth)
+    return updated_min, updated_max
 
 
 @torch.no_grad()

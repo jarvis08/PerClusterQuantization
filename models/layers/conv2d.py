@@ -298,8 +298,6 @@ class PCQConv2d(nn.Module):
 
         cluster = self.runtime_helper.batch_cluster
         if self.apply_ema[cluster]:
-            # indices = torch.randint(0, x.size(0), (8,), dtype=torch.long, device='cuda', requires_grad=False)
-            # self.act_range[cluster][0], self.act_range[cluster][1] = ema(x[indices], self.act_range[cluster], self.smooth)
             data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
             _min = data.min(dim=2).values.mean()
             _max = data.max(dim=2).values.mean()
@@ -309,8 +307,7 @@ class PCQConv2d(nn.Module):
             data = x.view(self.runtime_helper.data_per_cluster, x.size(0) // self.runtime_helper.data_per_cluster, -1)
             _min = data.min(dim=2).values.mean()
             _max = data.max(dim=2).values.mean()
-            self.act_range[cluster][0] = _min
-            self.act_range[cluster][1] = _max
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
@@ -323,9 +320,7 @@ class PCQConv2d(nn.Module):
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
-
         self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-
         if s_external:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
                                nn.Parameter(z_external, requires_grad=False)
@@ -397,16 +392,15 @@ class FusedConv2d(nn.Module):
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
-                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+                out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
         else:
             if self.apply_ema:
                 self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-                    out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+                    out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
             else:
-                self.act_range[0] = torch.min(x).item()
-                self.act_range[1] = torch.max(x).item()
+                self.act_range[0], self.act_range[1] = get_range(out)
                 self.apply_ema = True
         return out
 

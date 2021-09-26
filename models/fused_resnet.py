@@ -68,17 +68,15 @@ class FusedBasicBlock(nn.Module):
         if not self.training:
             return out
         
-        _out = out
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                out = fake_quantize(out, s, z, self.q_max, self.use_ste)
         else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
+            self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema = True
-        return _out
+        return out
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -144,17 +142,15 @@ class FusedBottleneck(nn.Module):
         if not self.training:
             return out
 
-        _out = out
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                out = fake_quantize(out, s, z, self.q_max, self.use_ste)
         else:
-            self.act_range[0] = torch.min(out).item()
-            self.act_range[1] = torch.max(out).item()
+            self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema = True
-        return _out
+        return out
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -242,8 +238,7 @@ class FusedResNet(nn.Module):
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)
             else:
-                self.in_range[0] = torch.min(x).item()
-                self.in_range[1] = torch.max(x).item()
+                self.in_range[0], self.in_range[1] = get_range(x)
                 self.apply_ema = True
 
         x = self.first_conv(x)
@@ -330,8 +325,7 @@ class FusedResNet20(nn.Module):
                     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
                     x = fake_quantize(x, s, z, self.q_max)
             else:
-                self.in_range[0] = torch.min(x).item()
-                self.in_range[1] = torch.max(x).item()
+                self.in_range[0], self.in_range[1] = get_range(x)
                 self.apply_ema = True
 
         x = self.first_conv(x)

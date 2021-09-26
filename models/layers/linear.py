@@ -271,19 +271,17 @@ class FusedLinear(nn.Module):
         else:
             w = apply_qn(self.fc.weight, s, z, self.q_max, qn_prob=self.qn_prob)
 
-        x = F.linear(x, w, self.fc.bias)
+        out = F.linear(x, w, self.fc.bias)
         if self._activation:
-            x = self._activation(x)
+            out = self._activation(x)
 
-        out = x
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+                out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
         else:
-            self.act_range[0] = torch.min(x).item()
-            self.act_range[1] = torch.max(x).item()
+            self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema = True
         return out
 
