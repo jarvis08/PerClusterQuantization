@@ -63,6 +63,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     #                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
     #            t.set_postfix(loss=losses.avg, acc=top1.avg)
 
+
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
