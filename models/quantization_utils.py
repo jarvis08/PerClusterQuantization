@@ -26,6 +26,8 @@ class QuantizationTool(object):
 
 @torch.no_grad()
 def calc_qparams(_min, _max, q_max):
+    _min = torch.tensor(0.0).cuda() if _min > 0.0 else _min
+    _max = torch.tensor(0.0).cuda() if _max < 0.0 else _max
     s = (_max - _min) / q_max
     if q_max == 15:            # UINT 4
         z = - torch.round(_min / s)
