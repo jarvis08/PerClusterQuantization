@@ -347,12 +347,12 @@ def quantize_layer_and_transfer(_fp, _int):
                     _means[c] = _fp.norms[c].running_mean
                     _vars[c] = _fp.norms[c].running_var
 
-                w = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
-                b = _biases - w * _means
-                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
-                _int.weight.copy_(w.type(torch.cuda.IntTensor))
+                weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
+                bias = _biases - weight * _means
+                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
+                _int.weight.copy_(weight.type(torch.cuda.IntTensor))
                 for c in range(_int.num_clusters):
-                    b = quantize_matrix(b[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
+                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
                     _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
             else:
                 w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
