@@ -24,6 +24,11 @@ class QuantizationTool(object):
         self.quantized_model_initializer = None
 
 
+def get_range(x):
+    _x = x.detach()
+    return _x.min().item(), _x.max().item()
+
+
 @torch.no_grad()
 def calc_qparams(_min, _max, q_max):
     _min = torch.tensor(0.0).cuda() if _min > 0.0 else _min
@@ -45,23 +50,31 @@ def calc_qparams(_min, _max, q_max):
         return s, z
 
 
-def get_range(x):
-    _x = x.detach()
-    return _x.min().item(), _x.max().item()
-
-
+@torch.no_grad()
 def calc_qparams_per_cluster(ranges, q_max):
-    s = ranges[:, 1].sub(ranges[:, 0]).div(q_max)
-
+    _min = torch.where(ranges[:, 0] > 0, ranges[:, 0], torch.tensor(0.0, dtype=torch.float, device='cuda'))
+    _max = torch.where(ranges[:, 1] < 0, ranges[:, 1], torch.tensor(0.0, dtype=torch.float, device='cuda'))
+    s = _max.sub(_min).div(q_max)
     if q_max == 15:
-        z = - torch.round(ranges[:, 0] / s)
+        z = - torch.round(_min / s)
         return s, torch.clamp(z, 0, 15).cuda()
     elif q_max == 255:
-        z = -128 - torch.round(ranges[:, 0] / s)
+        z = -128 - torch.round(_min / s)
         return s, torch.clamp(z, -128, 127).cuda()
     elif q_max == 65535:
-        z = -32768 - torch.round(ranges[:, 0] / s)
+        z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767).cuda()
+
+    # s = ranges[:, 1].sub(ranges[:, 0]).div(q_max)
+    # if q_max == 15:
+    #     z = - torch.round(ranges[:, 0] / s)
+    #     return s, torch.clamp(z, 0, 15).cuda()
+    # elif q_max == 255:
+    #     z = -128 - torch.round(ranges[:, 0] / s)
+    #     return s, torch.clamp(z, -128, 127).cuda()
+    # elif q_max == 65535:
+    #     z = -32768 - torch.round(ranges[:, 0] / s)
+    #     return s, torch.clamp(z, -32768, 32767).cuda()
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
     return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False).cuda()
@@ -84,6 +97,7 @@ def ema_per_cluster(x, averaged_ranges, num_clusters, smooth):
     averaged_ranges.mul_(smooth).add_(batch_range * (1 - smooth))
 
 
+@torch.no_grad()
 def bn_ema(cur, pre, smooth):
     mean = pre[0] * smooth + cur[0].running_mean * (1 - smooth)
     var = pre[1] * smooth + cur[1].running_var * (1 - smooth)
