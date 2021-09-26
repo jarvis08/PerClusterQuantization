@@ -52,8 +52,9 @@ def calc_qparams(_min, _max, q_max):
 
 @torch.no_grad()
 def calc_qparams_per_cluster(ranges, q_max):
-    _min = torch.where(ranges[:, 0] > 0, ranges[:, 0], torch.tensor(0.0, dtype=torch.float, device='cuda'))
-    _max = torch.where(ranges[:, 1] < 0, ranges[:, 1], torch.tensor(0.0, dtype=torch.float, device='cuda'))
+    zero = torch.tensor(0.0, device='cuda')
+    _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
+    _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
     s = _max.sub(_min).div(q_max)
     if q_max == 15:
         z = - torch.round(_min / s)
@@ -64,17 +65,6 @@ def calc_qparams_per_cluster(ranges, q_max):
     elif q_max == 65535:
         z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767).cuda()
-
-    # s = ranges[:, 1].sub(ranges[:, 0]).div(q_max)
-    # if q_max == 15:
-    #     z = - torch.round(ranges[:, 0] / s)
-    #     return s, torch.clamp(z, 0, 15).cuda()
-    # elif q_max == 255:
-    #     z = -128 - torch.round(ranges[:, 0] / s)
-    #     return s, torch.clamp(z, -128, 127).cuda()
-    # elif q_max == 65535:
-    #     z = -32768 - torch.round(ranges[:, 0] / s)
-    #     return s, torch.clamp(z, -32768, 32767).cuda()
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
     return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False).cuda()
