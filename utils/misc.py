@@ -28,7 +28,7 @@ class RuntimeHelper(object):
         self.qn_prob = 0.0
 
         self.range_update_phase = False
-        self.pcq_initialized = False
+        self.pcq_initialized = True
 
         self.num_clusters = None
         self.data_per_cluster = None
