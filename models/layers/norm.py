@@ -127,7 +127,7 @@ class PCQBnReLU(nn.Module):
 
         out = self._pcq(x)
         if external_range is None:
-            self._update_activation_ranges(out.detach())
+            self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -182,6 +182,7 @@ class PCQBnReLU(nn.Module):
                 fake_out = self.activation(fake_out)
         return STE.apply(out, fake_out)
 
+    @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
         data = x.view(x.size(0), -1)
