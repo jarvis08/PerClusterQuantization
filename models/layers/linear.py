@@ -213,6 +213,7 @@ class PCQLinear(nn.Module):
             s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.act_qmax)
         return fake_quantize(x, s, z, self.act_qmax, use_ste=self.use_ste)
 
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)

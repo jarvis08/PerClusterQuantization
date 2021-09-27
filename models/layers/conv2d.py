@@ -313,9 +313,10 @@ class PCQConv2d(nn.Module):
             s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.act_qmax)
         return fake_quantize(x, s, z, self.act_qmax, use_ste=self.use_ste)
 
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
-        self.s2, self.z2 = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
+        self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
         if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
                                nn.Parameter(z_external, requires_grad=False)

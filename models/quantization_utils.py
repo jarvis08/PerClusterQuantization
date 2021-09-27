@@ -34,6 +34,7 @@ def calc_qparams(range_min, range_max, q_max):
     _min = torch.tensor(0.0, device='cuda') if range_min > 0.0 else range_min
     _max = torch.tensor(0.0, device='cuda') if range_max < 0.0 else range_max
     s = (_max - _min) / q_max
+
     if q_max == 15:            # UINT 4
         z = - torch.round(_min / s)
         return s, torch.clamp(z, 0, q_max)
@@ -67,7 +68,7 @@ def calc_qparams_per_cluster(ranges, q_max):
         return s, torch.clamp(z, -32768, 32767).cuda()
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
-    return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False).cuda()
+    return s, torch.nn.Parameter(torch.zeros(s.shape, device='cuda'), requires_grad=False)
 
 
 @torch.no_grad()
@@ -95,7 +96,6 @@ def bn_ema(cur, pre, smooth):
 
 
 def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
-    _x = x.detach()
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -105,16 +105,13 @@ def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+    _x = (torch.clamp(torch.round(x.detach() / scale + zero_point), _qmin, _qmax) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
-    _x = x.detach()
-    s = torch.index_select(scale, 0, cluster_per_data)[:, None]
-    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -124,16 +121,15 @@ def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, 
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
+    s = torch.index_select(scale, 0, cluster_per_data)[:, None]
+    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
+    _x = (torch.clamp(torch.round(x.detach() / s + z), _qmin, _qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
-    _x = x.detach()
-    s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
-    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -143,14 +139,15 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, 
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
+    s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
+    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
+    _x = (torch.clamp(torch.round(x.detach() / s + z), _qmin, _qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
-    _x = x.detach()
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -160,8 +157,8 @@ def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channe
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
+    _x = x.detach()
     fq_x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
-
     if kernel_size is None:
         mask = torch.zeros_like(_x)
         mask.bernoulli_(1 - qn_prob)
@@ -341,15 +338,16 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
-                _weights = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
-                _biases = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
-                _means = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
-                _vars = torch.zeros(_fp.num_clusters, _fp.num_features).cuda()
+                _size = (_fp.num_clusters, _fp.num_features)
+                _weights = torch.zeros(_size, device='cuda')
+                _biases = torch.zeros(_size, device='cuda')
+                _means = torch.zeros(_size, device='cuda')
+                _vars = torch.zeros(_size, device='cuda')
                 for c in range(_fp.num_clusters):
-                    _weights[c] = _fp.norms[c].weight
-                    _biases[c] = _fp.norms[c].bias
-                    _means[c] = _fp.norms[c].running_mean
-                    _vars[c] = _fp.norms[c].running_var
+                    _weights[c] = _fp.norms[c].weight.clone().detach()
+                    _biases[c] = _fp.norms[c].bias.clone().detach()
+                    _means[c] = _fp.norms[c].running_mean.clone().detach()
+                    _vars[c] = _fp.norms[c].running_var.clone().detach()
 
                 weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
                 bias = _biases - weight * _means

@@ -133,13 +133,14 @@ class PCQBnReLU(nn.Module):
         for c in exists:
             indices = (bc == c).nonzero(as_tuple=True)[0]
             out[indices] = self.norms[c](x[indices])
-        if self.activation is not None:
+        if self.activation:
             out = self.activation(out)
         return out
 
     def _pcq(self, x):
         cluster = self.runtime_helper.batch_cluster
-        out = self.norms[cluster](x)
+        bn = self.norms[cluster]
+        out = bn(x)
         if self.activation:
             out = self.activation(out)
 
@@ -148,15 +149,13 @@ class PCQBnReLU(nn.Module):
             mean = _x.mean(dim=(0, 2, 3))
             var = _x.var(dim=(0, 2, 3), unbiased=False)
 
-            folded_weight = self.norms[cluster].weight.div(torch.sqrt(var) + self.norms[0].eps)
-            folded_bias = self.norms[cluster].bias - folded_weight * mean
-            _min = folded_weight.min()
-            _max = folded_weight.max()
-            scale, zero_point = calc_qparams(_min, _max, self.w_qmax)
-            fake_weight = fake_quantize(folded_weight, scale, zero_point, self.w_qmax)
+            weight = bn.weight.div(torch.sqrt(var + bn.eps))
+            bias = bn.bias - weight * mean
+            scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+            weight = fake_quantize(weight, scale, zero_point, self.w_qmax)
 
-            fake_out = x * fake_weight[None, :, None, None] + folded_bias[None, :, None, None]
-            if self.activation is not None:
+            fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
+            if self.activation:
                 fake_out = self.activation(fake_out)
         return STE.apply(out, fake_out)
 
@@ -185,15 +184,13 @@ class PCQBnReLU(nn.Module):
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
 
-        _weights = torch.zeros(self.num_clusters, self.num_features).cuda()
-        _vars = torch.ones(self.num_clusters, self.num_features).cuda()
+        _weights = torch.zeros((self.num_clusters, self.num_features), device='cuda')
+        _vars = torch.ones((self.num_clusters, self.num_features), device='cuda')
         for c in range(self.num_clusters):
             _weights[c] = self.norms[c].weight
             _vars[c] = self.norms[c].running_var
-        folded_weights = _weights.div(torch.sqrt(_vars + self.norms[0].eps))
-        _min = folded_weights.min()
-        _max = folded_weights.max()
-        self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
+        weight = _weights.div(torch.sqrt(_vars + self.norms[0].eps))
+        self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_qmax)
 
         if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
@@ -250,13 +247,11 @@ class FusedBnReLU(nn.Module):
             _x = x.detach()
             mean = _x.mean(dim=(0, 2, 3))
             var = _x.var(dim=(0, 2, 3), unbiased=False)
+
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
             bias = self.bn.bias - weight * mean
-
-            _min = weight.min()
-            _max = weight.max()
-            s, z = calc_qparams(_min, _max, self.w_qmax)
-            weight = fake_quantize(weight, s, z, self.w_qmax, use_ste=False)
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+            weight = fake_quantize(weight, s, z, self.w_qmax)
 
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
             if self._activation:

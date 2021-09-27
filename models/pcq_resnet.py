@@ -87,6 +87,7 @@ class PCQBasicBlock(nn.Module):
         s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
         return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
+    @torch.no_grad()
     def set_block_qparams(self, s1, z1):
         if self.downsample:
             prev_s, prev_z = self.downsample.set_qparams(s1, z1)
@@ -315,8 +316,8 @@ class PCQResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                    arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict,
+                                    act_qmax=self.act_qmax)
         self.bn1 = PCQBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
@@ -371,6 +372,7 @@ class PCQResNet20(nn.Module):
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
         return fake_quantize(x, s, z, self.q_max)
 
+    @torch.no_grad()
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
@@ -509,7 +511,7 @@ def modify_pcq_resnet_qn_pre_hook(model):
     model.first_conv.quant_noise = False
     # Block 1
     block = model.layer1
-    if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
+    if len(model.layer3) == 6:
         m = block[0].downsample
         m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, q_max=m.q_max)
     for i in range(len(block)):
