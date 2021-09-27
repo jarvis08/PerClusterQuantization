@@ -78,6 +78,9 @@ class FusedBasicBlock(nn.Module):
             self.act_range[0] = torch.min(out).item()
             self.act_range[1] = torch.max(out).item()
             self.apply_ema = True
+
+        with open('./bottleneck.txt', 'a') as f:
+            f.write('{}, {}'.format(self.act_range[0], self.act_range[1]))
         return _out
 
     def set_block_qparams(self, s1, z1):
