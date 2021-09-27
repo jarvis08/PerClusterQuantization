@@ -13,7 +13,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     losses = AverageMeter()
     top1 = AverageMeter()
     model.train()
-    container = InputContainer(runtime_helper.num_clusters, clustering_model.args.batch)
+    container = InputContainer(runtime_helper.num_clusters, clustering_model.args.dataset, clustering_model.args.batch)
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (images, targets) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))

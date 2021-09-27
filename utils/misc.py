@@ -39,10 +39,11 @@ class RuntimeHelper(object):
 
 
 class InputContainer(object):
-    def __init__(self, num_clusters, batch_size):
+    def __init__(self, num_clusters, dataset_name, batch_size):
+        img_size = 224 if dataset_name == 'imagenet' else 32
         self.num_clusters = num_clusters
         self.batch_size = batch_size
-        self.container = [[None, None] for _ in range(num_clusters)]
+        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0)] for _ in range(num_clusters)]
 
     @torch.no_grad()
     def gather_and_get_data(self, images, targets, cluster_info):
@@ -51,23 +52,13 @@ class InputContainer(object):
         next_target = None
         for c in range(self.num_clusters):
             indices = (cluster_info == c).nonzero(as_tuple=True)[0]
-            if len(indices):
-                if self.container[c][0] is not None:
-                    self.container[c][0] = torch.cat([self.container[c][0], images[indices]])
-                    self.container[c][1] = torch.cat([self.container[c][1], targets[indices]])
-                else:
-                    self.container[c][0] = images[indices]
-                    self.container[c][1] = targets[indices]
+            self.container[c][0] = torch.cat([self.container[c][0], images[indices]])
+            self.container[c][1] = torch.cat([self.container[c][1], targets[indices]])
 
-            if next_cluster is not None or self.container[c][0] is None:
+            if next_cluster is not None:
                 continue
 
-            if self.container[c][0].size(0) == self.batch_size:
-                next_input = self.container[c][0]
-                next_target = self.container[c][1]
-                self.container[c][0], self.container[c][1] = None, None
-                next_cluster = c
-            elif self.container[c][0].size(0) > self.batch_size:
+            if self.container[c][0].size(0) >= self.batch_size:
                 next_input = self.container[c][0][:self.batch_size]
                 next_target = self.container[c][1][:self.batch_size]
                 self.container[c][0] = self.container[c][0][self.batch_size:]
