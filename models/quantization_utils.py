@@ -30,9 +30,9 @@ def get_range(x):
 
 
 @torch.no_grad()
-def calc_qparams(_min, _max, q_max):
-    _min = torch.tensor(0.0).cuda() if _min > 0.0 else _min
-    _max = torch.tensor(0.0).cuda() if _max < 0.0 else _max
+def calc_qparams(range_min, range_max, q_max):
+    _min = torch.tensor(0.0, device='cuda') if range_min > 0.0 else range_min
+    _max = torch.tensor(0.0, device='cuda') if range_max < 0.0 else range_max
     s = (_max - _min) / q_max
     if q_max == 15:            # UINT 4
         z = - torch.round(_min / s)

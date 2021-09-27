@@ -108,7 +108,7 @@ class PCQBnReLU(nn.Module):
 
         self.w_qmax = w_qmax
         self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
-        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False).cuda()
+        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.num_features = num_features

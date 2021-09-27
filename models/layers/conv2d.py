@@ -258,7 +258,7 @@ class PCQConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias, dilation=dilation)
 
-        self._activation = activation(inplace=False) if activation else None
+        self._activation = activation(inplace=True) if activation else None
         self.out_channels = out_channels
         self.in_channels = in_channels
 
@@ -316,7 +316,7 @@ class PCQConv2d(nn.Module):
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
-        if s_external:
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
                                nn.Parameter(z_external, requires_grad=False)
         else:

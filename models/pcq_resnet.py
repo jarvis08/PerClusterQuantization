@@ -46,7 +46,7 @@ class PCQBasicBlock(nn.Module):
         self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, act_qmax=act_qmax)
         self.bn2 = PCQBnReLU(planes, arg_dict=arg_dict)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         identity = x

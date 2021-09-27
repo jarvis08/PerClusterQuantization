@@ -162,7 +162,7 @@ class PCQLinear(nn.Module):
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        self._activation = activation(inplace=False) if activation else None
+        self._activation = activation(inplace=True) if activation else None
 
     def forward(self, x, external_range=None):
         if not self.training:
@@ -196,9 +196,8 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
-        data = x.view(x.size(0), -1)
-        _min = data.min(dim=1).values.mean()
-        _max = data.max(dim=1).values.mean()
+        _min = x.min(dim=1).values.mean()
+        _max = x.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
