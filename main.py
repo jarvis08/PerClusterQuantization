@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization
 parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
+parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
@@ -18,7 +18,7 @@ parser.add_argument('--dali', default=False, type=bool, help='Use GPU data augme
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
-parser.add_argument('--val_batch', default=256, type=int, help='Validation batch size')
+parser.add_argument('--val_batch', default=0, type=int, help='Validation batch size')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
 parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d's momentum factor")
@@ -62,14 +62,10 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
-    args.val_batch = 128
 if args.dataset == 'cifar':
     args.dataset = 'cifar10'
-if not args.worker:
-    if args.dataset == 'imagenet':
-        args.worker = 4
-    else:
-        args.worker = 4
+if not args.val_batch:
+    args.val_batch = 256 if args.dataset != imagenet else 128
 print(vars(args))
 
 
