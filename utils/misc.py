@@ -43,7 +43,7 @@ class InputContainer(object):
         img_size = 224 if dataset_name == 'imagenet' else 32
         self.num_clusters = num_clusters
         self.batch_size = batch_size
-        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0)] for _ in range(num_clusters)]
+        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)] for _ in range(num_clusters)]
 
     @torch.no_grad()
     def gather_and_get_data(self, images, targets, cluster_info):
