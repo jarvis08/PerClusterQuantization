@@ -218,7 +218,7 @@ class PCQLinear(nn.Module):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.q_max)
 
-        if s_external:
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False),\
                                nn.Parameter(z_external, requires_grad=False)
         else:
@@ -281,7 +281,7 @@ class FusedLinear(nn.Module):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.q_max)
 
-        if s_external:
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)

@@ -195,7 +195,7 @@ class PCQBnReLU(nn.Module):
         _max = folded_weights.max()
         self.s2, self.z2 = calc_qparams(_min, _max, self.w_qmax)
 
-        if s_external:
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
                                nn.Parameter(z_external, requires_grad=False)
         else:
@@ -288,7 +288,7 @@ class FusedBnReLU(nn.Module):
         else:
             self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_qmax)
 
-        if s_external:
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
