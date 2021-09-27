@@ -65,7 +65,7 @@ if args.imagenet:
 if args.dataset == 'cifar':
     args.dataset = 'cifar10'
 if not args.val_batch:
-    args.val_batch = 256 if args.dataset != imagenet else 128
+    args.val_batch = 256 if args.dataset != 'imagenet' else 128
 print(vars(args))
 
 
