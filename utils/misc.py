@@ -69,10 +69,8 @@ class InputContainer(object):
     def check_leftover(self):
         leftover_batch = 0
         for c in range(self.num_clusters):
-            if self.container[c][0] is not None:
+            if self.container[c][0].size(0) >= 128:
                 leftover_batch += self.container[c][0].size(0) // self.batch_size
-                if self.container[c][0].size(0) % self.batch_size != 0:
-                    leftover_batch += 1
         return leftover_batch
 
     def get_leftover(self):
@@ -80,16 +78,11 @@ class InputContainer(object):
         next_input = None
         next_target = None
         for c in range(self.num_clusters):
-            if self.container[c][0] is not None:
-                if self.container[c][0].size(0) > self.batch_size:
-                    next_input = self.container[c][0][:self.batch_size]
-                    next_target = self.container[c][1][:self.batch_size]
-                    self.container[c][0] = self.container[c][0][self.batch_size:]
-                    self.container[c][1] = self.container[c][1][self.batch_size:]
-                else:
-                    next_input = self.container[c][0][:self.batch_size]
-                    next_target = self.container[c][1][:self.batch_size]
-                    self.container[c][0], self.container[c][1] = None, None
+            if self.container[c][0].size(0) >= self.batch_size:
+                next_input = self.container[c][0][:self.batch_size]
+                next_target = self.container[c][1][:self.batch_size]
+                self.container[c][0] = self.container[c][0][self.batch_size:]
+                self.container[c][1] = self.container[c][1][self.batch_size:]
                 next_cluster = c
                 break
         return next_input, next_target, next_cluster
