@@ -196,13 +196,10 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
-        _min = x.min(dim=1).values.mean()
-        _max = x.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
-            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+            self.act_range[cluster][0], self.act_range[cluster][1] = ema(x, self.act_range[cluster], self.smooth)
         else:
-            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.act_range[cluster][0], self.act_range[cluster][1] = x.min(), x.max()
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
