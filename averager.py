@@ -28,6 +28,7 @@ with open('exp_results.txt') as f:
                 exp = []
         else:
             to_average = cur_params
+            cnt = 1
             exp = []
             exp.append(float(splitted[0]))
 
