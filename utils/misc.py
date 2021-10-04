@@ -328,11 +328,18 @@ def check_file_exist(path):
     return os.path.isfile(path) 
 
 
-def add_path(prev_path, to_add):
+def add_path(prev_path, to_add, allow_existence=True):
     path = os.path.join(prev_path, to_add)
     if not os.path.exists(path):
         os.makedirs(path)
+    else:
+        if not allow_existence:
+            for i in range(100):
+                if not os.path.exists(path + '-{}'.format(i)):
+                    path += '-{}'.format(i)
+                    break
     return path
+
 
 
 def set_clustering_dir(args):
@@ -343,12 +350,12 @@ def set_clustering_dir(args):
     return path
 
 
-def set_save_dir(args):
+def set_save_dir(args, allow_existence=True):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
     path = add_path(path, args.dataset)
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
-    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
+    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"), allow_existence=allow_existence)
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path

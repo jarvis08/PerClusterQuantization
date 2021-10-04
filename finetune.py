@@ -118,8 +118,9 @@ def _finetune(args, tools):
             clustering_model.load_clustering_model()
 
     if not save_path_fp:
-        save_path_fp = set_save_dir(args)
+        save_path_fp = set_save_dir(args, allow_existence=False)
         args.dnn_path = save_path_fp
+        print("Save dir: " + args.dnn_path)
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
 
