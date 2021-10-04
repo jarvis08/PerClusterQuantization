@@ -91,7 +91,7 @@ class KMeans(object):
         best_model = None
         best_model_inertia = 9999999999999999
         print("Train K-means model 10 times, and choose the best model")
-        for trial in range(1, 2):
+        for trial in range(1, 11):
             model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
             early_stopped = False
             t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
