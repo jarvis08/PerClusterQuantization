@@ -119,6 +119,7 @@ def _finetune(args, tools):
 
     if not save_path_fp:
         save_path_fp = set_save_dir(args)
+        args.dnn_path = save_path_fp
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
 
