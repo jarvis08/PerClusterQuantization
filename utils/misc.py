@@ -252,25 +252,6 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     return top1.avg
 
 
-def validate_darknet_dataset(model, test_loader, criterion):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-
-    model.eval()
-    with torch.no_grad():
-        for i in range(1):
-            _in = test_loader[0][i]
-            _targ = test_loader[1][i]
-            input, target = _in.cuda(), _targ.cuda()
-            output = model(input)
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec.item(), input.size(0))
-        print("Acc : {}".format(top1.avg))
-    return top1.avg
-
-
 def load_dnn_model(arg_dict, tools, path=None):
     model = None
     if arg_dict['quantized']:
@@ -367,14 +348,6 @@ def set_logger(path):
     return logger
 
 
-def load_preprocessed_cifar10_from_darknet():
-    input = torch.tensor(
-        np.fromfile("result/darknet/cifar_test_dataset.bin", dtype='float32').reshape((10000, 1, 3, 32, 32)))
-    target = torch.tensor(np.fromfile("result/darknet/cifar_test_target.bin", dtype='int32').reshape((10000, 1)),
-                          dtype=torch.long)
-    return input, target
-
-
 # def metric_average(val, name):
 #     tensor = torch.tensor(val)
 #     avg_tensor = hvd.allreduce(tensor, name=name)
@@ -388,6 +361,7 @@ def get_time_cost_in_string(t):
         return '{:.1f}m'.format(t / 60)
     else:
         return '{:.1f}s'.format(t)
+
 
 def make_indices_list(clustering_model, train_loader, args, runtime_helper):
     total_list = [[] for _ in range(args.cluster)]
