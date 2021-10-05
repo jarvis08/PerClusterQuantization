@@ -1,5 +1,5 @@
 import os
-from misc import *
+from .misc import *
 
 
 def validate_darknet_dataset(model, test_loader, criterion):
