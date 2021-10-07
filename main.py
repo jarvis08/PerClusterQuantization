@@ -5,9 +5,10 @@ from pretrain import _pretrain
 from finetune import _finetune
 from finetune_with_dali import _finetune_with_dali
 from evaluate import _evaluate
+from utils.lipschitz import check_lipschitz
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
+parser.add_argument('--mode', default='eval', type=str, help="pre/fine/eval/lip")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
@@ -188,5 +189,7 @@ if __name__=='__main__':
             _finetune_with_dali(args, tools)
         else:
             _finetune(args, tools)
-    else:
+    elif args.mode == 'eval':
         _evaluate(args, tools)
+    elif args.mode == 'lip':
+        check_lipschitz(args, tools)
