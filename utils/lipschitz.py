@@ -192,24 +192,21 @@ def qat_lipschitz_with_zero(model, clustering_model, loader, input_shape, x_metr
 
 def pcq_lipschitz_with_zero(model, clustering_model, loader, runtime_helper, input_shape, x_metric, y_metric):
     model.eval()
-    container_shape = (0, input_shape[1], input_shape[2], input_shape[3])
+    batch_size = input_shape[0]
     with torch.no_grad():
-        container = [torch.zeros(container_shape) for _ in range(runtime_helper.num_clusters)]
+        container = InputContainer(runtime_helper.num_clusters, clustering_model.args.dataset, batch_size)
         candidates = [torch.zeros(0) for _ in range(runtime_helper.num_clusters)]
+        x2 = torch.zeros(input_shape, device='cuda')
+        y2 = None
         with tqdm(loader, unit="batch", ncols=90) as t:
             for i, (images, targets) in enumerate(t):
                 cluster_info = clustering_model.predict_cluster_of_batch(images)
-                for c in range(runtime_helper.num_clusters):
-                    indices = (cluster_info == c).nonzero(as_tuple=True)[0]
-                    container[c] = torch.cat([container[c], images[indices]])
 
-        batch_size = input_shape[0]
-        x2 = torch.zeros(input_shape, device='cuda')
-        y2 = None
-        for c in range(runtime_helper.num_clusters):
-            n_batch = container[c].size(0) // batch_size
-            for i in range(n_batch):
-                x1 = container[c][i * batch_size: (i + 1) * batch_size].cuda()
+                x1, _, c = container.gather_and_get_data(images, targets, cluster_info)
+                if x1 is None:
+                    continue
+
+                x1 = x1.cuda()
                 y1 = model(x1)
                 if y2 is None:
                     y2 = model(x2)
@@ -227,23 +224,28 @@ def pcq_lipschitz_with_zero(model, clustering_model, loader, runtime_helper, inp
                 cur_lipschitz = y_rst.cpu() / x_rst.cpu()
                 candidates[c] = torch.cat([candidates[c], cur_lipschitz.detach()])
 
-            leftover = container[c].size(0) - n_batch * batch_size
-            if leftover:
-                x1 = container[c][n_batch * batch_size:].cuda()
-                y1 = model(x1)
-                leftover_x2 = x2[:leftover]
-                leftover_y2 = y2[:leftover]
+        leftover = container.check_leftover()
+        if leftover:
+            with tqdm(range(leftover), unit="batch", ncols=90) as t:
+                for _ in t:
+                    t.set_description("Leftover")
+                    x1, target, c = container.get_leftover()
 
-                if x_metric == partitioned_range_l2_dist:
-                    x_rst = x_metric(x1, leftover_x2, clustering_model)
-                else:
-                    x_rst = x_metric(x1, leftover_x2)
-                if y_metric == partitioned_range_l2_dist:
-                    y_rst = y_metric(y1, leftover_y2, clustering_model)
-                else:
-                    y_rst = y_metric(y1, leftover_y2)
-                cur_lipschitz = y_rst.cpu() / x_rst.cpu()
-                candidates[c] = torch.cat([candidates[c], cur_lipschitz.detach()])
+                    x1 = x1.cuda()
+                    y1 = model(x1)
+                    leftover_x2 = x2[:x1.size(0)]
+                    leftover_y2 = y2[:x1.size(0)]
+
+                    if x_metric == partitioned_range_l2_dist:
+                        x_rst = x_metric(x1, leftover_x2, clustering_model)
+                    else:
+                        x_rst = x_metric(x1, leftover_x2)
+                    if y_metric == partitioned_range_l2_dist:
+                        y_rst = y_metric(y1, leftover_y2, clustering_model)
+                    else:
+                        y_rst = y_metric(y1, leftover_y2)
+                    cur_lipschitz = y_rst.cpu() / x_rst.cpu()
+                    candidates[c] = torch.cat([candidates[c], cur_lipschitz.detach()])
 
         for c in range(runtime_helper.num_clusters):
             print("[cluster {} ({})] max: {:.5f}, avg: {:.5f}, std: {:.5f}"
@@ -295,8 +297,8 @@ def check_lipschitz(args, tools):
 
     x_metric = batch_l2_dist
     y_metric = batch_range_l2_dist
-    qat_lipschitz_with_zero(model, clustering_model, data_loader, input_shape, x_metric, y_metric)
     pcq_lipschitz_with_zero(model, clustering_model, data_loader, runtime_helper, input_shape, x_metric, y_metric)
+    qat_lipschitz_with_zero(model, clustering_model, data_loader, input_shape, x_metric, y_metric)
 
     x_metric = partitioned_range_l2_dist
     y_metric = batch_range_l2_dist
