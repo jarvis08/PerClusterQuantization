@@ -297,8 +297,8 @@ def check_lipschitz(args, tools):
 
     x_metric = batch_l2_dist
     y_metric = batch_range_l2_dist
-    pcq_lipschitz_with_zero(model, clustering_model, data_loader, runtime_helper, input_shape, x_metric, y_metric)
     qat_lipschitz_with_zero(model, clustering_model, data_loader, input_shape, x_metric, y_metric)
+    pcq_lipschitz_with_zero(model, clustering_model, data_loader, runtime_helper, input_shape, x_metric, y_metric)
 
     x_metric = partitioned_range_l2_dist
     y_metric = batch_range_l2_dist
