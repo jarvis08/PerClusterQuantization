@@ -12,9 +12,11 @@ class PCQAlexNet(nn.Module):
 
     def __init__(self, arg_dict: dict, num_classes: int = 1000) -> None:
         super(PCQAlexNet, self).__init__()
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
+        arg_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+
+        self.bit = torch.nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.bit.data = torch.tensor(arg_bit, dtype=torch.int8)
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
@@ -57,8 +59,8 @@ class PCQAlexNet(nn.Module):
         return x
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
+        s, z = calc_qparams_per_cluster(self.in_range, self.bit)
+        return fake_quantize_per_cluster_4d(x, s, z, self.bit, self.runtime_helper.batch_cluster)
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
@@ -74,7 +76,7 @@ class PCQAlexNet(nn.Module):
             self.apply_ema[cluster] = True
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
@@ -90,9 +92,11 @@ class PCQAlexNetSmall(nn.Module):
 
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(PCQAlexNetSmall, self).__init__()
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
+        arg_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+
+        self.bit = torch.nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.bit.data = torch.tensor(arg_bit, dtype=torch.int8)
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
@@ -149,14 +153,14 @@ class PCQAlexNetSmall(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=False)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.bit)
+        return fake_quantize(x, s, z, self.bit, use_ste=False)
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
         for c in range(self.num_clusters):
-            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.q_max)
+            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.bit)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
@@ -174,13 +178,14 @@ def pcq_alexnet(arg_dict: dict, **kwargs: Any) -> PCQAlexNet:
 def pcq_alexnet_small(arg_dict: dict, num_classes=10, **kwargs: Any) -> PCQAlexNetSmall:
     return PCQAlexNetSmall(arg_dict, num_classes=num_classes, **kwargs)
 
+
 def modify_pcq_alexnet_qn_pre_hook(model):
-    model.conv1.conv = _quant_noise(model.conv1.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.conv2.conv = _quant_noise(model.conv2.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.conv3.conv = _quant_noise(model.conv3.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.conv4.conv = _quant_noise(model.conv4.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.conv5.conv = _quant_noise(model.conv5.conv, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.fc1.fc = _quant_noise(model.fc1.fc, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.fc2.fc = _quant_noise(model.fc2.fc, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
-    model.fc3.fc = _quant_noise(model.fc3.fc, model.runtime_helper.qn_prob, 1, q_max=model.q_max)
+    model.conv1.conv = _quant_noise(model.conv1.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.conv2.conv = _quant_noise(model.conv2.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.conv3.conv = _quant_noise(model.conv3.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.conv4.conv = _quant_noise(model.conv4.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.conv5.conv = _quant_noise(model.conv5.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.fc1.fc = _quant_noise(model.fc1.fc, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.fc2.fc = _quant_noise(model.fc2.fc, model.runtime_helper.qn_prob, 1, q_max=model.bit)
+    model.fc3.fc = _quant_noise(model.fc3.fc, model.runtime_helper.qn_prob, 1, q_max=model.bit)
     model.qn_prob = model.runtime_helper.qn_prob

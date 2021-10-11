@@ -31,8 +31,12 @@ parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through
 parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-quantize activations.'
                                                       ' PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
+parser.add_argument('--conv_a_bit', default=16, type=int, help="CONV's activation bit size when not using CONV & BN folding")
+parser.add_argument('--bn_w_bit', default=8, type=int, help="BN's weight bit size when not using CONV & BN folding")
+parser.add_argument('--first_bit', default=0, type=int, help="First layer's bit size")
+parser.add_argument('--classifier_bit', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
-parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
+parser.add_argument('--fold_convbn', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
 parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means/BIRCH) to use in PCQ")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')

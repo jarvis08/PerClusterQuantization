@@ -30,45 +30,46 @@ def get_range(x):
 
 
 @torch.no_grad()
-def calc_qparams(range_min, range_max, q_max):
+def calc_qparams(range_min, range_max, bit):
     _min = torch.tensor(0.0, device='cuda') if range_min > 0.0 else range_min
     _max = torch.tensor(0.0, device='cuda') if range_max < 0.0 else range_max
-    s = (_max - _min) / q_max
 
-    if q_max == 15:            # UINT 4
+    if bit == 4:
+        s = (_max - _min) / 15
         z = - torch.round(_min / s)
-        return s, torch.clamp(z, 0, q_max)
-    elif q_max == 255:         # INT 8
+        return s, torch.clamp(z, 0, 15)
+    elif bit == 8:
+        s = (_max - _min) / 255
         z = -128 - torch.round(_min / s)
         return s, torch.clamp(z, -128, 127)
-    elif q_max == 65535:       # INT 16
+    elif bit == 16:
+        s = (_max - _min) / 65535
         z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767)
-    elif q_max == 4294967295:  # INT 32
-        return s, torch.nn.Parameter(torch.tensor(0), requires_grad=False)
-    else:
-        z = - torch.round(_min / s)
-        return s, z
+    s = (_max - _min) / 4294967295
+    return s, torch.tensor(0, device='cuda')
 
 
 @torch.no_grad()
-def calc_qparams_per_cluster(ranges, q_max):
+def calc_qparams_per_cluster(ranges, bit):
     zero = torch.tensor(0.0, device='cuda')
     _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
     _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
-    s = _max.sub(_min).div(q_max)
-    if q_max == 15:
+
+    if bit == 4:
+        s = _max.sub(_min).div(15)
         z = - torch.round(_min / s)
         return s, torch.clamp(z, 0, 15).cuda()
-    elif q_max == 255:
+    elif bit == 8:
+        s = _max.sub(_min).div(255)
         z = -128 - torch.round(_min / s)
         return s, torch.clamp(z, -128, 127).cuda()
-    elif q_max == 65535:
+    elif bit == 16:
+        s = _max.sub(_min).div(65535)
         z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767).cuda()
-
-    # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
-    return s, torch.nn.Parameter(torch.zeros(s.shape, device='cuda'), requires_grad=False)
+    s = _max.sub(_min).div(65535)
+    return s, torch.zeros(s.shape, device='cuda')
 
 
 @torch.no_grad()
@@ -95,12 +96,12 @@ def bn_ema(cur, pre, smooth):
     return mean, var
 
 
-def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
-    if q_max == 15:
+def fake_quantize(x, scale, zero_point, bit, use_ste=False):
+    if bit == 4:
         _qmin, _qmax = 0, 15
-    elif q_max == 255:
+    elif bit == 8:
         _qmin, _qmax = -128, 127
-    elif q_max == 65535:
+    elif bit == 16:
         _qmin, _qmax = -32768, 32767
     else:
         _qmin, _qmax = -2147483648, 2147483647
@@ -111,12 +112,12 @@ def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     return _x
 
 
-def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
-    if q_max == 15:
+def fake_quantize_per_cluster_2d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
+    if bit == 4:
         _qmin, _qmax = 0, 15
-    elif q_max == 255:
+    elif bit == 8:
         _qmin, _qmax = -128, 127
-    elif q_max == 65535:
+    elif bit == 16:
         _qmin, _qmax = -32768, 32767
     else:
         _qmin, _qmax = -2147483648, 2147483647
@@ -129,12 +130,12 @@ def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, 
     return _x
 
 
-def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
-    if q_max == 15:
+def fake_quantize_per_cluster_4d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
+    if bit == 4:
         _qmin, _qmax = 0, 15
-    elif q_max == 255:
+    elif bit == 8:
         _qmin, _qmax = -128, 127
-    elif q_max == 65535:
+    elif bit == 16:
         _qmin, _qmax = -32768, 32767
     else:
         _qmin, _qmax = -2147483648, 2147483647
@@ -147,12 +148,12 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, 
     return _x
 
 
-def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
-    if q_max == 15:
+def apply_qn(x, scale, zero_point, bit, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
+    if bit == 4:
         _qmin, _qmax = 0, 15
-    elif q_max == 255:
+    elif bit == 8:
         _qmin, _qmax = -128, 127
-    elif q_max == 65535:
+    elif bit == 16:
         _qmin, _qmax = -32768, 32767
     else:
         _qmin, _qmax = -2147483648, 2147483647
@@ -181,51 +182,41 @@ def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channe
     return STE.apply(x, qn_x)
 
 
-def quantize_matrix(x, scale, zero_point, q_max=None):
-    x = x.detach()
+def quantize_matrix(x, scale, zero_point, bit=None):
     quantized = torch.round(x / scale + zero_point)
-    if q_max == 15:            # UINT 4
+    if bit == 4:
         return torch.clamp(quantized, 0, 15)
-    elif q_max == 255:         # INT 8
+    elif bit == 8:
         return torch.clamp(quantized, -128, 127)
-    elif q_max == 65535:       # INT 16
+    elif bit == 16:
         return torch.clamp(quantized, -32768, 32767)
-    elif q_max == 4294967295:  # INT 32
-        return torch.clamp(quantized, -2147483648, 2147483647)
-    else:
-        return quantized
+    return torch.clamp(quantized, -2147483648, 2147483647)
 
 
-def quantize_matrix_2d(x, scale, zero_point, batch_cluster, q_max=None):
+def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None):
     scale = torch.index_select(scale, 0, batch_cluster)[:, None]
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None]
     quantized = torch.round(x / scale + zero_point)
-    if q_max == 15:            # UINT 4
+    if bit == 4:
         return torch.clamp(quantized, 0, 15)
-    elif q_max == 255:         # INT 8
+    elif bit == 8:
         return torch.clamp(quantized, -128, 127)
-    elif q_max == 65535:       # INT 16
+    elif bit == 16:
         return torch.clamp(quantized, -32768, 32767)
-    elif q_max == 4294967295:  # INT 32
-        return torch.clamp(quantized, -2147483648, 2147483647)
-    else:
-        return quantized
+    return torch.clamp(quantized, -2147483648, 2147483647)
 
 
-def quantize_matrix_4d(x, scale, zero_point, batch_cluster, q_max=None):
+def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
     scale = torch.index_select(scale, 0, batch_cluster)[:, None, None, None]
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
     quantized = torch.round(x / scale + zero_point)
-    if q_max == 15:            # UINT 4
+    if bit == 4:
         return torch.clamp(quantized, 0, 15)
-    elif q_max == 255:         # INT 8
+    elif bit == 8:
         return torch.clamp(quantized, -128, 127)
-    elif q_max == 65535:       # INT 16
+    elif bit == 16:
         return torch.clamp(quantized, -32768, 32767)
-    elif q_max == 4294967295:  # INT 32
-        return torch.clamp(quantized, -2147483648, 2147483647)
-    else:
-        return quantized
+    return torch.clamp(quantized, -2147483648, 2147483647)
 
 
 def dequantize_matrix(x, scale, zero_point):
@@ -259,7 +250,7 @@ def quantize_M(M):
     shift = torch.tensor(shift, dtype=torch.int32).cuda()
     max_int = 2147483647
     assert q_M <= max_int
-    return torch.nn.Parameter(q_M, requires_grad=False), torch.nn.Parameter(shift, requires_grad=False)
+    return q_M, shift
 
 
 def multiply_M(sub_sum, q_M):
@@ -320,16 +311,17 @@ def shifting4d(cur, shift):
 
 
 def transfer_qparams(_fp, _int):
-    _int.s1 = torch.nn.Parameter(_fp.s1, requires_grad=False)
-    _int.s2 = torch.nn.Parameter(_fp.s2, requires_grad=False)
-    _int.s3 = torch.nn.Parameter(_fp.s3, requires_grad=False)
-    _int.z1 = torch.nn.Parameter(_fp.z1, requires_grad=False)
-    _int.z2 = torch.nn.Parameter(_fp.z2, requires_grad=False)
-    _int.z3 = torch.nn.Parameter(_fp.z3, requires_grad=False)
-    _int.M0 = torch.nn.Parameter(_fp.M0, requires_grad=False)
-    _int.shift = torch.nn.Parameter(_fp.shift, requires_grad=False)
+    _int.s1.data = _fp.s1
+    _int.s2.data = _fp.s2
+    _int.s3.data = _fp.s3
+    _int.z1.data = _fp.z1
+    _int.z2.data = _fp.z2
+    _int.z3.data = _fp.z3
+    _int.M0.data = _fp.M0
+    _int.shift.data = _fp.shift
     if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d']:
-        _int.act_qmax = nn.Parameter(torch.tensor(_fp.act_qmax), requires_grad=False)
+        _int.w_bit.data = _fp.w_bit.data
+        _int.a_bit.data = _fp.a_bit.data
     return _int
 
 
@@ -351,16 +343,16 @@ def quantize_layer_and_transfer(_fp, _int):
 
                 weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
                 bias = _biases - weight * _means
-                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
+                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit)
                 _int.weight.copy_(weight.type(torch.cuda.IntTensor))
                 for c in range(_int.num_clusters):
-                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 2 ** 32 - 1)
+                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32)
                     _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
             else:
                 w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
                 b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
-                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_qmax)
-                b = quantize_matrix(b, _int.s1 * _int.s2, 0, 2 ** 32 - 1)
+                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit)
+                b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32)
 
                 _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
                 _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
@@ -370,16 +362,16 @@ def quantize_layer_and_transfer(_fp, _int):
             else:
                 fp_layer = _fp.fc
 
-            _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.q_max))
+            _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.w_bit))
             if fp_layer.bias is not None:
-                _int.is_bias = nn.Parameter(torch.tensor(True, dtype=torch.bool), requires_grad=False)
+                _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
                 if _int.num_clusters > 1:
                     for c in range(_int.num_clusters):
                         _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                                     _int.s1[c] * _int.s2, 0, 2 ** 32 - 1))
+                                                                     _int.s1[c] * _int.s2, 32))
                 else:
                     _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                                 _int.s1 * _int.s2, 0, 2 ** 32 - 1))
+                                                                 _int.s1 * _int.s2, 0, 32))
     return _int
 
 

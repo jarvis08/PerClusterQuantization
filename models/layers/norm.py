@@ -10,10 +10,10 @@ class QuantizedBn2d(nn.Module):
     def __init__(self, num_features, arg_dict=None):
         super(QuantizedBn2d, self).__init__()
         self.layer_type = 'QuantizedBn2d'
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
         self.num_features = num_features
-        self.q_max = 2 ** self.bit - 1
-        self.act_qmax = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.w_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -64,13 +64,13 @@ class QuantizedBn2d(nn.Module):
             total[pos] = shifting4d(multiplied, s)
         total = total.add(z3)
 
-        if self.act_qmax == 15:
+        if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
-        elif self.act_qmax == 255:
+        elif self.a_bit == 8:
             total = torch.clamp(total, -128, 127)
-        elif self.act_qmax == 65535:  # INT 16
+        elif self.a_bit == 16:
             total = torch.clamp(total, -32768, 32767)
-        elif self.act_qmax == 4294967295:  # INT 32
+        elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
@@ -88,26 +88,29 @@ class QuantizedBn2d(nn.Module):
             total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.act_qmax == 15:
+        if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
-        elif self.act_qmax == 255:
+        elif self.a_bit == 8:
             total = torch.clamp(total, -128, 127)
-        elif self.act_qmax == 65535:  # INT 16
+        elif self.a_bit == 16:
             total = torch.clamp(total, -32768, 32767)
-        elif self.act_qmax == 4294967295:  # INT 32
+        elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)
 
 
 class PCQBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, act_qmax=None, w_qmax=2 ** 8 - 1, arg_dict=None):
+    def __init__(self, num_features, activation=None, a_bit=None, w_bit=None, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
-        self.momentum, self.bit, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
+        self.momentum, arg_w_bit, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
             itemgetter('bn_momentum', 'bit', 'smooth', 'runtime_helper', 'cluster', 'ste')(arg_dict)
 
-        self.w_qmax = w_qmax
-        self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
+        w_bit = w_bit if w_bit is not None else arg_dict['bn_w_bit']
+        a_bit = a_bit if a_bit is not None else arg_dict['bit']
+        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
@@ -151,8 +154,8 @@ class PCQBnReLU(nn.Module):
 
             weight = bn.weight.div(torch.sqrt(var + bn.eps))
             bias = bn.bias - weight * mean
-            scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_qmax)
-            weight = fake_quantize(weight, scale, zero_point, self.w_qmax)
+            scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            weight = fake_quantize(weight, scale, zero_point, self.w_bit)
 
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
             if self.activation:
@@ -175,14 +178,14 @@ class PCQBnReLU(nn.Module):
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
         if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.act_qmax)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit)
         else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.act_qmax)
-        return fake_quantize(x, s, z, self.act_qmax, use_ste=self.use_ste)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
+        self.s1, self.z1 = s1, z1
 
         _weights = torch.zeros((self.num_clusters, self.num_features), device='cuda')
         _vars = torch.ones((self.num_clusters, self.num_features), device='cuda')
@@ -190,30 +193,32 @@ class PCQBnReLU(nn.Module):
             _weights[c] = self.norms[c].weight
             _vars[c] = self.norms[c].running_var
         weight = _weights.div(torch.sqrt(_vars + self.norms[0].eps))
-        self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+        self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_bit)
 
         if s_external is not None:
-            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
-                               nn.Parameter(z_external, requires_grad=False)
+            self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.act_qmax)
+            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
 
-        self.M0 = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
+        self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
+        self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
         for c in range(self.num_clusters):
             self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         return self.s3, self.z3
 
 
 class FusedBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, act_qmax=None, w_qmax=None, arg_dict=None):
+    def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        self.bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
+        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
-        self.w_qmax = w_qmax if w_qmax else 2 ** 8 - 1
-        self.act_qmax = act_qmax if act_qmax else 2 ** self.bit - 1
+        w_bit = w_bit if w_bit is not None else arg_dict['bn_w_bit']
+        a_bit = a_bit if a_bit is not None else arg_dict['bit']
+        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
@@ -250,8 +255,8 @@ class FusedBnReLU(nn.Module):
 
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
             bias = self.bn.bias - weight * mean
-            s, z = calc_qparams(weight.min(), weight.max(), self.w_qmax)
-            weight = fake_quantize(weight, s, z, self.w_qmax)
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            weight = fake_quantize(weight, s, z, self.w_bit)
 
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
             if self._activation:
@@ -267,26 +272,26 @@ class FusedBnReLU(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
-            s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
+            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
         else:
-            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-        return fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+        return fake_quantize(x, s, z, self.a_bit, self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
+        self.s1, self.z1 = s1, z1
 
         weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))
         if weight.min() > 0:
-            self.s2, self.z2 = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
+            self.s2, self.z2 = calc_qparams(torch.tensor(0), weight.max(), self.w_bit)
         elif weight.max() < 0:
-            self.s2, self.z2 = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
+            self.s2, self.z2 = calc_qparams(weight.min(), torch.tensor(0), self.w_bit)
         else:
-            self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+            self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_bit)
 
         if s_external is not None:
-            self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
+            self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
 
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
@@ -294,11 +299,11 @@ class FusedBnReLU(nn.Module):
     def get_weight_qparams(self):
         weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))
         if weight.min() > 0:
-            s, z = calc_qparams(torch.tensor(0), weight.max(), self.w_qmax)
+            s, z = calc_qparams(torch.tensor(0), weight.max(), self.w_bit)
         elif weight.max() < 0:
-            s, z = calc_qparams(weight.min(), torch.tensor(0), self.w_qmax)
+            s, z = calc_qparams(weight.min(), torch.tensor(0), self.w_bit)
         else:
-            s, z = calc_qparams(weight.min(), weight.max(), self.w_qmax)
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
         return s, z
 
     def get_multiplier_qparams(self):

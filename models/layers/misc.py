@@ -8,8 +8,8 @@ class QuantizedAdd(nn.Module):
     def __init__(self, arg_dict=None):
         super(QuantizedAdd, self).__init__()
         self.layer_type = 'QuantizedAdd'
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.z_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
@@ -69,8 +69,12 @@ class QuantizedAdd(nn.Module):
 
         if self.bit == 4:
             out = torch.clamp(out, 0, 15)
-        else:
+        elif self.bit == 8:
             out = torch.clamp(out, -128, 127)
+        elif self.bit == 16:
+            out = torch.clamp(out, -32768, 32767)
+        elif self.bit == 32:
+            out = torch.clamp(out, -2147483648, 2147483647)
         return out.type(torch.cuda.FloatTensor)
 
     def general_bypass(self, bypass, prev):
@@ -91,8 +95,12 @@ class QuantizedAdd(nn.Module):
         out = (x1 + x2).add(self.z3)
         if self.bit == 4:
             out = torch.clamp(out, 0, 15)
-        else:
+        elif self.bit == 8:
             out = torch.clamp(out, -128, 127)
+        elif self.bit == 16:
+            out = torch.clamp(out, -32768, 32767)
+        elif self.bit == 32:
+            out = torch.clamp(out, -2147483648, 2147483647)
         return out.type(torch.cuda.FloatTensor)
 
 

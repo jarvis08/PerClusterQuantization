@@ -7,24 +7,24 @@ from .quantization_utils import *
 
 
 def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False,
-                  norm_layer=None, activation=None, act_qmax=None, arg_dict=None):
+                  norm_layer=None, activation=None, a_bit=None, arg_dict=None):
     """3x3 convolution with padding"""
     return FusedConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                        padding=dilation, groups=groups, dilation=dilation, bias=bias,
-                       norm_layer=norm_layer, activation=activation, act_qmax=act_qmax, arg_dict=arg_dict)
+                       norm_layer=norm_layer, activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
-def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None, act_qmax=None, arg_dict=None):
+def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None, a_bit=None, arg_dict=None):
     """1x1 convolution"""
     return FusedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                       norm_layer=norm_layer, activation=activation, act_qmax=act_qmax, arg_dict=arg_dict)
+                       norm_layer=norm_layer, activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
 class FusedBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 norm_layer=None, act_qmax=None, arg_dict=None):
+                 norm_layer=None, arg_dict=None):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -34,17 +34,16 @@ class FusedBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
-        act_qmax = act_qmax if act_qmax else self.q_max
-        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        arg_bit, a_bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'conv_a_bit','smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit = torch.nn.Parameter(torch.tensor(arg_bit, dtype=torch.int8), requires_grad=False)
 
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
-        self.conv1 = fused_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.conv1 = fused_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=a_bit)
         self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
-        self.conv2 = fused_conv3x3(planes, planes, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.conv2 = fused_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=a_bit)
         self.bn2 = FusedBnReLU(planes, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
@@ -71,8 +70,8 @@ class FusedBasicBlock(nn.Module):
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.bit)
+                out = fake_quantize(out, s, z, self.bit, self.use_ste)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema = True
@@ -86,7 +85,7 @@ class FusedBasicBlock(nn.Module):
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         self.bn2.set_qparams(prev_s, prev_z)
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.bit)
         return self.s3, self.z3
 
 
@@ -94,7 +93,7 @@ class FusedBottleneck(nn.Module):
     expansion: int = 4
 
     def __init__(self, inplane:int, planes:int, stride:int=1, downsample=None,
-                 groups: int = 1, base_width:int =64, dilation:int =1, act_qmax=None, arg_dict=None) -> None:
+                 groups: int = 1, base_width:int =64, dilation:int =1, a_bit=None, arg_dict=None) -> None:
         super(FusedBottleneck, self).__init__()
 
         self.downsample = downsample
@@ -104,20 +103,20 @@ class FusedBottleneck(nn.Module):
         self.bit, self.smooth, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
-        self.q_max = 2 ** self.bit - 1
-        act_qmax = act_qmax if act_qmax else self.q_max
+        self.bit = 2 ** self.bit - 1
+        a_bit = a_bit if a_bit else self.bit
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
         self.apply_ema = False
 
         width = int(planes * (base_width/64.)) * groups
-        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, act_qmax=act_qmax)
+        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, a_bit=a_bit)
         self.bn1 = FusedBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
         self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                   arg_dict=self.arg_dict, act_qmax=act_qmax)
+                                   arg_dict=self.arg_dict, a_bit=a_bit)
         self.bn2 = FusedBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
         self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict,
-                                   act_qmax=act_qmax)
+                                   a_bit=a_bit)
         self.bn3 = FusedBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
@@ -145,8 +144,8 @@ class FusedBottleneck(nn.Module):
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.bit)
+                out = fake_quantize(out, s, z, self.bit, self.use_ste)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema = True
@@ -162,7 +161,7 @@ class FusedBottleneck(nn.Module):
         prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.bit)
         return self.s3, self.z3
 
 
@@ -170,14 +169,17 @@ class FusedResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FusedResNet, self).__init__()
+        self.arg_dict = arg_dict
+        a_bit, first_bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('conv_a_bit', 'first_bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
-        self.arg_dict = arg_dict
-        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-        self.arg_dict = arg_dict
-        self.q_max = 2 ** self.bit - 1
-        self.act_qmax = 2 ** 16 - 1
-        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        if first_bit:
+            self.bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+            self.first_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        else:
+            self.bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+            self.first_bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.apply_ema = False
 
@@ -198,7 +200,7 @@ class FusedResNet(nn.Module):
         self.base_width = width_per_group
 
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                      arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+                                      arg_dict=self.arg_dict, a_bit=a_bit)
         self.bn1 = FusedBnReLU(self.inplanes, nn.ReLU, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -218,16 +220,15 @@ class FusedResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict,
-                                       act_qmax=self.act_qmax)
+                                       a_bit=self.a_bit.item())
 
         layers = []
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
-                            base_width=self.base_width, dilation=previous_dilation,
-                            act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                            base_width=self.base_width, dilation=previous_dilation, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                                dilation=self.dilation, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
@@ -235,8 +236,8 @@ class FusedResNet(nn.Module):
             if self.apply_ema:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                    x = fake_quantize(x, s, z, self.q_max)
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
+                    x = fake_quantize(x, s, z, self.bit)
             else:
                 self.in_range[0], self.in_range[1] = get_range(x)
                 self.apply_ema = True
@@ -261,7 +262,7 @@ class FusedResNet(nn.Module):
                 m.show_params()
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         for i in range(len(self.layer1)):
@@ -278,13 +279,18 @@ class FusedResNet(nn.Module):
 class FusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(FusedResNet20, self).__init__()
-        self.bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.arg_dict = arg_dict
-        self.q_max = 2 ** self.bit - 1
-        self.act_qmax = 2 ** 16 - 1
-        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.a_bit, first_bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('conv_a_bit', 'first_bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
+        if first_bit:
+            self.bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+            self.first_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        else:
+            self.bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+            self.first_bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+
+        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
         self._norm_layer = nn.BatchNorm2d
@@ -295,26 +301,25 @@ class FusedResNet20(nn.Module):
         self.arg_dict = arg_dict
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                      arg_dict=arg_dict, act_qmax=self.act_qmax)
+                                      arg_dict=arg_dict, a_bit=self.a_bit)
         self.bn1 = FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = FusedLinear(64 * block.expansion, num_classes, arg_dict=arg_dict)
+        self.fc = FusedLinear(64 * block.expansion, num_classes, is_classifier=True, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride,
-                                       arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+                                       arg_dict=self.arg_dict, a_bit=self.a_bit)
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample,
-                            norm_layer=self._norm_layer, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                            norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer,
-                                act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -322,8 +327,8 @@ class FusedResNet20(nn.Module):
             if self.apply_ema:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
-                    x = fake_quantize(x, s, z, self.q_max)
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
+                    x = fake_quantize(x, s, z, self.bit)
             else:
                 self.in_range[0], self.in_range[1] = get_range(x)
                 self.apply_ema = True
@@ -339,7 +344,7 @@ class FusedResNet20(nn.Module):
         return x
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         for i in range(len(self.layer1)):
@@ -494,59 +499,59 @@ def modify_fused_resnet_qn_pre_hook(model):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     # model.first_conv.quant_noise = False
-    model.first_conv.conv = _quant_noise(model.first_conv.conv, model.qn_prob, 1, q_max=model.q_max)
+    model.first_conv.conv = _quant_noise(model.first_conv.conv, model.qn_prob, 1, bit=model.bit)
     # Block 1
     block = model.layer1
     if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
         m = block[0].downsample
-        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 4, q_max=m.q_max)
+        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 4, bit=m.bit)
     for i in range(len(block)):
         if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
         elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
 
     # Block 2
     block = model.layer2
     block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            4, q_max=block[0].downsample.q_max)
+                                            4, bit=block[0].downsample.bit)
     for i in range(len(block)):
         if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
         elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
 
     # Block 3
     block = model.layer3
     block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            4, q_max=block[0].downsample.q_max)
+                                            4, bit=block[0].downsample.bit)
     for i in range(len(block)):
         if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
         elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
     # Block 4
     if model.num_blocks == 4:
         block = model.layer4
         block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                                4, q_max=block[0].downsample.q_max)
+                                                4, bit=block[0].downsample.bit)
         for i in range(len(block)):
             if type(block[i]) == FusedBottleneck:
-                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
-                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, q_max=block[i].q_max)
+                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
+                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
+                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
             elif type(block[i]) == FusedBasicBlock:
-                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
-                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, q_max=block[i].q_max)
+                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
+                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
 
     # Classifier
     model.fc.quant_noise = False

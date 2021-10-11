@@ -9,21 +9,20 @@ from .quant_noise import _quant_noise
 from .quantization_utils import *
 
 
-def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, activation=None, act_qmax=None, arg_dict=None):
+def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, activation=None, a_bit=None, arg_dict=None):
     return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,
-                     bias=bias, activation=activation, act_qmax=act_qmax, arg_dict=arg_dict)
+                     bias=bias, activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
-def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, activation=None, act_qmax=None, arg_dict=None):
+def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, activation=None, a_bit=None, arg_dict=None):
     return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                     activation=activation, act_qmax=act_qmax, arg_dict=arg_dict)
+                     activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
 class PCQBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 act_qmax=None, arg_dict=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, arg_dict=None):
         super(PCQBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -33,18 +32,18 @@ class PCQBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
-        act_qmax = act_qmax if act_qmax else self.q_max
+        arg_bit, a_bit, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper\
+            = itemgetter('bit', 'conv_a_bit','smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        self.bit = torch.nn.Parameter(torch.tensor(arg_bit, dtype=torch.int8), requires_grad=False)
+
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         if self.downsample is not None:
             self.bn_down = PCQBnReLU(planes, arg_dict=arg_dict)
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=a_bit)
         self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
-        self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, act_qmax=act_qmax)
+        self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=a_bit)
         self.bn2 = PCQBnReLU(planes, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
@@ -84,8 +83,8 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.bit)
+        return fake_quantize(x, s, z, self.bit, use_ste=self.use_ste)
 
     @torch.no_grad()
     def set_block_qparams(self, s1, z1):
@@ -98,7 +97,7 @@ class PCQBasicBlock(nn.Module):
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         self.bn2.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.q_max)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.bit)
         return self.s3, self.z3
 
 
@@ -107,7 +106,7 @@ class PCQBottleneck(nn.Module):
 
     def __init__(
             self, inplanes: int, planes: int, stride: int = 1, downsample = None,
-            groups: int = 1, base_width: int = 64,dilation: int = 1, act_qmax=None, arg_dict = None
+            groups: int = 1, base_width: int = 64, dilation: int = 1, arg_dict = None
     ) -> None:
         super(PCQBottleneck, self).__init__()
 
@@ -116,21 +115,22 @@ class PCQBottleneck(nn.Module):
 
         self.arg_dict = arg_dict
 
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
-        act_qmax = act_qmax if act_qmax else self.q_max
+        bit, a_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'conv_a_bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=act_qmax)
+        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, a_bit=self.a_bit)
         self.bn1 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation,
-                                 arg_dict=self.arg_dict, act_qmax=act_qmax)
+                                 arg_dict=self.arg_dict, a_bit=a_bit)
         self.bn2 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
-        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=act_qmax)
+        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, a_bit=a_bit)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
@@ -174,8 +174,8 @@ class PCQBottleneck(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.bit)
+        return fake_quantize(x, s, z, self.bit, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -188,7 +188,7 @@ class PCQBottleneck(nn.Module):
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.q_max)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.bit)
         return self.s3, self.z3
 
 
@@ -197,11 +197,11 @@ class PCQResNet(nn.Module):
                  width_per_group=64, replace_stride_with_dilation=None):
         super(PCQResNet, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-            
-        self.q_max = 2 ** self.bit - 1
-        self.act_qmax = 2 ** 16 - 1
+        arg_bit, arg_conv_a_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'conv_a_bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        self.bit = torch.nn.Parameter(torch.tensor(arg_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(arg_conv_a_bit, dtype=torch.int8), requires_grad=False)
+
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
@@ -218,7 +218,7 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                    arg_dict=arg_dict, act_qmax=self.act_qmax)
+                                    arg_dict=arg_dict, a_bit=self.a_bit.item())
         self.bn1 = PCQBnReLU(self.inplanes, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -226,7 +226,7 @@ class PCQResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = PCQLinear(512 * block.expansion, num_classes, arg_dict=arg_dict)
+        self.fc = PCQLinear(512 * block.expansion, num_classes, is_classifier=True, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -237,15 +237,15 @@ class PCQResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict,
-                                     act_qmax=self.act_qmax)
+                                     a_bit=self.a_bit.item())
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups, self.base_width,
-                            previous_dilation, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                            previous_dilation, a_bit=self.a_bit.item(), arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+                                dilation=self.dilation, a_bit=self.a_bit.item(), arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -283,11 +283,11 @@ class PCQResNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.bit)
+        return fake_quantize(x, s, z, self.bit)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         for i in range(len(self.layer1)):
@@ -305,10 +305,16 @@ class PCQResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(PCQResNet20, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
-        self.act_qmax = 2 ** 16 - 1
+        self.a_bit, first_bit, self.smooth, self.num_clusters, self.runtime_helper \
+            = itemgetter('conv_a_bit', 'first_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+
+        if first_bit:
+            self.bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+            self.first_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        else:
+            self.bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+            self.first_bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
@@ -316,26 +322,25 @@ class PCQResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict,
-                                    act_qmax=self.act_qmax)
+        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict, a_bit=self.a_bit)
         self.bn1 = PCQBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = PCQLinear(64 * block.expansion, num_classes, arg_dict=self.arg_dict)
+        self.fc = PCQLinear(64 * block.expansion, num_classes, is_classifier=True, arg_dict=self.arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride,
-                                     arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+                                     arg_dict=self.arg_dict, a_bit=self.a_bit)
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, act_qmax=self.act_qmax, arg_dict=self.arg_dict))
+            layers.append(block(self.inplanes, planes, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -369,12 +374,12 @@ class PCQResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
-        return fake_quantize(x, s, z, self.q_max)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.bit)
+        return fake_quantize(x, s, z, self.bit)
 
     @torch.no_grad()
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.layer1[0].set_block_qparams(prev_s, prev_z)
@@ -513,42 +518,42 @@ def modify_pcq_resnet_qn_pre_hook(model):
     block = model.layer1
     if len(model.layer3) == 6:
         m = block[0].downsample
-        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, q_max=m.q_max)
+        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, bit=m.bit)
     for i in range(len(block)):
-        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, bit=block[i].bit)
+        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, bit=block[i].bit)
         if type(block[i]) == PCQBottleneck:
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, bit=block[i].bit)
 
     # Block 2
     block = model.layer2
     block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            1, q_max=block[0].downsample.q_max)
+                                            1, bit=block[0].downsample.bit)
     for i in range(len(block)):
-        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, bit=block[i].bit)
+        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, bit=block[i].bit)
         if type(block[i]) == PCQBottleneck:
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, bit=block[i].bit)
 
     # Block 3
     block = model.layer3
     block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            1, q_max=block[0].downsample.q_max)
+                                            1, bit=block[0].downsample.bit)
     for i in range(len(block)):
-        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+        block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, bit=block[i].bit)
+        block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, bit=block[i].bit)
         if type(block[i]) == PCQBottleneck:
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, bit=block[i].bit)
     # Block 4
     if model.num_blocks == 4:
         block = model.layer4
         block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                                1, q_max=block[0].downsample.q_max)
+                                                1, bit=block[0].downsample.bit)
         for i in range(len(block)):
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 1, bit=block[i].bit)
+            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 1, bit=block[i].bit)
             if type(block[i]) == PCQBottleneck:
-                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, q_max=block[i].q_max)
+                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 1, bit=block[i].bit)
 
     # Classifier
     model.fc.quant_noise = False
