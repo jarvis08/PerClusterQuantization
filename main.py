@@ -187,9 +187,10 @@ def specify_target_arch(arch, dataset, num_clusters):
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
-    assert args.mode == 'fine' and args.bit in [4, 8], 'Please set target bit between 4 & 8'
-    if args.mode == 'fine' and args.dataset != 'imagenet':
-        assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
+    if args.mode == 'fine':
+        assert args.bit in [4, 8], 'Please set target bit between 4 & 8'
+        if args.dataset != 'imagenet':
+            assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
     if args.mode == 'pre':
