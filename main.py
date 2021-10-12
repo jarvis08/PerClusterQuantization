@@ -4,6 +4,7 @@ from models import *
 from pretrain import _pretrain
 from finetune import _finetune
 from finetune_with_dali import _finetune_with_dali
+from finetune_check2mix import _check_and_finetune
 from evaluate import _evaluate
 from utils.lipschitz import check_lipschitz
 
@@ -12,6 +13,9 @@ parser.add_argument('--mode', default='eval', type=str, help="pre/fine/eval/lip"
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
+
+parser.add_argument('--check_method', default='both', type=str, help="Only used in mode==check2mix, among both/range/n_params")
+parser.add_argument('--worker', default=2, type=int, help='Only used in mode==check2mix, between 1 & 2')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
@@ -76,6 +80,9 @@ if args.dataset == 'cifar':
     args.dataset = 'cifar10'
 if not args.val_batch:
     args.val_batch = 256 if args.dataset != 'imagenet' else 128
+
+if args.mode == 'check2mix':
+    args.fold_convbn = True
 print(vars(args))
 
 
@@ -199,6 +206,8 @@ if __name__=='__main__':
             _finetune_with_dali(args, tools)
         else:
             _finetune(args, tools)
+    elif args.mode == 'check2mix':
+        _check_and_finetune(args, tools)
     elif args.mode == 'eval':
         _evaluate(args, tools)
     elif args.mode == 'lip':

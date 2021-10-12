@@ -293,3 +293,8 @@ class FusedLinear(nn.Module):
 
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
+
+    @torch.no_grad()
+    def reset_activation_range(self):
+        self.act_range[0], self.act_range[1] = 0.0, 0.0
+        self.apply_ema = False

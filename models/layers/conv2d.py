@@ -348,8 +348,8 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
-            = itemgetter('smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
+        self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper \
+            = itemgetter('smooth', 'fold_convbn', 'ste', 'runtime_helper')(arg_dict)
         
         w_bit = w_bit if w_bit is not None else arg_dict['bit']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -415,20 +415,19 @@ class FusedConv2d(nn.Module):
             general_out = self._activation(general_out)
 
         with torch.no_grad():
-            alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean, \
-                                          self._norm_layer.running_var, self._norm_layer.eps
-            n_channel = self.conv.weight.shape[0]
+            _x = x.detach()
+            mean = _x.mean(dim=(0, 2, 3))
+            var = _x.var(dim=(0, 2, 3), unbiased=False)
 
-            folded_weight = self.conv.weight.clone().detach()
-            folded_bias = beta.clone().detach()
-            for c in range(n_channel):
-                folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-                folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
+            std = torch.sqrt(var + self._norm_layer.eps)
+            w_bn = self._norm_layer.weight / std
+            folded_weight = self.conv.weight * w_bn
+            folded_bias = self._norm_layer.bias - mean * w_bn
 
             s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit)
-            fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
+            fake_weight = fake_quantize(folded_weight, s, z, self.w_bit)
 
-            folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+            folded_out = F.conv2d(x, fake_weight, folded_bias, self.conv.stride, self.conv.padding,
                                   self.conv.dilation, self.conv.groups)
             if self._activation:
                 folded_out = self._activation(folded_out)
@@ -438,7 +437,7 @@ class FusedConv2d(nn.Module):
                     self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
                     if self.runtime_helper.apply_fake_quantization:
                         s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                        folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
+                        folded_out = fake_quantize(folded_out, s, z, self.a_bit)
                 else:
                     self.act_range[0] = torch.min(folded_out).item()
                     self.act_range[1] = torch.max(folded_out).item()
@@ -449,21 +448,20 @@ class FusedConv2d(nn.Module):
                     folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
         return STE.apply(general_out, folded_out)
 
+    @torch.no_grad()
     def fold_conv_and_bn(self):
-        # In case of validation, fuse pretrained Conv&BatchNorm params
-        assert self.training == False, 'Do not fuse layers while training.'
-        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
-                                      self._norm_layer.running_var, self._norm_layer.eps
-        n_channel = self.conv.weight.shape[0]
-        self.conv.bias = nn.Parameter(beta)
-        for c in range(n_channel):
-            self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-            self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-        self._norm_layer = nn.Identity()
+        w_bn = self._norm_layer.weight / torch.sqrt(self._norm_layer.running_var + self._norm_layer.eps)
+        self.folded_weight = self.conv.weight * w_bn
+        self.folded_bias = self._norm_layer.bias - self._norm_layer.running_mean * w_bn
 
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit)
+
+        if self.fold_convbn:
+            self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit)
+        else:
+            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
@@ -473,3 +471,7 @@ class FusedConv2d(nn.Module):
         self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
 
+    @torch.no_grad()
+    def reset_activation_range(self):
+        self.act_range[0], self.act_range[1] = 0.0, 0.0
+        self.apply_ema = False
