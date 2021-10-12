@@ -92,19 +92,18 @@ class PCQAlexNetSmall(nn.Module):
 
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(PCQAlexNetSmall, self).__init__()
-        arg_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-
-        self.bit = torch.nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.bit.data = torch.tensor(arg_bit, dtype=torch.int8)
+        target_bit, first_bit, classifier_bit, self.smooth, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'first_bit', 'classifier_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                               activation=nn.ReLU, arg_dict=arg_dict)
+        self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, activation=nn.ReLU,
+                               w_bit=first_bit, a_bit=first_bit, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
@@ -113,9 +112,10 @@ class PCQAlexNetSmall(nn.Module):
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
                                activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc1 = PCQLinear(256, 4096, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc2 = PCQLinear(4096, 4096, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict)
+        self.fc1 = PCQLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc3 = PCQLinear(4096, num_classes, bias=True,
+                             w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -153,14 +153,11 @@ class PCQAlexNetSmall(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.bit)
-        return fake_quantize(x, s, z, self.bit, use_ste=False)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
+        return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)
-        self.zero_point = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.int32), requires_grad=False)
-        for c in range(self.num_clusters):
-            self.scale[c], self.zero_point[c] = calc_qparams(self.in_range[c][0], self.in_range[c][1], self.bit)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)

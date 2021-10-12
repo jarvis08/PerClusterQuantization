@@ -57,8 +57,10 @@ class QuantizedAlexNet(nn.Module):
 class QuantizedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict, num_classes: int = 10) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+
+        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -77,9 +79,9 @@ class QuantizedAlexNetSmall(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.conv1(x)
         x = self.maxpool(x)
