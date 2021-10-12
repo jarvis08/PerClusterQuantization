@@ -41,7 +41,6 @@ class QuantizedLinear(nn.Linear):
         self.activation = activation
 
     def forward(self, x):
-        print("Linear w: {} a: {}".format(self.w_bit.data, self.a_bit.data))
         sum_q1q2 = F.linear(x, self.weight, None)
         if self.runtime_helper.batch_cluster is not None:
             return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))

@@ -217,8 +217,6 @@ class QuantizedResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        print()
-        print("Input Bit: {}".format(self.in_bit.data))
         if self.runtime_helper.batch_cluster is not None:
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
         else:
