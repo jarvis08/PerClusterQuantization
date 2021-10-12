@@ -38,6 +38,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.activation = activation
 
     def forward(self, x):
+        print("CONV w: {} a: {}".format(self.w_bit.data, self.a_bit.data))
         if self.runtime_helper.batch_cluster is not None:
             return self.pcq(x)
         else:

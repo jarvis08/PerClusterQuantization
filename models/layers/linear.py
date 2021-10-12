@@ -41,6 +41,7 @@ class QuantizedLinear(nn.Linear):
         self.activation = activation
 
     def forward(self, x):
+        print("Linear w: {} a: {}".format(self.w_bit.data, self.a_bit.data))
         sum_q1q2 = F.linear(x, self.weight, None)
         if self.runtime_helper.batch_cluster is not None:
             return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
@@ -154,17 +155,13 @@ class PCQLinear(nn.Module):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
         
-        self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
-        if is_classifier and arg_dict['classifier_bit']:
-            self.w_bit = torch.nn.Parameter(torch.tensor(arg_dict['classifier_bit'], dtype=torch.int8), requires_grad=False)
-            self.a_bit = torch.nn.Parameter(torch.tensor(arg_dict['classifier_bit'], dtype=torch.int8), requires_grad=False)
-        else:
-            w_bit = w_bit if w_bit is not None else arg_dict['bit']
-            a_bit = a_bit if a_bit is not None else arg_dict['bit']
-            self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
-            self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+        w_bit = w_bit if w_bit is not None else bit
+        a_bit = a_bit if a_bit is not None else bit
+        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
@@ -245,17 +242,13 @@ class FusedLinear(nn.Module):
         self.layer_type = 'FusedLinear'
 
         self.arg_dict = arg_dict
-        self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
-        if is_classifier and arg_dict['classifier_bit']:
-            self.w_bit = torch.nn.Parameter(torch.tensor(arg_dict['classifier_bit'], dtype=torch.int8), requires_grad=False)
-            self.a_bit = torch.nn.Parameter(torch.tensor(arg_dict['classifier_bit'], dtype=torch.int8), requires_grad=False)
-        else:
-            w_bit = w_bit if w_bit is not None else arg_dict['bit']
-            a_bit = a_bit if a_bit is not None else arg_dict['bit']
-            self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
-            self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+        w_bit = w_bit if w_bit is not None else bit
+        a_bit = a_bit if a_bit is not None else bit
+        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False

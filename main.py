@@ -65,6 +65,11 @@ parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+if not args.first_bit:
+    args.first_bit = args.bit
+if not args.classifier_bit:
+    args.classifier_bit = args.bit
 if args.imagenet:
     args.dataset = 'imagenet'
 if args.dataset == 'cifar':
@@ -182,6 +187,7 @@ def specify_target_arch(arch, dataset, num_clusters):
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
+    assert args.mode == 'fine' and args.bit in [4, 8], 'Please set target bit between 4 & 8'
     if args.mode == 'fine' and args.dataset != 'imagenet':
         assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 

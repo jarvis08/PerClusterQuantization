@@ -184,7 +184,8 @@ class QuantizedResNet20(nn.Module):
         super(QuantizedResNet20, self).__init__()
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
 
-        self.bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -216,10 +217,12 @@ class QuantizedResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        print()
+        print("Input Bit: {}".format(self.in_bit.data))
         if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.bit)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.bit)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x)
         x = self.bn1(x)
@@ -348,7 +351,8 @@ def quantize_resnet(fp_model, int_model):
 
 
 def quantize_pcq_resnet(fp_model, int_model):
-    int_model.bit.data = fp_model.bit
+    int_model.target_bit.data = fp_model.target_bit
+    int_model.in_bit.data = fp_model.in_bit
     int_model.scale.data = fp_model.scale
     int_model.zero_point.data = fp_model.zero_point
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
