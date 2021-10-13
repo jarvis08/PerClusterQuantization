@@ -362,18 +362,25 @@ class FusedConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias, dilation=dilation)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
-        self._activation = activation(inplace=False) if activation else None
+        self._activation = activation(inplace=True) if activation else None
         self.out_channels = out_channels
         self.in_channels = in_channels
 
     def forward(self, x, external_range=None):
         if not self.training:
-            x = self.conv(x)
+            out = self.conv(x)
             if self._norm_layer:
-                x = self._norm_layer(x)
+                out = self._norm_layer(out)
             if self._activation:
-                x = self._activation(x)
-            return x
+                out = self._activation(out)
+
+            if self.runtime_helper.check2mix:
+                if self.apply_ema:
+                    self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+                else:
+                    self.act_range[0], self.act_range[1] = get_range(out)
+                    self.apply_ema = True
+            return out
 
         if self.fold_convbn:
             return self._norm_folded(x, external_range)
@@ -409,49 +416,42 @@ class FusedConv2d(nn.Module):
         return out
 
     def _norm_folded(self, x, external_range=None):
-        general_out = self.conv(x)
-        general_out = self._norm_layer(general_out)
-        if self._activation:
-            general_out = self._activation(general_out)
+        out = self.conv(x)
+        real_out = self._norm_layer(out)
 
         with torch.no_grad():
-            _x = x.detach()
-            mean = _x.mean(dim=(0, 2, 3))
-            var = _x.var(dim=(0, 2, 3), unbiased=False)
+            _out = out.detach()
+            _mean = _out.mean(dim=(0, 2, 3))
+            _var = _out.var(dim=(0, 2, 3), unbiased=False)
 
-            std = torch.sqrt(var + self._norm_layer.eps)
-            w_bn = self._norm_layer.weight / std
-            folded_weight = self.conv.weight * w_bn
-            folded_bias = self._norm_layer.bias - mean * w_bn
+            w_bn = self._norm_layer.weight / torch.sqrt(_var + self._norm_layer.eps)
+            folded_weight = self.conv.weight * w_bn[:, None, None, None]
+            folded_bias = self._norm_layer.bias - _mean * w_bn
 
-            s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit)
+            s, z = calc_qparams(folded_weight.min(), folded_weight.max(), self.w_bit)
             fake_weight = fake_quantize(folded_weight, s, z, self.w_bit)
 
             folded_out = F.conv2d(x, fake_weight, folded_bias, self.conv.stride, self.conv.padding,
                                   self.conv.dilation, self.conv.groups)
-            if self._activation:
-                folded_out = self._activation(folded_out)
 
-            if external_range is None:
-                if self.apply_ema:
-                    self.act_range[0], self.act_range[1] = ema(folded_out, self.act_range, self.smooth)
-                    if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                        folded_out = fake_quantize(folded_out, s, z, self.a_bit)
-                else:
-                    self.act_range[0] = torch.min(folded_out).item()
-                    self.act_range[1] = torch.max(folded_out).item()
-                    self.apply_ema = True
-            else:
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-                    folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
-        return STE.apply(general_out, folded_out)
+        fake_out = STE.apply(real_out, folded_out)
+        if self._activation:
+            fake_out = self._activation(fake_out)
+
+        if self.apply_ema:
+            self.act_range[0], self.act_range[1] = ema(fake_out, self.act_range, self.smooth)
+            if self.runtime_helper.apply_fake_quantization:
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+                fake_out = fake_quantize(fake_out, s, z, self.a_bit, use_ste=self.use_ste)
+        else:
+            self.act_range[0], self.act_range[1] = get_range(fake_out)
+            self.apply_ema = True
+        return fake_out
 
     @torch.no_grad()
     def fold_conv_and_bn(self):
         w_bn = self._norm_layer.weight / torch.sqrt(self._norm_layer.running_var + self._norm_layer.eps)
-        self.folded_weight = self.conv.weight * w_bn
+        self.folded_weight = self.conv.weight * w_bn[:, None, None, None]
         self.folded_bias = self._norm_layer.bias - self._norm_layer.running_mean * w_bn
 
     @torch.no_grad()

@@ -26,7 +26,7 @@ def get_finetuning_model(arg_dict, tools):
         fused_model.load_state_dict(checkpoint['state_dict'], strict=False)
     else:
         pretrained_model = load_dnn_model(arg_dict, tools)
-        if arg_dict['arch'] == 'ResNet':
+        if arg_dict['arch'] == 'ResNet20':
             fused_model = check2mix_resnet.set_fused_resnet_with_fold_method(fused_model, pretrained_model)
         else:
             fused_model = tools.fuser(fused_model, pretrained_model)
@@ -34,7 +34,7 @@ def get_finetuning_model(arg_dict, tools):
 
 
 def find_layer_of_longest_range(model, loader, to_search=2):
-    model.valid()
+    model.eval()
     with torch.no_grad():
         with tqdm(loader, unit="batch", ncols=90) as t:
             for i, (input, _) in enumerate(t):
@@ -53,49 +53,17 @@ def find_layer_of_longest_range(model, loader, to_search=2):
 def find_layer_of_largest_number_of_params(model, to_search=2):
     print("Find top-{} layers of largest number of parameters..".format(to_search))
     found_layers = []
-    model.valid()
+    model.eval()
     with torch.no_grad():
-        found_layers.append(model.find_biggest_layer(found_layers))
+        for _ in range(to_search):
+            found_layers.append(model.find_biggest_layer(found_layers))
     return found_layers
 
 
-def raise_bit_level(model, found_layers):
-    model.valid()
+def raise_bit_level(model, target_layer):
     with torch.no_grad():
-        for m in range(len(found_layers)):
-            found_layers[m].w_bit.data = 8
-            found_layers[m].a_bit.data = 8
-
-
-def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-
-    model.train()
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
-        for i, (input, target) in enumerate(t):
-            t.set_description("Epoch {}".format(epoch))
-
-            input, target = input.cuda(), target.cuda()
-            output = model(input)
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec.item(), input.size(0))
-
-            if hvd:
-                if hvd.rank() == 0:
-                    logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                                 .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-            else:
-                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            t.set_postfix(loss=losses.avg, acc=top1.avg)
+        target_layer.w_bit.data = torch.tensor(8, dtype=torch.int8)
+        target_layer.a_bit.data = torch.tensor(8, dtype=torch.int8)
 
 
 def _check_and_finetune(args, tools):
@@ -145,24 +113,26 @@ def _check_and_finetune(args, tools):
     save_path_int = add_path(save_path_fp, 'quantized')
     logger = set_logger(save_path_fp)
 
-    if args.check_mode == 'both':
-        range_layers = find_layer_of_longest_range(model, train_loader, to_search=1)
-        n_params_layers = find_layer_of_largest_number_of_params(model)
-        model = raise_bit_level(model, range_layers[0])
-        if id(range_layers[0]) != id(n_params_layers[0]):
-            model = raise_bit_level(model, n_params_layers[0])
-        else:
-            model = raise_bit_level(model, n_params_layers[1])
-    elif args.check_mode == 'range':
-        layers = find_layer_of_largest_number_of_params(model, train_loader, to_search=args.n_mix)
-        model = raise_bit_level(model, layers[0])
-        if args.n_mix == 2:
-            model = raise_bit_level(model, layers[1])
-    elif args.check_mode == 'n_params':
-        layers = find_layer_of_largest_number_of_params(model, to_search=args.n_mix)
-        model = raise_bit_level(model, layers[0])
-        if args.n_mix == 2:
-            model = raise_bit_level(model, layers[1])
+    if args.mode == 'check2mix':
+        if args.check_method == 'both':
+            range_layers = find_layer_of_longest_range(model, train_loader, to_search=1)
+            n_params_layers = find_layer_of_largest_number_of_params(model)
+            raise_bit_level(model, range_layers[0])
+            if id(range_layers[0]) != id(n_params_layers[0]):
+                raise_bit_level(model, n_params_layers[0])
+            else:
+                raise_bit_level(model, n_params_layers[1])
+        elif args.check_method == 'range':
+            layers = find_layer_of_longest_range(model, train_loader, to_search=args.n_mix)
+            raise_bit_level(model, layers[0])
+            if args.n_mix == 2:
+                raise_bit_level(model, layers[1])
+        elif args.check_method == 'n_params':
+            layers = find_layer_of_largest_number_of_params(model, to_search=args.n_mix)
+            raise_bit_level(model, layers[0])
+            if args.n_mix == 2:
+                raise_bit_level(model, layers[1])
+    runtime_helper.check2mix = False
 
     quantized_model = None
     for e in range(epoch_to_start, args.epoch + 1):
@@ -185,6 +155,8 @@ def _check_and_finetune(args, tools):
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
+            if arg_dict['arch'] == 'ResNet20':
+                model = check2mix_resnet.fold_resnet(model)
             model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
@@ -192,8 +164,7 @@ def _check_and_finetune(args, tools):
                 else:
                     quantized_model = tools.quantized_model_initializer(arg_dict)
 
-            if arg_dict['arch'] == 'ResNet50':
-                model = check2mix_resnet.fold_resnet(model)
+            if arg_dict['arch'] == 'ResNet20':
                 quantized_model = quantized_resnet.quantize_folded_resnet(model, quantized_model)
             else:
                 quantized_model = tools.quantizer(model, quantized_model)

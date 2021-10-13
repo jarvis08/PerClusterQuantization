@@ -42,7 +42,7 @@ class FusedBasicBlock(nn.Module):
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
-        self.conv1 = fused_conv3x3(inplanes, planes, stride, norm_layer=norm_layer, arg_dict=arg_dict)
+        self.conv1 = fused_conv3x3(inplanes, planes, stride, norm_layer=norm_layer, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = fused_conv3x3(planes, planes, norm_layer=norm_layer, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=False)
 
@@ -59,6 +59,12 @@ class FusedBasicBlock(nn.Module):
         out = self.relu(out)
 
         if not self.training:
+            if self.runtime_helper.check2mix:
+                if self.apply_ema:
+                    self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+                else:
+                    self.act_range[0], self.act_range[1] = get_range(out)
+                    self.apply_ema = True
             return out
         
         if self.apply_ema:
@@ -111,8 +117,11 @@ class FusedBasicBlock(nn.Module):
             if len(found_layers) and id(found_layers[0]) == id(layer):
                 pass
             else:
-                number_of_params = layer.weight.numel()
-                biggest_number = biggest.weight.numel()
+                number_of_params = layer.conv.weight.numel()
+                if isinstance(biggest, FusedConv2d):
+                    biggest_number = biggest.conv.weight.numel()
+                else:
+                    biggest_number = biggest.fc.weight.numel()
                 if number_of_params > biggest_number:
                     biggest = layer
         return biggest
@@ -122,8 +131,8 @@ class FusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(FusedResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.a_bit, first_bit, classifier_bit, self.smooth, self.runtime_helper \
-            = itemgetter('bit', 'conv_a_bit', 'first_bit', 'classifier_bit', 'smooth', 'runtime_helper')(arg_dict)
+        target_bit, first_bit, classifier_bit, self.smooth, self.runtime_helper \
+            = itemgetter('bit', 'first_bit', 'classifier_bit', 'smooth', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
 
@@ -137,21 +146,18 @@ class FusedResNet20(nn.Module):
 
         self.arg_dict = arg_dict
 
-        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1, norm_layer=self._norm_layer,
-                                      w_bit=first_bit, a_bit=self.a_bit, arg_dict=arg_dict)
+        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1, norm_layer=self._norm_layer, activation=nn.ReLU, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = FusedLinear(64 * block.expansion, num_classes, is_classifier=True,
-                              w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
+        self.fc = FusedLinear(64 * block.expansion, num_classes, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, norm_layer=self._norm_layer,
-                                       arg_dict=self.arg_dict, a_bit=self.a_bit)
+            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, norm_layer=self._norm_layer, arg_dict=self.arg_dict)
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample,
                             norm_layer=self._norm_layer, arg_dict=self.arg_dict))
@@ -183,20 +189,11 @@ class FusedResNet20(nn.Module):
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
-        for i in range(len(self.layer1)):
-            prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
-        for i in range(len(self.layer2)):
-            prev_s, prev_z = self.layer2[i].set_block_qparams(prev_s, prev_z)
-        for i in range(len(self.layer3)):
-            prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
+        blocks = [self.layer1, self.layer2, self.layer3]
+        for block in blocks:
+            for i in range(len(block)):
+                prev_s, prev_z = block[i].set_block_qparams(prev_s, prev_z)
         self.fc.set_qparams(prev_s, prev_z)
-
-    def reset_ranges(self):
-        self.first_conv.reset_activation_range()
-        self.layer1.reset_block_ranges()
-        self.layer2.reset_block_ranges()
-        self.layer3.reset_block_ranges()
-        self.fc.reset_activation_range()
 
     def find_longest_range(self, found_layers):
         longest = None
@@ -208,7 +205,7 @@ class FusedResNet20(nn.Module):
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:
             for i in range(len(block)):
-                longest = self.block[i].find_block_longest_range(longest, found_layers)
+                longest = block[i].find_block_longest_range(longest, found_layers)
                 if len(found_layers) and id(found_layers[0]) == id(block[i]):
                     pass
                 else:
@@ -224,6 +221,7 @@ class FusedResNet20(nn.Module):
             longest_range = torch.abs(longest.act_range[1] - longest.act_range[0])
             if len_range > longest_range:
                 longest = self.fc
+        print('Longest layer: {}, Length of Range: {}'.format(longest.layer_type, torch.abs(longest.act_range[1] - longest.act_range[0])))
         return longest
 
     def find_biggest_layer(self, found_layers):
@@ -236,16 +234,30 @@ class FusedResNet20(nn.Module):
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:
             for i in range(len(block)):
-                biggest = self.block[i].find_block_biggest_layer(biggest, found_layers)
+                biggest = block[i].find_block_biggest_layer(biggest, found_layers)
 
         if len(found_layers) and id(found_layers[0]) == id(self.fc):
             pass
         else:
-            number_of_params = self.fc.weight.numel()
-            biggest_number = biggest.weight.numel()
+            number_of_params = self.fc.fc.weight.numel()
+            biggest_number = biggest.conv.weight.numel()
             if number_of_params > biggest_number:
                 biggest = self.fc
+
+        if isinstance(biggest, FusedConv2d):
+            n_params = biggest.conv.weight.numel()
+        else:
+            n_params = biggest.fc.weight.numel()
+        print('Biggest layer: {}, # of Params: {}'.format(biggest.layer_type, n_params))
         return biggest
+
+    def reset_ranges(self):
+        self.first_conv.reset_activation_range()
+        blocks = [self.layer1, self.layer2, self.layer3]
+        for block in blocks:
+            for i in range(len(block)):
+                block[i].reset_block_ranges()
+        self.fc.reset_activation_range()
 
 
 def fused_resnet20(arg_dict, num_classes=10):

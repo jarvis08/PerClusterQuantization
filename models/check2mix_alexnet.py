@@ -171,6 +171,11 @@ class FusedAlexNetSmall(nn.Module):
                     biggest = layer
         return biggest
 
+    def reset_ranges(self):
+        layers = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5, self.fc1, self.fc2, self.fc3]
+        for layer in layers:
+            layer.reset_activation_range()
+
 
 def fused_alexnet(arg_dict: dict, **kwargs: Any) -> FusedAlexNet:
     return FusedAlexNet(arg_dict, **kwargs)

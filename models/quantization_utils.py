@@ -362,8 +362,8 @@ def quantize_layer_and_transfer(_fp, _int):
                 if _fp.fold_convbn and _fp._norm_layer is not None:
                     _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
                     _int.weight.data.copy_(
-                        quantize_matrix(fp_layer.folded_weight, _int.s2, _int.z2, _int.w_bit))
-                    _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.folded_bias, _int.s1 * _int.s2, 0, 32))
+                        quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
+                    _int.quantized_bias[0].copy_(quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, 32))
                     return _int
             else:
                 fp_layer = _fp.fc

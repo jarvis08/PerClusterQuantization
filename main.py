@@ -9,13 +9,13 @@ from evaluate import _evaluate
 from utils.lipschitz import check_lipschitz
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--mode', default='eval', type=str, help="pre/fine/eval/lip")
+parser.add_argument('--mode', default='eval', type=str, help="pre/fine/eval/lip/check2mix")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--check_method', default='both', type=str, help="Only used in mode==check2mix, among both/range/n_params")
-parser.add_argument('--worker', default=2, type=int, help='Only used in mode==check2mix, between 1 & 2')
+parser.add_argument('--n_mix', default=2, type=int, help='Only used in mode check2mix, between 1 & 2, How many layers to use 8 bit')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
@@ -194,9 +194,10 @@ def specify_target_arch(arch, dataset, num_clusters):
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
-    assert args.mode == 'fine' and args.bit in [4, 8], 'Please set target bit between 4 & 8'
-    if args.mode == 'fine' and args.dataset != 'imagenet':
-        assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
+    if args.mode == 'fine':
+        assert args.mode == 'fine' and args.bit in [4, 8], 'Please set target bit between 4 & 8'
+        if args.dataset != 'imagenet':
+            assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
     if args.mode == 'pre':

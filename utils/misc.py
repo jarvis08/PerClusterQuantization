@@ -27,6 +27,8 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.qn_prob = 0.0
 
+        self.check2mix = True
+
         self.range_update_phase = False
         self.pcq_initialized = True
 
@@ -318,6 +320,7 @@ def add_path(prev_path, to_add, allow_existence=True):
             for i in range(100):
                 if not os.path.exists(path + '-{}'.format(i)):
                     path += '-{}'.format(i)
+                    os.makedirs(path)
                     break
     return path
 

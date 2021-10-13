@@ -257,10 +257,17 @@ class FusedLinear(nn.Module):
 
     def forward(self, x):
         if not self.training:
-            x = self.fc(x)
+            out = self.fc(x)
             if self._activation:
-                x = self._activation(x)
-            return x
+                out = self._activation(out)
+
+            if self.runtime_helper.check2mix:
+                if self.apply_ema:
+                    self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+                else:
+                    self.act_range[0], self.act_range[1] = get_range(out)
+                    self.apply_ema = True
+            return out
 
         s, z = calc_qparams(self.fc.weight.detach().min(), self.fc.weight.detach().max(), self.w_bit)
         if not self.quant_noise:
@@ -282,6 +289,7 @@ class FusedLinear(nn.Module):
             self.apply_ema = True
         return out
 
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit)
