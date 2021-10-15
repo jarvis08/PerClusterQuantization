@@ -80,7 +80,7 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
-            sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][:, :, None, None])
+            sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
 
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
