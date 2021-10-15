@@ -65,10 +65,3 @@ class PCQMLP(nn.Module):
 def pcq_mlp(arg_dict: dict, n_channels=3, num_classes=10) -> PCQMLP:
     return PCQMLP(arg_dict, n_channels=n_channels, num_classes=num_classes)
 
-
-def set_fused_alexnet(fused, pre):
-    fused.fc1 = copy_from_pretrained(fused.fc1, pre.fc1)
-    fused.fc2 = copy_from_pretrained(fused.fc2, pre.fc2)
-    fused.fc3 = copy_from_pretrained(fused.fc3, pre.fc3)
-    fused.fc4 = copy_from_pretrained(fused.fc4, pre.fc4)
-    return fused

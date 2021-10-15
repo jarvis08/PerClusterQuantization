@@ -59,3 +59,4 @@ def set_fused_mlp(fused, pre):
     fused.fc3 = copy_from_pretrained(fused.fc3, pre.fc3)
     fused.fc4 = copy_from_pretrained(fused.fc4, pre.fc4)
     return fused
+
