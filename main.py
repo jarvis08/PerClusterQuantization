@@ -88,6 +88,13 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
         else:
             setattr(tools, 'clustering_method', BIRCH)
 
+    if arch == 'MLP':
+        setattr(tools, 'pretrained_model_initializer', mlp)
+        setattr(tools, 'fused_model_initializer', pcq_mlp if is_pcq else fused_mlp)
+        setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
+        setattr(tools, 'fuser', set_fused_mlp)
+        setattr(tools, 'quantizer', quantize_mlp)
+
     if 'AlexNet' in arch:
         setattr(tools, 'fuser', set_fused_alexnet)
         setattr(tools, 'quantizer', quantize_alexnet)
@@ -159,6 +166,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
 
 
 def specify_target_arch(arch, dataset, num_clusters):
+    arch = 'MLP' if arch == 'mlp' else arch
     if arch == 'alexnet':
         if dataset == 'imagenet':
             arch = 'AlexNet'
@@ -185,7 +193,7 @@ def specify_target_arch(arch, dataset, num_clusters):
 
 
 if __name__=='__main__':
-    assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
+    assert args.arch in ['mlp', 'alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
     if args.mode == 'fine':
         assert args.bit in [4, 8], 'Please set target bit between 4 & 8'
