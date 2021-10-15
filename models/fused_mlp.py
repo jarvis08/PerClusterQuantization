@@ -6,7 +6,7 @@ from .quantization_utils import *
 
 
 class FusedMLP(nn.Module):
-    def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
+    def __init__(self, arg_dict: dict, n_channels: int = 3, num_classes: int = 10) -> None:
         super(FusedMLP, self).__init__()
         target_bit, first_bit, classifier_bit, self.smooth, self.runtime_helper \
             = itemgetter('bit', 'first_bit', 'classifier_bit', 'smooth', 'runtime_helper')(arg_dict)
@@ -49,8 +49,8 @@ class FusedMLP(nn.Module):
         self.fc4.set_qparams(prev_s, prev_z)
 
 
-def fused_mlp(arg_dict: dict, num_classes=10) -> FusedMLP:
-    return FusedMLP(arg_dict, num_classes=num_classes)
+def fused_mlp(arg_dict: dict, n_channels=3, num_classes=10) -> FusedMLP:
+    return FusedMLP(arg_dict, n_channels=n_channels, num_classes=num_classes)
 
 
 def set_fused_mlp(fused, pre):

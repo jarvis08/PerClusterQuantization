@@ -6,7 +6,7 @@ from .quantization_utils import *
 
 
 class PCQMLP(nn.Module):
-    def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
+    def __init__(self, arg_dict: dict, n_channels: int = 3, num_classes: int = 10) -> None:
         super(PCQMLP, self).__init__()
         target_bit, first_bit, classifier_bit, self.smooth, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'first_bit', 'classifier_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
@@ -62,8 +62,8 @@ class PCQMLP(nn.Module):
         self.fc4.set_qparams(prev_s, prev_z)
 
 
-def pcq_mlp(arg_dict: dict, num_classes=10) -> PCQMLP:
-    return PCQMLP(arg_dict, num_classes=num_classes)
+def pcq_mlp(arg_dict: dict, n_channels=3, num_classes=10) -> PCQMLP:
+    return PCQMLP(arg_dict, n_channels=n_channels, num_classes=num_classes)
 
 
 def set_fused_alexnet(fused, pre):
