@@ -59,27 +59,17 @@ class QuantizedLinear(nn.Linear):
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
-            for out_f in range(output_feature):
-                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add_(bias[:, out_f].type(torch.cuda.IntTensor))
+            sum_q1q2 = sum_q1q2 + bias
 
-        sum_a1 = torch.zeros(input_feature, dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros((bc.shape[0], output_feature), dtype=torch.int32).cuda()
-
-        for out_f in range(output_feature):
-            sum_a2[:, out_f] = torch.sum(self.weight[out_f, :]).mul(z1)
-
-        for in_f in range(input_feature):
-            sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
+        sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+        sum_a2 = torch.sum(self.weight, dim=1).view(1, -1).repeat(z1.size(0), 1).mul(z1[:, None])
 
         z1 = z1.reshape(bc.shape[0], 1)
         nz1z2 = N * z1 * self.z2
         sum_q1q2 = sum_q1q2.add_(nz1z2.type(torch.cuda.IntTensor))
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2)
 
-        for in_f in range(input_feature):
-            sum_q1q2[in_f, :] = torch.sub(sum_q1q2[in_f, :], sum_a1[in_f])
-
-        for out_f in range(output_feature):
-            sum_q1q2[:, out_f] = torch.sub(sum_q1q2[:, out_f], sum_a2[:, out_f])
 
         multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), M0)
         total = shifting2d(multiplied, shift)
@@ -99,23 +89,16 @@ class QuantizedLinear(nn.Linear):
         input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
 
         if self.is_bias:
-            for out_f in range(output_feature):
-                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add(self.quantized_bias[0][out_f])
+            sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :])
         N = x.shape[1]
 
-        sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
-        sum_a2 = torch.zeros(output_feature, dtype=torch.int32)
-        for out_f in range(output_feature):
-            sum_a2[out_f] = torch.sum(self.weight[out_f, :]).mul(self.z1)
-        for in_f in range(input_feature):
-            sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
+        sum_a1 = torch.sum(x, dim=1).mul(z2)
+        sum_a2 = torch.sum(weight, dim=1).mul(z1)
 
         nz1z2 = N * self.z1 * self.z2
         sub_sum = sum_q1q2.add(nz1z2)
-        for in_f in range(input_feature):
-            sub_sum[in_f, :] = torch.sub(sub_sum[in_f, :], sum_a1[in_f])
-        for out_f in range(output_feature):
-            sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
+        sub_sum = torch.sub(sub_sum, sum_a1[:, None])
+        sub_sum = torch.sub(sub_sum, sum_a2[None, :])
 
         if self.shift < 0:
             multiplied = multiply_M((sub_sum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
