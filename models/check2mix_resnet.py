@@ -85,14 +85,6 @@ class FusedBasicBlock(nn.Module):
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.bit)
         return self.s3, self.z3
 
-    def reset_block_ranges(self):
-        if self.downsample:
-            self.downsample.reset_activation_range()
-        self.conv1.reset_activation_range()
-        self.conv2.reset_activation_range()
-        self.act_range[0], self.act_range[1] = 0.0, 0.0
-        self.apply_ema = False
-    
     def find_block_longest_range(self, longest, found_layers):
         layers = [self.conv1, self.conv2]
         if self.downsample:
@@ -126,6 +118,14 @@ class FusedBasicBlock(nn.Module):
                     biggest = layer
         return biggest
 
+    def reset_block_ranges(self):
+        if self.downsample:
+            self.downsample.reset_activation_range()
+        self.conv1.reset_activation_range()
+        self.conv2.reset_activation_range()
+        self.act_range[0], self.act_range[1] = 0.0, 0.0
+        self.apply_ema = False
+    
 
 class FusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
@@ -299,26 +299,12 @@ def set_fused_resnet_with_fold_method(fused, pre):
 
 
 def fold_resnet(model):
-    # First layer
     model.first_conv.fold_conv_and_bn()
-
-    # Block 1
-    fp_block = model.layer1
-    for i in range(len(fp_block)):
-        fp_block[i].conv1.fold_conv_and_bn()
-        fp_block[i].conv2.fold_conv_and_bn()
-
-    # Block 2
-    fp_block = model.layer2
-    fp_block[0].downsample.fold_conv_and_bn()
-    for i in range(len(fp_block)):
-        fp_block[i].conv1.fold_conv_and_bn()
-        fp_block[i].conv2.fold_conv_and_bn()
-
-    # Block 3
-    fp_block = model.layer3
-    fp_block[0].downsample.fold_conv_and_bn()
-    for i in range(len(fp_block)):
-        fp_block[i].conv1.fold_conv_and_bn()
-        fp_block[i].conv2.fold_conv_and_bn()
+    blocks = [model.layer1, model.layer2, model.layer3]
+    for block in blocks:
+        for i in range(len(block)):
+            if block[i].downsample:
+                block[i].downsample.fold_conv_and_bn()
+            block[i].conv1.fold_conv_and_bn()
+            block[i].conv2.fold_conv_and_bn()
     return model

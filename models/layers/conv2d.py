@@ -418,6 +418,8 @@ class FusedConv2d(nn.Module):
     def _norm_folded(self, x, external_range=None):
         out = self.conv(x)
         real_out = self._norm_layer(out)
+        if self._activation:
+            real_out = self._activation(real_out)
 
         with torch.no_grad():
             _out = out.detach()
@@ -431,22 +433,22 @@ class FusedConv2d(nn.Module):
             s, z = calc_qparams(folded_weight.min(), folded_weight.max(), self.w_bit)
             fake_weight = fake_quantize(folded_weight, s, z, self.w_bit)
 
-            folded_out = F.conv2d(x, fake_weight, folded_bias, self.conv.stride, self.conv.padding,
+            fake_out = F.conv2d(x, fake_weight, folded_bias, self.conv.stride, self.conv.padding,
                                   self.conv.dilation, self.conv.groups)
 
-        fake_out = STE.apply(real_out, folded_out)
-        if self._activation:
-            fake_out = self._activation(fake_out)
+            if self._activation:
+                fake_out = self._activation(fake_out)
 
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(fake_out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                fake_out = fake_quantize(fake_out, s, z, self.a_bit, use_ste=self.use_ste)
-        else:
-            self.act_range[0], self.act_range[1] = get_range(fake_out)
-            self.apply_ema = True
-        return fake_out
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(fake_out, self.act_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+                    fake_out = fake_quantize(fake_out, s, z, self.a_bit)
+            else:
+                self.act_range[0], self.act_range[1] = get_range(fake_out)
+                self.apply_ema = True
+
+        return STE.apply(real_out, fake_out)
 
     @torch.no_grad()
     def fold_conv_and_bn(self):
@@ -475,3 +477,4 @@ class FusedConv2d(nn.Module):
     def reset_activation_range(self):
         self.act_range[0], self.act_range[1] = 0.0, 0.0
         self.apply_ema = False
+

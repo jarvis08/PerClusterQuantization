@@ -332,8 +332,8 @@ def quantize_pcq_block(_fp, _int):
 def quantize_folded_resnet(fp_model, int_model):
     int_model.target_bit.data = fp_model.target_bit
     int_model.in_bit.data = fp_model.in_bit
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.scale.data = fp_model.scale
+    int_model.zero_point.data = fp_model.zero_point
 
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
     int_model.layer1 = quantize_folded_block(fp_model.layer1, int_model.layer1)

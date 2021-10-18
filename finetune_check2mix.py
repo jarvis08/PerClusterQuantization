@@ -165,6 +165,7 @@ def _check_and_finetune(args, tools):
                     quantized_model = tools.quantized_model_initializer(arg_dict)
 
             if arg_dict['arch'] == 'ResNet20':
+                model = check2mix_resnet.fold_resnet(model)
                 quantized_model = quantized_resnet.quantize_folded_resnet(model, quantized_model)
             else:
                 quantized_model = tools.quantizer(model, quantized_model)
