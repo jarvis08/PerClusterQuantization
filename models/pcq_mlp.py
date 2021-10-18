@@ -55,7 +55,7 @@ class PCQMLP(nn.Module):
         return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
         prev_s, prev_z = self.fc1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc3.set_qparams(prev_s, prev_z)
