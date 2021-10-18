@@ -16,9 +16,9 @@ class QuantizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=False, activation=None, arg_dict=None):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.w_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.out_features = out_features
 
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
@@ -192,7 +192,7 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.w_bit)
+        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external

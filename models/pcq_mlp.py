@@ -16,7 +16,7 @@ class PCQMLP(nn.Module):
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
-        self.fc1 = PCQLinear(3072, 1024, bias=True, activation=nn.ReLU,
+        self.fc1 = PCQLinear(1024 * n_channels, 1024, bias=True, activation=nn.ReLU,
                              w_bit=first_bit, a_bit=first_bit, arg_dict=arg_dict)
         self.fc2 = PCQLinear(1024, 1024, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc3 = PCQLinear(1024, 1024, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
@@ -63,4 +63,3 @@ class PCQMLP(nn.Module):
 
 def pcq_mlp(arg_dict: dict, n_channels=3, num_classes=10) -> PCQMLP:
     return PCQMLP(arg_dict, n_channels=n_channels, num_classes=num_classes)
-

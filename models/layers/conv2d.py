@@ -15,9 +15,9 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.w_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
 
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
@@ -95,8 +95,7 @@ class QuantizedConv2d(nn.Conv2d):
         sum_a1 = sum_a1 * self.z2
 
         nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2.type(torch.cuda.IntTensor).reshape(bc.shape[0], 1, 1, 1))
-
+        sum_q1q2 = sum_q1q2.add(nz1z2[:, None, None, None])
         sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
         sum_q1q2 = torch.sub(sum_q1q2, sum_a2[:, :, None, None])
 

@@ -16,7 +16,7 @@ class FusedMLP(nn.Module):
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = False
 
-        self.fc1 = FusedLinear(3072, 1024, bias=True, activation=nn.ReLU,
+        self.fc1 = FusedLinear(1024 * n_channels, 1024, bias=True, activation=nn.ReLU,
                                w_bit=first_bit, a_bit=first_bit, arg_dict=arg_dict)
         self.fc2 = FusedLinear(1024, 1024, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc3 = FusedLinear(1024, 1024, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
