@@ -91,7 +91,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
     if arch == 'MLP':
         setattr(tools, 'pretrained_model_initializer', mlp)
         setattr(tools, 'fused_model_initializer', pcq_mlp if is_pcq else fused_mlp)
-        setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
+        setattr(tools, 'quantized_model_initializer', quantized_mlp)
         setattr(tools, 'fuser', set_fused_mlp)
         setattr(tools, 'quantizer', quantize_mlp)
 
