@@ -42,8 +42,10 @@ def quantized_mlp(arg_dict: dict, num_classes=10) -> QuantizedMLP:
 
 
 def quantize_mlp(fp_model, int_model):
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.target_bit.data = fp_model.target_bit
+    int_model.in_bit.data = fp_model.in_bit
+    int_model.scale.data = fp_model.scale
+    int_model.zero_point.data = fp_model.zero_point
     int_model.fc1 = quantize(fp_model.fc1, int_model.fc1)
     int_model.fc2 = quantize(fp_model.fc2, int_model.fc2)
     int_model.fc3 = quantize(fp_model.fc3, int_model.fc3)
