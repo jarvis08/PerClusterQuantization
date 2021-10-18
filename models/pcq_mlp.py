@@ -24,12 +24,12 @@ class PCQMLP(nn.Module):
                              w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = torch.flatten(x, 1)
         if self.training:
             self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
-        x = torch.flatten(x, 1)
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
@@ -39,9 +39,8 @@ class PCQMLP(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
-        data = x.view(x.size(0), -1)
-        _min = data.min(dim=1).values.mean()
-        _max = data.max(dim=1).values.mean()
+        _min = x.min(dim=1).values.mean()
+        _max = x.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
