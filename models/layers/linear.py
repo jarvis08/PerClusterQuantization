@@ -93,7 +93,7 @@ class QuantizedLinear(nn.Linear):
         N = x.shape[1]
 
         sum_a1 = torch.sum(x, dim=1).mul(self.z2)
-        sum_a2 = torch.sum(weight, dim=1).mul(self.z1)
+        sum_a2 = torch.sum(self.weight, dim=1).mul(self.z1)
 
         nz1z2 = N * self.z1 * self.z2
         sub_sum = sum_q1q2.add(nz1z2)
