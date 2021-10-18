@@ -68,7 +68,7 @@ def calc_qparams_per_cluster(ranges, bit):
         s = _max.sub(_min).div(65535)
         z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767)
-    s = _max.sub(_min).div(65535)
+    s = _max.sub(_min).div(4294967295)
     return s, torch.zeros(s.shape, device='cuda')
 
 
@@ -365,6 +365,9 @@ def quantize_bn(_fp, _int):
 
 def quantize_layer(_fp, _int):
     with torch.no_grad():
+        if _int.layer_type == 'QuantizedBn2d':
+            return quantize_bn(_fp, _int)
+
         if _int.layer_type == 'QuantizedConv2d':
             fp_layer = _fp.conv
         else:
@@ -376,7 +379,7 @@ def quantize_layer(_fp, _int):
             if _int.num_clusters > 1:
                 for c in range(_int.num_clusters):
                     _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                                 _int.s1[c] * _int.s2, 32))
+                                                                 _int.s1[c] * _int.s2, 0, 32))
             else:
                 _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
                                                              _int.s1 * _int.s2, 0, 32))
@@ -386,10 +389,7 @@ def quantize_layer(_fp, _int):
 def quantize(_fp, _int):
     assert _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d'], "Not supported quantized layer"
     _int = transfer_qparams(_fp, _int)
-    if _int.layer_type == 'QuantizedBn2d':
-        _int = quantize_bn(_fp, _int)
-    else:
-        _int = quantize_layer(_fp, _int)
+    _int = quantize_layer(_fp, _int)
     return _int
 
 
