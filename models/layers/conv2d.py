@@ -249,28 +249,22 @@ class PCQConv2d(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias, dilation=dilation)
 
-        self._activation = activation(inplace=False) if activation else None
+        self._activation = activation(inplace=True) if activation else None
         self.out_channels = out_channels
         self.in_channels = in_channels
 
     def forward(self, x, external_range=None):
         if not self.training:
-            if self.runtime_helper.range_update_phase:  # Phase-2
-                out = self._fake_quantized_conv(x)
-                self._update_activation_ranges(out, external_range)
-                if self.runtime_helper.apply_fake_quantization:
-                    out = self._fake_quantize_activation(out, external_range)
-                return out
-            else:
-                return self._forward_impl(x)
+            return self._forward_impl(x)
 
-        # Phase-1
-        out = self._fake_quantized_conv(x)
+        out = self._pcq(x)
+        if external_range is None:
+            self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -281,12 +275,10 @@ class PCQConv2d(nn.Module):
             x = self._activation(x)
         return x
 
-    def _fake_quantized_conv(self, x):
-        is_phase1 = not self.runtime_helper.range_update_phase
-        w = self.conv.weight
-        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+    def _pcq(self, x):
+        s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
         if not self.quant_noise:
-            w = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=is_phase1)
+            w = fake_quantize(self.conv.weight, s, z, self.q_max, use_ste=self.use_ste)
         else:
             w = apply_qn(self.conv.weight, scale=s, zero_point=z, q_max=self.q_max, qn_prob=self.qn_prob,
                          kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
@@ -296,34 +288,32 @@ class PCQConv2d(nn.Module):
             out = self._activation(out)
         return out
 
+    @torch.no_grad()
+    def _update_activation_ranges(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
+
     def _fake_quantize_activation(self, x, external_range=None):
+        cluster = self.runtime_helper.batch_cluster
         if external_range is not None:
-            s, z = calc_qparams_per_cluster(external_range, self.act_qmax)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.act_qmax)
         else:
-            s, z = calc_qparams_per_cluster(self.act_range, self.act_qmax)
-        return fake_quantize_per_cluster_4d(x, s, z, self.act_qmax, self.runtime_helper.batch_cluster, self.use_ste)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.act_qmax)
+        return fake_quantize(x, s, z, self.act_qmax, use_ste=self.use_ste)
 
-    def _update_activation_ranges(self, x, external_range=None):
-        if external_range is not None:
-            return None
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
-        else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
-
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = torch.nn.Parameter(s1, requires_grad=False), torch.nn.Parameter(z1, requires_grad=False)
-
-        self.s2, self.z2 = calc_qparams(torch.min(self.conv.weight), torch.max(self.conv.weight), self.q_max)
-
-        if s_external:
+        self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), \
                                nn.Parameter(z_external, requires_grad=False)
         else:
@@ -381,35 +371,30 @@ class FusedConv2d(nn.Module):
             return self._general(x, external_range)
 
     def _general(self, x, external_range=None):
-        w = self.conv.weight
-        s, z = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
-        if not self.quant_noise :
+        s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.q_max)
+        if not self.quant_noise:
             w = fake_quantize(self.conv.weight, s, z, self.q_max, self.use_ste)
         else:
             w = apply_qn(self.conv.weight, s, z, self.q_max, qn_prob=self.qn_prob,
                          kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
                          in_feature=self.in_channels, out_feature=self.out_channels)
 
-        x = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-        if self._norm_layer:
-            x = self._norm_layer(x)
+        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
-            x = self._activation(x)
+            out = self._activation(out)
 
-        out = x
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(external_range[0], external_range[1], self.act_qmax)
-                out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+                out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
         else:
             if self.apply_ema:
-                self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+                self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)
-                    out = fake_quantize(x, s, z, self.act_qmax, self.use_ste)
+                    out = fake_quantize(out, s, z, self.act_qmax, self.use_ste)
             else:
-                self.act_range[0] = torch.min(x).item()
-                self.act_range[1] = torch.max(x).item()
+                self.act_range[0], self.act_range[1] = get_range(out)
                 self.apply_ema = True
         return out
 
@@ -470,7 +455,7 @@ class FusedConv2d(nn.Module):
         self.s1, self.z1 = nn.Parameter(s1, requires_grad=False), nn.Parameter(z1, requires_grad=False)
         self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.q_max)
 
-        if s_external:
+        if s_external is not None:
             self.s3, self.z3 = nn.Parameter(s_external, requires_grad=False), nn.Parameter(z_external, requires_grad=False)
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.act_qmax)

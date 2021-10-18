@@ -38,7 +38,7 @@ class PCQBasicBlock(nn.Module):
         self.q_max = 2 ** self.bit - 1
         act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         if self.downsample is not None:
             self.bn_down = PCQBnReLU(planes, arg_dict=arg_dict)
@@ -46,7 +46,7 @@ class PCQBasicBlock(nn.Module):
         self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, act_qmax=act_qmax)
         self.bn2 = PCQBnReLU(planes, arg_dict=arg_dict)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         identity = x
@@ -63,34 +63,31 @@ class PCQBasicBlock(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if not self.training:
-            if self.runtime_helper.range_update_phase:  # Phase-2
-                self._update_activation_ranges(out)
-                if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_activation(out)
-            return out
-
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out)
+        if self.training:
+            self._update_activation_ranges(out)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantize_activation(out)
         return out
 
-    def _fake_quantize_activation(self, x):
-        s, z = calc_qparams_per_cluster(self.act_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster, self.use_ste)
-
+    @torch.no_grad()
     def _update_activation_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
+    def _fake_quantize_activation(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
+
+    @torch.no_grad()
     def set_block_qparams(self, s1, z1):
         if self.downsample:
             prev_s, prev_z = self.downsample.set_qparams(s1, z1)
@@ -122,18 +119,18 @@ class PCQBottleneck(nn.Module):
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
         self.q_max = 2 ** self.bit - 1
-        self.act_qmax = act_qmax if act_qmax else self.q_max
+        act_qmax = act_qmax if act_qmax else self.q_max
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn1 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation,
-                                 arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+                                 arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn2 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
-        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+        self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=True)
         if self.downsample is not None:
@@ -156,33 +153,29 @@ class PCQBottleneck(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if not self.training:
-            if self.runtime_helper.range_update_phase:  # Phase-2
-                self._update_activation_ranges(out)
-                if self.runtime_helper.apply_fake_quantization:
-                    return self._fake_quantize_activation(out)
-            return out
-
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out)
+        if self.training:
+            self._update_activation_ranges(out)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantize_activation(out)
         return out
 
-    def _fake_quantize_activation(self, x):
-        s, z = calc_qparams_per_cluster(self.act_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster, self.use_ste)
-
+    @torch.no_grad()
     def _update_activation_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
+
+    def _fake_quantize_activation(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1):
         if self.downsample:
@@ -210,7 +203,7 @@ class PCQResNet(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.inplanes = 64
         self.dilation = 1
@@ -256,16 +249,8 @@ class PCQResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # if not self.training and not self.runtime_helper.range_update_phase:
-        #     pass
-        # else:
-        #     if not self.training:
-        #         self._update_input_ranges(x)
-        #     if self.runtime_helper.apply_fake_quantization:
-        #         x = self._fake_quantize_input(x)
         if self.training:
-            if self.runtime_helper.range_update_phase:
-                self._update_input_ranges(x)
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -283,22 +268,23 @@ class PCQResNet(nn.Module):
         x = self.fc(x)
         return x
 
-    def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
-
+    @torch.no_grad()
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.in_range[c][0], self.in_range[c][1] = ema(x[c * n: (c + 1) * n], self.in_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.in_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.in_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
+
+    def _fake_quantize_input(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
@@ -344,14 +330,14 @@ class PCQResNet20(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.inplanes = 16
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                    arg_dict=self.arg_dict, act_qmax=self.act_qmax)
+        self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict,
+                                    act_qmax=self.act_qmax)
         self.bn1 = PCQBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
@@ -373,11 +359,8 @@ class PCQResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if not self.training and not self.runtime_helper.range_update_phase:
-            pass
-        else:
-            if not self.training:
-                self._update_input_ranges(x)
+        if self.training:
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -391,23 +374,25 @@ class PCQResNet20(nn.Module):
         x = self.fc(x)
         return x
 
-    def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
-
+    @torch.no_grad()
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.in_range[c][0], self.in_range[c][1] = ema(x[c * n: (c + 1) * n], self.in_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.in_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.in_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
+    def _fake_quantize_input(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max)
+
+    @torch.no_grad()
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
@@ -442,62 +427,63 @@ def set_pcq_resnet(fused, pre):
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
     n = fused.arg_dict['cluster']
+    momentum = fused.arg_dict['bn_momentum']
     # First layer
     fused.first_conv = copy_weight_from_pretrained(fused.first_conv, pre.conv1)
-    fused.bn1 = copy_pcq_bn_from_pretrained(fused.bn1, pre.bn1, n)
+    fused.bn1 = copy_pcq_bn_from_pretrained(fused.bn1, pre.bn1, n, momentum)
 
     # Block 1
     block = fused.layer1
     if block[0].downsample is not None:
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer1[0].downsample[0])
-        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer1[0].downsample[1], n)
+        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer1[0].downsample[1], n, momentum)
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer1[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer1[i].conv2)
-        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer1[i].bn1, n)
-        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer1[i].bn2, n)
+        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer1[i].bn1, n, momentum)
+        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer1[i].bn2, n, momentum)
         if type(block[i]) == PCQBottleneck:
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer1[i].conv3)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer1[i].bn3, n)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer1[i].bn3, n, momentum)
 
     # Block 2
     block = fused.layer2
     block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0])
-    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer2[0].downsample[1], n)
+    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer2[0].downsample[1], n, momentum)
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer2[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer2[i].conv2)
-        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer2[i].bn1, n)
-        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer2[i].bn2, n)
+        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer2[i].bn1, n, momentum)
+        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer2[i].bn2, n, momentum)
         if type(block[i]) == PCQBottleneck:
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer2[i].conv3)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer2[i].bn3, n)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer2[i].bn3, n, momentum)
 
     # Block 3
     block = fused.layer3
     block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0])
-    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer3[0].downsample[1], n)
+    block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer3[0].downsample[1], n, momentum)
     for i in range(len(block)):
         block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer3[i].conv1)
         block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer3[i].conv2)
-        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer3[i].bn1, n)
-        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer3[i].bn2, n)
+        block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer3[i].bn1, n, momentum)
+        block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer3[i].bn2, n, momentum)
         if type(block[i]) == PCQBottleneck:
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer3[i].conv3)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer3[i].bn3, n)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer3[i].bn3, n, momentum)
 
     # Block 4
     if fused.num_blocks == 4:
         block = fused.layer4
         block[0].downsample = copy_weight_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0])
-        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer4[0].downsample[1], n)
+        block[0].bn_down = copy_pcq_bn_from_pretrained(block[0].bn_down, pre.layer4[0].downsample[1], n, momentum)
         for i in range(len(block)):
             block[i].conv1 = copy_weight_from_pretrained(block[i].conv1, pre.layer4[i].conv1)
             block[i].conv2 = copy_weight_from_pretrained(block[i].conv2, pre.layer4[i].conv2)
             block[i].conv3 = copy_weight_from_pretrained(block[i].conv3, pre.layer4[i].conv3)
-            block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer4[i].bn1, n)
-            block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer4[i].bn2, n)
-            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer4[i].bn3, n)
+            block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer4[i].bn1, n, momentum)
+            block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer4[i].bn2, n, momentum)
+            block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer4[i].bn3, n, momentum)
 
     # Classifier
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
@@ -545,7 +531,7 @@ def modify_pcq_resnet_qn_pre_hook(model):
     model.first_conv.quant_noise = False
     # Block 1
     block = model.layer1
-    if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
+    if len(model.layer3) == 6:
         m = block[0].downsample
         m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 1, q_max=m.q_max)
     for i in range(len(block)):

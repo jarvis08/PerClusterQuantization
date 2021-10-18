@@ -1,22 +1,17 @@
 import argparse
 
-#from PerClusterQuantization.models.bert.bert import bert_small
-#from PerClusterQuantization.models.bert.fused_bert import fused_bert_small, set_fused_bert_small
-#from PerClusterQuantization.models.bert.quantized_bert import quantized_bert_small, quantize_bert
-#from PerClusterQuantization.run_classifier import _run_classifier
-# from run_classifier import _run_classifier
 from models import *
 from pretrain import _pretrain
 from finetune import _finetune
 from finetune_with_dali import _finetune_with_dali
-#from hvd_finetune import hvd_finetune
 from evaluate import _evaluate
+from utils.lipschitz import check_lipschitz
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--mode', default='eval', type=str, help="pre or fine or eval")
+parser.add_argument('--mode', default='eval', type=str, help="pre/fine/eval/lip")
 parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
+parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
@@ -24,7 +19,7 @@ parser.add_argument('--dali', default=False, type=bool, help='Use GPU data augme
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
-parser.add_argument('--val_batch', default=256, type=int, help='Validation batch size')
+parser.add_argument('--val_batch', default=0, type=int, help='Validation batch size')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
 parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d's momentum factor")
@@ -42,6 +37,7 @@ parser.add_argument('--folded_fq', default=False, type=bool, help="Fake Quantize
 parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means/BIRCH) to use in PCQ")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
+parser.add_argument('--partition_method', default='square', type=str, help="How to divide image into partitions")
 parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
 parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
 parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
@@ -67,14 +63,10 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 if args.imagenet:
     args.dataset = 'imagenet'
-    args.val_batch = 128
 if args.dataset == 'cifar':
     args.dataset = 'cifar10'
-if not args.worker:
-    if args.dataset == 'imagenet':
-        args.worker = 4
-    else:
-        args.worker = 4
+if not args.val_batch:
+    args.val_batch = 256 if args.dataset != 'imagenet' else 128
 print(vars(args))
 
 
@@ -142,27 +134,16 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
         setattr(tools, 'fused_model_initializer', fused_mobilenet)
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
-    # elif arch == 'Bert':
-    #     # setattr(tools, 'fuser', set_fused_bert)
-    #     setattr(tools, 'fuser', set_fused_bert_small)
-    #     setattr(tools, 'pretrained_model_initializer', bert_small)
-    #     setattr(tools, 'fused_model_initializer', fused_bert_small)
-    #     setattr(tools, 'quantized_model_initializer', quantized_bert_small)
-    #     setattr(tools, 'quantizer', quantize_bert)
-
     elif arch == 'DenseNet121':
-        # setattr(tools, 'pretrained_model_initializer', densenet121)
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)
             setattr(tools, 'fuser', set_pcq_densenet)
-            # setattr(tools, 'folder', fold_pcq_densenet)
             setattr(tools, 'quantizer', quantize_pcq_densenet)
             setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
         else:
             setattr(tools, 'fused_model_initializer', fused_densenet)
             setattr(tools, 'fuser', set_fused_densenet)
-            # setattr(tools, 'folder', fold_densenet)
             setattr(tools, 'quantizer', quantize_densenet)
             setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
     return tools
@@ -196,7 +177,9 @@ def specify_target_arch(arch, dataset, num_clusters):
 
 if __name__=='__main__':
     assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
-    assert args.bit in [4, 8, 32], 'Not supported target bit'
+    assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
+    if args.mode == 'fine' and args.dataset != 'imagenet':
+        assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
     if args.mode == 'pre':
@@ -204,11 +187,9 @@ if __name__=='__main__':
     elif args.mode == 'fine':
         if args.dali and args.dataset == 'imagenet':
             _finetune_with_dali(args, tools)
-        #if args.horovod:
-        #    hvd_finetune(args,tools)
         else:
             _finetune(args, tools)
-    # elif args.mode == 'test':
-        #_run_classifier(args, tools)
-    else:
+    elif args.mode == 'eval':
         _evaluate(args, tools)
+    elif args.mode == 'lip':
+        check_lipschitz(args, tools)

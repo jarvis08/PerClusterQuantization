@@ -24,8 +24,17 @@ class QuantizationTool(object):
         self.quantized_model_initializer = None
 
 
-def calc_qparams(_min, _max, q_max):
+def get_range(x):
+    _x = x.detach()
+    return _x.min().item(), _x.max().item()
+
+
+@torch.no_grad()
+def calc_qparams(range_min, range_max, q_max):
+    _min = torch.tensor(0.0, device='cuda') if range_min > 0.0 else range_min
+    _max = torch.tensor(0.0, device='cuda') if range_max < 0.0 else range_max
     s = (_max - _min) / q_max
+
     if q_max == 15:            # UINT 4
         z = - torch.round(_min / s)
         return s, torch.clamp(z, 0, q_max)
@@ -42,31 +51,44 @@ def calc_qparams(_min, _max, q_max):
         return s, z
 
 
+@torch.no_grad()
 def calc_qparams_per_cluster(ranges, q_max):
-    s = ranges[:, 1].sub(ranges[:, 0]).div(q_max)
-
+    zero = torch.tensor(0.0, device='cuda')
+    _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
+    _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
+    s = _max.sub(_min).div(q_max)
     if q_max == 15:
-        z = - torch.round(ranges[:, 0] / s)
+        z = - torch.round(_min / s)
         return s, torch.clamp(z, 0, 15).cuda()
     elif q_max == 255:
-        z = -128 - torch.round(ranges[:, 0] / s)
+        z = -128 - torch.round(_min / s)
         return s, torch.clamp(z, -128, 127).cuda()
     elif q_max == 65535:
-        z = -32768 - torch.round(ranges[:, 0] / s)
+        z = -32768 - torch.round(_min / s)
         return s, torch.clamp(z, -32768, 32767).cuda()
 
     # If 32bit or larger, use zero-point as 0 which doesn't need to be clamped
-    return s, torch.nn.Parameter(torch.zeros(s.shape), requires_grad=False).cuda()
+    return s, torch.nn.Parameter(torch.zeros(s.shape, device='cuda'), requires_grad=False)
 
 
+@torch.no_grad()
 def ema(x, averaged, smooth):
-    _min = torch.min(x).item()
-    _max = torch.max(x).item()
-    rst_min = averaged[0] * smooth + _min * (1 - smooth)
-    rst_max = averaged[1] * smooth + _max * (1 - smooth)
-    return rst_min, rst_max
+    _min, _max = torch.min(x).item(), torch.max(x).item()
+    updated_min = averaged[0] * smooth + _min * (1 - smooth)
+    updated_max = averaged[1] * smooth + _max * (1 - smooth)
+    return updated_min, updated_max
 
 
+@torch.no_grad()
+def ema_per_cluster(x, averaged_ranges, num_clusters, smooth):
+    _x = x.view(num_clusters, -1)
+    _min = _x.min(-1, keepdim=True).values
+    _max = _x.max(-1, keepdim=True).values
+    batch_range = torch.cat([_min, _max], 1)
+    averaged_ranges.mul_(smooth).add_(batch_range * (1 - smooth))
+
+
+@torch.no_grad()
 def bn_ema(cur, pre, smooth):
     mean = pre[0] * smooth + cur[0].running_mean * (1 - smooth)
     var = pre[1] * smooth + cur[1].running_var * (1 - smooth)
@@ -74,7 +96,6 @@ def bn_ema(cur, pre, smooth):
 
 
 def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
-    _x = x.detach()
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -84,16 +105,13 @@ def fake_quantize(x, scale, zero_point, q_max, use_ste=False):
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+    _x = (torch.clamp(torch.round(x.detach() / scale + zero_point), _qmin, _qmax) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
-    _x = x.detach()
-    s = torch.index_select(scale, 0, cluster_per_data)[:, None]
-    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -103,16 +121,15 @@ def fake_quantize_per_cluster_2d(x, scale, zero_point, q_max, cluster_per_data, 
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
+    s = torch.index_select(scale, 0, cluster_per_data)[:, None]
+    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
+    _x = (torch.clamp(torch.round(x.detach() / s + z), _qmin, _qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, use_ste=False):
-    _x = x.detach()
-    s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
-    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -122,14 +139,15 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, q_max, cluster_per_data, 
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(_x / s + z), _qmin, _qmax) - z) * s
+    s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
+    z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
+    _x = (torch.clamp(torch.round(x.detach() / s + z), _qmin, _qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
-    _x = x.detach()
     if q_max == 15:
         _qmin, _qmax = 0, 15
     elif q_max == 255:
@@ -139,19 +157,14 @@ def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channe
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    fq_x_4 = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
-    fq_x_8 = (torch,clamp(torch.round(_x / scale + zero_point), __qmin, _qmax) - zero_point) * scale
-
+    _x = x.detach()
+    fq_x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
     if kernel_size is None:
         mask = torch.zeros_like(_x)
-        mask_high = torch.ones_like(_x)
-        mask.bernoulli_(qn_prob)
-        mask_high = mask_high - mask
+        mask.bernoulli_(1 - qn_prob)
+        noise = (fq_x - _x).masked_fill(mask.bool(), 0)
+        qn_x = _x + noise
 
-        noise_4 = (fq_x4 - _x).masked_fill(mask.bool(), 0)
-        noise_8 = (fq_x8 - _x).masked_fill(mask_high.bool(), 0)
-
-        qn_x = _x + noise_4 + noise_8
     else:  # Conv
         if each_channel:
             mask = torch.zeros(in_feature, out_feature).cuda()
@@ -326,8 +339,19 @@ def quantize_layer_and_transfer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
             if _int.num_clusters > 1:
-                weight = _fp.weights.clone().detach().div(torch.sqrt(_fp.running_vars.clone().detach() + _fp.eps))
-                bias = _fp.biases.clone().detach() - weight * _fp.running_means.clone().detach()
+                _size = (_fp.num_clusters, _fp.num_features)
+                _weights = torch.zeros(_size, device='cuda')
+                _biases = torch.zeros(_size, device='cuda')
+                _means = torch.zeros(_size, device='cuda')
+                _vars = torch.zeros(_size, device='cuda')
+                for c in range(_fp.num_clusters):
+                    _weights[c] = _fp.norms[c].weight.clone().detach()
+                    _biases[c] = _fp.norms[c].bias.clone().detach()
+                    _means[c] = _fp.norms[c].running_mean.clone().detach()
+                    _vars[c] = _fp.norms[c].running_var.clone().detach()
+
+                weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
+                bias = _biases - weight * _means
                 weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_qmax)
                 _int.weight.copy_(weight.type(torch.cuda.IntTensor))
                 for c in range(_int.num_clusters):
@@ -390,16 +414,11 @@ def copy_bn_from_pretrained(_to, _from):
     return _to
 
 
-def copy_pcq_bn_from_pretrained(_to, _from, num_clusters):
+def copy_pcq_bn_from_pretrained(_to, _from, num_clusters, momentum):
     with torch.no_grad():
-        _to.weights = nn.Parameter(_from.weight.clone().detach().unsqueeze(0)
-                                   .repeat(num_clusters, 1), requires_grad=True)
-        _to.biases = nn.Parameter(_from.bias.clone().detach().unsqueeze(0)
-                                  .repeat(num_clusters, 1), requires_grad=True)
-        _to.running_means = nn.Parameter(_from.running_mean.clone().detach()
-                                         .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
-        _to.running_vars = nn.Parameter(_from.running_var.clone().detach()
-                                        .unsqueeze(0).repeat(num_clusters, 1), requires_grad=False)
+        for c in range(num_clusters):
+            _to.norms[c] = deepcopy(_from)
+            _to.norms[c].momentum = momentum
     return _to
 
 
@@ -411,92 +430,3 @@ def copy_weight_from_pretrained(_to, _from):
         else:
             _to.fc.weight.copy_(_from.weight)
     return _to
-
-
-def transform(param):
-    return param.flatten().numpy().astype('float32')
-
-
-def save_qparams(m, f):
-    assert m.layer_type in ['FusedConv2d', 'FusedLinear', 'PCQConv2d', 'PCQLinear'],\
-        "Can't parse Q-params from {}".format(type(m))
-    print("S1: {} | Z1: {}".format(m.s1, m.z1))
-    print("S2: {} | Z2: {}".format(m.s2, m.z2))
-    print("S3: {} | Z3: {}".format(m.s3, m.z3))
-    m.s1.numpy().astype('float32').tofile(f)
-    m.s2.numpy().astype('float32').tofile(f)
-    m.s3.numpy().astype('float32').tofile(f)
-    m.z1.numpy().astype('int32').tofile(f)
-    m.z2.numpy().astype('int32').tofile(f)
-    m.z3.numpy().astype('int32').tofile(f)
-
-
-def save_block_qparams(block, f):
-    # Downsampling after bypass-connection
-    if block.downsample:
-        save_qparams(block.downsample, f)
-
-    # CONV after bypass-connection
-    save_qparams(block.conv1, f)
-
-    # 2nd CONV in a block
-    save_qparams(block.conv2, f)
-
-    # SHORTCUT layer in Darknet
-    if block.downsample:
-        block.downsample.s3.numpy().astype('float32').tofile(f)
-    else:
-        block.conv1.s1.numpy().astype('float32').tofile(f)
-    block.conv2.s3.numpy().astype('float32').tofile(f)
-    block.s3.numpy().astype('float32').tofile(f)
-
-    if block.downsample:
-        block.downsample.z3.numpy().astype('int32').tofile(f)
-    else:
-        block.conv1.z1.numpy().astype('int32').tofile(f)
-    block.conv2.z3.numpy().astype('int32').tofile(f)
-    block.z3.numpy().astype('int32').tofile(f)
-
-
-def save_fused_alexnet_qparams(model, path):
-    with open(path, 'w') as f:
-        for name, m in model.named_children():
-            if 'conv' in name or 'fc' in name:
-                save_qparams(m, f)
-
-
-def save_fused_resnet_qparams(model, path):
-    with open(path, 'wb') as f:
-        for name, m in model.named_children():
-            if "layer" in name:
-                for i in range(len(m)):
-                    save_block_qparams(m[i], f)
-            elif name in ["first_conv", "fc"]:
-                save_qparams(m, f)
-
-
-def save_params(model, path):
-    with open(path, 'w') as f:
-        weight = None
-        for name, param in model.named_parameters():
-            if 'weight' in name:
-                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
-                weight = transform(param.data)
-            elif 'bias' in name:
-                print(">> Layer: {}\tshape={}".format(name, str(param.data.shape).replace('torch.Size', '')))
-                transform(param.data).tofile(f)
-                weight.tofile(f)
-
-
-def save_fused_network_in_darknet_form(model, args):
-    path = './result/darknet'
-    if not os.path.exists(path):
-        os.makedirs(path)
-    path = os.path.join(path, '{}.fused.torch.int{}'.format(args.arch, args.bit))
-
-    model.cpu()
-    save_params(model, path + 'weights')
-    if 'ResNet' in args.arch:
-        save_fused_resnet_qparams(model, path + 'qparams')
-    elif 'AlexNet' in args.arch:
-        save_fused_alexnet_qparams(model, path + 'qparams')

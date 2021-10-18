@@ -17,7 +17,7 @@ class PCQAlexNet(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
 
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -37,8 +37,7 @@ class PCQAlexNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            if self.runtime_helper.range_update_phase:
-                self._update_input_ranges(x)
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -61,18 +60,18 @@ class PCQAlexNet(nn.Module):
         s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
         return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
 
+    @torch.no_grad()
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.in_range[c][0], self.in_range[c][1] = ema(x[c * n: (c + 1) * n], self.in_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.in_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.in_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.q_max)
@@ -96,7 +95,7 @@ class PCQAlexNetSmall(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
 
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -115,11 +114,8 @@ class PCQAlexNetSmall(nn.Module):
         self.fc3 = PCQLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if not self.training and not self.runtime_helper.range_update_phase:
-            pass
-        else:
-            if not self.training:
-                self._update_input_ranges(x)
+        if self.training:
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
@@ -138,22 +134,23 @@ class PCQAlexNetSmall(nn.Module):
         x = self.fc3(x)
         return x
 
-    def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
-
+    @torch.no_grad()
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.in_range[c][0], self.in_range[c][1] = ema(x[c * n: (c + 1) * n], self.in_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.in_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.in_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
+
+    def _fake_quantize_input(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=False)
 
     def set_quantization_params(self):
         self.scale = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.float32), requires_grad=False)

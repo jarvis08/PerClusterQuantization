@@ -63,7 +63,6 @@ class PCQTransition(nn.Sequential):
         self.arg_dict = arg_dict
         self.bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
 
         self.bn = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
@@ -104,7 +103,7 @@ class PCQDenseBlock(nn.ModuleDict):
         self.act_qmax = 2 ** 16 - 1
 
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         for i in range(num_layers):
             layer = PCQDenseLayer(
@@ -123,40 +122,27 @@ class PCQDenseBlock(nn.ModuleDict):
             features.append(new_features)
         out = torch.cat(features, 1)
 
-        if not self.training:
-            return out
-
-        if not self.runtime_helper.pcq_initialized:
-            # PCQ initialization
+        if self.training:
             self._update_activation_ranges(out)
-            return out
+        return out
 
-        # Phase-2
-        if self.runtime_helper.range_update_phase:
-            self._update_activation_ranges(out)
-
-        # Phase-1&2
-        if self.runtime_helper.apply_fake_quantization:
-            return self._fake_quantize_activation(out)
+    @torch.no_grad()
+    def _update_activation_ranges(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            return out
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams_per_cluster(self.act_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster, self.use_ste)
-
-    def _update_activation_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.act_range[c][0], self.act_range[c][1] = ema(x[c * n: (c + 1) * n], self.act_range[c], self.smooth)
-        else:
-            for c in range(self.num_clusters):
-                self.act_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.act_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
 
     def set_block_qparams(self):
         self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.act_qmax)
@@ -183,7 +169,7 @@ class PCQDenseNet(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = 2 ** 16 - 1
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
@@ -216,15 +202,11 @@ class PCQDenseNet(nn.Module):
         self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
-        if not self.training and not self.runtime_helper.range_update_phase:
-            pass
-        else:
-            if not self.training:
-                self._update_input_ranges(x)
+        if self.training:
+            self._update_input_ranges(x)
             if self.runtime_helper.apply_fake_quantization:
                 x = self._fake_quantize_input(x)
 
-        # out = self.features(x)
         out = self.features.first_conv(x)
         out = self.features.first_norm(out, self.features.denseblock1.act_range)
         out = self.features.maxpool(out)
@@ -242,22 +224,23 @@ class PCQDenseNet(nn.Module):
         out = self.classifier(out)
         return out
 
-    def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.q_max)
-        return fake_quantize_per_cluster_4d(x, s, z, self.q_max, self.runtime_helper.batch_cluster)
-
+    @torch.no_grad()
     def _update_input_ranges(self, x):
-        # Update of ranges only occures in Phase-2 :: data are sorted by cluster number
-        # (number of data per cluster in batch) == (args.data_per_cluster)
-        n = self.runtime_helper.data_per_cluster
-        if self.apply_ema:
-            for c in range(self.num_clusters):
-                self.in_range[c][0], self.in_range[c][1] = ema(x[c * n: (c + 1) * n], self.in_range[c], self.smooth)
+        cluster = self.runtime_helper.batch_cluster
+        data = x.view(x.size(0), -1)
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            for c in range(self.num_clusters):
-                self.in_range[c][0] = x[c * n: (c + 1) * n].min().item()
-                self.in_range[c][1] = x[c * n: (c + 1) * n].max().item()
-            self.apply_ema = True
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
+
+    def _fake_quantize_input(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.q_max)
+        return fake_quantize(x, s, z, self.q_max)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
@@ -280,10 +263,10 @@ def pcq_densenet(arg_dict: dict, **kwargs):
 
 def set_pcq_densenet(fused, pre):
     n = fused.arg_dict['cluster']
-
+    momentum = fused.arg_dict['bn_momentum']
     # first conv & norm
     fused.features.first_conv = copy_from_pretrained(fused.features.first_conv, pre.features.conv0)
-    fused.features.first_norm = copy_pcq_bn_from_pretrained(fused.features.first_norm, pre.features.norm0, n)
+    fused.features.first_norm = copy_pcq_bn_from_pretrained(fused.features.first_norm, pre.features.norm0, n, momentum)
 
     # dense block & Transition
     for block_idx in range(1,5):
@@ -299,15 +282,15 @@ def set_pcq_densenet(fused, pre):
             pre_layer = getattr(pre_block,'denselayer%d' % layer_idx)
             fused_layer.conv1 = copy_from_pretrained(fused_layer.conv1, pre_layer.conv1)
             fused_layer.conv2 = copy_from_pretrained(fused_layer.conv2, pre_layer.conv2)
-            fused_layer.bn1 = copy_pcq_bn_from_pretrained(fused_layer.bn1, pre_layer.norm1, n)
-            fused_layer.bn2 = copy_pcq_bn_from_pretrained(fused_layer.bn2, pre_layer.norm2, n)
+            fused_layer.bn1 = copy_pcq_bn_from_pretrained(fused_layer.bn1, pre_layer.norm1, n, momentum)
+            fused_layer.bn2 = copy_pcq_bn_from_pretrained(fused_layer.bn2, pre_layer.norm2, n, momentum)
 
         # transition
         if block_idx < 4:
             fused_trans.conv = copy_from_pretrained(fused_trans.conv, pre_trans.conv)
-            fused_trans.bn = copy_pcq_bn_from_pretrained(fused_trans.bn, pre_trans.norm, n)
+            fused_trans.bn = copy_pcq_bn_from_pretrained(fused_trans.bn, pre_trans.norm, n, momentum)
     # Last BatchNorm
-    fused.features.last_norm = copy_pcq_bn_from_pretrained(fused.features.last_norm, pre.features.norm5, n)
+    fused.features.last_norm = copy_pcq_bn_from_pretrained(fused.features.last_norm, pre.features.norm5, n, momentum)
 
     # Classifier
     fused.classifier = copy_from_pretrained(fused.classifier, pre.classifier)

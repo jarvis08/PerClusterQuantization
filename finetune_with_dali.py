@@ -55,22 +55,27 @@ def dali_validate(model, test_loader, criterion, logger=None):
     return top1.avg
 
 
-def dali_pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criterion, optimizer, runtime_helper, epoch,
-                   logger):
+def dali_pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
     losses = AverageMeter()
     top1 = AverageMeter()
-    with tqdm(phase1_loader, unit="batch", ncols=90) as t:
+    model.train()
+    container = InputContainer(runtime_helper.num_clusters, clustering_model.args.batch)
+    with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, data in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
-            # Phase-1
-            model.train()
-            input = data[0]["data"]
-            target = data[0]["label"].squeeze(-1).long()
-            runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-            output = model(input)
+            images, targets = data[0]["data"], data[0]["label"].squeeze(-1).long()
+            cluster_info = clustering_model.predict_cluster_of_batch(images)
+            images, targets = images.cpu(), targets.cpu()
 
+            input, target, runtime_helper.batch_cluster = container.gather_and_get_data(images, targets, cluster_info)
+            if input is None:
+                continue
+
+            input, target = input.cuda(), target.cuda()
+            output = model(input)
             loss = criterion(output, target)
+
             prec = accuracy(output, target)[0]
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
@@ -79,21 +84,37 @@ def dali_pcq_epoch(model, clustering_model, phase1_loader, phase2_loader, criter
             loss.backward()
             optimizer.step()
 
-            # Phase-2
-            model.eval()
-            runtime_helper.range_update_phase = True
-            phase2_input = phase2_loader.get_next_data()
-            runtime_helper.batch_cluster = phase2_loader.batch_cluster
-            with torch.no_grad():
-                model(phase2_input.cuda())
-            runtime_helper.range_update_phase = False
-
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
                          .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
+    #leftover = container.check_leftover()
+    #if leftover:
+    #    with tqdm(range(leftover), unit="batch", ncols=90) as t:
+    #        for _ in t:
+    #            t.set_description("Leftover")
+    #            input, target, runtime_helper.batch_cluster = container.get_leftover()
+    #            input = input.cuda()
+    #            target = target.cuda()
+    #            output = model(input)
 
-def dali_pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
+    #            loss = criterion(output, target)
+    #            prec = accuracy(output, target)[0]
+    #            losses.update(loss.item(), input.size(0))
+    #            top1.update(prec.item(), input.size(0))
+
+    #            optimizer.zero_grad()
+    #            loss.backward()
+    #            optimizer.step()
+
+    #            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+    #                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+    #            t.set_postfix(loss=losses.avg, acc=top1.avg)
+    #return top1.avg
+
+
+
+def dali_pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -148,7 +169,6 @@ def _finetune_with_dali(args, tools):
         runtime_helper.qn_prob = args.qn_prob - 0.1
         tools.shift_qn_prob(model)
 
-    phase2_loader = None
     clustering_model = None
     if args.cluster > 1:
         clustering_model = tools.clustering_method(args)
@@ -157,30 +177,6 @@ def _finetune_with_dali(args, tools):
             clustering_model.train_clustering_model(train_loader)
         else:
             clustering_model.load_clustering_model()
-    
-        normalizer = get_normalizer(args.dataset)
-        non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
-        # Make non-augmented dataset/loader for Phase-2 training
-        if args.indices_path:
-            indices_per_cluster, len_per_cluster = load_indices_list(args)
-        else:
-            sequential_non_aug_loader = get_sequential_loader(args, non_augmented_train_dataset)
-            # test_augmented_clustering(clustering_model, non_augmented_loader, train_loader)
-            indices_per_cluster, len_per_cluster = make_indices_list(clustering_model, sequential_non_aug_loader, args, runtime_helper)
-            save_indices_list(args, indices_per_cluster, len_per_cluster)
-            # check_cluster_distribution(clustering_model, non_augmented_loader)
-            if args.visualize_clustering:
-                visualize_clustering_res(sequential_non_aug_loader, clustering_model, indices_per_cluster, len_per_cluster, args.cluster)
-        list_for_phase2 = make_phase2_list(args, indices_per_cluster, len_per_cluster)
-        
-        phase2_dataset = torch.utils.data.Subset(non_augmented_train_dataset, list_for_phase2)
-        loader = torch.utils.data.DataLoader(phase2_dataset, batch_size=args.data_per_cluster * args.cluster,
-                                             num_workers=args.worker, shuffle=False)
-        phase2_loader = Phase2DataLoader(loader, args.cluster, args.data_per_cluster)
-    
-        if args.pcq_initialization:
-            runtime_helper.batch_cluster = phase2_loader.batch_cluster
-            initialize_pcq_model(model, phase2_loader.data_loader, criterion)
 
     if not save_path_fp:
         save_path_fp = set_save_dir(args)
@@ -199,8 +195,7 @@ def _finetune_with_dali(args, tools):
             tools.shift_qn_prob(model)
 
         if args.cluster > 1:
-            dali_pcq_epoch(model, clustering_model, train_loader, phase2_loader, criterion, optimizer, runtime_helper,
-                           e, logger)
+            dali_pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             dali_train_epoch(model, train_loader, criterion, optimizer, e, logger)
 

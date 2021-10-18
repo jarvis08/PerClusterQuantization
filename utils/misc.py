@@ -28,7 +28,7 @@ class RuntimeHelper(object):
         self.qn_prob = 0.0
 
         self.range_update_phase = False
-        self.pcq_initialized = False
+        self.pcq_initialized = True
 
         self.num_clusters = None
         self.data_per_cluster = None
@@ -36,6 +36,56 @@ class RuntimeHelper(object):
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
         self.data_per_cluster = args.data_per_cluster
+
+
+class InputContainer(object):
+    def __init__(self, num_clusters, dataset_name, batch_size):
+        img_size = 224 if dataset_name == 'imagenet' else 32
+        self.num_clusters = num_clusters
+        self.batch_size = batch_size
+        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)] for _ in range(num_clusters)]
+
+    @torch.no_grad()
+    def gather_and_get_data(self, images, targets, cluster_info):
+        next_cluster = None
+        next_input = None
+        next_target = None
+        for c in range(self.num_clusters):
+            indices = (cluster_info == c).nonzero(as_tuple=True)[0]
+            self.container[c][0] = torch.cat([self.container[c][0], images[indices]])
+            self.container[c][1] = torch.cat([self.container[c][1], targets[indices]])
+
+            if next_cluster is not None:
+                continue
+
+            if self.container[c][0].size(0) >= self.batch_size:
+                next_input = self.container[c][0][:self.batch_size]
+                next_target = self.container[c][1][:self.batch_size]
+                self.container[c][0] = self.container[c][0][self.batch_size:]
+                self.container[c][1] = self.container[c][1][self.batch_size:]
+                next_cluster = c
+        return next_input, next_target, next_cluster
+
+    def check_leftover(self):
+        leftover_batch = 0
+        for c in range(self.num_clusters):
+            if self.container[c][0].size(0) >= 128:
+                leftover_batch += self.container[c][0].size(0) // self.batch_size
+        return leftover_batch
+
+    def get_leftover(self):
+        next_cluster = None
+        next_input = None
+        next_target = None
+        for c in range(self.num_clusters):
+            if self.container[c][0].size(0) >= self.batch_size:
+                next_input = self.container[c][0][:self.batch_size]
+                next_target = self.container[c][1][:self.batch_size]
+                self.container[c][0] = self.container[c][0][self.batch_size:]
+                self.container[c][1] = self.container[c][1][self.batch_size:]
+                next_cluster = c
+                break
+        return next_input, next_target, next_cluster
 
 
 class Phase2DataLoader(object):
@@ -202,25 +252,6 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     return top1.avg
 
 
-def validate_darknet_dataset(model, test_loader, criterion):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-
-    model.eval()
-    with torch.no_grad():
-        for i in range(1):
-            _in = test_loader[0][i]
-            _targ = test_loader[1][i]
-            input, target = _in.cuda(), _targ.cuda()
-            output = model(input)
-            loss = criterion(output, target)
-            prec = accuracy(output, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec.item(), input.size(0))
-        print("Acc : {}".format(top1.avg))
-    return top1.avg
-
-
 def load_dnn_model(arg_dict, tools, path=None):
     model = None
     if arg_dict['quantized']:
@@ -278,11 +309,18 @@ def check_file_exist(path):
     return os.path.isfile(path) 
 
 
-def add_path(prev_path, to_add):
+def add_path(prev_path, to_add, allow_existence=True):
     path = os.path.join(prev_path, to_add)
     if not os.path.exists(path):
         os.makedirs(path)
+    else:
+        if not allow_existence:
+            for i in range(100):
+                if not os.path.exists(path + '-{}'.format(i)):
+                    path += '-{}'.format(i)
+                    break
     return path
+
 
 
 def set_clustering_dir(args):
@@ -290,22 +328,15 @@ def set_clustering_dir(args):
     path = add_path(path, args.clustering_method)
     path = add_path(path, args.dataset)
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
-    with open(os.path.join(path, "params.json"), 'w') as f:
-        if args.clustering_method == 'kmeans':
-            args_to_save = {'k': args.cluster, 'num_partitions': args.partition, 'tol': args.kmeans_tol,
-                            'n_inits': args.kmeans_init, 'epoch': args.kmeans_epoch, 'batch': args.batch}
-        else:
-            args_to_save = {'k': args.cluster, 'num_partitions': args.partition}
-        json.dump(args_to_save, f, indent=4)
     return path
 
 
-def set_save_dir(args):
+def set_save_dir(args, allow_existence=True):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
     path = add_path(path, args.dataset)
     path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
-    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"))
+    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"), allow_existence=allow_existence)
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path
@@ -315,14 +346,6 @@ def set_logger(path):
     logging.basicConfig(filename=os.path.join(path, "train.log"), level=logging.DEBUG)
     logger = logging.getLogger()
     return logger
-
-
-def load_preprocessed_cifar10_from_darknet():
-    input = torch.tensor(
-        np.fromfile("result/darknet/cifar_test_dataset.bin", dtype='float32').reshape((10000, 1, 3, 32, 32)))
-    target = torch.tensor(np.fromfile("result/darknet/cifar_test_target.bin", dtype='int32').reshape((10000, 1)),
-                          dtype=torch.long)
-    return input, target
 
 
 # def metric_average(val, name):
@@ -338,6 +361,7 @@ def get_time_cost_in_string(t):
         return '{:.1f}m'.format(t / 60)
     else:
         return '{:.1f}s'.format(t)
+
 
 def make_indices_list(clustering_model, train_loader, args, runtime_helper):
     total_list = [[] for _ in range(args.cluster)]
@@ -516,19 +540,47 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
 
 
 def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
-    non_aug_indices = []
-    for i, (input, target) in enumerate(non_augmented_loader):
-        batch_cluster = model.predict_cluster_of_batch(input)
-        non_aug_indices.extend(batch_cluster.tolist())
+    print('Check how much does augmentation effect on clustering result..')
+    aug_rst = []
+    with tqdm(augmented_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            batch_cluster = model.predict_cluster_of_batch(input)
+            # aug_rst.extend(batch_cluster.tolist())
+            aug_rst.append(batch_cluster)
 
-    aug_indices = []
-    for i, (input, target) in enumerate(augmented_loader):
-        batch_cluster = model.predict_cluster_of_batch(input)
-        aug_indices.extend(batch_cluster.tolist())
+    non_aug_rst = []
+    with tqdm(non_augmented_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            batch_cluster = model.predict_cluster_of_batch(input)
+            # non_aug_rst.extend(batch_cluster.tolist())
+            non_aug_rst.append(batch_cluster)
 
-    cnt_data_assigned_to_different_cluster = 0
-    for i in range(len(non_aug_indices)):
-        if non_aug_indices[i] != aug_indices[i]:
-            cnt_data_assigned_to_different_cluster += 1
-    print("Datum assigned to different cluster = {}".format(cnt_data_assigned_to_different_cluster))
+    non_aug_rst = torch.cat(non_aug_rst)
+    aug_rst = torch.cat(aug_rst)
+    _, non_aug_cnt = torch.unique(non_aug_rst, return_counts=True)
+    _, aug_cnt = torch.unique(aug_rst, return_counts=True)
+
+    is_equal_per_data = torch.eq(non_aug_rst, aug_rst)
+    not_equal_indices = (is_equal_per_data == False).nonzero(as_tuple=True)[0]
+    _, non_aug_changed_cnt_per_cluster = torch.unique(non_aug_rst[not_equal_indices], return_counts=True)
+
+    print("Datum assigned to different cluster = {}".format(len(not_equal_indices)))
+    print("Num-data per Non-aug. Cluster = {}".format(non_aug_cnt))
+    print("Num-data per Aug. Cluster = {}".format(aug_cnt))
+    print("Changed Count per Cluster = {}".format(non_aug_changed_cnt_per_cluster))
+
+    # nonaug_all_count = [0, 0, 0, 0]
+    # aug_all_count = [0, 0, 0, 0]
+    # changed_cluster_count = [0, 0, 0, 0]
+    # cnt_data_assigned_to_different_cluster = 0
+    # for i in range(len(non_aug_rst)):
+    #     nonaug_all_count[non_aug_rst[i]] += 1
+    #     aug_all_count[aug_rst[i]] += 1
+    #     if non_aug_rst[i] != aug_rst[i]:
+    #         cnt_data_assigned_to_different_cluster += 1
+    #         changed_cluster_count[non_aug_rst[i]] += 1
+    # print("Datum assigned to different cluster = {}".format(cnt_data_assigned_to_different_cluster))
+    # print("Num-data per Non-aug. Cluster = {}".format(nonaug_all_count))
+    # print("Num-data per Aug. Cluster = {}".format(aug_all_count))
+    # print("Changed Count per Cluster = {}".format(changed_cluster_count))
     exit()

@@ -90,10 +90,5 @@ def get_test_dataset(args, normalizer):
     return test_dataset
 
 
-def get_sequential_loader(args, dataset):
-    return torch.utils.data.DataLoader(dataset, batch_size=args.val_batch, shuffle=False, num_workers=args.worker)
-
-
-def get_shuffled_loader(args, dataset):
-    return torch.utils.data.DataLoader(dataset, batch_size=args.batch, shuffle=True, num_workers=args.worker)
-
+def get_data_loader(dataset, batch_size=128, shuffle=False, workers=4):
+    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers)
