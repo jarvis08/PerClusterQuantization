@@ -139,13 +139,19 @@ def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channe
     else:
         _qmin, _qmax = -2147483648, 2147483647
 
-    fq_x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+    fq_x_4 = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+    fq_x_8 = (torch,clamp(torch.round(_x / scale + zero_point), __qmin, _qmax) - zero_point) * scale
 
     if kernel_size is None:
         mask = torch.zeros_like(_x)
-        mask.bernoulli_(1 - qn_prob)
-        noise = (fq_x - _x).masked_fill(mask.bool(), 0)
-        qn_x = _x + noise
+        mask_high = torch.ones_like(_x)
+        mask.bernoulli_(qn_prob)
+        mask_high = mask_high - mask
+
+        noise_4 = (fq_x4 - _x).masked_fill(mask.bool(), 0)
+        noise_8 = (fq_x8 - _x).masked_fill(mask_high.bool(), 0)
+
+        qn_x = _x + noise_4 + noise_8
     else:  # Conv
         if each_channel:
             mask = torch.zeros(in_feature, out_feature).cuda()
