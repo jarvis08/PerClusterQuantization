@@ -113,6 +113,8 @@ def quantize_alexnet(fp_model, int_model):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
+    int_model.target_bit.data = fp_model.target_bit
+    int_model.in_bit.data = fp_model.in_bit
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.conv1 = quantize(fp_model.conv1, int_model.conv1)

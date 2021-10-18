@@ -133,7 +133,7 @@ class QuantizedConv2d(nn.Conv2d):
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
 
-        sum_a2 = torch.sum(weight.data, dim=(1, 2, 3)).mul(z1)
+        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).mul(self.z1)
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
         for o_col in range(output_col):
             for o_row in range(output_row):
