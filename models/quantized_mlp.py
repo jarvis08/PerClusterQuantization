@@ -29,6 +29,7 @@ class QuantizedMLP(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
+        x = torch.flatten(x, 1)
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
