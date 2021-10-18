@@ -15,9 +15,9 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.w_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
 
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
@@ -51,9 +51,6 @@ class QuantizedConv2d(nn.Conv2d):
             for c in exists:
                 indices = (bc == c).nonzero(as_tuple=True)[0]
                 padded[indices] = F.pad(x[indices], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1[c])
-            #z1 = torch.index_select(self.z1, 0, bc)
-            #for i in range(len(self.runtime_helper.batch_cluster)):
-            #    padded[i] = F.pad(x[i], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=z1[i])
             sum_q1q2 = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
             return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
         else:
@@ -83,31 +80,24 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
-            for output_ch in range(filter_batch):
-                sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add_(bias[:, output_ch].reshape(bc.shape[0], 1, 1))
+            sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
 
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros((bc.shape[0], filter_batch), dtype=torch.int32).cuda()
+        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).view(1, -1).repeat(x.size(0), 1).mul(z1[:, None])
 
-        for output_ch in range(0, filter_batch):
-            sum_a2[:, output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(z1)
-
-        for o_col in range(0,output_col):
-            for o_row in range(0, output_row):
+        for o_col in range(output_col):
+            for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
+                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+        sum_a1 = sum_a1 * self.z2
 
         nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2.type(torch.cuda.IntTensor).reshape(bc.shape[0], 1, 1, 1))
-
-        for i_batch in range(input_batch):
-            sum_q1q2[i_batch] = torch.sub(sum_q1q2[i_batch], sum_a1[i_batch])
-
-        for out_c in range(filter_batch):
-            sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[:, out_c].reshape(bc.shape[0], 1, 1))
+        sum_q1q2 = sum_q1q2.add(nz1z2[:, None, None, None])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2[:, :, None, None])
 
         total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
@@ -138,16 +128,12 @@ class QuantizedConv2d(nn.Conv2d):
         stride = self.stride[0]
 
         if self.is_bias:
-            for output_ch in range(filter_batch):
-                sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
+            sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :, None, None])
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
+
+        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).mul(self.z1)
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
-
-        for output_ch in range(filter_batch):
-            sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
-
         for o_col in range(output_col):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
@@ -155,12 +141,8 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sum_q1q2 = sum_q1q2.add(nz1z2)
-
-        for i_batch in range(input_batch):
-            sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
-
-        for out_c in range(filter_batch):
-            sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2[None, :, None, None])
 
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
@@ -389,12 +371,7 @@ class FusedConv2d(nn.Module):
 
     def _general(self, x, external_range=None):
         s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit)
-        if not self.quant_noise:
-            w = fake_quantize(self.conv.weight, s, z, self.w_bit, self.use_ste)
-        else:
-            w = apply_qn(self.conv.weight, s, z, self.w_bit, qn_prob=self.qn_prob,
-                         kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
-                         in_feature=self.in_channels, out_feature=self.out_channels)
+        w = fake_quantize(self.conv.weight, s, z, self.w_bit, self.use_ste)
 
         out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:

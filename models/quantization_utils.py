@@ -59,16 +59,16 @@ def calc_qparams_per_cluster(ranges, bit):
     if bit == 4:
         s = _max.sub(_min).div(15)
         z = - torch.round(_min / s)
-        return s, torch.clamp(z, 0, 15).cuda()
+        return s, torch.clamp(z, 0, 15)
     elif bit == 8:
         s = _max.sub(_min).div(255)
         z = -128 - torch.round(_min / s)
-        return s, torch.clamp(z, -128, 127).cuda()
+        return s, torch.clamp(z, -128, 127)
     elif bit == 16:
         s = _max.sub(_min).div(65535)
         z = -32768 - torch.round(_min / s)
-        return s, torch.clamp(z, -32768, 32767).cuda()
-    s = _max.sub(_min).div(65535)
+        return s, torch.clamp(z, -32768, 32767)
+    s = _max.sub(_min).div(4294967295)
     return s, torch.zeros(s.shape, device='cuda')
 
 
@@ -223,10 +223,16 @@ def dequantize_matrix(x, scale, zero_point):
     return (x - zero_point) * scale
 
 
+def dequantize_matrix_2d(x, scale, zero_point, batch_cluster):
+    s = torch.index_select(scale, 0, batch_cluster)[:, None]
+    z = torch.index_select(zero_point, 0, batch_cluster)[:, None]
+    return x.sub(z).mul(s)
+
+
 def dequantize_matrix_4d(x, scale, zero_point, batch_cluster):
     s = torch.index_select(scale, 0, batch_cluster)[:, None, None, None]
     z = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
-    return x.sub_(z).mul_(s)
+    return x.sub(z).mul(s)
 
 
 def quantize_M(M):
@@ -325,64 +331,71 @@ def transfer_qparams(_fp, _int):
     return _int
 
 
-def quantize_layer_and_transfer(_fp, _int):
-    assert _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d'], "Not supported quantized layer"
+def quantize_bn(_fp, _int):
+    with torch.no_grad():
+        if _int.num_clusters > 1:
+            _size = (_fp.num_clusters, _fp.num_features)
+            _weights = torch.zeros(_size, device='cuda')
+            _biases = torch.zeros(_size, device='cuda')
+            _means = torch.zeros(_size, device='cuda')
+            _vars = torch.zeros(_size, device='cuda')
+            for c in range(_fp.num_clusters):
+                _weights[c] = _fp.norms[c].weight.clone().detach()
+                _biases[c] = _fp.norms[c].bias.clone().detach()
+                _means[c] = _fp.norms[c].running_mean.clone().detach()
+                _vars[c] = _fp.norms[c].running_var.clone().detach()
+
+            weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
+            bias = _biases - weight * _means
+            weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit)
+            _int.weight.copy_(weight.type(torch.cuda.IntTensor))
+            for c in range(_int.num_clusters):
+                b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32)
+                _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
+        else:
+            w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
+            b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
+            w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit)
+            b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32)
+
+            _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
+            _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
+    return _int
+
+
+def quantize_layer(_fp, _int):
     with torch.no_grad():
         if _int.layer_type == 'QuantizedBn2d':
-            if _int.num_clusters > 1:
-                _size = (_fp.num_clusters, _fp.num_features)
-                _weights = torch.zeros(_size, device='cuda')
-                _biases = torch.zeros(_size, device='cuda')
-                _means = torch.zeros(_size, device='cuda')
-                _vars = torch.zeros(_size, device='cuda')
-                for c in range(_fp.num_clusters):
-                    _weights[c] = _fp.norms[c].weight.clone().detach()
-                    _biases[c] = _fp.norms[c].bias.clone().detach()
-                    _means[c] = _fp.norms[c].running_mean.clone().detach()
-                    _vars[c] = _fp.norms[c].running_var.clone().detach()
+            return quantize_bn(_fp, _int)
 
-                weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
-                bias = _biases - weight * _means
-                weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit)
-                _int.weight.copy_(weight.type(torch.cuda.IntTensor))
-                for c in range(_int.num_clusters):
-                    b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32)
-                    _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
-            else:
-                w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
-                b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
-                w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit)
-                b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32)
-
-                _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
-                _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
-        else:
-            if _int.layer_type == 'QuantizedConv2d':
-                fp_layer = _fp.conv
-                if _fp.fold_convbn:
-                    _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
-                    _int.weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
-                    _int.quantized_bias[0].copy_(quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, 32))
-                    return _int
-            else:
-                fp_layer = _fp.fc
-
-            _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.w_bit))
-            if fp_layer.bias is not None:
+        if _int.layer_type == 'QuantizedConv2d':
+            if _fp.fold_convbn:
                 _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
-                if _int.num_clusters > 1:
-                    for c in range(_int.num_clusters):
-                        _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                                     _int.s1[c] * _int.s2, 32))
-                else:
-                    _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                                 _int.s1 * _int.s2, 0, 32))
+                _int.weight.data.copy_(quantize_matrix(_fp.folded_weight.clone().detach(), _int.s2, _int.z2, _int.w_bit))
+                _int.quantized_bias[0].copy_(quantize_matrix(_fp.folded_bias.clone().detach(),
+                                                             _int.s1 * _int.s2, 0, 32))
+                return _int
+            fp_layer = _fp.conv
+        else:
+            fp_layer = _fp.fc
+
+        _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.w_bit))
+        if fp_layer.bias is not None:
+            _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
+            if _int.num_clusters > 1:
+                for c in range(_int.num_clusters):
+                    _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
+                                                                 _int.s1[c] * _int.s2, 0, 32))
+            else:
+                _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
+                                                             _int.s1 * _int.s2, 0, 32))
     return _int
 
 
 def quantize(_fp, _int):
+    assert _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d'], "Not supported quantized layer"
     _int = transfer_qparams(_fp, _int)
-    _int = quantize_layer_and_transfer(_fp, _int)
+    _int = quantize_layer(_fp, _int)
     return _int
 
 

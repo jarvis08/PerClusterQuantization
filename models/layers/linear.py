@@ -16,13 +16,13 @@ class QuantizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=False, activation=None, arg_dict=None):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.w_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.out_features = out_features
 
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
-        self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features)), requires_grad=False)
+        self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features), dtype=torch.int32), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -43,9 +43,9 @@ class QuantizedLinear(nn.Linear):
     def forward(self, x):
         sum_q1q2 = F.linear(x, self.weight, None)
         if self.runtime_helper.batch_cluster is not None:
-            return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            return self.pcq_totalsum(x.type(torch.cuda.IntTensor), sum_q1q2.type(torch.cuda.IntTensor))
         else:
-            return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
+            return self.general_totalsum(x.type(torch.cuda.IntTensor), sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
@@ -54,32 +54,17 @@ class QuantizedLinear(nn.Linear):
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1)
         shift = torch.index_select(self.shift, 0, bc).reshape(bc.shape[0], 1)
 
-        input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
-        N = x.shape[1]
-
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
-            for out_f in range(output_feature):
-                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add_(bias[:, out_f].type(torch.cuda.IntTensor))
+            sum_q1q2.add_(bias)
 
-        sum_a1 = torch.zeros(input_feature, dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros((bc.shape[0], output_feature), dtype=torch.int32).cuda()
+        sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+        sum_a2 = torch.sum(self.weight, dim=1).view(1, -1).repeat(x.size(0), 1).mul(z1[:, None])
 
-        for out_f in range(output_feature):
-            sum_a2[:, out_f] = torch.sum(self.weight[out_f, :]).mul(z1)
-
-        for in_f in range(input_feature):
-            sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
-
-        z1 = z1.reshape(bc.shape[0], 1)
-        nz1z2 = N * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add_(nz1z2.type(torch.cuda.IntTensor))
-
-        for in_f in range(input_feature):
-            sum_q1q2[in_f, :] = torch.sub(sum_q1q2[in_f, :], sum_a1[in_f])
-
-        for out_f in range(output_feature):
-            sum_q1q2[:, out_f] = torch.sub(sum_q1q2[:, out_f], sum_a2[:, out_f])
+        nz1z2 = x.size(1) * z1 * self.z2
+        sum_q1q2 = sum_q1q2.add(nz1z2[:, None])
+        sum_q1q2 = sum_q1q2.sub(sum_a1[:, None])
+        sum_q1q2 = sum_q1q2.sub(sum_a2)
 
         multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), M0)
         total = shifting2d(multiplied, shift)
@@ -96,32 +81,22 @@ class QuantizedLinear(nn.Linear):
         return total.type(torch.cuda.FloatTensor)
 
     def general_totalsum(self, x, sum_q1q2):
-        input_feature, output_feature = sum_q1q2.shape[0], sum_q1q2.shape[1]
-
         if self.is_bias:
-            for out_f in range(output_feature):
-                sum_q1q2[:, out_f] = sum_q1q2[:, out_f].add(self.quantized_bias[0][out_f])
-        N = x.shape[1]
+            sum_q1q2.add_(self.quantized_bias[0][None, :])
 
-        sum_a1 = torch.zeros(input_feature, dtype=torch.int32)
-        sum_a2 = torch.zeros(output_feature, dtype=torch.int32)
-        for out_f in range(output_feature):
-            sum_a2[out_f] = torch.sum(self.weight[out_f, :]).mul(self.z1)
-        for in_f in range(input_feature):
-            sum_a1[in_f] = torch.sum(x[in_f, :]).mul(self.z2)
+        sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+        sum_a2 = torch.sum(self.weight, dim=1).mul(self.z1)
 
-        nz1z2 = N * self.z1 * self.z2
-        sub_sum = sum_q1q2.add(nz1z2)
-        for in_f in range(input_feature):
-            sub_sum[in_f, :] = torch.sub(sub_sum[in_f, :], sum_a1[in_f])
-        for out_f in range(output_feature):
-            sub_sum[:, out_f] = torch.sub(sub_sum[:, out_f], sum_a2[out_f])
+        nz1z2 = x.size(1) * self.z1 * self.z2
+        sum_q1q2 = sum_q1q2.add(nz1z2)
+        sum_q1q2 = sum_q1q2.sub(sum_a1[:, None])
+        sum_q1q2 = sum_q1q2.sub(sum_a2[None, :])
 
         if self.shift < 0:
-            multiplied = multiply_M((sub_sum.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
+            multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
             total = shifting(multiplied, 0)
         else:
-            multiplied = multiply_M(sub_sum.type(torch.cuda.LongTensor), self.M0)
+            multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
             total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
@@ -217,7 +192,7 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(torch.min(self.fc.weight), torch.max(self.fc.weight), self.w_bit)
+        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external

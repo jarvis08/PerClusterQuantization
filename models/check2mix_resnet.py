@@ -260,7 +260,7 @@ class FusedResNet20(nn.Module):
         self.fc.reset_activation_range()
 
 
-def fused_resnet20(arg_dict, num_classes=10):
+def check2mix_fused_resnet20(arg_dict, num_classes=10):
     return FusedResNet20(FusedBasicBlock, [3, 3, 3], arg_dict, num_classes=num_classes)
 
 
@@ -297,14 +297,3 @@ def set_fused_resnet_with_fold_method(fused, pre):
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
 
-
-def fold_resnet(model):
-    model.first_conv.fold_conv_and_bn()
-    blocks = [model.layer1, model.layer2, model.layer3]
-    for block in blocks:
-        for i in range(len(block)):
-            if block[i].downsample:
-                block[i].downsample.fold_conv_and_bn()
-            block[i].conv1.fold_conv_and_bn()
-            block[i].conv2.fold_conv_and_bn()
-    return model

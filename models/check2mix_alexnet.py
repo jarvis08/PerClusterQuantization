@@ -181,7 +181,7 @@ def fused_alexnet(arg_dict: dict, **kwargs: Any) -> FusedAlexNet:
     return FusedAlexNet(arg_dict, **kwargs)
 
 
-def fused_alexnet_small(arg_dict: dict, num_classes=10, **kwargs: Any) -> FusedAlexNetSmall:
+def check2mix_fused_alexnet(arg_dict: dict, num_classes=10, **kwargs: Any) -> FusedAlexNetSmall:
     return FusedAlexNetSmall(arg_dict, num_classes=num_classes, **kwargs)
 
 

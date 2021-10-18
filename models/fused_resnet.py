@@ -450,45 +450,21 @@ def set_fused_resnet(fused, pre):
 
 
 def fold_resnet(model):
-    # First layer
     model.first_conv.fold_conv_and_bn()
-
-    # Block 1
-    fp_block = model.layer1
-    for i in range(len(fp_block)):
-        fp_block[i].conv1.fold_conv_and_bn()
-        fp_block[i].conv2.fold_conv_and_bn()
-        if type(fp_block[i]) == FusedBottleneck:
-            fp_block[i].conv3.fold_conv_and_bn()
-
-    # Block 2
-    fp_block = model.layer2
-    fp_block[0].downsample.fold_conv_and_bn()
-    for i in range(len(fp_block)):
-        fp_block[i].conv1.fold_conv_and_bn()
-        fp_block[i].conv2.fold_conv_and_bn()
-        if type(fp_block[i]) == FusedBottleneck:
-            fp_block[i].conv3.fold_conv_and_bn()
-
-    # Block 3
-    fp_block = model.layer3
-    fp_block[0].downsample.fold_conv_and_bn()
-    for i in range(len(fp_block)):
-        fp_block[i].conv1.fold_conv_and_bn()
-        fp_block[i].conv2.fold_conv_and_bn()
-        if type(fp_block[i]) == FusedBottleneck:
-            fp_block[i].conv3.fold_conv_and_bn()
-
-    # Block 4
+    blocks = [model.layer1, model.layer2, model.layer3]
     if model.num_blocks == 4:
-        fp_block = model.layer4
-        fp_block[0].downsample.fold_conv_and_bn()
-        for i in range(len(fp_block)):
-            fp_block[i].conv1.fold_conv_and_bn()
-            fp_block[i].conv2.fold_conv_and_bn()
-            if type(fp_block[i]) == FusedBottleneck:
-                fp_block[i].conv3.fold_conv_and_bn()
+        blocks.append(model.layer4)
+    for block in blocks:
+        for i in range(len(block)):
+            if block[i].downsample:
+                block[i].downsample.fold_conv_and_bn()
+            block[i].conv1.fold_conv_and_bn()
+            block[i].conv2.fold_conv_and_bn()
+            if isinstance(block[i], FusedBottleneck):
+                block[i].conv3.fold_conv_and_bn()
     return model
+
+
 def modify_fused_resnet_qn_pre_hook(model):
     """ 
         Copy from pre model's params to fused layers.

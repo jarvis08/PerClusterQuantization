@@ -81,67 +81,36 @@ if args.dataset == 'cifar':
 if not args.val_batch:
     args.val_batch = 256 if args.dataset != 'imagenet' else 128
 
-if args.mode == 'check2mix':
-    args.fold_convbn = True
+args.fold_convbn = True
 print(vars(args))
 
 
-def set_func_for_target_arch(arch, clustering_method, is_pcq):
+def set_func_for_target_arch(arch, is_check2mix):
     tools = QuantizationTool()
 
-    if is_pcq:
-        if clustering_method == 'kmeans':
-            setattr(tools, 'clustering_method', KMeans)
-        else:
-            setattr(tools, 'clustering_method', BIRCH)
+    if arch == 'MLP':
+        setattr(tools, 'pretrained_model_initializer', mlp)
+        setattr(tools, 'fused_model_initializer', None)
+        # setattr(tools, 'fused_model_initializer', check2mix_fused_mlp if is_check2mix else fused_mlp)
+        setattr(tools, 'quantized_model_initializer', quantized_mlp)
+        setattr(tools, 'fuser', set_fused_mlp)
+        setattr(tools, 'quantizer', quantize_mlp)
 
     if 'AlexNet' in arch:
+        setattr(tools, 'pretrained_model_initializer', alexnet_small)
+        setattr(tools, 'fused_model_initializer', check2mix_fused_alexnet if is_check2mix else fused_alexnet_small)
+        setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
+
         setattr(tools, 'fuser', set_fused_alexnet)
         setattr(tools, 'quantizer', quantize_alexnet)
-        if 'Small' in arch:
-            setattr(tools, 'pretrained_model_initializer', alexnet_small)
-            if is_pcq:
-                setattr(tools, 'fused_model_initializer', pcq_alexnet_small)
-                setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
-            else:
-                setattr(tools, 'fused_model_initializer', fused_alexnet_small)
-                setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
-            setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
-        else:
-            setattr(tools, 'pretrained_model_initializer', alexnet)
-            if is_pcq:
-                setattr(tools, 'fused_model_initializer', pcq_alexnet)
-                setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
-            else:
-                setattr(tools, 'fused_model_initializer', fused_alexnet)
-                setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
-            setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
-        setattr(tools, 'quantizer', quantize_pcq_resnet)
-        if is_pcq:
-            setattr(tools, 'fuser', set_pcq_resnet)
-        else:
-            setattr(tools, 'fuser', set_fused_resnet)
-
-        if '50' in arch:
-            setattr(tools, 'pretrained_model_initializer', resnet50)
-            if is_pcq:
-                setattr(tools, 'fused_model_initializer', pcq_resnet50)
-                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
-            else:
-                setattr(tools, 'fused_model_initializer', fused_resnet50)
-                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
-            setattr(tools, 'quantized_model_initializer', quantized_resnet50)
-        else:
-            setattr(tools, 'pretrained_model_initializer', resnet20)
-            if is_pcq:
-                setattr(tools, 'fused_model_initializer', pcq_resnet20)
-                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
-            else:
-                setattr(tools, 'fused_model_initializer', fused_resnet20)
-                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
-            setattr(tools, 'quantized_model_initializer', quantized_resnet20)
+        setattr(tools, 'pretrained_model_initializer', resnet20)
+        setattr(tools, 'fused_model_initializer', check2mix_fused_resnet20 if is_check2mix else fused_resnet20)
+        setattr(tools, 'quantized_model_initializer', quantized_resnet20)
+        setattr(tools, 'folder', fold_resnet)
+        setattr(tools, 'fuser', set_fused_resnet_with_fold_method)
+        setattr(tools, 'quantizer', quantize_folded_resnet)
 
     elif arch == 'MobileNetV3':
         setattr(tools, 'fuser', set_fused_mobilenet)
@@ -152,20 +121,15 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
 
     elif arch == 'DenseNet121':
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
-        if is_pcq:
-            setattr(tools, 'fused_model_initializer', pcq_densenet)
-            setattr(tools, 'fuser', set_pcq_densenet)
-            setattr(tools, 'quantizer', quantize_pcq_densenet)
-            setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
-        else:
-            setattr(tools, 'fused_model_initializer', fused_densenet)
-            setattr(tools, 'fuser', set_fused_densenet)
-            setattr(tools, 'quantizer', quantize_densenet)
-            setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
+        setattr(tools, 'fused_model_initializer', fused_densenet)
+        setattr(tools, 'fuser', set_fused_densenet)
+        setattr(tools, 'quantizer', quantize_densenet)
+        setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
     return tools
 
 
-def specify_target_arch(arch, dataset, num_clusters):
+def specify_target_arch(arch, dataset, is_check2mix):
+    arch = 'MLP' if arch == 'mlp' else arch
     if arch == 'alexnet':
         if dataset == 'imagenet':
             arch = 'AlexNet'
@@ -186,20 +150,19 @@ def specify_target_arch(arch, dataset, num_clusters):
     elif arch == 'densenet':
         arch = 'DenseNet121'
 
-    is_pcq = True if num_clusters > 1 else False
-    model_initializers = set_func_for_target_arch(arch, args.clustering_method, is_pcq)
+    model_initializers = set_func_for_target_arch(arch, is_check2mix)
     return arch, model_initializers
 
 
 if __name__=='__main__':
-    assert args.arch in ['alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
+    assert args.arch in ['mlp', 'alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
     if args.mode == 'fine':
-        assert args.mode == 'fine' and args.bit in [4, 8], 'Please set target bit between 4 & 8'
+        assert args.bit in [4, 8], 'Please set target bit between 4 & 8'
         if args.dataset != 'imagenet':
             assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 
-    args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
+    args.arch, tools = specify_target_arch(args.arch, args.dataset, args.mode == 'check2mix')
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':

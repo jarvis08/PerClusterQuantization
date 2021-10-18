@@ -57,10 +57,10 @@ class QuantizedAlexNet(nn.Module):
 class QuantizedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict, num_classes: int = 10) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
 
-        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.target_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -113,8 +113,10 @@ def quantize_alexnet(fp_model, int_model):
         Copy pre model's params & set fused layers.
         Use fused architecture, but not really fused (use CONV & BN seperately)
     """
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.target_bit.data = fp_model.target_bit.data
+    int_model.in_bit.data = fp_model.in_bit.data
+    int_model.scale.data = fp_model.scale
+    int_model.zero_point.data = fp_model.zero_point
     int_model.conv1 = quantize(fp_model.conv1, int_model.conv1)
     int_model.conv2 = quantize(fp_model.conv2, int_model.conv2)
     int_model.conv3 = quantize(fp_model.conv3, int_model.conv3)
@@ -124,3 +126,4 @@ def quantize_alexnet(fp_model, int_model):
     int_model.fc2 = quantize(fp_model.fc2, int_model.fc2)
     int_model.fc3 = quantize(fp_model.fc3, int_model.fc3)
     return int_model
+

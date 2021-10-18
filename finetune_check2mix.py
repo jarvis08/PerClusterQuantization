@@ -4,32 +4,26 @@ import torch
 from torchsummary import summary
 
 from utils import *
-from models import check2mix_alexnet, check2mix_resnet
-from models import quantized_alexnet, quantized_resnet
 from tqdm import tqdm
 from time import time
 
 
 def get_finetuning_model(arg_dict, tools):
-    if arg_dict['arch'] == 'AlexNetSmall':
-        fused_model_initializer = check2mix_alexnet.fused_alexnet_small
-    else:
-        fused_model_initializer = check2mix_resnet.fused_resnet20
-
     if arg_dict['dataset'] == 'cifar100':
-        fused_model = fused_model_initializer(arg_dict, num_classes=100)
+        fused_model = tools.fused_model_initializer(arg_dict, num_classes=100)
     else:
-        fused_model = fused_model_initializer(arg_dict)
+        fused_model = tools.fused_model_initializer(arg_dict)
 
     if arg_dict['fused']:
         checkpoint = torch.load(arg_dict['dnn_path'])
         fused_model.load_state_dict(checkpoint['state_dict'], strict=False)
     else:
         pretrained_model = load_dnn_model(arg_dict, tools)
-        if arg_dict['arch'] == 'ResNet20':
-            fused_model = check2mix_resnet.set_fused_resnet_with_fold_method(fused_model, pretrained_model)
-        else:
-            fused_model = tools.fuser(fused_model, pretrained_model)
+        fused_model = tools.fuser(fused_model, pretrained_model)
+        # if arg_dict['arch'] == 'ResNet20':
+        #     fused_model = check2mix_resnet.set_fused_resnet_with_fold_method(fused_model, pretrained_model)
+        # else:
+        #     fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
 
@@ -156,7 +150,7 @@ def _check_and_finetune(args, tools):
         # Test quantized model, and save if performs the best
         if e > args.fq:
             if arg_dict['arch'] == 'ResNet20':
-                model = check2mix_resnet.fold_resnet(model)
+                model = tools.folder(model)
             model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
@@ -164,11 +158,7 @@ def _check_and_finetune(args, tools):
                 else:
                     quantized_model = tools.quantized_model_initializer(arg_dict)
 
-            if arg_dict['arch'] == 'ResNet20':
-                model = check2mix_resnet.fold_resnet(model)
-                quantized_model = quantized_resnet.quantize_folded_resnet(model, quantized_model)
-            else:
-                quantized_model = tools.quantizer(model, quantized_model)
+            quantized_model = tools.quantizer(model, quantized_model)
             quantized_model.cuda()
 
             int_score = validate(quantized_model, val_loader, criterion, logger)
