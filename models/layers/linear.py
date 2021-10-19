@@ -149,7 +149,10 @@ class PCQLinear(nn.Module):
 
         out = self._pcq(x)
         if external_range is None:
-            self._update_activation_ranges(out)
+            if not self.is_classifier:
+                self._update_activation_granular_ranges(out)
+            else:
+                self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -171,6 +174,18 @@ class PCQLinear(nn.Module):
         if self._activation:
             out = self._activation(out)
         return out
+
+    @torch.no_grad()
+    def _update_activation_granular_ranges(self, x):
+        cluster = self.runtime_helper.batch_cluster
+        _min = data.min(dim=1).values.mean()
+        _max = data.max(dim=1).values.mean()
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
