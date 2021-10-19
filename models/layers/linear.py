@@ -139,6 +139,7 @@ class PCQLinear(nn.Module):
 
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
+        self.is_classifier = is_classifier
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=True) if activation else None
@@ -149,10 +150,11 @@ class PCQLinear(nn.Module):
 
         out = self._pcq(x)
         if external_range is None:
-            if not self.is_classifier:
-                self._update_activation_granular_ranges(out)
-            else:
-                self._update_activation_ranges(out)
+            self._update_activation_ranges(out)
+            # if not self.is_classifier:
+            #     self._update_activation_granular_ranges(out)
+            # else:
+            #     self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
