@@ -178,8 +178,8 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def _update_activation_granular_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
-        _min = data.min(dim=1).values.mean()
-        _max = data.max(dim=1).values.mean()
+        _min = x.min(dim=1).values.mean()
+        _max = x.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
             self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
