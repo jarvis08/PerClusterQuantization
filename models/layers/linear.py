@@ -150,11 +150,10 @@ class PCQLinear(nn.Module):
 
         out = self._pcq(x)
         if external_range is None:
-            self._update_activation_ranges(out)
-            # if not self.is_classifier:
-            #     self._update_activation_granular_ranges(out)
-            # else:
-            #     self._update_activation_ranges(out)
+            if not self.is_classifier:
+                self._update_activation_granular_ranges(out)
+            else:
+                self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
