@@ -150,10 +150,7 @@ class PCQLinear(nn.Module):
 
         out = self._pcq(x)
         if external_range is None:
-            if not self.is_classifier:
-                self._update_activation_granular_ranges(out)
-            else:
-                self._update_activation_ranges(out)
+            self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
@@ -175,18 +172,6 @@ class PCQLinear(nn.Module):
         if self._activation:
             out = self._activation(out)
         return out
-
-    @torch.no_grad()
-    def _update_activation_granular_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
-        _min = x.min(dim=1).values.mean()
-        _max = x.max(dim=1).values.mean()
-        if self.apply_ema[cluster]:
-            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-        else:
-            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
-            self.apply_ema[cluster] = True
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
@@ -241,7 +226,7 @@ class FusedLinear(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(1, dtype=torch.bool), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
