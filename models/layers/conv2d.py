@@ -339,7 +339,7 @@ class FusedConv2d(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(1, dtype=torch.bool), requires_grad=False)
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias, dilation=dilation)
@@ -387,7 +387,7 @@ class FusedConv2d(nn.Module):
                     out = fake_quantize(out, s, z, self.a_bit, self.use_ste)
             else:
                 self.act_range[0], self.act_range[1] = get_range(out)
-                self.apply_ema = True
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return out
 
     def _norm_folded(self, x, external_range=None):
@@ -424,7 +424,7 @@ class FusedConv2d(nn.Module):
                 else:
                     self.act_range[0] = torch.min(folded_out).item()
                     self.act_range[1] = torch.max(folded_out).item()
-                    self.apply_ema = True
+                    self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
             else:
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)

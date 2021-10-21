@@ -255,7 +255,7 @@ class FusedLinear(nn.Module):
                 out = fake_quantize(out, s, z, self.a_bit, self.use_ste)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return out
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
