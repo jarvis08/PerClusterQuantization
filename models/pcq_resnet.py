@@ -132,7 +132,7 @@ class PCQBottleneck(nn.Module):
         self.bn2 = PCQBnReLU(width, activation=nn.ReLU, arg_dict=self.arg_dict)
         self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict, act_qmax=act_qmax)
         self.bn3 = PCQBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU(inplace=True)
         if self.downsample is not None:
             self.bn_down = PCQBnReLU(planes * self.expansion, arg_dict=arg_dict)
 
@@ -289,15 +289,35 @@ class PCQResNet(nn.Module):
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.q_max)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
+        with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+            f.write('####################################')
+            f.write('{},{}\n'.format(prev_s, prev_z))
         prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
+        with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+            f.write('{},{}\n'.format(prev_s, prev_z))
+            f.write('1\n')
         for i in range(len(self.layer1)):
             prev_s, prev_z = self.layer1[i].set_block_qparams(prev_s, prev_z)
+            with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+                f.write('{},{}\n'.format(prev_s, prev_z))
+        with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+            f.write('2\n')
         for i in range(len(self.layer2)):
             prev_s, prev_z = self.layer2[i].set_block_qparams(prev_s, prev_z)
+            with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+                f.write('{},{}\n'.format(prev_s, prev_z))
+        with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+            f.write('3\n')
         for i in range(len(self.layer3)):
             prev_s, prev_z = self.layer3[i].set_block_qparams(prev_s, prev_z)
+            with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+                f.write('{},{}\n'.format(prev_s, prev_z))
+        with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+            f.write('4\n')
         for i in range(len(self.layer4)):
             prev_s, prev_z = self.layer4[i].set_block_qparams(prev_s, prev_z)
+            with open('pcq_resnet50_scale_zero.txt', 'a') as f:
+                f.write('{},{}\n'.format(prev_s, prev_z))
         self.fc.set_qparams(prev_s, prev_z)
 
 

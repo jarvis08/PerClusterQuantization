@@ -164,6 +164,7 @@ def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channe
         mask.bernoulli_(1 - qn_prob)
         noise = (fq_x - _x).masked_fill(mask.bool(), 0)
         qn_x = _x + noise
+
     else:  # Conv
         if each_channel:
             mask = torch.zeros(in_feature, out_feature).cuda()
