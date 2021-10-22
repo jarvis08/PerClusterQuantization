@@ -83,31 +83,24 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
-            for output_ch in range(filter_batch):
-                sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add_(bias[:, output_ch].reshape(bc.shape[0], 1, 1))
+            sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
 
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros((bc.shape[0], filter_batch), dtype=torch.int32).cuda()
+        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).view(1, -1).repeat(x.size(0), 1).mul(z1[:, None])
 
-        for output_ch in range(0, filter_batch):
-            sum_a2[:, output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(z1)
-
-        for o_col in range(0,output_col):
-            for o_row in range(0, output_row):
+        for o_col in range(output_col):
+            for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
+                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+        sum_a1 = sum_a1 * self.z2
 
         nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2.type(torch.cuda.IntTensor).reshape(bc.shape[0], 1, 1, 1))
-
-        for i_batch in range(input_batch):
-            sum_q1q2[i_batch] = torch.sub(sum_q1q2[i_batch], sum_a1[i_batch])
-
-        for out_c in range(filter_batch):
-            sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[:, out_c].reshape(bc.shape[0], 1, 1))
+        sum_q1q2 = sum_q1q2.add(nz1z2[:, None, None, None])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2[:, :, None, None])
 
         total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
         neg = (shift < 0).nonzero(as_tuple=True)[0]
@@ -138,16 +131,12 @@ class QuantizedConv2d(nn.Conv2d):
         stride = self.stride[0]
 
         if self.is_bias:
-            for output_ch in range(filter_batch):
-                sum_q1q2[:, output_ch, :, :] = sum_q1q2[:, output_ch, :, :].add(self.quantized_bias[0][output_ch])
+            sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :, None, None])
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
+
+        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).mul(self.z1)
         sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.zeros(filter_batch, dtype=torch.int32).cuda()
-
-        for output_ch in range(filter_batch):
-            sum_a2[output_ch] = torch.sum(self.weight.data[output_ch, :, :, :]).mul(self.z1)
-
         for o_col in range(output_col):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
@@ -155,12 +144,8 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sum_q1q2 = sum_q1q2.add(nz1z2)
-
-        for i_batch in range(input_batch):
-            sum_q1q2[i_batch, :] = torch.sub(sum_q1q2[i_batch, :], sum_a1[i_batch])
-
-        for out_c in range(filter_batch):
-            sum_q1q2[:, out_c] = torch.sub(sum_q1q2[:, out_c], sum_a2[out_c])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2[None, :, None, None])
 
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
