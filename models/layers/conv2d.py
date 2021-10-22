@@ -3,7 +3,8 @@ from operator import itemgetter
 import torch.nn.functional as F
 
 from ..quantization_utils import *
-import int_quantization
+# import int_quantization
+
 
 class QuantizedConv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation=None,
@@ -341,7 +342,7 @@ class FusedConv2d(nn.Module):
 
     def forward(self, x, external_range=None):
 
-        int_quantization.float2gemmlowp(x, 1.0, 1.0, 1, False, False, x)
+        # int_quantization.float2gemmlowp(x, 1.0, 1.0, 1, False, False, x)
         if not self.training:
             x = self.conv(x)
             if self._norm_layer:
