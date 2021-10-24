@@ -240,11 +240,11 @@ class PCQResNet(nn.Module):
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups, self.base_width,
-                            previous_dilation, a_bit=self.a_bit, arg_dict=self.arg_dict))
+                            previous_dilation, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
-                                dilation=self.dilation, a_bit=self.a_bit, arg_dict=self.arg_dict))
+                                dilation=self.dilation, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
