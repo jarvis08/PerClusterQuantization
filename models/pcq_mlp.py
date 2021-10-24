@@ -63,3 +63,11 @@ class PCQMLP(nn.Module):
 
 def pcq_mlp(arg_dict: dict, n_channels=3, num_classes=10) -> PCQMLP:
     return PCQMLP(arg_dict, n_channels=n_channels, num_classes=num_classes)
+
+
+def modify_fused_mlp_qn_pre_hook(model):
+    model.fc1.fc = _quant_noise(model.fc1.fc, model.runtime_helper.qn_prob, 1, q_max=2 ** model.fc1.w_bit - 1)
+    model.fc2.fc = _quant_noise(model.fc2.fc, model.runtime_helper.qn_prob, 1, q_max=2 ** model.fc2.w_bit - 1)
+    model.fc3.fc = _quant_noise(model.fc3.fc, model.runtime_helper.qn_prob, 1, q_max=2 ** model.fc3.w_bit - 1)
+    model.fc4.fc = _quant_noise(model.fc4.fc, model.runtime_helper.qn_prob, 1, q_max=2 ** model.fc4.w_bit - 1)
+
