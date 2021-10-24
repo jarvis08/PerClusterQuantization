@@ -196,6 +196,7 @@ class PCQResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, groups=1, \
                  width_per_group=64, replace_stride_with_dilation=None):
         super(PCQResNet, self).__init__()
+        self.arg_dict = arg_dict
         target_bit, self.a_bit, first_bit, classifier_bit, self.smooth, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'conv_a_bit', 'first_bit', 'classifier_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
