@@ -34,6 +34,7 @@ class MLP_cublas(nn.Module):
         self.L3.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.uint8), requires_grad=False)
         self.L4.weight = nn.Parameter(torch.randint(0, 127, (2048, 10), dtype=torch.uint8), requires_grad=False)
 
+
         self.torch_L1 = nn.Linear(2048, 2048)
         self.torch_L2 = nn.Linear(2048, 2048)
         self.torch_L3 = nn.Linear(2048, 2048)
@@ -54,7 +55,7 @@ class MLP_cublas(nn.Module):
         n = self.L1.weight.shape[0]
         b = self.L1.weight
         int_quantization.cublasGemm(1, 0, n, m, k, 1,
-                                    self.torch_L1.weight, k,
+                                    b, k,
                                     x, k,
                                     1,
                                     self.c,
@@ -194,12 +195,12 @@ if __name__ == '__main__':
     # a = input / b = weight / c = output / c32 = output accumulator / bias = bias
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = MLP()
-    c = torch.zeros(256, 2048, dtype=torch.float32).cuda()
+    c = torch.zeros(256, 2048, dtype=torch.int).cuda()
     d = torch.zeros(256, 2048, dtype=torch.int).cuda()
     e = torch.zeros(256, 2048, dtype=torch.int).cuda()
     f = torch.zeros(256, 2048, dtype=torch.int).cuda()
     model_cublas = MLP_cublas(c=c, d=d, e=e, f=f)
-    data = torch.randint(0, 3,(256, 2048), dtype=torch.float32).cuda()
+    data = torch.randint(0, 3,(256, 2048), dtype=torch.uint8).cuda()
     # print('Data type:', type(data.data[0][0].item()))
     model.to(device)
     model_cublas.to(device)

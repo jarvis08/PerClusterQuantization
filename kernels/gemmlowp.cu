@@ -70,10 +70,10 @@ void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
                                                     (TB ? CUBLAS_OP_T : CUBLAS_OP_N),
                                                     M, N, K,
                                                     &ALPHA,
-                                                    A_gpu.data_ptr<float>(), CUDA_R_32F, lda,
-                                                    B_gpu.data_ptr<float>(), CUDA_R_32F, ldb,
+                                                    A_gpu.data_ptr<uint8_t>(), CUDA_R_8U, lda,
+                                                    B_gpu.data_ptr<uint8_t>(), CUDA_R_8U, ldb,
                                                     &BETA,
-                                                    C_gpu.data_ptr<float>(), CUDA_R_32F, ldc,
+                                                    C_gpu.data_ptr<int>(), CUDA_R_32I, ldc,
                                                     CUDA_R_32F,
                                                     CUBLAS_GEMM_DEFAULT_TENSOR_OP)
                                                 );
