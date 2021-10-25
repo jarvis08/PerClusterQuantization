@@ -29,10 +29,10 @@ class MLP_cublas(nn.Module):
         self.L3 = nn.Linear(2048, 2048)
         self.L4 = nn.Linear(2048, num_classes)
 
-        self.L1.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.uint8), requires_grad=False)
-        self.L2.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.uint8), requires_grad=False)
-        self.L3.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.uint8), requires_grad=False)
-        self.L4.weight = nn.Parameter(torch.randint(0, 127, (2048, 10), dtype=torch.uint8), requires_grad=False)
+        self.L1.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
+        self.L2.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
+        self.L3.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
+        self.L4.weight = nn.Parameter(torch.randint(0, 16, (2048, 10), dtype=torch.int8), requires_grad=False)
 
 
         self.torch_L1 = nn.Linear(2048, 2048)
@@ -57,7 +57,7 @@ class MLP_cublas(nn.Module):
         int_quantization.cublasGemm(1, 0, n, m, k, 1,
                                     b, k,
                                     x, k,
-                                    1,
+                                    0,
                                     self.c,
                                     n)
         data = torch.tensor(x.clone().detach(), dtype=torch.float32)
@@ -200,7 +200,7 @@ if __name__ == '__main__':
     e = torch.zeros(256, 2048, dtype=torch.int).cuda()
     f = torch.zeros(256, 2048, dtype=torch.int).cuda()
     model_cublas = MLP_cublas(c=c, d=d, e=e, f=f)
-    data = torch.randint(0, 3,(256, 2048), dtype=torch.uint8).cuda()
+    data = torch.randint(0, 3,(256, 2048), dtype=torch.int8).cuda()
     # print('Data type:', type(data.data[0][0].item()))
     model.to(device)
     model_cublas.to(device)
