@@ -94,6 +94,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
         setattr(tools, 'quantized_model_initializer', quantized_mlp)
         setattr(tools, 'fuser', set_fused_mlp)
         setattr(tools, 'quantizer', quantize_mlp)
+        setattr(tools, 'shift_qn_prob', modify_fused_mlp_qn_pre_hook)
 
     if 'AlexNet' in arch:
         setattr(tools, 'fuser', set_fused_alexnet)
