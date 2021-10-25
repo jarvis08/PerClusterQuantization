@@ -54,7 +54,7 @@ parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means m
 parser.add_argument('--visualize_clustering', default=False, type=bool, help="Visualize clustering result with PCA-ed training dataset")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
-parser.add_argument('--qn_prob', default=0.1, type=float, help='quant noise probaility 0.05~0.2')
+parser.add_argument('--qn_prob', default=0.2, type=float, help='quant noise probaility 0.05~0.2')
 parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant noise qn_prob increment gap')
 parser.add_argument('--qn_each_channel', default=False, type=bool, help='qn apply conv each channel')
 
