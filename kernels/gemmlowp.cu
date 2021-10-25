@@ -5,6 +5,12 @@
 
 #include <vector>
 
+#include <torch/torch.h>
+#include <cublas_v2.h>
+#include <ATen/cuda/CUDABlas.h>
+#include <torch/extension.h>
+
+
 __global__ void GEMMLowpKernel(const float* in, const int N, float* out,
                                float scale, float shift, long long qmax, const float* noise, bool enforce_true_zero) {
 //   printf("Potting Success\n");
@@ -46,3 +52,32 @@ at::Tensor float2gemmlowp(at::Tensor in, float range, float offset, int num_bits
     return out;
 }
 
+void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
+                at::Tensor A_gpu, int lda,
+                at::Tensor B_gpu, int ldb,
+                float BETA,
+                at::Tensor C_gpu, int ldc)
+{
+
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    printf("some : %d\n", CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    cudaError_t status = static_cast<cudaError_t>(
+                                                    cublasGemmEx(
+                                                    handle,
+                                                    (TA ? CUBLAS_OP_T : CUBLAS_OP_N),
+                                                    (TB ? CUBLAS_OP_T : CUBLAS_OP_N),
+                                                    M, N, K,
+                                                    &ALPHA,
+                                                    A_gpu.data_ptr<float>(), CUDA_R_32F, lda,
+                                                    B_gpu.data_ptr<float>(), CUDA_R_32F, ldb,
+                                                    &BETA,
+                                                    C_gpu.data_ptr<float>(), CUDA_R_32F, ldc,
+                                                    CUDA_R_32F,
+                                                    CUBLAS_GEMM_DEFAULT_TENSOR_OP)
+                                                );
+
+    printf("%d\n", status);
+    printf("%s\n", cudaGetErrorName(status));
+}
