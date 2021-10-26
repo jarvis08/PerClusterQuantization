@@ -62,12 +62,12 @@ void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
                 float BETA,
                 at::Tensor C_gpu, int ldc)
 {
-    cout << A_gpu.type() << endl;
-    cout << B_gpu.type() << endl;
-    cout << C_gpu.type() << endl;
+    //cout << A_gpu.type() << endl;
+    //cout << B_gpu.type() << endl;
+    //cout << C_gpu.type() << endl;
     cublasHandle_t handle;
     cublasCreate(&handle);
-    printf("some : %d\n", CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    //printf("some : %d\n", CUBLAS_GEMM_DEFAULT_TENSOR_OP);
     /*
     cudaError_t status = static_cast<cudaError_t>(
                                                     cublasGemmEx(
@@ -76,19 +76,16 @@ void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
                                                     (TB ? CUBLAS_OP_T : CUBLAS_OP_N),
                                                     M, N, K,
                                                     &ALPHA,
-<<<<<<< HEAD
                                                     A_gpu.data_ptr<int8_t>(), CUDA_R_8I, lda,
                                                     B_gpu.data_ptr<int8_t>(), CUDA_R_8I, ldb,
                                                     &BETA,
                                                     C_gpu.data_ptr<int32_t>(), CUDA_R_32I, ldc,
                                                     CUBLAS_COMPUTE_32I,
-=======
                                                     A_gpu.data_ptr<float>(), CUDA_R_32F, lda,
                                                     B_gpu.data_ptr<float>(), CUDA_R_32F, ldb,
                                                     &BETA,
                                                     C_gpu.data_ptr<float>(), CUDA_R_32F, ldc,
                                                     CUDA_R_32F,
->>>>>>> b522c899a517bbec33df33fec4c8542e7a4c3a37
                                                     CUBLAS_GEMM_DEFAULT_TENSOR_OP)
                                                 );
 //     cublasStatus_t status = cublasGemmEx(
@@ -104,7 +101,6 @@ void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
 //                                                 CUDA_R_32F,
 //                                                 CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 
-<<<<<<< HEAD
     */
     cublasStatus_t status = cublasGemmEx(
                                                 handle,
@@ -115,13 +111,11 @@ void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
                                                 A_gpu.data_ptr<int8_t>(), CUDA_R_8I, lda,
                                                 B_gpu.data_ptr<int8_t>(), CUDA_R_8I, ldb,
                                                 &BETA,
-                                                C_gpu.data_ptr<int32_t>(), CUDA_R_32I, ldc,
-                                                CUDA_R_32I,
+                                                C_gpu.data_ptr<float>(), CUDA_R_32F, ldc,
+                                                CUBLAS_COMPUTE_32F,
                                                 CUBLAS_GEMM_DEFAULT_TENSOR_OP);
-=======
-    if (status == CUBLAS_STATUS_EXECUTION_FAILED) printf("start 1 Found");
-    if (status == CUBLAS_STATUS_INTERNAL_ERROR) printf("Found");
->>>>>>> b522c899a517bbec33df33fec4c8542e7a4c3a37
-    printf("%d\n", status);
+    //if (status == CUBLAS_STATUS_EXECUTION_FAILED) printf("start 1 Found");
+    //if (status == CUBLAS_STATUS_INTERNAL_ERROR) printf("Found");
+    //printf("%d\n", status);
 //     printf("%s\n", cudaGetErrorName(status));
 }
