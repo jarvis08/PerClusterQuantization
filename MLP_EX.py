@@ -29,10 +29,17 @@ class MLP_cublas(nn.Module):
         self.L3 = nn.Linear(2048, 2048)
         self.L4 = nn.Linear(2048, num_classes)
 
+<<<<<<< HEAD
         self.L1.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
         self.L2.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
         self.L3.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
         self.L4.weight = nn.Parameter(torch.randint(0, 16, (2048, 10), dtype=torch.int8), requires_grad=False)
+=======
+        self.L1.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.float), requires_grad=False)
+        self.L2.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.uint8), requires_grad=False)
+        self.L3.weight = nn.Parameter(torch.randint(0, 127, (2048, 2048), dtype=torch.uint8), requires_grad=False)
+        self.L4.weight = nn.Parameter(torch.randint(0, 127, (2048, 10), dtype=torch.uint8), requires_grad=False)
+>>>>>>> b522c899a517bbec33df33fec4c8542e7a4c3a37
 
 
         self.torch_L1 = nn.Linear(2048, 2048)
@@ -195,12 +202,16 @@ if __name__ == '__main__':
     # a = input / b = weight / c = output / c32 = output accumulator / bias = bias
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = MLP()
-    c = torch.zeros(256, 2048, dtype=torch.int).cuda()
+    c = torch.zeros(256, 2048, dtype=torch.float).cuda()
     d = torch.zeros(256, 2048, dtype=torch.int).cuda()
     e = torch.zeros(256, 2048, dtype=torch.int).cuda()
     f = torch.zeros(256, 2048, dtype=torch.int).cuda()
     model_cublas = MLP_cublas(c=c, d=d, e=e, f=f)
+<<<<<<< HEAD
     data = torch.randint(0, 3,(256, 2048), dtype=torch.int8).cuda()
+=======
+    data = torch.randint(0, 3,(256, 2048), dtype=torch.float).cuda()
+>>>>>>> b522c899a517bbec33df33fec4c8542e7a4c3a37
     # print('Data type:', type(data.data[0][0].item()))
     model.to(device)
     model_cublas.to(device)
@@ -217,8 +228,6 @@ if __name__ == '__main__':
         for index in range(20):
             starter.record()
             _ = model_cublas(data)
-            print(_)
-            exit(1)
             model.f = torch.zeros(256, 2048, dtype=torch.int).cuda()
             # _ = model(data)
             ender.record()
