@@ -29,7 +29,8 @@ def _evaluate(args, tools):
 
     else:
         normalizer = get_normalizer(args.dataset)
-        test_loader = get_test_loader(args, normalizer)
+        test_dataset = get_test_dataset(args, normalizer)
+        test_loader = get_data_loader(test_dataset)
         if args.cluster > 1:
             kmeans = KMeans(args)
             kmeans.load_kmeans_model()
@@ -37,5 +38,6 @@ def _evaluate(args, tools):
             pcq_validate(model, test_loader, criterion, runtime_helper)
         else:
             normalizer = get_normalizer(args.dataset)
-            test_loader = get_test_loader(args, normalizer)
+            #test_loader = get_test_loader(args, normalizer)
+            test_loader = get_data_loader(args.dataset)
             validate(model, test_loader, criterion)
