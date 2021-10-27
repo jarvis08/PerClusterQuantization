@@ -3,16 +3,18 @@ import torch.nn as nn
 from typing import Any
 import numpy as np
 from ctypes import *
+import nvidia_dlprof_pytorch_nvtx
+import torch.cuda.profiler as profiler
 
 import int_quantization
 
 class MLP(nn.Module):
     def __init__(self, num_classes:int = 10) -> None:
         super(MLP, self).__init__()
-        self.L1 = nn.Linear(2048, 2048)
-        self.L2 = nn.Linear(2048, 2048)
-        self.L3 = nn.Linear(2048, 2048)
-        self.L4 = nn.Linear(2048, num_classes)
+        self.L1 = nn.Linear(4096, 4096)
+        self.L2 = nn.Linear(4096, 4096)
+        self.L3 = nn.Linear(4096, 4096)
+        self.L4 = nn.Linear(4096, num_classes)
 
     def forward(self, x:torch.Tensor):
         out = self.L1(x)
@@ -24,20 +26,20 @@ class MLP(nn.Module):
 class MLP_cublas(nn.Module):
     def __init__(self, num_classes: int = 10, c=None, d=None, e=None, f=None) -> None:
         super(MLP_cublas, self).__init__()
-        self.L1 = nn.Linear(2048, 2048)
-        self.L2 = nn.Linear(2048, 2048)
-        self.L3 = nn.Linear(2048, 2048)
-        self.L4 = nn.Linear(2048, num_classes)
+        self.L1 = nn.Linear(4096, 4096)
+        self.L2 = nn.Linear(4096, 4096)
+        self.L3 = nn.Linear(4096, 4096)
+        self.L4 = nn.Linear(4096, num_classes)
 
-        self.L1.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
-        self.L2.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
-        self.L3.weight = nn.Parameter(torch.randint(0, 16, (2048, 2048), dtype=torch.int8), requires_grad=False)
-        self.L4.weight = nn.Parameter(torch.randint(0, 16, (2048, 10), dtype=torch.int8), requires_grad=False)
+        self.L1.weight = nn.Parameter(torch.randint(0, 16, (4096, 4096), dtype=torch.int8), requires_grad=False)
+        self.L2.weight = nn.Parameter(torch.randint(0, 16, (4096, 4096), dtype=torch.int8), requires_grad=False)
+        self.L3.weight = nn.Parameter(torch.randint(0, 16, (4096, 4096), dtype=torch.int8), requires_grad=False)
+        self.L4.weight = nn.Parameter(torch.randint(0, 16, (4096, 10), dtype=torch.int8), requires_grad=False)
 
-        self.torch_L1 = nn.Linear(2048, 2048)
-        self.torch_L2 = nn.Linear(2048, 2048)
-        self.torch_L3 = nn.Linear(2048, 2048)
-        self.torch_L4 = nn.Linear(2048, num_classes)
+        self.torch_L1 = nn.Linear(4096, 4096)
+        self.torch_L2 = nn.Linear(4096, 4096)
+        self.torch_L3 = nn.Linear(4096, 4096)
+        self.torch_L4 = nn.Linear(4096, num_classes)
         self.torch_L1.weight = nn.Parameter(torch.tensor(self.L1.weight.clone().detach(), dtype=torch.float32), requires_grad=False)
         self.torch_L2.weight = nn.Parameter(torch.tensor(self.L2.weight.clone().detach(), dtype=torch.float32), requires_grad=False)
         self.torch_L3.weight = nn.Parameter(torch.tensor(self.L3.weight.clone().detach(), dtype=torch.float32), requires_grad=False)
@@ -120,9 +122,9 @@ class MLP_cublas(nn.Module):
         super(MLP_cublas, self).__init__()
         self.L1 = nn.Linear(4, 3)
         #self.L1 = nn.Linear(32, 128)
-        self.L2 = nn.Linear(128, 2048)
-        self.L3 = nn.Linear(2048, 2048)
-        self.L4 = nn.Linear(2048, 10)
+        self.L2 = nn.Linear(128, 4096)
+        self.L3 = nn.Linear(4096, 4096)
+        self.L4 = nn.Linear(4096, 10)
 
         self.L1.weight = nn.Parameter(torch.randint(0, 5, (3, 4), dtype=torch.int8), requires_grad=False)
         self.torch_L1 = nn.Linear(4,3)
@@ -202,15 +204,16 @@ if __name__ == '__main__':
     # a = input / b = weight / c = output / c32 = output accumulator / bias = bias
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = MLP()
+    nvidia_dlprof_pytorch_nvtx.init(enable_function_stack=True)
     
-    c = torch.zeros(256, 2048, dtype=torch.float32).cuda()
-    d = torch.zeros(256, 2048, dtype=torch.float32).cuda()
-    e = torch.zeros(256, 2048, dtype=torch.float32).cuda()
-    f = torch.zeros(256, 2048, dtype=torch.float32).cuda()
+    c = torch.zeros(256, 4096, dtype=torch.float32).cuda()
+    d = torch.zeros(256, 4096, dtype=torch.float32).cuda()
+    e = torch.zeros(256, 4096, dtype=torch.float32).cuda()
+    f = torch.zeros(256, 4096, dtype=torch.float32).cuda()
     # model_cublas = MLP_cublas()
     model_cublas = MLP_cublas(c=c, d=d, e=e, f=f)
-    data = torch.randint(0, 3,(256, 2048), dtype=torch.int8).cuda()
-    #data = torch.randint(0, 3,(256, 2048), dtype=torch.float).cuda()
+    data = torch.randint(0, 3,(256, 4096), dtype=torch.int8).cuda()
+    #data = torch.randint(0, 3,(256, 4096), dtype=torch.float).cuda()
     #data = torch.randint(0, 3,(3, 4), dtype=torch.int8).cuda()
     #print('Data type:', type(data.data[0][0].item()))
     model.to(device)
@@ -224,10 +227,13 @@ if __name__ == '__main__':
         time_arr.append(0)
         time_arr.append(0)
 
-    with torch.no_grad():
+    # with torch.no_grad():
+    with torch.autograd.profiler.emit_nvtx():
         for index in range(20):
             starter.record()
+            profiler.start()
             _ = model_cublas(data)
+            profiler.stop()
             #_ = model(data)
             ender.record()
             torch.cuda.synchronize()

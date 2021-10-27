@@ -57,17 +57,17 @@ at::Tensor float2gemmlowp(at::Tensor in, float range, float offset, int num_bits
 }
 
 void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
-                at::Tensor A_gpu, int lda,
-                at::Tensor B_gpu, int ldb,
+                torch::Tensor A_gpu, int lda,
+                torch::Tensor B_gpu, int ldb,
                 float BETA,
-                at::Tensor C_gpu, int ldc)
+                torch::Tensor C_gpu, int ldc)
 {
     //cout << A_gpu.type() << endl;
     //cout << B_gpu.type() << endl;
     //cout << C_gpu.type() << endl;
     cublasHandle_t handle;
     cublasCreate(&handle);
-    //printf("some : %d\n", CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
     /*
     cudaError_t status = static_cast<cudaError_t>(
                                                     cublasGemmEx(
@@ -107,13 +107,14 @@ void cublasGemm(int TA, int TB, int M, int N, int K, float ALPHA,
                                                 (TA ? CUBLAS_OP_T : CUBLAS_OP_N),
                                                 (TB ? CUBLAS_OP_T : CUBLAS_OP_N),
                                                 M, N, K,
-                                                &ALPHA,
-                                                A_gpu.data_ptr<int8_t>(), CUDA_R_8I, lda,
-                                                B_gpu.data_ptr<int8_t>(), CUDA_R_8I, ldb,
-                                                &BETA,
-                                                C_gpu.data_ptr<float>(), CUDA_R_32F, ldc,
+                                                static_cast<const void*>(&ALPHA),
+                                                static_cast<const void*>(A_gpu.data_ptr()), CUDA_R_8I, lda,
+                                                static_cast<const void*>(B_gpu.data_ptr()), CUDA_R_8I, ldb,
+                                                static_cast<const void*>(&BETA),
+                                                static_cast<void*>(C_gpu.data_ptr()), CUDA_R_32F, ldc,
                                                 CUBLAS_COMPUTE_32F,
                                                 CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    // CUBLAS_GEMM_DEFAULT_TENSOR_OP
     //if (status == CUBLAS_STATUS_EXECUTION_FAILED) printf("start 1 Found");
     //if (status == CUBLAS_STATUS_INTERNAL_ERROR) printf("Found");
     //printf("%d\n", status);
