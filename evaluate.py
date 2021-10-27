@@ -29,13 +29,11 @@ def _evaluate(args, tools):
 
     else:
         normalizer = get_normalizer(args.dataset)
-        test_loader = get_test_loader(args, normalizer)
+        test_dataset = get_test_dataset(args, normalizer)
+        test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
         if args.cluster > 1:
-            kmeans = KMeans(args)
-            kmeans.load_kmeans_model()
-            runtime_helper.kmeans = kmeans
-            pcq_validate(model, test_loader, criterion, runtime_helper)
+            clustering_model = tools.clustering_method(args)
+            clustering_model.load_clustering_model()
+            pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
         else:
-            normalizer = get_normalizer(args.dataset)
-            test_loader = get_test_loader(args, normalizer)
             validate(model, test_loader, criterion)
