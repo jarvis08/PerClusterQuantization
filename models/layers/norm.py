@@ -144,7 +144,7 @@ class PCQBnReLU(nn.Module):
                 out = self.activation(out)
             if self.to_record:
                 _max = out.view(out.size(0), -1).max(dim=1).values
-                with open('pcq_resnet50_per_input_activation_ranges.csv', 'a') as f:
+                with open('pcq_resnet50_per_input_activation_ranges_c{}.csv'.format(cluster + 1), 'a') as f:
                     if self.is_first:
                         # f.write('\n{}, {}, '.format(out.min().item(), out.max().item()))
                         f.write('\n{}'.format(_max[0].item()))
