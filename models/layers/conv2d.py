@@ -257,6 +257,11 @@ class PCQConv2d(nn.Module):
             return self._forward_impl(x)
 
         out = self._pcq(x)
+
+        # with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
+        with open('pcq_alexnet_per_input_activation_ranges_c{}.csv'.format(self.runtime_helper.batch_cluster), 'a') as f:
+            f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+
         if external_range is None:
             self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
@@ -339,7 +344,8 @@ class FusedConv2d(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = nn.Parameter(torch.zeros([], dtype=torch.bool), requires_grad=False)
+        #self.apply_ema = nn.Parameter(torch.zeros([], dtype=torch.bool), requires_grad=False)
+        self.apply_ema = True
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=self.groups, bias=bias, dilation=dilation)

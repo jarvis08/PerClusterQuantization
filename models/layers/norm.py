@@ -250,11 +250,17 @@ class FusedBnReLU(nn.Module):
             if self._activation:
                 out = self._activation(out)
             if self.to_record:
+                _max = out.view(out.size(0), -1).max(dim=1).values
                 with open('qat_resnet50_per_input_activation_ranges.csv', 'a') as f:
                     if self.is_first:
-                        f.write('\n{}, {}, '.format(out.min().item(), out.max().item()))
+                        # f.write('\n{}, {}, '.format(out.min().item(), out.max().item()))
+                        f.write('\n{}'.format(_max[0].item()))
+                        for i in range(1, out.size(0)):
+                            f.write(',{}'.format(_max[i].item()))
                     else:
-                        f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+                        # f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+                        for i in range(out.size(0)):
+                            f.write(',{}'.format(_max[i].item()))
         else:
             out = self._fake_quantized_bn(x)
 

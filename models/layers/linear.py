@@ -227,7 +227,8 @@ class FusedLinear(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = nn.Parameter(torch.zeros([], dtype=torch.bool), requires_grad=False)
+        #self.apply_ema = nn.Parameter(torch.zeros([], dtype=torch.bool), requires_grad=False)
+        self.apply_ema = True 
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
@@ -250,10 +251,11 @@ class FusedLinear(nn.Module):
             out = self._activation(out)
 
         # with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
-        #     if self.is_classifier:
-        #         f.write('{}, {}\n'.format(out.min().item(), out.max().item()))
-        #     else:
-        #         f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+        with open('pcq_alexnet_per_input_activation_ranges_c{}.csv'.format(self.runtime_helper.batch_cluster), 'a') as f:
+            if self.is_classifier:
+                f.write('{}, {}\n'.format(out.min().item(), out.max().item()))
+            else:
+                f.write('{}, {}, '.format(out.min().item(), out.max().item()))
 
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)

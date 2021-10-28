@@ -183,13 +183,13 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
-                if hvd:
-                    if hvd.rank() == 0:
-                        logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                                     .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-                else:
-                    logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                                 .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+                # if hvd:
+                #     if hvd.rank() == 0:
+                #         logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                #                      .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+                # else:
+                #     logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                #                  .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
                 # optimizer.zero_grad()
                 # loss.backward()

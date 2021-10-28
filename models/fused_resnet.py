@@ -39,7 +39,8 @@ class FusedBasicBlock(nn.Module):
         self.bit = torch.nn.Parameter(torch.tensor(arg_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        #self.apply_ema = False
+        self.apply_ema = True
 
         self.conv1 = fused_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=a_bit)
         # self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
@@ -109,7 +110,8 @@ class FusedBottleneck(nn.Module):
         a_bit = a_bit if a_bit else self.bit
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
 
-        self.apply_ema = False
+        #self.apply_ema = False
+        self.apply_ema = True
 
         width = int(planes * (base_width/64.)) * groups
         self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, a_bit=a_bit)
@@ -187,7 +189,9 @@ class FusedResNet(nn.Module):
             self.first_bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
-        self.apply_ema = False
+        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        #self.apply_ema = False
+        self.apply_ema = True
 
         self.inplanes = 64
         self.dilation = 1
@@ -293,7 +297,8 @@ class FusedResNet20(nn.Module):
         self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        #self.apply_ema = False
+        self.apply_ema = True
 
         self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16

@@ -32,12 +32,12 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # optimizer.zero_grad()
+            # loss.backward()
+            # optimizer.step()
 
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            # logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+            #              .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     leftover = container.check_leftover()
@@ -100,17 +100,19 @@ def _finetune(args, tools):
     model = get_finetuning_model(arg_dict, tools)
     model.cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
-    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    # opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     criterion = torch.nn.CrossEntropyLoss().cuda()
+    optimizer = None
+    opt_scheduler = None
 
     save_path_fp = ''
-    epoch_to_start = 1
+    epoch_to_start = 60
     best_epoch = 0
     best_int_val_score = 0
-    if args.fused:
-        optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
-        save_path_fp, best_epoch, best_int_val_score = load_tuning_info(args.dnn_path)
+    # if args.fused:
+    #     optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
+    #     save_path_fp, best_epoch, best_int_val_score = load_tuning_info(args.dnn_path)
 
     # if args.quant_noise:
     #     runtime_helper.qn_prob = args.qn_prob - 0.1

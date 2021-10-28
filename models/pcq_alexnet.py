@@ -114,7 +114,7 @@ class PCQAlexNetSmall(nn.Module):
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.fc1 = PCQLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc3 = PCQLinear(4096, num_classes, bias=True,
+        self.fc3 = PCQLinear(4096, num_classes, bias=True, is_classifier=True,
                              w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -1,7 +1,29 @@
+def pcq_alexnet_trained_activation_ranges(model):
+    ranges = [[] for _ in range(4)]
+    for c in range(4):
+        ranges[c].append([model.conv1.act_range[c][0].item(), model.conv1.act_range[c][1].item()])
+        ranges[c].append([model.conv2.act_range[c][0].item(), model.conv2.act_range[c][1].item()])
+        ranges[c].append([model.conv3.act_range[c][0].item(), model.conv3.act_range[c][1].item()])
+        ranges[c].append([model.conv4.act_range[c][0].item(), model.conv4.act_range[c][1].item()])
+        ranges[c].append([model.conv5.act_range[c][0].item(), model.conv5.act_range[c][1].item()])
+        ranges[c].append([model.fc1.act_range[c][0].item(), model.fc1.act_range[c][1].item()])
+        ranges[c].append([model.fc2.act_range[c][0].item(), model.fc2.act_range[c][1].item()])
+        ranges[c].append([model.fc3.act_range[c][0].item(), model.fc3.act_range[c][1].item()])
+    names = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5', 'fc1', 'fc2', 'fc3']
+
+    import csv
+    for c in range(4):
+        with open('pcq_alexnet_trained_activation_ranges_c{}.csv'.format(c + 1), 'w', newline='') as csvfile:
+            fieldnames = ['name', 'min', 'max']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for n, r in zip(names, ranges[c]):
+                writer.writerow({'name': n, 'min': r[0], 'max': r[1]})
 
 
 def qat_alexnet_trained_activation_ranges(model):
-    ranges = [[model.in_range[0].item(), model.in_range[1].item()]]
+    ranges = []
     ranges.append([model.conv1.act_range[0].item(), model.conv1.act_range[1].item()])
     ranges.append([model.conv2.act_range[0].item(), model.conv2.act_range[1].item()])
     ranges.append([model.conv3.act_range[0].item(), model.conv3.act_range[1].item()])
