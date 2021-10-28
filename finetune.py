@@ -77,10 +77,18 @@ def _finetune(args, tools):
         non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
         _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
 
+        # Check Range
+        train_loader = get_data_loader(non_augmented_train_dataset, batch_size=1, shuffle=False, workers=args.worker)
+
         test_dataset = get_test_dataset(args, normalizer)
         test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
     else:
-        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+        # train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+
+        # Check Range
+        non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+        train_loader = get_data_loader(non_augmented_train_dataset, batch_size=args.batch, shuffle=False, workers=args.worker)
+
         val_dataset = get_test_dataset(args, normalizer)
     val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
 
@@ -111,11 +119,12 @@ def _finetune(args, tools):
     clustering_model = None
     if args.cluster > 1:
         clustering_model = tools.clustering_method(args)
-        if not args.clustering_path:
-            args.clustering_path = set_clustering_dir(args)
-            clustering_model.train_clustering_model(train_loader)
-        else:
+        if args.clustering_path:
             clustering_model.load_clustering_model()
+        else:
+            if args.clustering_method == 'kmeans':
+                args.clustering_path = set_clustering_dir(args)
+            clustering_model.train_clustering_model(train_loader)
 
     if not save_path_fp:
         save_path_fp = set_save_dir(args, allow_existence=False)
@@ -139,6 +148,7 @@ def _finetune(args, tools):
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
+        exit()
 
         fp_score = 0
         if args.dataset != 'imagenet':

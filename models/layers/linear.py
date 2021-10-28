@@ -42,6 +42,7 @@ class QuantizedLinear(nn.Linear):
 
     def forward(self, x):
         sum_q1q2 = F.linear(x, self.weight, None)
+
         if self.runtime_helper.batch_cluster is not None:
             return self.pcq_totalsum(x.type(torch.cuda.IntTensor), sum_q1q2.type(torch.cuda.IntTensor))
         else:
@@ -219,14 +220,14 @@ class FusedLinear(nn.Module):
         self.arg_dict = arg_dict
         bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
             = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-
+        self.is_classifier = is_classifier
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
         self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = nn.Parameter(torch.zeros(1, dtype=torch.bool), requires_grad=False)
+        self.apply_ema = nn.Parameter(torch.zeros([], dtype=torch.bool), requires_grad=False)
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
@@ -247,6 +248,12 @@ class FusedLinear(nn.Module):
         out = F.linear(x, w, self.fc.bias)
         if self._activation:
             out = self._activation(out)
+
+        # with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
+        #     if self.is_classifier:
+        #         f.write('{}, {}\n'.format(out.min().item(), out.max().item()))
+        #     else:
+        #         f.write('{}, {}, '.format(out.min().item(), out.max().item()))
 
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)

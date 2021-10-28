@@ -42,12 +42,14 @@ class FusedBasicBlock(nn.Module):
         self.apply_ema = False
 
         self.conv1 = fused_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=a_bit)
-        self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
+        # self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, arg_dict=arg_dict)
+        self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, to_check=True, to_record=True, arg_dict=arg_dict)
         self.conv2 = fused_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=a_bit)
-        self.bn2 = FusedBnReLU(planes, arg_dict=arg_dict)
+        # self.bn2 = FusedBnReLU(planes, arg_dict=arg_dict)
+        self.bn2 = FusedBnReLU(planes, to_check=True, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes, arg_dict=arg_dict)
+            self.bn_down = FusedBnReLU(planes, to_check=True, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
@@ -111,16 +113,20 @@ class FusedBottleneck(nn.Module):
 
         width = int(planes * (base_width/64.)) * groups
         self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, arg_dict=self.arg_dict, a_bit=a_bit)
-        self.bn1 = FusedBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
+        # self.bn1 = FusedBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
+        self.bn1 = FusedBnReLU(width, nn.ReLU, to_check=True, to_record=True, arg_dict=self.arg_dict)
         self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
                                    arg_dict=self.arg_dict, a_bit=a_bit)
-        self.bn2 = FusedBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
+        # self.bn2 = FusedBnReLU(width, nn.ReLU, arg_dict=self.arg_dict)
+        self.bn2 = FusedBnReLU(width, nn.ReLU, to_check=True, to_record=True, arg_dict=self.arg_dict)
         self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=self.arg_dict,
                                    a_bit=a_bit)
-        self.bn3 = FusedBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
+        # self.bn3 = FusedBnReLU(planes * self.expansion, arg_dict=self.arg_dict)
+        self.bn3 = FusedBnReLU(planes * self.expansion, to_check=True, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=False)
         if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes * self.expansion, arg_dict=arg_dict)
+            # self.bn_down = FusedBnReLU(planes * self.expansion, arg_dict=arg_dict)
+            self.bn_down = FusedBnReLU(planes * self.expansion, to_check=True, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
@@ -201,7 +207,8 @@ class FusedResNet(nn.Module):
 
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                       arg_dict=self.arg_dict, a_bit=a_bit)
-        self.bn1 = FusedBnReLU(self.inplanes, nn.ReLU, arg_dict=self.arg_dict)
+        # self.bn1 = FusedBnReLU(self.inplanes, nn.ReLU, arg_dict=self.arg_dict)
+        self.bn1 = FusedBnReLU(self.inplanes, nn.ReLU, is_first=True, to_check=True, to_record=True, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -297,7 +304,8 @@ class FusedResNet20(nn.Module):
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
                                       w_bit=first_bit, a_bit=self.a_bit, arg_dict=arg_dict)
-        self.bn1 = FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
+        # self.bn1 = FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
+        self.bn1 = FusedBnReLU(16, activation=nn.ReLU, is_first=True, to_check=True, to_record=True, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)

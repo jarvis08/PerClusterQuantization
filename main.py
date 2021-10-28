@@ -3,7 +3,7 @@ import argparse
 from models import *
 from pretrain import _pretrain
 from finetune import _finetune
-from finetune_with_dali import _finetune_with_dali
+# from finetune_with_dali import _finetune_with_dali
 from evaluate import _evaluate
 from utils.lipschitz import check_lipschitz
 
@@ -15,7 +15,8 @@ parser.add_argument('--worker', default=4, type=int, help='Number of workers for
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
-parser.add_argument('--dali', default=False, type=bool, help='Use GPU data augmentation DALI')
+# parser.add_argument('--dali', default=False, type=bool, help='Use GPU data augmentation DALI')
+parser.add_argument('--rt', default=False, type=bool, help='Use TensorRT in inference mode')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
@@ -205,10 +206,11 @@ if __name__=='__main__':
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
-        if args.dali and args.dataset == 'imagenet':
-            _finetune_with_dali(args, tools)
-        else:
-            _finetune(args, tools)
+        # if args.dali and args.dataset == 'imagenet':
+        #     _finetune_with_dali(args, tools)
+        # else:
+        #     _finetune(args, tools)
+        _finetune(args, tools)
     elif args.mode == 'eval':
         _evaluate(args, tools)
     elif args.mode == 'lip':

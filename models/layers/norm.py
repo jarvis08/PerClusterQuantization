@@ -208,7 +208,7 @@ class PCQBnReLU(nn.Module):
 
 
 class FusedBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
+    def __init__(self, num_features, activation=None, is_first=False, to_check=False, to_record=False, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
         arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
@@ -220,7 +220,12 @@ class FusedBnReLU(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        # self.apply_ema = False
+
+        self.is_first = is_first
+        self.to_check = to_check
+        self.to_record = to_record
+        self.apply_ema = True
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
@@ -230,7 +235,29 @@ class FusedBnReLU(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        out = self._fake_quantized_bn(x)
+        # out = self._fake_quantized_bn(x)
+
+        if self.to_check:
+            mean = self.bn.running_mean
+            var = self.bn.running_var
+
+            weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
+            bias = self.bn.bias - weight * mean
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            weight = fake_quantize(weight, s, z, self.w_bit)
+
+            out = x * weight[None, :, None, None] + bias[None, :, None, None]
+            if self._activation:
+                out = self._activation(out)
+            if self.to_record:
+                with open('qat_resnet50_per_input_activation_ranges.csv', 'a') as f:
+                    if self.is_first:
+                        f.write('\n{}, {}, '.format(out.min().item(), out.max().item()))
+                    else:
+                        f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+        else:
+            out = self._fake_quantized_bn(x)
+
         if external_range is None:
             self._update_activation_range(out)
         if self.runtime_helper.apply_fake_quantization:
