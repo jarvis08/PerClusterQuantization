@@ -8,6 +8,7 @@ import torch.cuda.profiler as profiler
 
 import int_quantization
 
+
 class MLP(nn.Module):
     def __init__(self, num_classes:int = 10) -> None:
         super(MLP, self).__init__()
@@ -35,7 +36,7 @@ class MLP_cublas(nn.Module):
         self.L2.weight = nn.Parameter(torch.randint(0, 16, (4096, 4096), dtype=torch.int8), requires_grad=False)
         self.L3.weight = nn.Parameter(torch.randint(0, 16, (4096, 4096), dtype=torch.int8), requires_grad=False)
         self.L4.weight = nn.Parameter(torch.randint(0, 16, (4096, 10), dtype=torch.int8), requires_grad=False)
-
+        """
         self.torch_L1 = nn.Linear(4096, 4096)
         self.torch_L2 = nn.Linear(4096, 4096)
         self.torch_L3 = nn.Linear(4096, 4096)
@@ -44,29 +45,41 @@ class MLP_cublas(nn.Module):
         self.torch_L2.weight = nn.Parameter(torch.tensor(self.L2.weight.clone().detach(), dtype=torch.float32), requires_grad=False)
         self.torch_L3.weight = nn.Parameter(torch.tensor(self.L3.weight.clone().detach(), dtype=torch.float32), requires_grad=False)
         self.torch_L4.weight = nn.Parameter(torch.tensor(self.L4.weight.clone().detach(), dtype=torch.float32), requires_grad=False)
-
+        """
         self.c = c
         self.d = d
         self.e = e
         self.f = f
+        self.alpha = 1.0
+        self.beta = 0.0
 
     def forward(self, x):
         m = x.size(0)
         k = self.L1.weight.shape[1]
         n = self.L1.weight.shape[0]
         b = self.L1.weight
-        int_quantization.cublasGemm(1, 0, n, m, k, 1,
+        #print(m, n, k)
+        """
+        int_quantization.cublasLtGemm(1, 0, n, m, k, self.alpha,
+                                      b, k,
+                                      x, k,
+                                      self.beta,
+                                      self.c, n,
+                                      None, 0)
+        """
+        int_quantization.cublasGemm(1, 0, n, m, k, self.alpha,
                                     b, k,
                                     x, k,
-                                    0,
-                                    self.c,
-                                    n)
+                                    self.beta,
+                                    self.c, n,
+                                    )
+        
         #data = torch.tensor(x.clone().detach(), dtype=torch.float32)
         #torch_out = self.torch_L1(data)
         #print('Layer 1')
         #print('Cublas Out\n',self.c)
         #print('Torch out\n', torch_out)
-        
+        #exit(1)
         #print('===================================')
         #self.c = self.c.type(torch.int8)
         #print('Cublas out type cast to int8\n', self.c)
@@ -85,34 +98,64 @@ class MLP_cublas(nn.Module):
         print('==================================')
         print(self.c)
         """
+
+        """
+        int_quantization.cublasLtGemm(1, 0, n, m, k, self.alpha,
+                                      b, k,
+                                      x, k,
+                                      self.beta,
+                                      self.c, n,
+                                      None, 0)
+        """
         m = c.size(0)
         k = self.L2.weight.shape[1]
         n = self.L2.weight.shape[0]
-        int_quantization.cublasGemm(1, 0, n, m, k, 1,
+        b = self.L2.weight
+        int_quantization.cublasGemm(1, 0, n, m, k, self.alpha,
                                     b, k,
                                     x, k,
-                                    1,
-                                    self.d, n)
-
+                                    self.beta,
+                                    self.d, n,
+                                   )
+        
         m = c.size(0)
         k = self.L3.weight.shape[1]
         n = self.L3.weight.shape[0]
         b = self.L3.weight
-        int_quantization.cublasGemm(1, 0, n, m, k, 1,
+        """
+        int_quantization.cublasLtGemm(1, 0, n, m, k, self.alpha,                                                                    
+                                      b, k,                                                                                          
+                                      x, k,                                                                                          
+                                      self.beta,                                                                                     
+                                      self.c, n,                                                                                     
+                                      None, 0)
+        """
+        int_quantization.cublasGemm(1, 0, n, m, k, self.alpha,
                                     b, k,
                                     x, k,
-                                    1,
-                                    self.e, n)
-
+                                    self.beta,
+                                    self.e, n,
+                                    )
+        
         m = c.size(0)
         k = self.L4.weight.shape[1]
         n = self.L4.weight.shape[0]
         b = self.L4.weight
-        int_quantization.cublasGemm(1, 0, n, m, k, 1,
+        """
+        int_quantization.cublasLtGemm(1, 0, n, m, k, self.alpha,
+                                      b, k,
+                                      x, k,
+                                      self.beta,
+                                      self.c, n,
+                                      None, 0)
+        """
+        int_quantization.cublasGemm(1, 0, n, m, k, self.alpha,
                                     b, k,
                                     x, k,
-                                    1,
-                                    self.f, n)
+                                    self.beta,
+                                    self.f, n,
+                                    )
+        
         return self.f
 
 
@@ -157,7 +200,7 @@ class MLP_cublas(nn.Module):
         #c = c.view(-1).cuda()
         print('m:{}, n:{}, k:{}, a shape:{}'.format(m, n, k, a.shape))
         print('a shape:{}, b shape:{}'.format(a.shape, b.shape))
-        int_quantization.cublasGemm(1, 0, n, m, k, 1,
+        int_quantization.cublasLtGemm(1, 0, n, m, k, 1,
                                     b, k,
                                     a, k,
                                     1,
@@ -174,13 +217,13 @@ class MLP_cublas(nn.Module):
         exit(1)
         
         #Version1
-        int_quantization.cublasGemm(1, 1, m, n, k, 1,
+        int_quantization.cublasLtGemm(1, 1, m, n, k, 1,
                                     a, k,
                                     b, n,
                                     1,
                                     c, m)
         #Origin
-        int_quantization.cublasGemm(0, 0, n, m, k, 1,
+        int_quantization.cublasLtGemm(0, 0, n, m, k, 1,
                                     b, n,
                                     a, k,
                                     1,
@@ -188,13 +231,13 @@ class MLP_cublas(nn.Module):
         
         print('Cublas output accumulator\n',c)
         int_quantization.distict_gemm(x, b, c)
-        int_quantization.cublasGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
+        int_quantization.cublasLtGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
         a = c, b = self.L2.weight, c = self.L2.weight.shape[1]
-        int_quantization.cublasGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
+        int_quantization.cublasLtGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
         a = c, b = self.L3.weight, c = self.L3.weight.shape[1]
-        int_quantization.cublasGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
+        int_quantization.cublasLtGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
         a = c, b = self.L4.weight, c = self.L4.weight.shape[1]
-        int_quantization.cublasGemm(0, 1, m, n, k, 1, a, k, b, k, c, n)
+        int_quantization.cublasLtGemm(0, 1, m, n, k, 1, a, k, b, k, 0, c, n)
 
         return c
 """
@@ -206,14 +249,14 @@ if __name__ == '__main__':
     model = MLP()
     nvidia_dlprof_pytorch_nvtx.init(enable_function_stack=True)
     
-    c = torch.zeros(256, 4096, dtype=torch.float32).cuda()
-    d = torch.zeros(256, 4096, dtype=torch.float32).cuda()
-    e = torch.zeros(256, 4096, dtype=torch.float32).cuda()
-    f = torch.zeros(256, 4096, dtype=torch.float32).cuda()
+    c = torch.zeros(256*4, 4096, dtype=torch.float).to(device)
+    d = torch.zeros(256*4, 4096, dtype=torch.float).to(device)
+    e = torch.zeros(256*4, 4096, dtype=torch.float).to(device)
+    f = torch.zeros(256*4, 4096, dtype=torch.float).to(device)
     # model_cublas = MLP_cublas()
     model_cublas = MLP_cublas(c=c, d=d, e=e, f=f)
-    data = torch.randint(0, 3,(256, 4096), dtype=torch.int8).cuda()
-    #data = torch.randint(0, 3,(256, 4096), dtype=torch.float).cuda()
+    #data = torch.randint(0, 3,(256 * 4, 4096), dtype=torch.int8).to(device)
+    data = torch.randint(0, 3,(256, 4096), dtype=torch.float).cuda()
     #data = torch.randint(0, 3,(3, 4), dtype=torch.int8).cuda()
     #print('Data type:', type(data.data[0][0].item()))
     model.to(device)
@@ -221,25 +264,23 @@ if __name__ == '__main__':
 
     time_arr = []
     starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    for _ in range(50):
-        #model(data)
-        model_cublas(data)
-        time_arr.append(0)
-        time_arr.append(0)
+    for _ in range(10):
+        model(data)
+        #model_cublas(data)
 
     # with torch.no_grad():
     with torch.autograd.profiler.emit_nvtx():
         for index in range(20):
             starter.record()
-            profiler.start()
-            _ = model_cublas(data)
-            profiler.stop()
-            #_ = model(data)
+            #profiler.start()
+            #_ = model_cublas(data)
+            #profiler.stop()
+            _ = model(data)
             ender.record()
             torch.cuda.synchronize()
             curr_time = starter.elapsed_time(ender)
-            time_arr[index] = curr_time
+            time_arr.append(curr_time)
 
-    with open('./cublas_forward_inference_time.txt', 'w') as f:
+    with open('./torch_forward_inference_time.txt', 'w') as f:
         for time in time_arr:
             f.write('{}\n'.format(time))
