@@ -42,10 +42,12 @@ def _evaluate(args, tools):
         arg_dict['runtime_helper'] = runtime_helper
     model = load_dnn_model(arg_dict, tools)
     model.cuda()
-    pcq_alexnet_trained_activation_ranges(model)
+
+    # pcq_alexnet_trained_activation_ranges(model)
     # qat_alexnet_trained_activation_ranges(model)
     # qat_resnet_trained_activation_ranges(model)
     # qat_resnet50_trained_activation_ranges(model)
+    pcq_resnet50_trained_activation_ranges(model)
     exit()
     # if not args.quantized:
     #     if args.dataset == 'imagenet':

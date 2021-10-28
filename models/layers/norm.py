@@ -100,7 +100,7 @@ class QuantizedBn2d(nn.Module):
 
 
 class PCQBnReLU(nn.Module):
-    def __init__(self, num_features, activation=None, a_bit=None, w_bit=None, arg_dict=None):
+    def __init__(self, num_features, activation=None, is_first=False, to_check=False, to_record=False, a_bit=None, w_bit=None, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
         self.momentum, arg_w_bit, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
@@ -110,6 +110,10 @@ class PCQBnReLU(nn.Module):
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
         self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+
+        self.is_first = is_first
+        self.to_check = to_check
+        self.to_record = to_record
 
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
@@ -122,7 +126,37 @@ class PCQBnReLU(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        out = self._pcq(x)
+        # out = self._pcq(x)
+
+        if self.to_check:
+            cluster = self.runtime_helper.batch_cluster
+            bn = self.norms[cluster]
+            mean = bn.running_mean
+            var = bn.running_var
+
+            weight = bn.weight.div(torch.sqrt(var + bn.eps))
+            bias = bn.bias - weight * mean
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            weight = fake_quantize(weight, s, z, self.w_bit)
+
+            out = x * weight[None, :, None, None] + bias[None, :, None, None]
+            if self.activation:
+                out = self.activation(out)
+            if self.to_record:
+                _max = out.view(out.size(0), -1).max(dim=1).values
+                with open('pcq_resnet50_per_input_activation_ranges.csv', 'a') as f:
+                    if self.is_first:
+                        # f.write('\n{}, {}, '.format(out.min().item(), out.max().item()))
+                        f.write('\n{}'.format(_max[0].item()))
+                        for i in range(1, out.size(0)):
+                            f.write(',{}'.format(_max[i].item()))
+                    else:
+                        # f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+                        for i in range(out.size(0)):
+                            f.write(',{}'.format(_max[i].item()))
+        else:
+            out = self._pcq(x)
+
         if external_range is None:
             self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
@@ -236,7 +270,6 @@ class FusedBnReLU(nn.Module):
             return self._forward_impl(x)
 
         # out = self._fake_quantized_bn(x)
-
         if self.to_check:
             mean = self.bn.running_mean
             var = self.bn.running_var

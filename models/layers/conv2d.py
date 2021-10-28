@@ -258,8 +258,8 @@ class PCQConv2d(nn.Module):
 
         out = self._pcq(x)
 
-        with open('pcq_alexnet_per_input_activation_ranges_c{}.csv'.format(self.runtime_helper.batch_cluster), 'a') as f:
-            f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+        # with open('pcq_alexnet_per_input_activation_ranges_c{}.csv'.format(self.runtime_helper.batch_cluster), 'a') as f:
+        #     f.write('{}, {}, '.format(out.min().item(), out.max().item()))
 
         if external_range is None:
             self._update_activation_ranges(out)

@@ -102,3 +102,37 @@ def qat_resnet50_trained_activation_ranges(model):
         writer.writeheader()
         for n, r in zip(names, ranges):
             writer.writerow({'name': n, 'min': r[0], 'max': r[1]})
+
+
+def pcq_resnet50_trained_activation_ranges(model):
+    ranges = [[] for _ in range(4)]
+    for c in range(4):
+        ranges[c].append([model.bn1.act_range[c][0].item(), model.bn1.act_range[c][1].item()])
+        for i in range(len(model.layer1)):
+            ranges[c].append([model.layer1[i].bn1.act_range[c][0].item(), model.layer1[i].bn1.act_range[c][1].item()])
+            ranges[c].append([model.layer1[i].bn2.act_range[c][0].item(), model.layer1[i].bn2.act_range[c][1].item()])
+        for i in range(len(model.layer2)):
+            ranges[c].append([model.layer2[i].bn1.act_range[c][0].item(), model.layer2[i].bn1.act_range[c][1].item()])
+            ranges[c].append([model.layer2[i].bn2.act_range[c][0].item(), model.layer2[i].bn2.act_range[c][1].item()])
+        for i in range(len(model.layer3)):
+            ranges[c].append([model.layer3[i].bn1.act_range[c][0].item(), model.layer3[i].bn1.act_range[c][1].item()])
+            ranges[c].append([model.layer3[i].bn2.act_range[c][0].item(), model.layer3[i].bn2.act_range[c][1].item()])
+        for i in range(len(model.layer4)):
+            ranges[c].append([model.layer3[i].bn1.act_range[c][0].item(), model.layer3[i].bn1.act_range[c][1].item()])
+            ranges[c].append([model.layer3[i].bn2.act_range[c][0].item(), model.layer3[i].bn2.act_range[c][1].item()])
+
+    names = ['First_BN']
+    num_blocks = 3 + 4 + 6 + 3
+    for block in range(1, num_blocks + 1):
+        names.append('Block{}_BN1'.format(block))
+        names.append('Block{}_BN2'.format(block))
+
+    import csv
+    for c in range(4):
+        with open('pcq_resnet50_trained_activation_ranges_c{}.csv'.format(c + 1), 'w', newline='') as csvfile:
+            fieldnames = ['name', 'min', 'max']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for n, r in zip(names, ranges[c]):
+                writer.writerow({'name': n, 'min': r[0], 'max': r[1]})
