@@ -115,8 +115,8 @@ class PCQBottleneck(nn.Module):
 
         self.arg_dict = arg_dict
 
-        bit, a_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'conv_a_bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, a_bit, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'conv_a_bit', 'smooth', 'ste', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
