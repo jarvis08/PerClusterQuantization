@@ -258,7 +258,6 @@ class PCQConv2d(nn.Module):
 
         out = self._pcq(x)
 
-        # with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
         with open('pcq_alexnet_per_input_activation_ranges_c{}.csv'.format(self.runtime_helper.batch_cluster), 'a') as f:
             f.write('{}, {}, '.format(out.min().item(), out.max().item()))
 
@@ -381,8 +380,8 @@ class FusedConv2d(nn.Module):
         if self._activation:
             out = self._activation(out)
 
-        # with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
-        #     f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+        with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
+            f.write('{}, {}, '.format(out.min().item(), out.max().item()))
 
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
