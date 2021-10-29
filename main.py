@@ -86,19 +86,19 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'pretrained_model_initializer', alexnet_small)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_alexnet_small)
-                setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_alexnet_small)
-                setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
         else:
             setattr(tools, 'pretrained_model_initializer', alexnet)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_alexnet)
-                setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_alexnet)
-                setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
@@ -112,19 +112,19 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'pretrained_model_initializer', resnet50)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet50)
-                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet50)
-                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet50)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet20)
-                setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet20)
-                setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
+                # setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
 
     elif arch == 'MobileNetV3':
@@ -140,12 +140,12 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'fused_model_initializer', pcq_densenet)
             setattr(tools, 'fuser', set_pcq_densenet)
             setattr(tools, 'quantizer', quantize_pcq_densenet)
-            setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
+            # setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
         else:
             setattr(tools, 'fused_model_initializer', fused_densenet)
             setattr(tools, 'fuser', set_fused_densenet)
             setattr(tools, 'quantizer', quantize_densenet)
-            setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
+            # setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
     return tools
 
 
