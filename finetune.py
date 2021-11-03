@@ -108,7 +108,7 @@ def _finetune(args, tools):
     # opt_scheduler = None
 
     save_path_fp = ''
-    epoch_to_start = 0
+    epoch_to_start = 1
     best_epoch = 0
     best_int_val_score = 0
     # if args.fused:

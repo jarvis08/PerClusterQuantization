@@ -21,10 +21,11 @@ def _pretrain(args, tools):
     #     checkpoint = torch.load(args.dnn_path)
     #     model.load_state_dict(checkpoint['state_dict'], strict=False)
 
+
     pre_model = alexnet_small()
     checkpoint = torch.load(args.dnn_path)
     pre_model.load_state_dict(checkpoint['state_dict'], strict=False)
-    model = alexnet_no_seq()
+    model = alexnet_no_seq(num_classes=10, percent=args.percent)
     model.set_no_seq_alexnet(pre_model)
 
     model.cuda()

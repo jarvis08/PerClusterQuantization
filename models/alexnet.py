@@ -89,7 +89,7 @@ class AlexNetSmall(nn.Module):
 
 
 class AlexNetNoSeq(nn.Module):
-    def __init__(self, num_classes: int = 10) -> None:
+    def __init__(self, num_classes: int = 10, percent:float=0.0) -> None:
         super(AlexNetNoSeq, self).__init__()
 
         self.features = nn.Sequential(
@@ -118,6 +118,8 @@ class AlexNetNoSeq(nn.Module):
             nn.Linear(4096, num_classes),
         )
 
+        self.percent = percent
+
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.dropout = nn.Dropout()
@@ -136,20 +138,20 @@ class AlexNetNoSeq(nn.Module):
         if not self.training:
             x = self.conv1(x)
             x = self.relu(x)
-            x = self.saturate_values(x, 0, is_Conv=True)
+            x = self.saturate_values(x)
             x = self.maxpool(x)
             x = self.conv2(x)
             x = self.relu(x)
-            x = self.saturate_values(x, 1, is_Conv=True)
+            x = self.saturate_values(x)
             x = self.maxpool(x)
             x = self.conv3(x)
             x = self.relu(x)
-            x = self.saturate_values(x, 2, is_Conv=True)
+            x = self.saturate_values(x)
             x = self.conv4(x)
-            x = self.saturate_values(x, 3, is_Conv=True)
+            x = self.saturate_values(x)
             x = self.relu(x)
             x = self.conv5(x)
-            x = self.saturate_values(x, 4, is_Conv=True)
+            x = self.saturate_values(x)
             x = self.relu(x)
             # x = self.saturate_values(x, 0)
             x = self.maxpool(x)
@@ -162,42 +164,30 @@ class AlexNetNoSeq(nn.Module):
             x = self.fc3(x)
             return x
 
-        # f = open('fp_conv_output_max.txt', 'a')
         x = self.conv1(x)
+        x = self.saturate_values(x, percent=self.percent)
         x = self.relu(x)
-        # self.save_max_value(x, f)
-        x = self.saturate_values(x, layer_idx=0, is_Conv=True)
         x = self.maxpool(x)
-        # self.save_max_value(x, f)
 
         x = self.conv2(x)
+        x = self.saturate_values(x, percent=self.percent)
         x = self.relu(x)
-        # self.save_max_value(x, f)
-        x = self.saturate_values(x, layer_idx=1, is_Conv=True)
         x = self.maxpool(x)
-        # self.save_max_value(x, f)
 
         x = self.conv3(x)
+        x = self.saturate_values(x, percent=self.percent)
         x = self.relu(x)
-        # self.save_max_value(x, f)
-        x = self.saturate_values(x, layer_idx=2, is_Conv=True)
-        # self.save_max_value(x, f)
 
         x = self.conv4(x)
+        x = self.saturate_values(x, percent=self.percent)
         x = self.relu(x)
-        # self.save_max_value(x, f)
-        x = self.saturate_values(x, layer_idx=3, is_Conv=True)
-        # self.save_max_value(x, f)
 
         x = self.conv5(x)
+        x = self.saturate_values(x, percent=self.percent)
         x = self.relu(x)
-        # self.save_max_value(x, f, is_last=True)
-        x = self.saturate_values(x, layer_idx=4, is_Conv=True)
         x = self.maxpool(x)
-        # self.save_max_value(x, f, is_last=True)
 
         x = self.avgpool(x)
-
         x = self.dropout(x)
 
         x = torch.flatten(x, 1)
@@ -209,7 +199,6 @@ class AlexNetNoSeq(nn.Module):
         x = self.relu(x)
 
         x = self.fc3(x)
-        # f.close()
         return x
 
     def set_no_seq_alexnet(self, pre):
@@ -233,7 +222,7 @@ class AlexNetNoSeq(nn.Module):
             self.fc3.bias = deepcopy(pre.classifier[6].bias)
 
     @staticmethod
-    def saturate_values(x, layer_idx, is_Conv=False):
+    def saturate_values(x, percent:float=1.0):
         # with torch.no_grad():
         #     median_of_max_values = [5.823872, 7.904878, 4.921054, 2.202915, 1.642391]
         #     _x = torch.clamp_max(x, median_of_max_values[layer_idx])
@@ -243,37 +232,24 @@ class AlexNetNoSeq(nn.Module):
             # _x = torch.clamp_max(x, value.item())
 
             _min, _max = x.min(), x.max()
-            # _m, _M = x.min(), torch.tensor(x.max().item() * 0.9)
-
-
             s, z = calc_qparams(_min, _max, 4)
-            # ts, tz = calc_qparams(_m, _M, 4)
-
             quantized_x = quantize_matrix(x, s, z, 4)
-            # quantized_tx = quantize_matrix(x, ts, tz, 4)
-
             num_zero = (quantized_x == z).nonzero(as_tuple=True)[0]     # z 값과 같은 애의 index를 담는 애, 그냥 총 개수가 중요.
-            # t_num_zero = (quantized_tx == tz).nonzero(as_tuple=True)[0]
             to_quantile = torch.tensor([num_zero.size(0) / x.numel()], device='cuda')
-            # to_quantile_t = torch.tensor([num_zero.size(0) / x.numel()], device='cuda')
-            # if is_Conv:
-            #     with open('quantile_compare_{}_layer.txt'.format(layer_idx), 'a') as f:
-            #         f.write('{:.5f}\n'.format(float(to_quantile_t)/float(to_quantile)))
-            #         if layer_idx == 4:
-            #             f.write('==============================\n')
 
-            percentage = 0.9
-            idx = int(x.numel() * (1 - percentage))
+            ####
+            idx = int(x.numel() * (1 - percent))
             sorted, indices = torch.sort(torch.flatten(x), dim=0, descending=True)
             max_value = sorted[idx].item()
-
+            ###
             value = torch.quantile(x, to_quantile)
 
             y = torch.zeros_like(x, device='cuda')
             # _x = torch.where(x > value, x, y)
             limit = torch.tensor(max_value).cuda()
-            # _x = torch.where(x > limit, limit, x)
-            _x = torch.where(x > sorted[0], sorted[0], x)
+            y += limit
+            _x = torch.where(x > limit, y, x)
+        # return _x
         return ClampMax.apply(x, _x)
 
     @staticmethod
@@ -304,5 +280,5 @@ def alexnet_small(num_classes=10, **kwargs: Any) -> AlexNetSmall:
     return AlexNetSmall(num_classes=num_classes, **kwargs)
 
 
-def alexnet_no_seq(num_classes=10, **kwargs: Any) -> AlexNetSmall:
-    return AlexNetNoSeq(num_classes=num_classes, **kwargs)
+def alexnet_no_seq(num_classes=10, percent=0.0, **kwargs: Any) -> AlexNetSmall:
+    return AlexNetNoSeq(num_classes=num_classes, percent=percent,**kwargs)

@@ -63,6 +63,8 @@ parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with d
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
+parser.add_argument('--percent', default='0.0', type=float)
+
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu

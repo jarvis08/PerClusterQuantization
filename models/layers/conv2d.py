@@ -390,7 +390,7 @@ class FusedConv2d(nn.Module):
         else:
             if self.apply_ema:
                 # self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-                self.act_range[0], self.act_range[1] = ema(out, self.act_range, 0)
+                self.act_range[0], self.act_range[1] = ema(out, self.act_range, 0.99)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
                     out = fake_quantize(out, s, z, self.a_bit, self.use_ste)
