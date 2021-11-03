@@ -257,14 +257,15 @@ class FusedLinear(nn.Module):
         if self._activation:
             out = self._activation(out)
 
-        with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
-            if self.is_classifier:
-                f.write('{}, {}\n'.format(out.min().item(), out.max().item()))
-            else:
-                f.write('{}, {}, '.format(out.min().item(), out.max().item()))
+        # with open('qat_alexnet_per_input_activation_ranges.csv', 'a') as f:
+        #     if self.is_classifier:
+        #         f.write('{}, {}\n'.format(out.min().item(), out.max().item()))
+        #     else:
+        #         f.write('{}, {}, '.format(out.min().item(), out.max().item()))
 
         if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+            # self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+            self.act_range[0], self.act_range[1] = ema(out, self.act_range, 0)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
                 out = fake_quantize(out, s, z, self.a_bit, self.use_ste)

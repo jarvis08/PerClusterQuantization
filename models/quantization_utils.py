@@ -26,7 +26,13 @@ class QuantizationTool(object):
 
 def get_range(x):
     _x = x.detach()
-    return _x.min().item(), _x.max().item()
+
+    sorted, indices = torch.sort(torch.flatten(_x), descending=True)
+    percent = 0.95
+    idx = int(_x.numel() * (1 - percent))
+    _min, _max = torch.min(x).item(), sorted[idx].item()
+    return _min, _max
+    # return _x.min().item(), _x.max().item()
 
 
 @torch.no_grad()
@@ -74,7 +80,11 @@ def calc_qparams_per_cluster(ranges, bit):
 
 @torch.no_grad()
 def ema(x, averaged, smooth):
-    _min, _max = torch.min(x).item(), torch.max(x).item()
+    sorted, indices = torch.sort(torch.flatten(x), descending=True)
+    percent = 0.95
+    idx = int(x.numel() * (1 - percent))
+    _min, _max = torch.min(x).item(), sorted[idx].item()
+    # _min, _max = torch.min(x).item(), torch.max(x).item()
     updated_min = averaged[0] * smooth + _min * (1 - smooth)
     updated_max = averaged[1] * smooth + _max * (1 - smooth)
     return updated_min, updated_max
