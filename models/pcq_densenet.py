@@ -31,10 +31,10 @@ class PCQDenseLayer(nn.Module):
 
         self.bn1 = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
-                               arg_dict=arg_dict, a_bit=self.a_bit.item())
+                               arg_dict=arg_dict, a_bit=self.a_bit)
         self.bn2 = PCQBnReLU(bn_size * growth_rate, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
-                               arg_dict=arg_dict, a_bit=self.a_bit.item())
+                               arg_dict=arg_dict, a_bit=self.a_bit)
         self.memory_efficient = memory_efficient
 
     # torchscript does not yet support *args, so we overload method
@@ -71,7 +71,7 @@ class PCQTransition(nn.Sequential):
 
         self.bn = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
-                              arg_dict=arg_dict, a_bit=self.a_bit.item())
+                              arg_dict=arg_dict, a_bit=self.a_bit)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x, next_block_range):
@@ -118,7 +118,7 @@ class PCQDenseBlock(nn.ModuleDict):
                 growth_rate=growth_rate,
                 bn_size=bn_size,
                 memory_efficient=memory_efficient,
-                a_bit=a_bit.item()
+                a_bit=a_bit
             )
             self.add_module('denselayer%d' % (i + 1), layer)
 
@@ -166,19 +166,18 @@ class PCQDenseNet(nn.Module):
     ) -> None:
         super(PCQDenseNet, self).__init__()
         self.arg_dict = arg_dict
-        arg_bit, arg_conv_a_bit, self.smooth, self.num_clusters, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'conv_a_bit', 'smooth', 'cluster', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
-        self.bit = torch.nn.Parameter(torch.tensor(arg_bit, dtype=torch.int8), requires_grad=False)
-        self.a_bit = torch.nn.Parameter(torch.tensor(arg_conv_a_bit, dtype=torch.int8), requires_grad=False)
-        
+        target_bit, self.a_bit, first_bit, classifier_bit, self.smooth, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'conv_a_bit', 'first_bit', 'classifier_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
-                                     arg_dict=arg_dict, a_bit=self.a_bit.item())),
-            ('first_norm', PCQBnReLU(num_init_features, activation=nn.ReLU, a_bit=self.a_bit.item(), arg_dict=arg_dict)),
+                                     w_bit=first_bit, a_bit=self.a_bit, arg_dict=arg_dict)),
+            ('first_norm', PCQBnReLU(num_init_features, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -202,7 +201,8 @@ class PCQDenseNet(nn.Module):
         # Last Norm
         self.features.add_module('last_norm', PCQBnReLU(num_features, activation=nn.ReLU, arg_dict=arg_dict))
         # Linear layer
-        self.classifier = PCQLinear(num_features, num_classes, arg_dict=arg_dict)
+        self.classifier = PCQLinear(num_features, num_classes, is_classifier=True,
+                                    w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
         if self.training:
