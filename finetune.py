@@ -101,11 +101,11 @@ def _finetune(args, tools):
     model = get_finetuning_model(arg_dict, tools)
     model.cuda()
 
-    # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
-    # opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     criterion = torch.nn.CrossEntropyLoss().cuda()
-    optimizer = None
-    opt_scheduler = None
+    # optimizer = None
+    # opt_scheduler = None
 
     save_path_fp = ''
     epoch_to_start = 60
@@ -150,7 +150,6 @@ def _finetune(args, tools):
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
-        exit()
         opt_scheduler.step()
 
         fp_score = 0

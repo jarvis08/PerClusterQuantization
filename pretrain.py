@@ -32,10 +32,11 @@ def _pretrain(args, tools):
     #     summary(model, (3, 224, 224))
     # else:
     #     summary(model, (3, 32, 32))
-    if args.dataset == 'imagenet':
-        summary(pre_model, (3, 224, 224))
-    else:
-        summary(pre_model, (3, 32, 32))
+
+    # if args.dataset == 'imagenet':
+    #     summary(pre_model, (3, 224, 224))
+    # else:
+    #     summary(pre_model, (3, 32, 32))
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
@@ -66,12 +67,11 @@ def _pretrain(args, tools):
 
     best_epoch = 0
     for e in range(epoch_to_start, args.epoch + 1):
-        # train_epoch(model, train_loader, criterion, optimizer, e, logger)
+        train_epoch(model, train_loader, criterion, optimizer, e, logger)
         # exit()
         # opt_scheduler.step()
         # prec = validate(model, val_loader, criterion, logger)
         prec = validate(model, test_loader, criterion, logger)
-        exit()
         is_best = prec > best_prec
         if is_best:
             best_epoch = e

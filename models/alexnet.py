@@ -136,20 +136,22 @@ class AlexNetNoSeq(nn.Module):
         if not self.training:
             x = self.conv1(x)
             x = self.relu(x)
-            x = self.saturate_values(x, 0)
+            x = self.saturate_values(x, 0, is_Conv=True)
             x = self.maxpool(x)
             x = self.conv2(x)
             x = self.relu(x)
-            x = self.saturate_values(x, 0)
+            x = self.saturate_values(x, 1, is_Conv=True)
             x = self.maxpool(x)
             x = self.conv3(x)
             x = self.relu(x)
-            x = self.saturate_values(x, 0)
+            x = self.saturate_values(x, 2, is_Conv=True)
             x = self.conv4(x)
+            x = self.saturate_values(x, 3, is_Conv=True)
             x = self.relu(x)
             x = self.conv5(x)
+            x = self.saturate_values(x, 4, is_Conv=True)
             x = self.relu(x)
-            x = self.saturate_values(x, 0)
+            # x = self.saturate_values(x, 0)
             x = self.maxpool(x)
             x = self.avgpool(x)
             x = torch.flatten(x, 1)
@@ -164,35 +166,41 @@ class AlexNetNoSeq(nn.Module):
         x = self.conv1(x)
         x = self.relu(x)
         # self.save_max_value(x, f)
-        x = self.saturate_values(x, 0)
+        x = self.saturate_values(x, layer_idx=0, is_Conv=True)
         x = self.maxpool(x)
+        # self.save_max_value(x, f)
 
         x = self.conv2(x)
         x = self.relu(x)
         # self.save_max_value(x, f)
-        x = self.saturate_values(x, 1)
+        x = self.saturate_values(x, layer_idx=1, is_Conv=True)
         x = self.maxpool(x)
+        # self.save_max_value(x, f)
 
         x = self.conv3(x)
         x = self.relu(x)
         # self.save_max_value(x, f)
-        x = self.saturate_values(x, 2)
+        x = self.saturate_values(x, layer_idx=2, is_Conv=True)
+        # self.save_max_value(x, f)
 
         x = self.conv4(x)
         x = self.relu(x)
         # self.save_max_value(x, f)
-        x = self.saturate_values(x, 3)
+        x = self.saturate_values(x, layer_idx=3, is_Conv=True)
+        # self.save_max_value(x, f)
 
         x = self.conv5(x)
         x = self.relu(x)
         # self.save_max_value(x, f, is_last=True)
-        x = self.saturate_values(x, 4)
+        x = self.saturate_values(x, layer_idx=4, is_Conv=True)
         x = self.maxpool(x)
+        # self.save_max_value(x, f, is_last=True)
 
         x = self.avgpool(x)
-        x = torch.flatten(x, 1)
 
         x = self.dropout(x)
+
+        x = torch.flatten(x, 1)
         x = self.fc1(x)
         x = self.relu(x)
 
@@ -225,7 +233,7 @@ class AlexNetNoSeq(nn.Module):
             self.fc3.bias = deepcopy(pre.classifier[6].bias)
 
     @staticmethod
-    def saturate_values(x, layer_idx):
+    def saturate_values(x, layer_idx, is_Conv=False):
         # with torch.no_grad():
         #     median_of_max_values = [5.823872, 7.904878, 4.921054, 2.202915, 1.642391]
         #     _x = torch.clamp_max(x, median_of_max_values[layer_idx])
@@ -235,13 +243,37 @@ class AlexNetNoSeq(nn.Module):
             # _x = torch.clamp_max(x, value.item())
 
             _min, _max = x.min(), x.max()
+            # _m, _M = x.min(), torch.tensor(x.max().item() * 0.9)
+
+
             s, z = calc_qparams(_min, _max, 4)
+            # ts, tz = calc_qparams(_m, _M, 4)
+
             quantized_x = quantize_matrix(x, s, z, 4)
-            num_zero = (quantized_x == z).nonzero(as_tuple=True)[0]
+            # quantized_tx = quantize_matrix(x, ts, tz, 4)
+
+            num_zero = (quantized_x == z).nonzero(as_tuple=True)[0]     # z 값과 같은 애의 index를 담는 애, 그냥 총 개수가 중요.
+            # t_num_zero = (quantized_tx == tz).nonzero(as_tuple=True)[0]
             to_quantile = torch.tensor([num_zero.size(0) / x.numel()], device='cuda')
+            # to_quantile_t = torch.tensor([num_zero.size(0) / x.numel()], device='cuda')
+            # if is_Conv:
+            #     with open('quantile_compare_{}_layer.txt'.format(layer_idx), 'a') as f:
+            #         f.write('{:.5f}\n'.format(float(to_quantile_t)/float(to_quantile)))
+            #         if layer_idx == 4:
+            #             f.write('==============================\n')
+
+            percentage = 0.9
+            idx = int(x.numel() * (1 - percentage))
+            sorted, indices = torch.sort(torch.flatten(x), dim=0, descending=True)
+            max_value = sorted[idx].item()
+
             value = torch.quantile(x, to_quantile)
+
             y = torch.zeros_like(x, device='cuda')
-            _x = torch.where(x > value, x, y)
+            # _x = torch.where(x > value, x, y)
+            limit = torch.tensor(max_value).cuda()
+            # _x = torch.where(x > limit, limit, x)
+            _x = torch.where(x > sorted[0], sorted[0], x)
         return ClampMax.apply(x, _x)
 
     @staticmethod
