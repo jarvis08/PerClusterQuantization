@@ -171,31 +171,35 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
     top1 = AverageMeter()
 
     model.train()
-    with torch.no_grad():
-        with tqdm(train_loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
-                t.set_description("Epoch {}".format(epoch))
+    with tqdm(train_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            t.set_description("Epoch {}".format(epoch))
 
-                input, target = input.cuda(), target.cuda()
-                output = model(input)
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
+            input, target = input.cuda(), target.cuda()
+            output = model(input)
+            loss = criterion(output, target)
+            prec = accuracy(output, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec.item(), input.size(0))
 
-                # if hvd:
-                #     if hvd.rank() == 0:
-                #         logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                #                      .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-                # else:
-                #     logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                #                  .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-                # optimizer.zero_grad()
-                # loss.backward()
-                # optimizer.step()
-
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
+            t.set_postfix(loss=losses.avg, acc=top1.avg)
+    # with torch.no_grad():
+    #     with tqdm(train_loader, unit="batch", ncols=90) as t:
+    #         for i, (input, target) in enumerate(t):
+    #             t.set_description("Epoch {}".format(epoch))
+    #
+    #             input, target = input.cuda(), target.cuda()
+    #             output = model(input)
+    #             loss = criterion(output, target)
+    #             prec = accuracy(output, target)[0]
+    #             losses.update(loss.item(), input.size(0))
+    #             top1.update(prec.item(), input.size(0))
+    #
+    #             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
 
 def validate(model, test_loader, criterion, logger=None, hvd=None):

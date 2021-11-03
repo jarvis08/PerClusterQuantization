@@ -47,7 +47,11 @@ def _evaluate(args, tools):
     # qat_alexnet_trained_activation_ranges(model)
     # qat_resnet_trained_activation_ranges(model)
     # qat_resnet50_trained_activation_ranges(model)
-    pcq_resnet50_trained_activation_ranges(model)
+    # pcq_resnet50_trained_activation_ranges(model)
+    # qat_mlp_trained_activation_ranges(model)
+    # pcq_mlp_trained_activation_ranges(model)
+    pcq_resnet20_trained_activation_ranges(model)
+    # qat_resnet20_trained_activation_ranges(model)
     exit()
     # if not args.quantized:
     #     if args.dataset == 'imagenet':
