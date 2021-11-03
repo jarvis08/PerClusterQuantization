@@ -181,7 +181,8 @@ class FusedResNet(nn.Module):
             self.first_bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
-        self.apply_ema = False
+        self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
         self.inplanes = 64
         self.dilation = 1
@@ -286,7 +287,7 @@ class FusedResNet20(nn.Module):
         self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
         self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16

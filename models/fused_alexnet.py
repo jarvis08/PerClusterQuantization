@@ -79,7 +79,7 @@ class FusedAlexNetSmall(nn.Module):
         self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
