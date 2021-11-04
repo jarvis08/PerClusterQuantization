@@ -25,7 +25,7 @@ class QuantizedAdd(nn.Module):
 
     def forward(self, bypass, prev):
         if self.runtime_helper.batch_cluster is not None:
-            return self.pcq_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor))
+            return self.pcq_bypass(bypass, prev)
         else:
             return self.general_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor))
 
@@ -77,7 +77,7 @@ class QuantizedAdd(nn.Module):
             out = torch.clamp(out, -32768, 32767)
         elif self.bit == 32:
             out = torch.clamp(out, -2147483648, 2147483647)
-        return out.type(torch.cuda.FloatTensor)
+        return out
 
     def general_bypass(self, bypass, prev):
         if self.shift_bypass < 0:

@@ -36,14 +36,13 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
-        batch, channel, width, height = x.shape
-        weight = torch.index_select(self.weight.repeat_interleave(width * height)
-                                    .reshape(self.num_clusters, self.num_features, width, height), 0, bc)
-        bias = torch.index_select(self.bias.repeat_interleave(width * height)
-                                  .reshape(self.num_clusters, self.num_features, width, height), 0, bc)
-        z1 = torch.index_select(self.z1, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        weight = torch.index_select(self.weight, 0, bc)
+        weight = weight[:, :, None, None]
+        bias = torch.index_select(self.bias, 0, bc)
+        bias = bias[:, :, None, None]
+        z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
+        z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
+        M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
         shift = torch.index_select(self.shift, 0, bc)
 
         q1q2 = x.mul(weight)
@@ -51,17 +50,18 @@ class QuantizedBn2d(nn.Module):
         q2z1 = weight.mul(z1)
         subsum = q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
 
-        total = torch.zeros(subsum.shape, dtype=torch.int32).cuda()
+        total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
         neg = (shift < 0).nonzero(as_tuple=True)[0]
         pos = (shift >= 0).nonzero(as_tuple=True)[0]
+        shift = shift[:, None, None, None]
         if len(neg) > 0:
-            s = - shift[neg].reshape(neg.shape[0], 1, 1, 1)
+            s = - shift[neg]
             multiplied = multiply_M((subsum[neg] << s), M0[neg])
-            total[neg] = shifting(multiplied, 0)
+            total[neg] = shifting_without_cast(multiplied, 0)
         if len(pos) > 0:
-            s = shift[pos].reshape(pos.shape[0], 1, 1, 1)
+            s = shift[pos]
             multiplied = multiply_M(subsum[pos], M0[pos])
-            total[pos] = shifting4d(multiplied, s)
+            total[pos] = shifting4d_without_cast(multiplied, s)
         total = total.add(z3)
 
         if self.a_bit == 4:
@@ -72,7 +72,7 @@ class QuantizedBn2d(nn.Module):
             total = torch.clamp(total, -32768, 32767)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        return total.type(torch.cuda.FloatTensor)
+        return total
 
     def _general(self, x):
         q1q2 = x.mul(self.weight[0][None, :, None, None])

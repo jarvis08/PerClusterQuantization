@@ -72,6 +72,7 @@ class QuantizedConv2d(nn.Conv2d):
         z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
         shift = torch.index_select(self.shift, 0, bc)
+        z1[0]
 
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
         filter_batch, filter_ch, filter_col, filter_row =\
@@ -120,7 +121,8 @@ class QuantizedConv2d(nn.Conv2d):
             total = torch.clamp(total, -32768, 32767)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        return total.type(torch.cuda.FloatTensor)
+        # return total.type(torch.cuda.FloatTensor)
+        return total
 
     def general_totalsum(self, x, sum_q1q2):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]

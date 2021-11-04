@@ -34,6 +34,7 @@ class QuantizedBasicBlock(nn.Module):
 
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.add_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -55,18 +56,20 @@ class QuantizedBasicBlock(nn.Module):
     def forward(self, x):
         identity = x
 
-        conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift, self.target_bit,
-                          self.runtime_helper.batch_cluster)
+        conv_x = x
+        if self.add_bit > self.target_bit:
+            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift, self.target_bit,
+                              self.runtime_helper.batch_cluster)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
         out = self.conv1(conv_x)
-        out = self.bn1(out)
+        out = self.bn1(out.type(torch.cuda.FloatTensor))
 
-        out = self.conv2(out)
-        out = self.bn2(out)
+        out = self.conv2(out.type(torch.cuda.FloatTensor))
+        out = self.bn2(out.type(torch.cuda.FloatTensor))
 
         if self.downsample is not None:
             identity = self.downsample(conv_x)
-            identity = self.bn_down(identity)
+            identity = self.bn_down(identity.type(torch.cuda.FloatTensor))
 
         out = self.shortcut(identity, out)
         return out
@@ -244,19 +247,19 @@ class QuantizedResNet20(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
-        x = self.first_conv(x)
-        x = self.bn1(x)
+        x = self.first_conv(x.type(torch.cuda.FloatTensor))
+        x = self.bn1(x.type(torch.cuda.FloatTensor))
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
 
-        x = self.avgpool(x)
+        x = self.avgpool(x.type(torch.cuda.FloatTensor))
         x = x.floor()
 
         x = torch.flatten(x, 1)
-        x = rescale_matrix_2d(x, self.z1, self.z_target, self.M0, self.shift, self.target_bit, self.runtime_helper.batch_cluster)
+        x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift, self.target_bit, self.runtime_helper.batch_cluster)
         x = self.fc(x.type(torch.cuda.FloatTensor))
-        return x
+        return x.type(torch.cuda.FloatTensor)
 
 
 # def quantized_resnet18(arg_dict, **kwargs):
@@ -323,6 +326,7 @@ def quantize_block(_fp, _int):
 def quantize_pcq_block(_fp, _int):
     for i in range(len(_int)):
         _int[i].target_bit.data = _fp[i].target_bit
+        _int[i].add_bit.data = _fp[i].add_bit
         _int[i].s1.data = _fp[i].s1              # S, Z of 8/16/32 bit
         _int[i].z1.data = _fp[i].z1
         _int[i].s_target.data = _fp[i].s_target  # S, Z of 4/8 bit
@@ -341,23 +345,23 @@ def quantize_pcq_block(_fp, _int):
             _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
             _int[i].bn_down = quantize(_fp[i].bn_down, _int[i].bn_down)
             if type(_int[i]) == QuantizedBottleneck:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].add_bit.data,
                                                         _int[i].bn_down.s3, _int[i].bn_down.z3,
                                                         _int[i].bn3.s3, _int[i].bn3.z3,
                                                         _fp[i].s3, _fp[i].z3)
             else:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].add_bit.data,
                                                         _int[i].bn_down.s3, _int[i].bn_down.z3,
                                                         _int[i].bn2.s3, _int[i].bn2.z3,
                                                         _fp[i].s3, _fp[i].z3)
         else:
             if type(_int[i]) == QuantizedBottleneck:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].add_bit.data,
                                                         _int[i].conv1.s1, _int[i].conv1.z1,
                                                         _int[i].bn3.s3, _int[i].bn3.z3,
                                                         _fp[i].s3, _fp[i].z3)
             else:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].add_bit.data,
                                                         # _int[i].conv1.s1, _int[i].conv1.z1,
                                                         _int[i].s1, _int[i].z1,
                                                         _int[i].bn2.s3, _int[i].bn2.z3,

@@ -33,6 +33,7 @@ parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-qu
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--conv_a_bit', default=16, type=int, help="CONV's activation bit size when not using CONV & BN folding")
 parser.add_argument('--bn_w_bit', default=8, type=int, help="BN's weight bit size when not using CONV & BN folding")
+parser.add_argument('--add_bit', default=32, type=int, help="Bit size used in Skip-connection")
 parser.add_argument('--first_bit', default=0, type=int, help="First layer's bit size")
 parser.add_argument('--classifier_bit', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
