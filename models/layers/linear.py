@@ -59,7 +59,6 @@ class QuantizedLinear(nn.Linear):
             sum_q1q2.add_(bias)
 
         sum_a1 = torch.sum(x, dim=1).mul(self.z2)
-        # sum_a2 = torch.sum(self.weight, dim=1).view(1, -1).repeat(x.size(0), 1).mul(z1[:, None])
         sum_a2 = torch.sum(self.weight, dim=1)[None, :].mul(z1[:, None])
 
         nz1z2 = x.size(1) * z1 * self.z2
@@ -79,7 +78,6 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, -32768, 32767)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        # return total.type(torch.cuda.FloatTensor)
         return total
 
     def general_totalsum(self, x, sum_q1q2):

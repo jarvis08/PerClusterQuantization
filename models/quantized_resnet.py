@@ -262,8 +262,8 @@ class QuantizedResNet20(nn.Module):
         return x.type(torch.cuda.FloatTensor)
 
 
-# def quantized_resnet18(arg_dict, **kwargs):
-#     return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
+def quantized_resnet18(arg_dict, **kwargs):
+    return QuantizedResNet18(QuantizedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
 
 
 def quantized_resnet20(arg_dict, num_classes=10):
