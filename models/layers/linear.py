@@ -50,9 +50,9 @@ class QuantizedLinear(nn.Linear):
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)
-        z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1)
-        M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1)
-        shift = torch.index_select(self.shift, 0, bc).reshape(bc.shape[0], 1)
+        z3 = torch.index_select(self.z3, 0, bc)[:, None]
+        M0 = torch.index_select(self.M0, 0, bc)[:, None]
+        shift = torch.index_select(self.shift, 0, bc)[:, None]
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)

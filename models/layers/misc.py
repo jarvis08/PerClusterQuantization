@@ -31,39 +31,41 @@ class QuantizedAdd(nn.Module):
 
     def pcq_bypass(self, bypass, prev):
         bc = self.runtime_helper.batch_cluster
-        z_bypass = torch.index_select(self.z_bypass, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        z_prev = torch.index_select(self.z_prev, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        M0_bypass = torch.index_select(self.M0_bypass, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        M0_prev = torch.index_select(self.M0_prev, 0, bc).reshape(bc.shape[0], 1, 1, 1)
+        z_bypass = torch.index_select(self.z_bypass, 0, bc)[:, None, None, None]
+        z_prev = torch.index_select(self.z_prev, 0, bc)[:, None, None, None]
+        z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
+        M0_bypass = torch.index_select(self.M0_bypass, 0, bc)[:, None, None, None]
+        M0_prev = torch.index_select(self.M0_prev, 0, bc)[:, None, None, None]
         shift_bypass = torch.index_select(self.shift_bypass, 0, bc)
         shift_prev = torch.index_select(self.shift_prev, 0, bc)
-        z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
 
-        out = torch.zeros(bypass.shape, dtype=torch.int32).cuda()
+        out = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
         x1_under = (shift_bypass < 0).nonzero(as_tuple=True)[0]
         x1_over = (shift_bypass >= 0).nonzero(as_tuple=True)[0]
         x2_under = (shift_prev < 0).nonzero(as_tuple=True)[0]
         x2_over = (shift_prev >= 0).nonzero(as_tuple=True)[0]
+        shift_bypass = shift_bypass[:, None, None, None]
+        shift_prev = shift_prev[:, None, None, None]
         if len(x1_under) > 0:
-            shift = - shift_bypass[x1_under].reshape(x1_under.shape[0], 1, 1, 1)
+            shift = - shift_bypass[x1_under]
             x1 = multiply_M((bypass[x1_under].sub(z_bypass[x1_under]) << shift), M0_bypass[x1_under])
-            x1 = shifting(x1, 0)
+            x1 = shifting_without_cast(x1, 0)
             out[x1_under] = out[x1_under].add(x1)
         if len(x1_over) > 0:
-            shift = shift_bypass[x1_over].reshape(x1_over.shape[0], 1, 1, 1)
+            shift = shift_bypass[x1_over]
             x1 = multiply_M((bypass[x1_over].sub(z_bypass[x1_over])), M0_bypass[x1_over])
-            x1 = shifting4d(x1, shift)
+            x1 = shifting4d_without_cast(x1, shift)
             out[x1_over] = out[x1_over].add(x1)
 
         if len(x2_under) > 0:
-            shift = - shift_prev[x2_under].reshape(x2_under.shape[0], 1, 1, 1)
+            shift = - shift_prev[x2_under]
             x2 = multiply_M((prev[x2_under].sub(z_prev[x2_under]) << shift), M0_prev[x2_under])
-            x2 = shifting(x2, 0)
+            x2 = shifting_without_cast(x2, 0)
             out[x2_under] = out[x2_under].add(x2)
         if len(x2_over) > 0:
-            shift = shift_prev[x2_over].reshape(x2_over.shape[0], 1, 1, 1)
+            shift = shift_prev[x2_over]
             x2 = multiply_M((prev[x2_over].sub(z_prev[x2_over])), M0_prev[x2_over])
-            x2 = shifting4d(x2, shift)
+            x2 = shifting4d_without_cast(x2, shift)
             out[x2_over] = out[x2_over].add(x2)
         out = out.add(z3)
 
