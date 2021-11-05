@@ -76,6 +76,8 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, -128, 127)
         elif self.a_bit == 16:
             total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 24:
+            total = torch.clamp(total, -8388608, 8388607)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
         return total
@@ -115,6 +117,8 @@ class QuantizedLinear(nn.Linear):
             total = torch.clamp(total, -128, 127)
         elif self.a_bit == 16:
             total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 24:
+            total = torch.clamp(total, -8388608, 8388607)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
         return total.type(torch.cuda.FloatTensor)

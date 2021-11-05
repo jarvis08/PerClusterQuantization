@@ -8,8 +8,8 @@ class QuantizedAdd(nn.Module):
     def __init__(self, arg_dict=None):
         super(QuantizedAdd, self).__init__()
         self.layer_type = 'QuantizedAdd'
-        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
-        self.bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.z_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
@@ -36,16 +36,14 @@ class QuantizedAdd(nn.Module):
         z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
         M0_bypass = torch.index_select(self.M0_bypass, 0, bc)[:, None, None, None]
         M0_prev = torch.index_select(self.M0_prev, 0, bc)[:, None, None, None]
-        shift_bypass = torch.index_select(self.shift_bypass, 0, bc)
-        shift_prev = torch.index_select(self.shift_prev, 0, bc)
+        shift_bypass = torch.index_select(self.shift_bypass, 0, bc)[:, None, None, None]
+        shift_prev = torch.index_select(self.shift_prev, 0, bc)[:, None, None, None]
 
         out = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
         x1_under = (shift_bypass < 0).nonzero(as_tuple=True)[0]
         x1_over = (shift_bypass >= 0).nonzero(as_tuple=True)[0]
         x2_under = (shift_prev < 0).nonzero(as_tuple=True)[0]
         x2_over = (shift_prev >= 0).nonzero(as_tuple=True)[0]
-        shift_bypass = shift_bypass[:, None, None, None]
-        shift_prev = shift_prev[:, None, None, None]
         if len(x1_under) > 0:
             shift = - shift_bypass[x1_under]
             x1 = multiply_M((bypass[x1_under].sub(z_bypass[x1_under]) << shift), M0_bypass[x1_under])
@@ -75,6 +73,8 @@ class QuantizedAdd(nn.Module):
             out = torch.clamp(out, -128, 127)
         elif self.bit == 16:
             out = torch.clamp(out, -32768, 32767)
+        elif self.bit == 24:
+            out = torch.clamp(out, -8388608, 8388607)
         elif self.bit == 32:
             out = torch.clamp(out, -2147483648, 2147483647)
         return out

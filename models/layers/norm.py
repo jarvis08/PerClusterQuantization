@@ -36,14 +36,12 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
-        weight = torch.index_select(self.weight, 0, bc)
-        weight = weight[:, :, None, None]
-        bias = torch.index_select(self.bias, 0, bc)
-        bias = bias[:, :, None, None]
+        weight = torch.index_select(self.weight, 0, bc)[:, :, None, None]
+        bias = torch.index_select(self.bias, 0, bc)[:, :, None, None]
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
         z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
         M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
-        shift = torch.index_select(self.shift, 0, bc)
+        shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
 
         q1q2 = x.mul(weight)
         q1z2 = x.mul(self.z2)
@@ -53,7 +51,6 @@ class QuantizedBn2d(nn.Module):
         total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
         neg = (shift < 0).nonzero(as_tuple=True)[0]
         pos = (shift >= 0).nonzero(as_tuple=True)[0]
-        shift = shift[:, None, None, None]
         if len(neg) > 0:
             s = - shift[neg]
             multiplied = multiply_M((subsum[neg] << s), M0[neg])
@@ -70,6 +67,8 @@ class QuantizedBn2d(nn.Module):
             total = torch.clamp(total, -128, 127)
         elif self.a_bit == 16:
             total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 24:
+            total = torch.clamp(total, -8388608, 8388607)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
         return total
