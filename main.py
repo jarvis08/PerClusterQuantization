@@ -2,7 +2,7 @@ import argparse
 
 from models import *
 from pretrain import _pretrain
-from finetune import _finetune
+from finetune import _finetune, _cal_flops
 from finetune_with_dali import _finetune_with_dali
 from evaluate import _evaluate
 from utils.lipschitz import check_lipschitz
@@ -58,6 +58,7 @@ parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with d
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
+parser.add_argument('--flops_model', default='torch', type=str, help='GPU to use')
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -193,3 +194,5 @@ if __name__=='__main__':
         _evaluate(args, tools)
     elif args.mode == 'lip':
         check_lipschitz(args, tools)
+    elif args.mode == 'flops':
+        _cal_flops(args, tools)

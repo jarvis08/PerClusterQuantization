@@ -184,6 +184,9 @@ def apply_qn(x, scale, zero_point, q_max, qn_prob, kernel_size=None, each_channe
 
 def quantize_matrix(x, scale, zero_point, q_max=None):
     x = x.detach()
+    # tmp custom
+    # scale = scale[0]
+    # zero_point = zero_point[0]
     quantized = torch.round(x / scale + zero_point)
     if q_max == 15:            # UINT 4
         return torch.clamp(quantized, 0, 15)

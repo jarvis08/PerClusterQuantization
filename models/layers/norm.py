@@ -15,6 +15,8 @@ class QuantizedBn2d(nn.Module):
         self.q_max = 2 ** self.bit - 1
         self.act_qmax = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
 
+        self.affine = False
+
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)

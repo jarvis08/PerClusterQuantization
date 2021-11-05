@@ -1,12 +1,65 @@
 from copy import deepcopy
 
+import numpy as np
 import torch
 from torchsummary import summary
 
+from ptflops import get_model_complexity_info
 from utils import *
 from models import *
 from tqdm import tqdm
 from time import time
+
+import torchvision.models as models
+import torch
+
+
+
+def _cal_flops(args, tools):
+    runtime_helper = RuntimeHelper()
+    runtime_helper.set_pcq_arguments(args)
+    arg_dict = deepcopy(vars(args))
+    arg_dict['runtime_helper'] = runtime_helper
+
+
+    if arg_dict['flops_model'] == 'torch':
+        with torch.cuda.device(0):
+            net = models.resnet50(pretrained=True)
+            # net = load_dnn_model(arg_dict, tools)
+            macs, params = get_model_complexity_info(net, (3, 224, 224), as_strings=True,
+                                                     print_per_layer_stat=True)
+            print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+            print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    else:
+        quantized_model = load_dnn_model(arg_dict, tools).cuda()
+        # data = torch.randint(0, 255, (3, 224, 224))
+        # data = data.unsqueeze(dim=0)
+        # batch = []
+        # for i in range(256):
+        #     batch.append(torch.randint(0, 255, (3, 224, 224)))
+        # data = torch.tensor(batch, dtype=torch.double)
+
+        shape = torch.empty(256, 3, 224, 224)
+        data = torch.randn_like(shape)
+        if arg_dict['cluster'] > 1:
+            clustering_model = None
+            if args.cluster > 1:
+                clustering_model = tools.clustering_method(args)
+                if not args.clustering_path:
+                    args.clustering_path = set_clustering_dir(arg_dict)
+                    # clustering_model.train_clustering_model(train_loader)
+                else:
+                    clustering_model.load_clustering_model()
+                    runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(data)
+
+        # through_data = data[0]
+        # through_data = np.array(through_data)
+        # through_data = through_data.tolist()
+        macs, params = get_model_complexity_info(quantized_model, (3, 224, 224), as_strings=True,
+                                                     print_per_layer_stat=True)
+        print('Quantized')
+        print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+        print('{:<30}  {:<8}'.format('Number of parameters: ', params))
 
 
 def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):

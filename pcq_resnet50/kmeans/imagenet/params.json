@@ -1,0 +1,8 @@
+{
+    "k": 4,
+    "num_partitions": 4,
+    "tol": 0.0001,
+    "n_inits": 10,
+    "epoch": 300,
+    "batch": 128
+}
