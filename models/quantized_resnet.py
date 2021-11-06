@@ -148,6 +148,13 @@ class QuantizedResNet(nn.Module):
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
+        self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.s_target = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.num_blocks = 4
         self.inplanes = 64
