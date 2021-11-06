@@ -131,7 +131,7 @@ class PCQBnReLU(nn.Module):
     def _forward_impl(self, x):
         bc = self.runtime_helper.batch_cluster
         exists = torch.unique(bc)
-        out = torch.zeros(x.shape).cuda()
+        out = torch.zeros(x.shape, device='cuda')
         for c in exists:
             indices = (bc == c).nonzero(as_tuple=True)[0]
             out[indices] = self.norms[c](x[indices])
