@@ -27,15 +27,19 @@ parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d'
 parser.add_argument('--fused', default=False, type=bool, help="Evaluate fine-tuned, fused model")
 parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quantized model")
 
+
+parser.add_argument('--quant_base', default='qat', type=str,
+                    help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
+
 parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through Estimator in Fake Quantization")
 parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-quantize activations.'
                                                       ' PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
-parser.add_argument('--conv_a_bit', default=16, type=int, help="CONV's activation bit size when not using CONV & BN folding")
-parser.add_argument('--bn_w_bit', default=8, type=int, help="BN's weight bit size when not using CONV & BN folding")
-parser.add_argument('--add_bit', default=32, type=int, help="Bit size used in Skip-connection")
-parser.add_argument('--first_bit', default=0, type=int, help="First layer's bit size")
-parser.add_argument('--classifier_bit', default=0, type=int, help="Last classifier layer's bit size")
+parser.add_argument('--bit_conv_act', default=16, type=int, help="CONV's activation bit size when not using CONV & BN folding")
+parser.add_argument('--bit_bn_w', default=8, type=int, help="BN's weight bit size when not using CONV & BN folding")
+parser.add_argument('--bit_addcat', default=0, type=int, help="Bit size used in Skip-connection")
+parser.add_argument('--bit_first', default=0, type=int, help="First layer's bit size")
+parser.add_argument('--bit_classifier', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
 parser.add_argument('--fold_convbn', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
@@ -44,10 +48,6 @@ parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
 parser.add_argument('--partition_method', default='square', type=str, help="How to divide image into partitions")
 parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
-parser.add_argument('--data_per_cluster', default=8, type=int, help="In Phase-2 of PCQ, number of data per cluster in a mini-batch")
-parser.add_argument('--pcq_initialization', default=False, type=bool, help="Initialize PCQ model's BN & qparams before finetuning")
-parser.add_argument('--phase2_loader_strategy', default='mean', type=str, help="Making data loader of Phase-2, choose length of data loader per cluster by strategy of mean/min/max length")
-parser.add_argument('--indices_path', default='', type=str, help="Path to load indices_list for BN initialization and phase2 training")
 
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
@@ -57,26 +57,40 @@ parser.add_argument('--visualize_clustering', default=False, type=bool, help="Vi
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.2, type=float, help='quant noise probaility 0.05~0.2')
 parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant noise qn_prob increment gap')
-parser.add_argument('--qn_each_channel', default=False, type=bool, help='qn apply conv each channel')
+parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply conv each channel')
 
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 
-
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-if not args.first_bit:
-    args.first_bit = args.bit
-if not args.classifier_bit:
-    args.classifier_bit = args.bit
+# General
 if args.imagenet:
     args.dataset = 'imagenet'
 if args.dataset == 'cifar':
     args.dataset = 'cifar10'
 if not args.val_batch:
     args.val_batch = 256 if args.dataset != 'imagenet' else 128
+
+if args.quant_base == 'qn':
+    args.quant_noise = True
+
+# First/Last layers' bit level
+if args.quant_base == 'hawq':
+    args.bit_first, args.bit_classifier = 8, 8
+if not args.bit_first:
+    args.bit_first = args.bit
+if not args.bit_classifier:
+    args.bit_classifier = args.bit
+
+# Skip-connections' bit level
+if not args.bit_addcat:
+    if args.quant_base == 'hawq':
+        args.bit_addcat = 16
+    else:
+        args.bit_addcat = args.bit
 print(vars(args))
 
 
@@ -174,16 +188,13 @@ def specify_target_arch(arch, dataset, num_clusters):
             arch = 'AlexNet'
         else:
             arch = 'AlexNetSmall'
-
     elif arch == 'resnet':
         if dataset == 'imagenet':
             arch = 'ResNet50'
         else:
             arch = 'ResNet20'
-
     elif arch == 'mobilenet':
         arch = 'MobileNetV3'
-
     elif arch =='bert':
         arch = 'Bert'
     elif arch == 'densenet':

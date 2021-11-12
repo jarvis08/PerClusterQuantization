@@ -35,7 +35,7 @@ class FusedBasicBlock(nn.Module):
         self.stride = stride
 
         arg_bit, a_bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'conv_a_bit','smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+            = itemgetter('bit', 'bit_conv_act','smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
         self.bit = torch.nn.Parameter(torch.tensor(arg_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -170,15 +170,15 @@ class FusedResNet(nn.Module):
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FusedResNet, self).__init__()
         self.arg_dict = arg_dict
-        network_bit, a_bit, first_bit, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'conv_a_bit', 'first_bit', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        network_bit, a_bit, bit_first, self.smooth, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'bit_conv_act', 'bit_first', 'smooth', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
-        if first_bit:
-            self.bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
-            self.first_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        if bit_first:
+            self.bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
+            self.bit_first = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
         else:
             self.bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
-            self.first_bit = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
+            self.bit_first = torch.nn.Parameter(torch.tensor(arg_dict['bit'], dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -281,10 +281,10 @@ class FusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(FusedResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.a_bit, first_bit, classifier_bit, self.smooth, self.runtime_helper \
-            = itemgetter('bit', 'conv_a_bit', 'first_bit', 'classifier_bit', 'smooth', 'runtime_helper')(arg_dict)
+        target_bit, self.a_bit, bit_first, bit_classifier, self.smooth, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_first', 'bit_classifier', 'smooth', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
-        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
@@ -297,14 +297,14 @@ class FusedResNet20(nn.Module):
         self.arg_dict = arg_dict
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                      w_bit=first_bit, a_bit=self.a_bit, arg_dict=arg_dict)
+                                      w_bit=bit_first, a_bit=self.a_bit, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(16, activation=nn.ReLU, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = FusedLinear(64 * block.expansion, num_classes, is_classifier=True,
-                              w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
+                              w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None

@@ -239,14 +239,14 @@ def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
     return torch.clamp(quantized, -2147483648, 2147483647)
 
 
-def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, bc):
+def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, mask, zero, one, bc):
     z1 = torch.index_select(z_from, 0, bc)[:, None, None, None]
     z2 = torch.index_select(z_to, 0, bc)[:, None, None, None]
     _m0 = torch.index_select(m0, 0, bc)[:, None, None, None]
-    _shift = torch.index_select(shift, 0, bc)
+    _shift = torch.index_select(shift, 0, bc)[:, None, None, None]
     _x = x - z1
     _x = multiply_M(_x, _m0)
-    _x = shifting4d_without_cast(_x, _shift[:, None, None, None])
+    _x = shifting4d_without_cast(_x, _shift, mask, zero, one)
     _x = _x.add(z2)
     if target_bit == 4:
         _x = torch.clamp(_x, 0, 15)
@@ -261,14 +261,14 @@ def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, bc):
     return _x
 
 
-def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, bc):
+def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, mask, zero, one, bc):
     z1 = torch.index_select(z_from, 0, bc)[:, None]
     z2 = torch.index_select(z_to, 0, bc)[:, None]
     _m0 = torch.index_select(m0, 0, bc)[:, None]
-    _shift = torch.index_select(shift, 0, bc)
+    _shift = torch.index_select(shift, 0, bc)[:, None]
     _x = x - z1
     _x = multiply_M(_x, _m0)
-    _x = shifting2d_without_cast(_x, _shift[:, None])
+    _x = shifting2d_without_cast(_x, _shift, mask, zero, one)
     _x = _x.add(z2)
     if target_bit == 4:
         _x = torch.clamp(_x, 0, 15)
@@ -347,30 +347,31 @@ def shifting_without_cast(cur, shift):
     return (cur >> shift).add(maskifgreaterthan & one)
 
 
-def shifting2d_without_cast(cur, shift):
-    shape = (cur.shape[0], 1)
-    mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    mask = (mask << shift) - 1
-    zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
-
-    remainder = (cur & mask).type(torch.cuda.IntTensor)
+def shifting2d_without_cast(cur, shift, mask, zero, one):
+    # shape = (cur.shape[0], 1)
+    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
+    # mask = (mask << shift) - 1
+    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
+    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
+    _mask = (mask << shift) - 1
+    remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
-    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
+    threshold = ((_mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
     return (cur >> shift).add(maskifgreaterthan & one)
 
 
-def shifting4d_without_cast(cur, shift):
-    shape = (cur.shape[0], 1, 1, 1)
-    mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    mask = (mask << shift) - 1
-    zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
+def shifting4d_without_cast(cur, shift, mask, zero, one):
+    # shape = (cur.shape[0], 1, 1, 1)
+    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
+    # mask = (mask << shift) - 1
+    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
+    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
+    _mask = (mask << shift) - 1
 
-    remainder = (cur & mask).type(torch.cuda.IntTensor)
+    remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
-    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
+    threshold = ((_mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
     return (cur >> shift).add(maskifgreaterthan & one)
 
@@ -390,32 +391,33 @@ def shifting(cur, shift):
     return total
 
 
-def shifting2d(cur, shift):
-    shape = (cur.shape[0], 1)
-    mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    mask = (mask << shift) - 1
-    zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
-
-    remainder = (cur & mask).type(torch.cuda.IntTensor)
+def shifting2d(cur, shift, mask, zero, one):
+    # shape = (cur.shape[0], 1)
+    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
+    # mask = (mask << shift) - 1
+    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
+    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
+    _mask = (mask << shift) - 1
+    remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
-    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
+    threshold = ((_mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
 
     total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
     return total
 
 
-def shifting4d(cur, shift):
-    shape = (cur.shape[0], 1, 1, 1)
-    mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    mask = (mask << shift) - 1
-    zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
+def shifting4d(cur, shift, mask, zero, one):
+    # shape = (cur.shape[0], 1, 1, 1)
+    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
+    # mask = (mask << shift) - 1
+    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
+    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
+    _mask = (mask << shift) - 1
 
-    remainder = (cur & mask).type(torch.cuda.IntTensor)
+    remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
-    threshold = ((mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
+    threshold = ((_mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
     maskifgreaterthan = torch.where(remainder > threshold, ~zero, zero)
 
     total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
@@ -437,35 +439,46 @@ def transfer_qparams(_fp, _int):
     return _int
 
 
+def quantize_conv2d_weight(_fp, _int):
+    _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+    _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+    return _int
+
+
+def quantize_fc_weight(_fp, _int):
+    _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+    _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=1).reshape(1, _int.out_features))
+    return _int
+
+
 def quantize_bn(_fp, _int):
-    with torch.no_grad():
-        if _int.num_clusters > 1:
-            _size = (_fp.num_clusters, _fp.num_features)
-            _weights = torch.zeros(_size, device='cuda')
-            _biases = torch.zeros(_size, device='cuda')
-            _means = torch.zeros(_size, device='cuda')
-            _vars = torch.zeros(_size, device='cuda')
-            for c in range(_fp.num_clusters):
-                _weights[c] = _fp.norms[c].weight.clone().detach()
-                _biases[c] = _fp.norms[c].bias.clone().detach()
-                _means[c] = _fp.norms[c].running_mean.clone().detach()
-                _vars[c] = _fp.norms[c].running_var.clone().detach()
+    if _int.num_clusters > 1:
+        _size = (_fp.num_clusters, _fp.num_features)
+        _weights = torch.zeros(_size, device='cuda')
+        _biases = torch.zeros(_size, device='cuda')
+        _means = torch.zeros(_size, device='cuda')
+        _vars = torch.zeros(_size, device='cuda')
+        for c in range(_fp.num_clusters):
+            _weights[c] = _fp.norms[c].weight.clone().detach()
+            _biases[c] = _fp.norms[c].bias.clone().detach()
+            _means[c] = _fp.norms[c].running_mean.clone().detach()
+            _vars[c] = _fp.norms[c].running_var.clone().detach()
 
-            weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
-            bias = _biases - weight * _means
-            weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit)
-            _int.weight.copy_(weight.type(torch.cuda.IntTensor))
-            for c in range(_int.num_clusters):
-                b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32)
-                _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
-        else:
-            w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
-            b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
-            w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit)
-            b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32)
+        weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
+        bias = _biases - weight * _means
+        weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit)
+        _int.weight.copy_(weight.type(torch.cuda.IntTensor))
+        for c in range(_int.num_clusters):
+            b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32)
+            _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
+    else:
+        w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
+        b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
+        w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit)
+        b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32)
 
-            _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
-            _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
+        _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
+        _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
     return _int
 
 
@@ -476,19 +489,18 @@ def quantize_layer(_fp, _int):
 
         if _int.layer_type == 'QuantizedConv2d':
             fp_layer = _fp.conv
+            _int = quantize_conv2d_weight(fp_layer, _int)
         else:
             fp_layer = _fp.fc
+            _int = quantize_fc_weight(fp_layer, _int)
 
-        _int.weight.data.copy_(quantize_matrix(fp_layer.weight.clone().detach(), _int.s2, _int.z2, _int.w_bit))
         if fp_layer.bias is not None:
             _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
             if _int.num_clusters > 1:
                 for c in range(_int.num_clusters):
-                    _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                                 _int.s1[c] * _int.s2, 0, 32))
+                    _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0, 32))
             else:
-                _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias.clone().detach(),
-                                                             _int.s1 * _int.s2, 0, 32))
+                _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0, 32))
     return _int
 
 

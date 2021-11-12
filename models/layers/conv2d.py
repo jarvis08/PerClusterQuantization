@@ -11,16 +11,21 @@ from .activation import *
 
 class QuantizedConv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation=None,
-                 dilation=1, groups=1, bias=False, arg_dict=None):
+                 dilation=1, groups=1, bias=False, is_first=False, arg_dict=None):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        bit, self.num_clusters, self.runtime_helper, self.default_batch = \
+            itemgetter('bit', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
-
+        self.is_first = is_first
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
+        self.sum_a2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
+        self.sum_a1, self.total, self.mask, self.zero, self.one = None, None, None, None, None  # for faster inference
+
+        self.out_channels = out_channels
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -44,13 +49,16 @@ class QuantizedConv2d(nn.Conv2d):
             return self.general(x)
 
     def pcq(self, x):
-        if self.padding[0] > 0 or self.padding[1] > 0:
-            bc = self.runtime_helper.batch_cluster
-            exists = torch.unique(bc)
-            padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding[0] * 2, x.shape[3] + self.padding[1] * 2)).cuda()
-            for c in exists:
-                indices = (bc == c).nonzero(as_tuple=True)[0]
-                padded[indices] = F.pad(x[indices], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1[c])
+        if self.padding[0] > 0:
+            if self.is_first or self.w_bit == 8:
+                bc = self.runtime_helper.batch_cluster
+                exists = torch.unique(bc)
+                padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding[0] * 2, x.shape[3] + self.padding[1] * 2), device='cuda')
+                for c in exists:
+                    indices = (bc == c).nonzero(as_tuple=True)[0]
+                    padded[indices] = F.pad(x[indices], (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1[c])
+            else:
+                padded = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=0)
             sum_q1q2 = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
             return self.pcq_totalsum(padded, sum_q1q2.type(torch.cuda.IntTensor))
         else:
@@ -58,7 +66,7 @@ class QuantizedConv2d(nn.Conv2d):
             return self.pcq_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def general(self, x):
-        if self.padding[0] > 0 or self.padding[1] > 0:
+        if self.padding[0] > 0:
             x = F.pad(x, (self.padding[0], self.padding[0], self.padding[1], self.padding[1]), mode='constant', value=self.z1.item())
         sum_q1q2 = F.conv2d(x, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
 
@@ -68,10 +76,10 @@ class QuantizedConv2d(nn.Conv2d):
 
     def pcq_totalsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
-        z1 = torch.index_select(self.z1, 0, bc)
-        z3 = torch.index_select(self.z3, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        M0 = torch.index_select(self.M0, 0, bc).reshape(bc.shape[0], 1, 1, 1)
-        shift = torch.index_select(self.shift, 0, bc)
+        z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
+        z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
+        M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
+        shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
 
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
         filter_batch, filter_ch, filter_col, filter_row =\
@@ -84,33 +92,38 @@ class QuantizedConv2d(nn.Conv2d):
 
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
-        sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
-        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).view(1, -1).repeat(x.size(0), 1).mul(z1[:, None])
+        if self.sum_a1 is None:
+            self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
 
         for o_col in range(output_col):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
-        sum_a1 = sum_a1 * self.z2
+                self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+        sum_a1 = self.sum_a1[:x.size(0)] * self.z2
+        sum_a2 = self.sum_a2.mul(z1)
 
         nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2[:, None, None, None])
+        sum_q1q2 = sum_q1q2.add(nz1z2)
         sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
-        sum_q1q2 = torch.sub(sum_q1q2, sum_a2[:, :, None, None])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2)
 
-        total = torch.zeros(sum_q1q2.shape, dtype=torch.int32).cuda()
+        if self.total is None:
+            self.total = torch.zeros(sum_q1q2.shape, dtype=torch.int32, device='cuda')
+            _shape = (x.size(0), 1, 1, 1)
+            self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
+            self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
+            self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
         neg = (shift < 0).nonzero(as_tuple=True)[0]
         pos = (shift >= 0).nonzero(as_tuple=True)[0]
+        n_pos = len(pos)
         if len(neg) > 0:
-            s = - shift[neg].reshape(neg.shape[0], 1, 1, 1)
-            subsum = multiply_M((sum_q1q2[neg].type(torch.cuda.LongTensor) << s), M0[neg])
-            total[neg] = shifting(subsum, 0)
-        if len(pos) > 0:
-            s = shift[pos].reshape(pos.shape[0], 1, 1, 1)
+            subsum = multiply_M((sum_q1q2[neg].type(torch.cuda.LongTensor) << - shift[neg]), M0[neg])
+            self.total[neg] = shifting(subsum, 0)
+        if n_pos > 0:
             subsum = multiply_M(sum_q1q2[pos].type(torch.cuda.LongTensor), M0[pos])
-            total[pos] = shifting4d(subsum, s)
-        total = total.add(z3)
+            self.total[pos] = shifting4d(subsum, shift[pos], self.mask[:n_pos], self.zero[:n_pos], self.one[:n_pos])
+        total = self.total[:x.size(0)].add(z3)
 
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
@@ -122,7 +135,6 @@ class QuantizedConv2d(nn.Conv2d):
             total = torch.clamp(total, -8388608, 8388607)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        # return total.type(torch.cuda.FloatTensor)
         return total
 
     def general_totalsum(self, x, sum_q1q2):
@@ -135,17 +147,20 @@ class QuantizedConv2d(nn.Conv2d):
         output_col = sum_q1q2.shape[2]
         output_row = sum_q1q2.shape[3]
 
-        sum_a2 = torch.sum(self.weight.data, dim=(1, 2, 3)).mul(self.z1)
-        sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32).cuda()
+        if self.sum_a1 is None:
+            self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
         for o_col in range(output_col):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                sum_a1[:, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3)).mul(self.z2)
+                self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+        sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+
+        sum_a2 = self.sum_a2.mul(self.z1)
         nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
         sum_q1q2 = sum_q1q2.add(nz1z2)
         sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
-        sum_q1q2 = torch.sub(sum_q1q2, sum_a2[None, :, None, None])
+        sum_q1q2 = torch.sub(sum_q1q2, sum_a2)
 
         if self.shift < 0:
             multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
@@ -155,17 +170,6 @@ class QuantizedConv2d(nn.Conv2d):
             total = shifting(multiplied, self.shift.item())
         total = total.add(self.z3)
 
-        if self.activation is not None:
-            # hs_total = total + self.hardswish_3
-            # hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
-            # if self.activation == 'Hardswish':
-            #     total = total * hs_total / self.hardswish_6.item()
-            # else:
-            #     total = hs_total / self.hardswish_6.item()
-            total = dequantize_matrix(total, self.s_activation, self.z_activation)
-            total = nn.Hardswish(inplace=False)(total)
-            total = quantize_matrix(total, self.s_activation, self.z_activation, self.w_bit)
-
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
         elif self.a_bit == 8:
@@ -174,7 +178,7 @@ class QuantizedConv2d(nn.Conv2d):
             total = torch.clamp(total, -32768, 32767)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        return total.type(torch.cuda.FloatTensor)
+        return total
 
     def depthwise_totalsum(self, x, sum_q1q2):
         input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
@@ -223,7 +227,7 @@ class QuantizedConv2d(nn.Conv2d):
             total = torch.clamp(total, -32768, 32767)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        return total.type(torch.cuda.FloatTensor)
+        return total
 
 
 class PCQConv2d(nn.Module):

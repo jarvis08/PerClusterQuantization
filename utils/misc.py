@@ -26,16 +26,10 @@ class RuntimeHelper(object):
         self.apply_fake_quantization = False
         self.batch_cluster = None
         self.qn_prob = 0.0
-
-        self.range_update_phase = False
-        self.pcq_initialized = True
-
         self.num_clusters = None
-        self.data_per_cluster = None
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
-        self.data_per_cluster = args.data_per_cluster
 
 
 class InputContainer(object):

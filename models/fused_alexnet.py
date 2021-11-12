@@ -73,10 +73,10 @@ class FusedAlexNet(nn.Module):
 class FusedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(FusedAlexNetSmall, self).__init__()
-        target_bit, first_bit, classifier_bit, self.smooth, self.runtime_helper \
-            = itemgetter('bit', 'first_bit', 'classifier_bit', 'smooth', 'runtime_helper')(arg_dict)
+        target_bit, bit_first, bit_classifier, self.smooth, self.runtime_helper \
+            = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
-        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
@@ -84,7 +84,7 @@ class FusedAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                                 w_bit=first_bit, a_bit=first_bit, activation=nn.ReLU, arg_dict=arg_dict)
+                                 w_bit=bit_first, a_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
                                  activation=nn.ReLU, arg_dict=arg_dict)
         self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
@@ -96,7 +96,7 @@ class FusedAlexNetSmall(nn.Module):
         self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc3 = FusedLinear(4096, num_classes, bias=True, is_classifier=True,
-                               w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
+                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

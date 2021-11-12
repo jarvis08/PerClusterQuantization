@@ -223,6 +223,8 @@ def quantize_pcq_densenet(fp_model, int_model):
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.features.first_conv = quantize(fp_model.features.first_conv, int_model.features.first_conv)
     int_model.features.first_norm = quantize(fp_model.features.first_norm, int_model.features.first_norm)
+    int_model.features.maxpool.bit.data = int_model.features.first_norm.a_bit.data
+    int_model.features.maxpool.zero_point.data = int_model.features.first_norm.z3.data
     int_model.features.denseblock1 = quantize_block(fp_model.features.denseblock1, int_model.features.denseblock1)
     int_model.features.transition1 = quantize_trans(fp_model.features.transition1, int_model.features.transition1)
     int_model.features.denseblock2 = quantize_block(fp_model.features.denseblock2, int_model.features.denseblock2)

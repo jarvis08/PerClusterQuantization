@@ -27,6 +27,7 @@ class QuantizedBn2d(nn.Module):
 
         self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
         self.bias = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
+        self.total, self.mask, self.zero, self.one = None, None, None, None  # for faster inference
 
     def forward(self, x):
         if self.runtime_helper.batch_cluster is not None:
@@ -48,18 +49,23 @@ class QuantizedBn2d(nn.Module):
         q2z1 = weight.mul(z1)
         subsum = q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
 
-        total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
+        if self.total is None:
+            self.total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
+            _shape = (x.size(0), 1, 1, 1)
+            self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
+            self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
+            self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
         neg = (shift < 0).nonzero(as_tuple=True)[0]
         pos = (shift >= 0).nonzero(as_tuple=True)[0]
+        n_pos = len(pos)
         if len(neg) > 0:
-            s = - shift[neg]
-            multiplied = multiply_M((subsum[neg] << s), M0[neg])
-            total[neg] = shifting_without_cast(multiplied, 0)
-        if len(pos) > 0:
-            s = shift[pos]
+            multiplied = multiply_M((subsum[neg] << - shift[neg]), M0[neg])
+            self.total[neg] = shifting_without_cast(multiplied, 0)
+        if n_pos > 0:
             multiplied = multiply_M(subsum[pos], M0[pos])
-            total[pos] = shifting4d_without_cast(multiplied, s)
-        total = total.add(z3)
+            self.total[pos] = shifting4d_without_cast(multiplied, shift[pos], self.mask[:n_pos],
+                                                      self.zero[:n_pos], self.one[:n_pos])
+        total = self.total[:x.size(0)].add(z3)
 
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
@@ -95,7 +101,7 @@ class QuantizedBn2d(nn.Module):
             total = torch.clamp(total, -32768, 32767)
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
-        return total.type(torch.cuda.FloatTensor)
+        return total
 
 
 class PCQBnReLU(nn.Module):
@@ -105,7 +111,7 @@ class PCQBnReLU(nn.Module):
         self.momentum, arg_w_bit, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
             itemgetter('bn_momentum', 'bit', 'smooth', 'runtime_helper', 'cluster', 'ste')(arg_dict)
 
-        w_bit = w_bit if w_bit is not None else arg_dict['bn_w_bit']
+        w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
         self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
@@ -213,7 +219,7 @@ class FusedBnReLU(nn.Module):
         arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
             itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
-        w_bit = w_bit if w_bit is not None else arg_dict['bn_w_bit']
+        w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
         self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)

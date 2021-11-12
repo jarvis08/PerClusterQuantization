@@ -32,20 +32,20 @@ class PCQBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        target_bit, conv_a_bit, add_bit, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'conv_a_bit', 'add_bit', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.add_bit = torch.nn.Parameter(torch.tensor(add_bit, dtype=torch.int8), requires_grad=False)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         if self.downsample is not None:
-            self.bn_down = PCQBnReLU(planes, a_bit=add_bit, arg_dict=arg_dict)
-        self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=conv_a_bit)
+            self.bn_down = PCQBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
+        self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=bit_conv_act)
         self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
-        self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=conv_a_bit)
-        self.bn2 = PCQBnReLU(planes, a_bit=add_bit, arg_dict=arg_dict)
+        self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=bit_conv_act)
+        self.bn2 = PCQBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -62,26 +62,16 @@ class PCQBasicBlock(nn.Module):
 
         out += identity
         out = self.relu(out)
-        # _out = out + identity
-        # _out = self.relu(_out)
 
         if self.training:
             self._update_activation_ranges(out)
-            # self._update_activation_ranges(out, identity, _out)
             if self.runtime_helper.apply_fake_quantization:
                 out = self._fake_quantize_activation(out)
-                # out = self._fake_quantize_activation(_out)
         return out
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-    # def _update_activation_ranges(self, bn, identity, added):
         cluster = self.runtime_helper.batch_cluster
-        # _bn = bn.view(bn.size(0), -1).max(dim=1).values.mean().unsqueeze(0)
-        # _identity = identity.view(bn.size(0), -1).max(dim=1).values.mean().unsqueeze(0)
-        # _added = added.view(bn.size(0), -1).max(dim=1).values.mean().unsqueeze(0)
-        # maxs = torch.cat([_bn, _identity, _added])
-        # _max = maxs.max()
         data = x.view(x.size(0), -1)
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
@@ -94,8 +84,6 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.batch_cluster
-        # s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.add_bit)
-        # return fake_quantize(x, s, z, self.add_bit, use_ste=self.use_ste)
         s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.target_bit)
         return fake_quantize(x, s, z, self.target_bit, use_ste=self.use_ste)
 
@@ -117,7 +105,7 @@ class PCQBasicBlock(nn.Module):
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         self.bn2.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.add_bit)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
         nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
@@ -136,9 +124,9 @@ class PCQBottleneck(nn.Module):
 
         self.arg_dict = arg_dict
 
-        target_bit, conv_a_bit, add_bit, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'conv_a_bit', 'add_bit', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.add_bit = torch.nn.Parameter(torch.tensor(add_bit, dtype=torch.int8), requires_grad=False)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
@@ -147,15 +135,15 @@ class PCQBottleneck(nn.Module):
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         if self.downsample is not None:
-            self.bn_down = PCQBnReLU(planes * self.expansion, a_bit=add_bit, arg_dict=arg_dict)
-        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, a_bit=conv_a_bit, arg_dict=self.arg_dict)
+            self.bn_down = PCQBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
+        self.conv1 = pcq_conv1x1(in_planes=inplanes, out_planes=width, a_bit=bit_conv_act, arg_dict=self.arg_dict)
         self.bn1 = PCQBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=self.arg_dict)
         self.conv2 = pcq_conv3x3(in_planes=width, out_planes=width, stride=stride, dilation=dilation, 
-                                 a_bit=conv_a_bit, arg_dict=self.arg_dict)
+                                 a_bit=bit_conv_act, arg_dict=self.arg_dict)
         self.bn2 = PCQBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=self.arg_dict)
         self.conv3 = pcq_conv1x1(in_planes=width, out_planes=planes * self.expansion,
-                                 a_bit=conv_a_bit, arg_dict=self.arg_dict)
-        self.bn3 = PCQBnReLU(planes * self.expansion, a_bit=add_bit, arg_dict=self.arg_dict)
+                                 a_bit=bit_conv_act, arg_dict=self.arg_dict)
+        self.bn3 = PCQBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=self.arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -218,7 +206,7 @@ class PCQBottleneck(nn.Module):
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.add_bit)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
         nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
@@ -228,11 +216,11 @@ class PCQResNet(nn.Module):
                  width_per_group=64, replace_stride_with_dilation=None):
         super(PCQResNet, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.conv_a_bit, add_bit, first_bit, classifier_bit, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'conv_a_bit', 'add_bit', 'first_bit', 'classifier_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
-        self.add_bit = torch.nn.Parameter(torch.tensor(add_bit, dtype=torch.int8), requires_grad=False)
-        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
@@ -249,8 +237,8 @@ class PCQResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False,
-                                    w_bit=first_bit, a_bit=self.conv_a_bit, arg_dict=arg_dict)
-        self.bn1 = PCQBnReLU(self.inplanes, activation=nn.ReLU, a_bit=add_bit, arg_dict=self.arg_dict)
+                                    w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
+        self.bn1 = PCQBnReLU(self.inplanes, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -258,7 +246,7 @@ class PCQResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = PCQLinear(512 * block.expansion, num_classes, is_classifier=True,
-                            w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=self.arg_dict)
+                            w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -269,7 +257,7 @@ class PCQResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict,
-                                     a_bit=self.conv_a_bit)
+                                     a_bit=self.bit_conv_act)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups, self.base_width,
@@ -343,11 +331,11 @@ class PCQResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(PCQResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.conv_a_bit, add_bit, first_bit, classifier_bit, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'conv_a_bit', 'add_bit', 'first_bit', 'classifier_bit', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
-        self.add_bit = torch.nn.Parameter(torch.tensor(add_bit, dtype=torch.int8), requires_grad=False)
-        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
@@ -356,20 +344,20 @@ class PCQResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1, arg_dict=self.arg_dict,
-                                    w_bit=first_bit, a_bit=self.conv_a_bit)
-        self.bn1 = PCQBnReLU(16, activation=nn.ReLU, a_bit=add_bit, arg_dict=arg_dict)
+                                    w_bit=bit_first, a_bit=self.bit_conv_act)
+        self.bn1 = PCQBnReLU(16, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = PCQLinear(64 * block.expansion, num_classes, is_classifier=True,
-                            w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=self.arg_dict)
+                            w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = pcq_conv1x1(self.inplanes, planes * block.expansion, stride,
-                                     arg_dict=self.arg_dict, a_bit=self.conv_a_bit)
+                                     arg_dict=self.arg_dict, a_bit=self.bit_conv_act)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
@@ -390,7 +378,6 @@ class PCQResNet20(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.avgpool(x)
-        # x = STE.apply(x, x.detach().floor())
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x

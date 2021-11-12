@@ -8,20 +8,20 @@ from .quantization_utils import *
 class FusedMLP(nn.Module):
     def __init__(self, arg_dict: dict, n_channels: int = 3, num_classes: int = 10) -> None:
         super(FusedMLP, self).__init__()
-        target_bit, first_bit, classifier_bit, self.smooth, self.runtime_helper \
-            = itemgetter('bit', 'first_bit', 'classifier_bit', 'smooth', 'runtime_helper')(arg_dict)
+        target_bit, bit_first, bit_classifier, self.smooth, self.runtime_helper \
+            = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
-        self.in_bit = torch.nn.Parameter(torch.tensor(first_bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
         self.fc1 = FusedLinear(1024 * n_channels, 1024, bias=True, activation=nn.ReLU,
-                               w_bit=first_bit, a_bit=first_bit, arg_dict=arg_dict)
+                               w_bit=bit_first, a_bit=bit_first, arg_dict=arg_dict)
         self.fc2 = FusedLinear(1024, 1024, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc3 = FusedLinear(1024, 1024, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc4 = FusedLinear(1024, num_classes, bias=True, is_classifier=True,
-                               w_bit=classifier_bit, a_bit=classifier_bit, arg_dict=arg_dict)
+                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

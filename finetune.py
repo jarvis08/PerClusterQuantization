@@ -227,7 +227,7 @@ def _finetune(args, tools):
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, LR: {}, {}Epoch: {}, Batch: {}, Bit(First/Last): {}({}/{}), FQ: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
                 .format(test_score, args.arch, method, args.lr, bn, args.epoch, args.batch, args.bit,
-                    args.first_bit, args.classifier_bit, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
+                    args.bit_first, args.bit_classifier, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):

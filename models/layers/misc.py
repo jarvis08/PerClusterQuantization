@@ -9,7 +9,8 @@ class QuantizedAdd(nn.Module):
         super(QuantizedAdd, self).__init__()
         self.layer_type = 'QuantizedAdd'
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.total, self.mask, self.zero, self.one = None, None, None, None  # for faster inference
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.z_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
@@ -27,7 +28,7 @@ class QuantizedAdd(nn.Module):
         if self.runtime_helper.batch_cluster is not None:
             return self.pcq_bypass(bypass, prev)
         else:
-            return self.general_bypass(bypass.type(torch.cuda.LongTensor), prev.type(torch.cuda.LongTensor))
+            return self.general_bypass(bypass, prev)
 
     def pcq_bypass(self, bypass, prev):
         bc = self.runtime_helper.batch_cluster
@@ -39,45 +40,50 @@ class QuantizedAdd(nn.Module):
         shift_bypass = torch.index_select(self.shift_bypass, 0, bc)[:, None, None, None]
         shift_prev = torch.index_select(self.shift_prev, 0, bc)[:, None, None, None]
 
-        out = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
+        if self.total is None:
+            self.total = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
+            _shape = (bypass.size(0), 1, 1, 1)
+            self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
+            self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
+            self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
+
         x1_under = (shift_bypass < 0).nonzero(as_tuple=True)[0]
         x1_over = (shift_bypass >= 0).nonzero(as_tuple=True)[0]
         x2_under = (shift_prev < 0).nonzero(as_tuple=True)[0]
         x2_over = (shift_prev >= 0).nonzero(as_tuple=True)[0]
+        n_x1_over, n_x2_over = len(x1_over), len(x2_over)
         if len(x1_under) > 0:
             shift = - shift_bypass[x1_under]
             x1 = multiply_M((bypass[x1_under].sub(z_bypass[x1_under]) << shift), M0_bypass[x1_under])
             x1 = shifting_without_cast(x1, 0)
-            out[x1_under] = out[x1_under].add(x1)
-        if len(x1_over) > 0:
+            self.total[x1_under] = x1
+        if n_x1_over > 0:
             shift = shift_bypass[x1_over]
             x1 = multiply_M((bypass[x1_over].sub(z_bypass[x1_over])), M0_bypass[x1_over])
-            x1 = shifting4d_without_cast(x1, shift)
-            out[x1_over] = out[x1_over].add(x1)
+            x1 = shifting4d_without_cast(x1, shift, self.mask[:n_x1_over], self.zero[:n_x1_over], self.one[:n_x1_over])
+            self.total[x1_over] = x1
 
         if len(x2_under) > 0:
             shift = - shift_prev[x2_under]
             x2 = multiply_M((prev[x2_under].sub(z_prev[x2_under]) << shift), M0_prev[x2_under])
             x2 = shifting_without_cast(x2, 0)
-            out[x2_under] = out[x2_under].add(x2)
-        if len(x2_over) > 0:
+            self.total[x2_under] = self.total[x2_under].add_(x2)
+        if n_x2_over > 0:
             shift = shift_prev[x2_over]
             x2 = multiply_M((prev[x2_over].sub(z_prev[x2_over])), M0_prev[x2_over])
-            x2 = shifting4d_without_cast(x2, shift)
-            out[x2_over] = out[x2_over].add(x2)
-        out = out.add(z3)
+            x2 = shifting4d_without_cast(x2, shift, self.mask[:n_x2_over], self.zero[:n_x2_over], self.one[:n_x2_over])
+            self.total[x2_over] = self.total[x2_over].add_(x2)
+        total = self.total[:bypass.size(0)].add(z3)
 
-        if self.bit == 4:
-            out = torch.clamp(out, 0, 15)
-        elif self.bit == 8:
-            out = torch.clamp(out, -128, 127)
-        elif self.bit == 16:
-            out = torch.clamp(out, -32768, 32767)
-        elif self.bit == 24:
-            out = torch.clamp(out, -8388608, 8388607)
-        elif self.bit == 32:
-            out = torch.clamp(out, -2147483648, 2147483647)
-        return out
+        if self.a_bit == 4:
+            total = torch.clamp(total, 0, 15)
+        elif self.a_bit == 8:
+            total = torch.clamp(total, -128, 127)
+        elif self.a_bit == 16:
+            total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 32:
+            total = torch.clamp(total, -2147483648, 2147483647)
+        return total
 
     def general_bypass(self, bypass, prev):
         if self.shift_bypass < 0:
@@ -94,24 +100,23 @@ class QuantizedAdd(nn.Module):
             x2 = multiply_M(prev.sub(self.z_prev), self.M0_prev)
             x2 = shifting(x2, self.shift_prev.item())
 
-        out = (x1 + x2).add(self.z3)
-        if self.bit == 4:
-            out = torch.clamp(out, 0, 15)
-        elif self.bit == 8:
-            out = torch.clamp(out, -128, 127)
-        elif self.bit == 16:
-            out = torch.clamp(out, -32768, 32767)
-        elif self.bit == 32:
-            out = torch.clamp(out, -2147483648, 2147483647)
-        return out.type(torch.cuda.FloatTensor)
+        total = (x1 + x2).add(self.z3)
+        if self.a_bit == 4:
+            total = torch.clamp(total, 0, 15)
+        elif self.a_bit == 8:
+            total = torch.clamp(total, -128, 127)
+        elif self.a_bit == 16:
+            total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 32:
+            total = torch.clamp(total, -2147483648, 2147483647)
+        return total
 
 
 class QuantizedMul(nn.Module):
     def __init__(self, arg_dict=None):
         super(QuantizedMul, self).__init__()
         self.layer_type = 'QuantizedMul'
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+        self.a_bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s_prev = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -130,7 +135,7 @@ class QuantizedMul(nn.Module):
             return self.general_mul(prev, bypass)
 
     def general_mul(self, prev, bypass):
-        mul_q1q2 = torch.mul(prev, bypass).type(torch.cuda.IntTensor)
+        mul_q1q2 = torch.mul(prev, bypass)
         z1z2 = self.z_bypass * self.z_prev
         z2q1 = torch.mul(prev, self.z_bypass)
         z1q2 = torch.mul(bypass, self.z_prev)
@@ -147,9 +152,13 @@ class QuantizedMul(nn.Module):
 
         total = total.add(self.z3)
 
-        if self.bit == 4:
-            out = torch.clamp(total, 0, 15)
-        else:
-            out = torch.clamp(total, -128, 127)
-        return out.type(torch.cuda.FloatTensor)
+        if self.a_bit == 4:
+            total = torch.clamp(total, 0, 15)
+        elif self.a_bit == 8:
+            total = torch.clamp(total, -128, 127)
+        elif self.a_bit == 16:
+            total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 32:
+            total = torch.clamp(total, -2147483648, 2147483647)
+        return total
 

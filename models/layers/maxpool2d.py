@@ -11,6 +11,7 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
         super(QuantizedMaxPool2d, self).__init__(kernel_size, stride, padding)
         self.layer_type = 'QuantizedMaxPool2d'     
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         self.kernel_size = kernel_size
         self.stride = stride
@@ -26,17 +27,26 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
             return self.general(x)
 
     def pcq(self, x):
-        bc = self.runtime_helper.batch_cluster
-        exists = torch.unique(bc)
-        padded = torch.zeros((x.shape[0], x.shape[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2)).cuda()
-        for c in exists:
-            indices = (bc == c).nonzero(as_tuple=True)[0]
-            padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding),
-                                          mode='constant', value=self.zero_point[c])
+        padded = None
+        if self.padding > 0:
+            if self.bit == 4 or self.bit == 32:
+                padded = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=0)
+            else:
+                bc = self.runtime_helper.batch_cluster
+                padded_shape = (x.shape[0], x.shape[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2)
+                exists = torch.unique(bc)
+                padded = torch.zeros(padded_shape, device='cuda')
+                for c in exists:
+                    indices = (bc == c).nonzero(as_tuple=True)[0]
+                    padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding),
+                                                  mode='constant', value=self.zero_point[c])
+        else:
+            padded = x
         return self.maxpool(padded)
 
     def general(self, x):
         if self.padding > 0:
-            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point.item())
+            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
+                      value=self.zero_point.item())
         return self.maxpool(x)
 
