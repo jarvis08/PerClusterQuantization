@@ -225,7 +225,7 @@ class QuantizedResNet(nn.Module):
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
         x = self.bn1(x.type(torch.cuda.FloatTensor))
-        x = self.maxpool(x)
+        x = self.maxpool(x.type(torch.cuda.FloatTensor))
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -467,3 +467,4 @@ def quantize_pcq_resnet(fp_model, int_model):
 
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
+

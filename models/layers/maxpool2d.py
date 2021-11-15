@@ -19,34 +19,28 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.padded = None
 
     def forward(self, x):
-        if self.runtime_helper.batch_cluster is not None and self.padding > 0:
-            return self.pcq(x)
-        else:
-            return self.general(x)
+        if not self.padding:
+            return self.maxpool(x)
 
-    def pcq(self, x):
-        padded = None
-        if self.padding > 0:
-            if self.bit == 4 or self.bit == 32:
-                padded = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=0)
-            else:
-                bc = self.runtime_helper.batch_cluster
-                padded_shape = (x.shape[0], x.shape[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2)
-                exists = torch.unique(bc)
-                padded = torch.zeros(padded_shape, device='cuda')
-                for c in exists:
-                    indices = (bc == c).nonzero(as_tuple=True)[0]
-                    padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding),
-                                                  mode='constant', value=self.zero_point[c])
-        else:
-            padded = x
-        return self.maxpool(padded)
+        if self.bit == 4 or self.bit == 32:
+            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=0)
+            return self.maxpool(x)
 
-    def general(self, x):
-        if self.padding > 0:
-            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
-                      value=self.zero_point.item())
-        return self.maxpool(x)
+        bc = self.runtime_helper.batch_cluster
+        if bc is None:
+            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point.item())
+            return self.maxpool(x)
+
+        if self.padded is None:
+            padded_shape = (x.shape[0], x.shape[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2)
+            self.padded = torch.zeros(padded_shape, device='cuda')
+        exists = torch.unique(bc)
+        for c in exists:
+            indices = (bc == c).nonzero(as_tuple=True)[0]
+            self.padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding),
+                                         mode='constant', value=self.zero_point[c])
+        return self.maxpool(self.padded[:x.size(0)])
 
