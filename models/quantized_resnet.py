@@ -227,7 +227,7 @@ class QuantizedResNet(nn.Module):
         x = self.bn1(x.type(torch.cuda.FloatTensor))
         x = self.maxpool(x.type(torch.cuda.FloatTensor))
 
-        x = self.layer1(x)
+        x = self.layer1(x.type(torch.cuda.LongTensor))
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
@@ -236,7 +236,6 @@ class QuantizedResNet(nn.Module):
         x = x.floor()
 
         x = torch.flatten(x, 1)
-        fc_x = x
         if self.a_bit > self.target_bit:
             if self.mask is None:
                 _shape = (x.size(0), 1)
@@ -244,10 +243,12 @@ class QuantizedResNet(nn.Module):
                 self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
                 self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
             batch_size = x.size(0)
-            fc_x = rescale_matrix_2d(fc_x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift,
-                                     self.target_bit, self.mask[:batch_size], self.zero[:batch_size],
-                                     self.one[:batch_size], self.runtime_helper.batch_cluster)
-        x = self.fc(fc_x.type(torch.cuda.FloatTensor))
+            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift,
+                                  self.target_bit, self.mask[:batch_size], self.zero[:batch_size],
+                                  self.one[:batch_size], self.runtime_helper.batch_cluster)
+            x = self.fc(x.type(torch.cuda.FloatTensor))
+        else:
+            x = self.fc(x)
         return x.type(torch.cuda.FloatTensor)
 
 
@@ -314,7 +315,6 @@ class QuantizedResNet20(nn.Module):
         x = x.floor()
 
         x = torch.flatten(x, 1)
-        fc_x = x
         if self.a_bit > self.target_bit:
             if self.mask is None:
                 _shape = (x.size(0), 1)
@@ -322,10 +322,12 @@ class QuantizedResNet20(nn.Module):
                 self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
                 self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
             batch_size = x.size(0)
-            fc_x = rescale_matrix_2d(fc_x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift,
-                                     self.target_bit, self.mask[:batch_size], self.zero[:batch_size],
-                                     self.one[:batch_size], self.runtime_helper.batch_cluster)
-        x = self.fc(fc_x.type(torch.cuda.FloatTensor))
+            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift,
+                                  self.target_bit, self.mask[:batch_size], self.zero[:batch_size],
+                                  self.one[:batch_size], self.runtime_helper.batch_cluster)
+            x = self.fc(x.type(torch.cuda.FloatTensor))
+        else:
+            x = self.fc(x)
         return x.type(torch.cuda.FloatTensor)
 
 
