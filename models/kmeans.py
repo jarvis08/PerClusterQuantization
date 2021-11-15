@@ -25,20 +25,12 @@ class KMeans(object):
                          if self.args.partition % 2 == 0
                          else (self.args.partition / 3))  # Per row & col
             n_data = int(_size / n_part)  # Per part
-            rst = None
-            for i in range(n_part):
-                c_start = n_data * i
-                for j in range(n_part):
-                    r_start = n_data * j
-                    part = data[:, :, c_start:c_start + n_data, r_start:r_start + n_data].reshape(batch, channel, -1)
-                    _min = part.min(-1, keepdim=True).values
-                    _max = part.max(-1, keepdim=True).values
-                    part_rst = torch.cat([_min, _max], dim=-1)
-                    if rst is None:
-                        rst = part_rst
-                    else:
-                        rst = torch.cat([rst, part_rst], dim=-1)
-            return rst.view(rst.size(0), -1).cpu().numpy()
+            data = data.view(batch, channel, n_part, n_data, _size).transpose(3, 4)
+            data = data.reshape(batch, channel, n_part * n_part, -1)
+            _min = data.min(-1, keepdim=True).values
+            _max = data.max(-1, keepdim=True).values
+            rst = torch.cat((_min, _max), dim=-1)
+            return rst.view(rst.size(0), -1).numpy()
         else:
             # To make clustering model more robust about augmentation's horizontal flip
             n_part = 4
@@ -55,7 +47,7 @@ class KMeans(object):
                     rst = part_rst
                 else:
                     rst = torch.cat([rst, part_rst], dim=-1)
-            return rst.view(rst.size(0), -1).cpu().numpy()
+            return rst.view(rst.size(0), -1).numpy()
 
     def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
@@ -72,7 +64,7 @@ class KMeans(object):
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
-        return torch.cuda.LongTensor(cluster_info).cuda()
+        return torch.cuda.LongTensor(cluster_info)
 
     def train_clustering_model(self, train_loader):
         def check_convergence(prev, cur, tol):
