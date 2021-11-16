@@ -66,7 +66,7 @@ class QuantizedAlexNetSmall(nn.Module):
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, arg_dict=arg_dict)
+        self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, is_first=True, arg_dict=arg_dict)
         self.conv2 = QuantizedConv2d(96, 256, kernel_size=5, stride=1, padding=2, arg_dict=arg_dict)
         self.conv3 = QuantizedConv2d(256, 384, kernel_size=3, stride=1, padding=1, arg_dict=arg_dict)
         self.conv4 = QuantizedConv2d(384, 384, kernel_size=3, stride=1, padding=1, arg_dict=arg_dict)

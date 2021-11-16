@@ -125,7 +125,8 @@ class QuantizedDenseNet(nn.Module):
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
-            ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
+            ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3,
+                                           is_first=True, arg_dict=arg_dict)),
             ('first_norm', QuantizedBn2d(num_init_features, arg_dict)),
             ('maxpool', QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict))
         ]))
