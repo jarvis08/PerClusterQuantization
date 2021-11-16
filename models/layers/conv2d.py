@@ -36,6 +36,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -75,6 +76,7 @@ class QuantizedConv2d(nn.Conv2d):
         return self.general_totalsum(x, sum_q1q2.type(torch.cuda.IntTensor))
 
     def pcq_totalsum(self, x, sum_q1q2):
+        batch_size = x.size(0)
         bc = self.runtime_helper.batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
         z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
@@ -99,30 +101,38 @@ class QuantizedConv2d(nn.Conv2d):
             for o_row in range(output_row):
                 col_st, col_end = o_col * stride, o_col * stride + filter_col
                 row_st, row_end = o_row * stride, o_row * stride + filter_row
-                self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
-        sum_a1 = self.sum_a1[:x.size(0)] * self.z2
+                self.sum_a1[:batch_size, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+        sum_a1 = self.sum_a1[:batch_size] * self.z2
         sum_a2 = self.sum_a2.mul(z1)
 
         nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2)
-        sum_q1q2 = torch.sub(sum_q1q2, sum_a1[:, None, :, :])
-        sum_q1q2 = torch.sub(sum_q1q2, sum_a2)
+        subsum = sum_q1q2.add(nz1z2)
+        subsum = torch.sub(subsum, sum_a1[:, None, :, :])
+        subsum = torch.sub(subsum, sum_a2)
 
-        if self.total is None:
-            self.total = torch.zeros(sum_q1q2.shape, dtype=torch.int32, device='cuda')
-        neg = (shift < 0).nonzero(as_tuple=True)[0]
-        pos = (shift >= 0).nonzero(as_tuple=True)[0]
-        n_pos = len(pos)
-        if len(neg) > 0:
-            subsum = multiply_M((sum_q1q2[neg].type(torch.cuda.LongTensor) << - shift[neg]), M0[neg])
-            self.total[neg] = shifting(subsum, 0)
-        if n_pos > 0:
-            subsum = multiply_M(sum_q1q2[pos].type(torch.cuda.LongTensor), M0[pos])
-            self.total[pos] = shifting4d(subsum, shift[pos],
-                                         self.runtime_helper.mask_4d[:n_pos],
-                                         self.runtime_helper.zero_4d[:n_pos],
-                                         self.runtime_helper.one_4d[:n_pos])
-        total = self.total[:x.size(0)].add(z3)
+        if not self.is_shift_neg:
+            multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), M0)
+            total = shifting4d(multiplied, shift,
+                               self.runtime_helper.mask_4d[:batch_size],
+                               self.runtime_helper.zero_4d[:batch_size],
+                               self.runtime_helper.one_4d[:batch_size])
+            total = total.add(z3)
+        else:
+            if self.total is None:
+                self.total = torch.zeros(subsum.shape, dtype=torch.int32, device='cuda')
+            neg = (shift < 0).nonzero(as_tuple=True)[0]
+            pos = (shift >= 0).nonzero(as_tuple=True)[0]
+            n_pos = len(pos)
+            if len(neg) > 0:
+                multiplied = multiply_M((subsum[neg].type(torch.cuda.LongTensor) << - shift[neg]), M0[neg])
+                self.total[neg] = shifting(multiplied, 0)
+            if n_pos > 0:
+                multiplied = multiply_M(subsum[pos].type(torch.cuda.LongTensor), M0[pos])
+                self.total[pos] = shifting4d(multiplied, shift[pos],
+                                             self.runtime_helper.mask_4d[:n_pos],
+                                             self.runtime_helper.zero_4d[:n_pos],
+                                             self.runtime_helper.one_4d[:n_pos])
+            total = self.total[:batch_size].add(z3)
 
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)

@@ -320,6 +320,13 @@ def set_shortcut_qparams(m, bit, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
         for c in range(m.num_clusters):
             m.M0_bypass[c], m.shift_bypass[c] = quantize_M(s_bypass[c] / s3[c])
             m.M0_prev[c], m.shift_prev[c] = quantize_M(s_prev[c] / s3[c])
+
+        bypass_neg_values = (m.shift_bypass < 0).nonzero(as_tuple=True)[0]
+        prev_neg_values = (m.shift_prev < 0).nonzero(as_tuple=True)[0]
+        if len(bypass_neg_values):
+            m.is_bypass_shift_neg.data = torch.tensor(True, dtype=torch.bool)
+        if len(prev_neg_values):
+            m.is_prev_shift_neg.data = torch.tensor(True, dtype=torch.bool)
     else:
         m.M0_bypass.data, m.shift_bypass.data = quantize_M(s_bypass / s3)
         m.M0_prev.data, m.shift_prev.data = quantize_M(s_prev / s3)

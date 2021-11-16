@@ -448,6 +448,9 @@ def transfer_qparams(_fp, _int):
     if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d']:
         _int.w_bit.data = _fp.w_bit.data
         _int.a_bit.data = _fp.a_bit.data
+        negative_values = (_int.shift < 0).nonzero(as_tuple=True)[0]
+        if len(negative_values):
+            _int.is_shift_neg.data = torch.tensor(True, dtype=torch.bool)
     return _int
 
 

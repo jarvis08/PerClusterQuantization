@@ -24,6 +24,7 @@ class QuantizedLinear(nn.Linear):
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features), dtype=torch.int32), requires_grad=False)
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_features), dtype=torch.int32), requires_grad=False)
+        self.total = None  # For faster inference
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -34,6 +35,7 @@ class QuantizedLinear(nn.Linear):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -64,16 +66,33 @@ class QuantizedLinear(nn.Linear):
         sum_a2 = self.sum_a2.mul(z1)
 
         nz1z2 = x.size(1) * z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2)
-        sum_q1q2 = sum_q1q2.sub(sum_a1[:, None])
-        sum_q1q2 = sum_q1q2.sub(sum_a2)
+        subsum = sum_q1q2.add(nz1z2)
+        subsum = subsum.sub(sum_a1[:, None])
+        subsum = subsum.sub(sum_a2)
 
-        total = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), M0)
-        total = shifting2d(total, shift,
-                           self.runtime_helper.mask_2d[:batch_size],
-                           self.runtime_helper.zero_2d[:batch_size],
-                           self.runtime_helper.one_2d[:batch_size])
-        total = total.add(z3)
+        if not self.is_shift_neg:
+            multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), M0)
+            total = shifting2d(multiplied, shift,
+                               self.runtime_helper.mask_2d[:batch_size],
+                               self.runtime_helper.zero_2d[:batch_size],
+                               self.runtime_helper.one_2d[:batch_size])
+            total = total.add(z3)
+        else:
+            if self.total is None:
+                self.total = torch.zeros(subsum.shape, dtype=torch.int32, device='cuda')
+            neg = (shift < 0).nonzero(as_tuple=True)[0]
+            pos = (shift >= 0).nonzero(as_tuple=True)[0]
+            n_pos = len(pos)
+            if len(neg) > 0:
+                multiplied = multiply_M((subsum[neg].type(torch.cuda.LongTensor) << - shift[neg]), M0[neg])
+                self.total[neg] = shifting(multiplied, 0)
+            if n_pos > 0:
+                multiplied = multiply_M(subsum[pos].type(torch.cuda.LongTensor), M0[pos])
+                self.total[pos] = shifting2d(multiplied, shift[pos],
+                                             self.runtime_helper.mask_2d[:n_pos],
+                                             self.runtime_helper.zero_2d[:n_pos],
+                                             self.runtime_helper.one_2d[:n_pos])
+            total = self.total[:batch_size].add(z3)
 
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)

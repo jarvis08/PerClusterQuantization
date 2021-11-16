@@ -18,6 +18,8 @@ class QuantizedAdd(nn.Module):
         self.M0_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0_prev = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.is_bypass_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
+        self.is_prev_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.shift_prev = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.s_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.s_prev = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -25,12 +27,10 @@ class QuantizedAdd(nn.Module):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
     def forward(self, bypass, prev):
-        if self.runtime_helper.batch_cluster is not None:
-            return self.pcq_bypass(bypass, prev)
-        else:
+        if self.runtime_helper.batch_cluster is None:
             return self.general_bypass(bypass, prev)
 
-    def pcq_bypass(self, bypass, prev):
+        batch_size = bypass.size(0)
         bc = self.runtime_helper.batch_cluster
         z_bypass = torch.index_select(self.z_bypass, 0, bc)[:, None, None, None]
         z_prev = torch.index_select(self.z_prev, 0, bc)[:, None, None, None]
@@ -40,43 +40,25 @@ class QuantizedAdd(nn.Module):
         shift_bypass = torch.index_select(self.shift_bypass, 0, bc)[:, None, None, None]
         shift_prev = torch.index_select(self.shift_prev, 0, bc)[:, None, None, None]
 
-        if self.total is None:
-            self.total = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
+        if not self.is_bypass_shift_neg:
+            x1 = multiply_M((bypass.sub(z_bypass)), M0_bypass)
+            x1 = shifting4d_without_cast(x1, shift_bypass,
+                                         self.runtime_helper.mask_4d[:batch_size],
+                                         self.runtime_helper.zero_4d[:batch_size],
+                                         self.runtime_helper.one_4d[:batch_size])
+        else:
+            x1 = self._pcq_with_negative_value(bypass, z_bypass, M0_bypass, shift_bypass)
 
-        x1_under = (shift_bypass < 0).nonzero(as_tuple=True)[0]
-        x1_over = (shift_bypass >= 0).nonzero(as_tuple=True)[0]
-        x2_under = (shift_prev < 0).nonzero(as_tuple=True)[0]
-        x2_over = (shift_prev >= 0).nonzero(as_tuple=True)[0]
-        n_x1_over, n_x2_over = len(x1_over), len(x2_over)
-        if len(x1_under) > 0:
-            shift = - shift_bypass[x1_under]
-            x1 = multiply_M((bypass[x1_under].sub(z_bypass[x1_under]) << shift), M0_bypass[x1_under])
-            x1 = shifting_without_cast(x1, 0)
-            self.total[x1_under] = x1
-        if n_x1_over > 0:
-            shift = shift_bypass[x1_over]
-            x1 = multiply_M((bypass[x1_over].sub(z_bypass[x1_over])), M0_bypass[x1_over])
-            x1 = shifting4d_without_cast(x1, shift,
-                                         self.runtime_helper.mask_4d[:n_x1_over],
-                                         self.runtime_helper.zero_4d[:n_x1_over],
-                                         self.runtime_helper.one_4d[:n_x1_over])
-            self.total[x1_over] = x1
+        if not self.is_prev_shift_neg:
+            x2 = multiply_M((prev.sub(z_prev)), M0_prev)
+            x2 = shifting4d_without_cast(x2, shift_prev,
+                                         self.runtime_helper.mask_4d[:batch_size],
+                                         self.runtime_helper.zero_4d[:batch_size],
+                                         self.runtime_helper.one_4d[:batch_size])
+        else:
+            x2 = self._pcq_with_negative_value(prev, z_prev, M0_prev, shift_prev)
 
-        if len(x2_under) > 0:
-            shift = - shift_prev[x2_under]
-            x2 = multiply_M((prev[x2_under].sub(z_prev[x2_under]) << shift), M0_prev[x2_under])
-            x2 = shifting_without_cast(x2, 0)
-            self.total[x2_under] = self.total[x2_under].add_(x2)
-        if n_x2_over > 0:
-            shift = shift_prev[x2_over]
-            x2 = multiply_M((prev[x2_over].sub(z_prev[x2_over])), M0_prev[x2_over])
-            x2 = shifting4d_without_cast(x2, shift,
-                                         self.runtime_helper.mask_4d[:n_x2_over],
-                                         self.runtime_helper.zero_4d[:n_x2_over],
-                                         self.runtime_helper.one_4d[:n_x2_over])
-            self.total[x2_over] = self.total[x2_over].add_(x2)
-        total = self.total[:bypass.size(0)].add(z3)
-
+        total = (x1 + x2).add(z3)
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
         elif self.a_bit == 8:
@@ -86,6 +68,26 @@ class QuantizedAdd(nn.Module):
         elif self.a_bit == 32:
             total = torch.clamp(total, -2147483648, 2147483647)
         return total
+
+    def _pcq_with_negative_value(self, x, z, M0, shift):
+        _x = torch.zeros(x.shape, dtype=torch.int64, device='cuda')
+        under = (shift < 0).nonzero(as_tuple=True)[0]
+        over = (shift >= 0).nonzero(as_tuple=True)[0]
+        n_over = len(over)
+        if len(under) > 0:
+            _shift = - shift[under]
+            x_under = multiply_M((x[under].sub(z[under]) << _shift), M0[under])
+            x_under = shifting_without_cast(x_under, 0)
+            _x[under] = x_under
+        if n_over > 0:
+            _shift = shift[over]
+            x_over = multiply_M((x[over].sub(z[over])), M0[over])
+            x_over = shifting4d_without_cast(x_over, _shift,
+                                             self.runtime_helper.mask_4d[:n_over],
+                                             self.runtime_helper.zero_4d[:n_over],
+                                             self.runtime_helper.one_4d[:n_over])
+            _x[over] = x_over
+        return _x
 
     def general_bypass(self, bypass, prev):
         if self.shift_bypass < 0:

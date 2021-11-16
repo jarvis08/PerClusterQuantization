@@ -24,18 +24,17 @@ class QuantizedBn2d(nn.Module):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
+        self.total = None  # For faster inference
 
         self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
         self.bias = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
-        self.total = None  # for faster inference
 
     def forward(self, x):
-        if self.runtime_helper.batch_cluster is not None:
-            return self._pcq(x.type(torch.cuda.LongTensor))
-        else:
-            return self._general(x.type(torch.cuda.LongTensor))
+        x = x.type(torch.cuda.LongTensor)
+        if self.runtime_helper.batch_cluster is None:
+            return self._general(x)
 
-    def _pcq(self, x):
         bc = self.runtime_helper.batch_cluster
         weight = torch.index_select(self.weight, 0, bc)[:, :, None, None]
         bias = torch.index_select(self.bias, 0, bc)[:, :, None, None]
@@ -48,7 +47,32 @@ class QuantizedBn2d(nn.Module):
         q1z2 = x.mul(self.z2)
         q2z1 = weight.mul(z1)
         subsum = q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
+        if self.is_shift_neg:
+            return self._pcq_with_negative_shift_value(subsum, M0, shift, z3)
+        else:
+            return self._pcq(subsum, M0, shift, z3)
 
+    def _pcq(self, subsum, M0, shift, z3):
+        batch_size = subsum.size(0)
+        multiplied = multiply_M(subsum, M0)
+        total = shifting4d_without_cast(multiplied, shift,
+                                        self.runtime_helper.mask_4d[:batch_size],
+                                        self.runtime_helper.zero_4d[:batch_size],
+                                        self.runtime_helper.one_4d[:batch_size])
+        total = total.add(z3)
+        if self.a_bit == 4:
+            total = torch.clamp(total, 0, 15)
+        elif self.a_bit == 8:
+            total = torch.clamp(total, -128, 127)
+        elif self.a_bit == 16:
+            total = torch.clamp(total, -32768, 32767)
+        elif self.a_bit == 24:
+            total = torch.clamp(total, -8388608, 8388607)
+        elif self.a_bit == 32:
+            total = torch.clamp(total, -2147483648, 2147483647)
+        return total
+
+    def _pcq_with_negative_shift_value(self, subsum, M0, shift, z3):
         if self.total is None:
             self.total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
         neg = (shift < 0).nonzero(as_tuple=True)[0]
@@ -63,8 +87,7 @@ class QuantizedBn2d(nn.Module):
                                                       self.runtime_helper.mask_4d[:n_pos],
                                                       self.runtime_helper.zero_4d[:n_pos],
                                                       self.runtime_helper.one_4d[:n_pos])
-        total = self.total[:x.size(0)].add(z3)
-
+        total = self.total[:subsum.size(0)].add(z3)
         if self.a_bit == 4:
             total = torch.clamp(total, 0, 15)
         elif self.a_bit == 8:
