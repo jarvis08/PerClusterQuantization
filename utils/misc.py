@@ -233,9 +233,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
                 runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
 
-                torch.cuda.synchronize()
                 output = model(input_gpu)
-
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
