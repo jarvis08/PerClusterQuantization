@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 def _evaluate(args, tools):
     runtime_helper = RuntimeHelper()
+    runtime_helper.set_pcq_arguments(args)
     arg_dict = deepcopy(vars(args))
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
