@@ -37,17 +37,18 @@ class InputContainer(object):
         img_size = 224 if dataset_name == 'imagenet' else 32
         self.num_clusters = num_clusters
         self.batch_size = batch_size
-        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)] for _ in range(num_clusters)]
+        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)]
+                          for _ in range(num_clusters)]
 
     @torch.no_grad()
     def gather_and_get_data(self, images, targets, cluster_info):
-        next_cluster = None
         next_input = None
         next_target = None
+        next_cluster = None
         for c in range(self.num_clusters):
             indices = (cluster_info == c).nonzero(as_tuple=True)[0]
-            self.container[c][0] = torch.cat([self.container[c][0], images[indices]])
-            self.container[c][1] = torch.cat([self.container[c][1], targets[indices]])
+            self.container[c][0] = torch.cat((self.container[c][0], images[indices]))
+            self.container[c][1] = torch.cat((self.container[c][1], targets[indices]))
 
             if next_cluster is not None:
                 continue
@@ -227,9 +228,14 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
-                input, target = input.cuda(), target.cuda()
+                input_gpu = input.cuda(non_blocking=True)
+                target = target.cuda(non_blocking=True)
                 runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                output = model(input)
+                runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
+
+                torch.cuda.synchronize()
+                output = model(input_gpu)
+
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
