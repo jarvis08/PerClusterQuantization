@@ -99,7 +99,7 @@ class QuantizedAlexNetSmall(nn.Module):
         x = self.fc1(x)
         x = self.fc2(x.type(torch.cuda.FloatTensor))
         x = self.fc3(x.type(torch.cuda.FloatTensor))
-        return x
+        return x.type(torch.cuda.FloatTensor)
 
 
 def quantized_alexnet(arg_dict: dict, **kwargs: Any) -> QuantizedAlexNet:
