@@ -73,13 +73,11 @@ class PCQBasicBlock(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
         data = x.view(x.size(0), -1)
-        _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
-            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.act_range[cluster][0], self.act_range[cluster][1] = torch.tensor(0.0, device='cuda'), _max
+            self.act_range[cluster][1] = _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):
@@ -173,13 +171,11 @@ class PCQBottleneck(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
         data = x.view(x.size(0), -1)
-        _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
-            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.act_range[cluster][1] = _max
             self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):

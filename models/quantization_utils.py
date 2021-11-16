@@ -239,14 +239,20 @@ def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
     return torch.clamp(quantized, -2147483648, 2147483647)
 
 
-def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, mask, zero, one, bc):
+def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
+    bc = runtime_helper.batch_cluster
+    batch_size = x.size(0)
+
     z1 = torch.index_select(z_from, 0, bc)[:, None, None, None]
     z2 = torch.index_select(z_to, 0, bc)[:, None, None, None]
     _m0 = torch.index_select(m0, 0, bc)[:, None, None, None]
     _shift = torch.index_select(shift, 0, bc)[:, None, None, None]
+
     _x = x - z1
     _x = multiply_M(_x, _m0)
-    _x = shifting4d_without_cast(_x, _shift, mask, zero, one)
+    _x = shifting4d_without_cast(_x, _shift, runtime_helper.mask_4d[:batch_size],
+                                 runtime_helper.zero_4d[:batch_size],
+                                 runtime_helper.one_4d[:batch_size])
     _x = _x.add(z2)
     if target_bit == 4:
         _x = torch.clamp(_x, 0, 15)
@@ -261,14 +267,20 @@ def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, mask, zero, one, b
     return _x
 
 
-def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, mask, zero, one, bc):
+def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
+    bc = runtime_helper.batch_cluster
+    batch_size = x.size(0)
+
     z1 = torch.index_select(z_from, 0, bc)[:, None]
     z2 = torch.index_select(z_to, 0, bc)[:, None]
     _m0 = torch.index_select(m0, 0, bc)[:, None]
     _shift = torch.index_select(shift, 0, bc)[:, None]
+
     _x = x - z1
     _x = multiply_M(_x, _m0)
-    _x = shifting2d_without_cast(_x, _shift, mask, zero, one)
+    _x = shifting2d_without_cast(_x, _shift, runtime_helper.mask_2d[:batch_size],
+                                 runtime_helper.zero_2d[:batch_size],
+                                 runtime_helper.one_2d[:batch_size])
     _x = _x.add(z2)
     if target_bit == 4:
         _x = torch.clamp(_x, 0, 15)

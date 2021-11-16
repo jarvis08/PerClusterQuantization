@@ -44,8 +44,6 @@ class QuantizedBasicBlock(nn.Module):
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.mask, self.zero, self.one = None, None, None  # for faster inference in HAWQ-v3
-
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, arg_dict=arg_dict)
         self.conv2 = quantized_conv3x3(planes, planes, arg_dict=arg_dict)
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
@@ -60,15 +58,8 @@ class QuantizedBasicBlock(nn.Module):
 
         conv_x = x
         if self.a_bit > self.target_bit:
-            if self.mask is None:
-                _shape = (x.size(0), 1, 1, 1)
-                self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
-                self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
-                self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
-            batch_size = x.size(0)
-            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift, self.target_bit,
-                                       self.mask[:batch_size], self.zero[:batch_size], self.one[:batch_size],
-                                       self.runtime_helper.batch_cluster)
+            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift,
+                                       self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
         out = self.conv1(conv_x)
         out = self.bn1(out.type(torch.cuda.FloatTensor))
@@ -106,12 +97,10 @@ class QuantizedBottleneck(nn.Module):
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.mask, self.zero, self.one = None, None, None  # for faster inference in HAWQ-v3
-
         width = int(planes * (base_width/64.)) * groups
         self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, arg_dict=arg_dict)
-        self.conv2 = quantized_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                       arg_dict=arg_dict)
+        self.conv2 = quantized_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups,
+                                       dilation=dilation, arg_dict=arg_dict)
         self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=arg_dict)
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
@@ -126,15 +115,8 @@ class QuantizedBottleneck(nn.Module):
 
         conv_x = x
         if self.a_bit > self.target_bit:
-            if self.mask is None:
-                _shape = (x.size(0), 1, 1, 1)
-                self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
-                self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
-                self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
-            batch_size = x.size(0)
-            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift, self.target_bit,
-                                       self.mask[:batch_size], self.zero[:batch_size], self.one[:batch_size],
-                                       self.runtime_helper.batch_cluster)
+            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift,
+                                       self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
 
         out = self.conv1(conv_x)
@@ -172,8 +154,6 @@ class QuantizedResNet(nn.Module):
         self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-
-        self.mask, self.zero, self.one = None, None, None  # for faster inference in HAWQ-v3
 
         self.num_blocks = 4
         self.inplanes = 64
@@ -237,15 +217,8 @@ class QuantizedResNet(nn.Module):
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
-            if self.mask is None:
-                _shape = (x.size(0), 1)
-                self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
-                self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
-                self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
-            batch_size = x.size(0)
-            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift,
-                                  self.target_bit, self.mask[:batch_size], self.zero[:batch_size],
-                                  self.one[:batch_size], self.runtime_helper.batch_cluster)
+            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                                  self.shift, self.target_bit, self.runtime_helper)
             x = self.fc(x.type(torch.cuda.FloatTensor))
         else:
             x = self.fc(x)
@@ -276,8 +249,6 @@ class QuantizedResNet20(nn.Module):
         self.inplanes = 16
         self.dilation = 1
         self.num_blocks = 3
-
-        self.mask, self.zero, self.one = None, None, None  # for faster inference in HAWQ-v3
 
         self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, is_first=True, arg_dict=arg_dict)
         self.bn1 = QuantizedBn2d(16, arg_dict=arg_dict)
@@ -316,15 +287,8 @@ class QuantizedResNet20(nn.Module):
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
-            if self.mask is None:
-                _shape = (x.size(0), 1)
-                self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
-                self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
-                self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
-            batch_size = x.size(0)
-            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0, self.shift,
-                                  self.target_bit, self.mask[:batch_size], self.zero[:batch_size],
-                                  self.one[:batch_size], self.runtime_helper.batch_cluster)
+            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                                  self.shift, self.target_bit, self.runtime_helper)
             x = self.fc(x.type(torch.cuda.FloatTensor))
         else:
             x = self.fc(x)

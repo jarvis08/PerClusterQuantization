@@ -10,7 +10,7 @@ class QuantizedAdd(nn.Module):
         self.layer_type = 'QuantizedAdd'
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.total, self.mask, self.zero, self.one = None, None, None, None  # for faster inference
+        self.total = None  # for faster inference
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.z_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
@@ -42,10 +42,6 @@ class QuantizedAdd(nn.Module):
 
         if self.total is None:
             self.total = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
-            _shape = (bypass.size(0), 1, 1, 1)
-            self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
-            self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
-            self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
 
         x1_under = (shift_bypass < 0).nonzero(as_tuple=True)[0]
         x1_over = (shift_bypass >= 0).nonzero(as_tuple=True)[0]
@@ -60,7 +56,10 @@ class QuantizedAdd(nn.Module):
         if n_x1_over > 0:
             shift = shift_bypass[x1_over]
             x1 = multiply_M((bypass[x1_over].sub(z_bypass[x1_over])), M0_bypass[x1_over])
-            x1 = shifting4d_without_cast(x1, shift, self.mask[:n_x1_over], self.zero[:n_x1_over], self.one[:n_x1_over])
+            x1 = shifting4d_without_cast(x1, shift,
+                                         self.runtime_helper.mask_4d[:n_x1_over],
+                                         self.runtime_helper.zero_4d[:n_x1_over],
+                                         self.runtime_helper.one_4d[:n_x1_over])
             self.total[x1_over] = x1
 
         if len(x2_under) > 0:
@@ -71,7 +70,10 @@ class QuantizedAdd(nn.Module):
         if n_x2_over > 0:
             shift = shift_prev[x2_over]
             x2 = multiply_M((prev[x2_over].sub(z_prev[x2_over])), M0_prev[x2_over])
-            x2 = shifting4d_without_cast(x2, shift, self.mask[:n_x2_over], self.zero[:n_x2_over], self.one[:n_x2_over])
+            x2 = shifting4d_without_cast(x2, shift,
+                                         self.runtime_helper.mask_4d[:n_x2_over],
+                                         self.runtime_helper.zero_4d[:n_x2_over],
+                                         self.runtime_helper.one_4d[:n_x2_over])
             self.total[x2_over] = self.total[x2_over].add_(x2)
         total = self.total[:bypass.size(0)].add(z3)
 

@@ -24,7 +24,6 @@ class QuantizedLinear(nn.Linear):
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features), dtype=torch.int32), requires_grad=False)
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_features), dtype=torch.int32), requires_grad=False)
-        self.mask, self.zero, self.one = None, None, None  # for faster inference
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -56,11 +55,6 @@ class QuantizedLinear(nn.Linear):
         M0 = torch.index_select(self.M0, 0, bc)[:, None]
         shift = torch.index_select(self.shift, 0, bc)[:, None]
         batch_size = x.size(0)
-        if self.mask is None:
-            _shape = (x.size(0), 1)
-            self.mask = torch.ones(_shape, dtype=torch.int64, device='cuda')
-            self.zero = torch.zeros(_shape, dtype=torch.int32, device='cuda')
-            self.one = torch.ones(_shape, dtype=torch.int32, device='cuda')
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
@@ -75,7 +69,10 @@ class QuantizedLinear(nn.Linear):
         sum_q1q2 = sum_q1q2.sub(sum_a2)
 
         total = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), M0)
-        total = shifting2d(total, shift, self.mask[:batch_size], self.zero[:batch_size], self.one[:batch_size])
+        total = shifting2d(total, shift,
+                           self.runtime_helper.mask_2d[:batch_size],
+                           self.runtime_helper.zero_2d[:batch_size],
+                           self.runtime_helper.one_2d[:batch_size])
         total = total.add(z3)
 
         if self.a_bit == 4:
@@ -188,18 +185,28 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
+        _min, _max = None, None
         if self.is_classifier:
             _min, _max = get_range(x)
         else:
             data = x.view(x.size(0) // 4, -1)
-            _min = data.min(dim=1).values.mean()
+            if self._activation is None:
+                _min = data.min(dim=1).values.mean()
             _max = data.max(dim=1).values.mean()
-        if self.apply_ema[cluster]:
-            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+
+        if self._activation:
+            if self.apply_ema[cluster]:
+                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.act_range[cluster][1] = _max
+                self.apply_ema[cluster] = True
         else:
-            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
-            self.apply_ema[cluster] = True
+            if self.apply_ema[cluster]:
+                self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+                self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
