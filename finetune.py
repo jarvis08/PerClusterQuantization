@@ -13,19 +13,16 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     losses = AverageMeter()
     top1 = AverageMeter()
     model.train()
-    container = InputContainer(runtime_helper.num_clusters, clustering_model.args.dataset, clustering_model.args.batch)
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
-        for i, (images, targets) in enumerate(t):
-            t.set_description("Epoch {}".format(epoch))
-
-            cluster_info = clustering_model.predict_cluster_of_batch(images)
-
-            input, target, runtime_helper.batch_cluster = container.gather_and_get_data(images, targets, cluster_info)
-            if input is None:
-                continue
-
+    container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
+                               clustering_model.args.dataset, clustering_model.args.batch)
+    container.initialize_generator()
+    container.set_next_batch()
+    with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
+        for i, _ in enumerate(t):
+            input, target, runtime_helper.batch_cluster = container.get_batch()
             input, target = input.cuda(), target.cuda()
             output = model(input)
+
             loss = criterion(output, target)
 
             prec = accuracy(output, target)[0]
@@ -36,32 +33,14 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             loss.backward()
             optimizer.step()
 
+            container.set_next_batch()
+
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
-    leftover = container.check_leftover()
-    if leftover:
-        with tqdm(range(leftover), unit="batch", ncols=90) as t:
-            for _ in t:
-                t.set_description("Leftover")
-                input, target, runtime_helper.batch_cluster = container.get_leftover()
-                input = input.cuda()
-                target = target.cuda()
-                output = model(input)
-
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
+            if container.ready_cluster is None:
+                break
 
 
 def _finetune(args, tools):

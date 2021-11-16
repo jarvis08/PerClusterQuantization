@@ -27,18 +27,89 @@ class RuntimeHelper(object):
         self.batch_cluster = None
         self.qn_prob = 0.0
         self.num_clusters = None
+        self.val_batch = None
+        self.mask_4d, self.zero_4d, self.one_4d = None, None, None
+        self.mask_2d, self.zero_2d, self.one_2d = None, None, None
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
+        self.val_batch = args.val_batch
+
+        mask = torch.ones(self.val_batch, dtype=torch.int64, device='cuda')
+        zero = torch.zeros(self.val_batch, dtype=torch.int32, device='cuda')
+        one = torch.ones(self.val_batch, dtype=torch.int32, device='cuda')
+        self.mask_4d = mask.view(-1, 1, 1, 1)
+        self.zero_4d = zero.view(-1, 1, 1, 1)
+        self.one_4d = one.view(-1, 1, 1, 1)
+        self.mask_2d = mask.view(-1, 1)
+        self.zero_2d = zero.view(-1, 1)
+        self.one_2d = one.view(-1, 1)
 
 
 class InputContainer(object):
-    def __init__(self, num_clusters, dataset_name, batch_size):
+    def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, batch_size):
         img_size = 224 if dataset_name == 'imagenet' else 32
         self.num_clusters = num_clusters
         self.batch_size = batch_size
         self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)]
                           for _ in range(num_clusters)]
+
+        self.data_loader = data_loader
+        self.clustering_model = clustering_model
+        self.input, self.target = None, None
+        self.ready_cluster = None
+        self.epoch_done = False
+
+        self.generator = iter(self.data_loader)
+        self.index = 0
+
+    def initialize_generator(self):
+        self.generator = iter(self.data_loader)
+
+    def iter_loader(self):
+        while True:
+            try:
+                images, targets = next(self.generator)
+            except StopIteration:
+                self.epoch_done = True
+                break
+            cluster_info = self.clustering_model.predict_cluster_of_batch(images)
+            self.set_data_per_cluster(images, targets, cluster_info)
+            if self.ready_cluster is not None:
+                break
+
+    @torch.no_grad()
+    def set_next_batch(self):
+        self.ready_cluster = None
+        for c in range(self.num_clusters):
+            if self.container[c][0].size(0) >= self.batch_size:
+                self.ready_cluster = c
+                break
+
+        if self.ready_cluster is None and not self.epoch_done:
+            self.iter_loader()
+
+    @torch.no_grad()
+    def get_batch(self):
+        c = self.ready_cluster
+        input = self.container[c][0][:self.batch_size]
+        target = self.container[c][1][:self.batch_size]
+        self.container[c][0] = self.container[c][0][self.batch_size:]
+        self.container[c][1] = self.container[c][1][self.batch_size:]
+        return input, target, c
+
+    @torch.no_grad()
+    def set_data_per_cluster(self, images, targets, cluster_info):
+        for c in range(self.num_clusters):
+            indices = (cluster_info == c).nonzero(as_tuple=True)[0]
+            self.container[c][0] = torch.cat((self.container[c][0], images[indices]))
+            self.container[c][1] = torch.cat((self.container[c][1], targets[indices]))
+
+            if self.ready_cluster is not None:
+                continue
+
+            if self.container[c][0].size(0) >= self.batch_size:
+                self.ready_cluster = c
 
     @torch.no_grad()
     def gather_and_get_data(self, images, targets, cluster_info):
@@ -81,33 +152,6 @@ class InputContainer(object):
                 next_cluster = c
                 break
         return next_input, next_target, next_cluster
-
-
-class Phase2DataLoader(object):
-    def __init__(self, loader, num_clusters, num_data_per_cluster):
-        self.data_loader = loader
-        self.len_loader = len(loader)
-        self.batch_size = num_clusters * num_data_per_cluster
-
-        bc = []
-        for c in range(num_clusters):
-            per_cluster = [c for _ in range(num_data_per_cluster)]
-            bc += per_cluster
-        self.batch_cluster = torch.cuda.LongTensor(bc).cuda()
-
-        self.generator = iter(self.data_loader)
-        self.iterated = 0
-
-    def initialize_phase2_generator(self):
-        self.generator = iter(self.data_loader)
-        self.iterated = 0
-
-    def get_next_data(self):
-        if self.iterated == self.len_loader:
-            self.initialize_phase2_generator()
-        input, _ = next(self.generator)
-        self.iterated += 1
-        return input
 
 
 class AverageMeter(object):
