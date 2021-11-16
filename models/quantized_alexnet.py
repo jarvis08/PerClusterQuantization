@@ -86,19 +86,19 @@ class QuantizedAlexNetSmall(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.conv1(x)
-        x = self.maxpool1(x)
-        x = self.conv2(x)
-        x = self.maxpool2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.conv5(x)
-        x = self.maxpool3(x)
+        x = self.maxpool1(x.type(torch.cuda.FloatTensor))
+        x = self.conv2(x.type(torch.cuda.FloatTensor))
+        x = self.maxpool2(x.type(torch.cuda.FloatTensor))
+        x = self.conv3(x.type(torch.cuda.FloatTensor))
+        x = self.conv4(x.type(torch.cuda.FloatTensor))
+        x = self.conv5(x.type(torch.cuda.FloatTensor))
+        x = self.maxpool3(x.type(torch.cuda.FloatTensor))
         x = self.avgpool(x)
         x = x.floor()
         x = torch.flatten(x, 1)
         x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.fc3(x)
+        x = self.fc2(x.type(torch.cuda.FloatTensor))
+        x = self.fc3(x.type(torch.cuda.FloatTensor))
         return x
 
 
