@@ -83,10 +83,6 @@ def _finetune(args, tools):
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         save_path_fp, best_epoch, best_int_val_score = load_tuning_info(args.dnn_path)
 
-    # if args.quant_noise:
-    #     runtime_helper.qn_prob = args.qn_prob - 0.1
-    #     tools.shift_qn_prob(model)
-
     clustering_model = None
     if args.cluster > 1:
         clustering_model = tools.clustering_method(args)
@@ -107,11 +103,6 @@ def _finetune(args, tools):
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
-
-        # Only for QuantNoise prob-increasing
-        # if args.quant_noise and e % args.qn_increment_epoch == 1:
-        #     model.runtime_helper.qn_prob += 0.1
-        #     tools.shift_qn_prob(model)
 
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
