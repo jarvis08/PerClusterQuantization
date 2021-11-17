@@ -104,17 +104,17 @@ def bn_ema(cur, pre, smooth):
 
 def fake_quantize(x, scale, zero_point, bit, use_ste=False):
     if bit == 4:
-        _qmin, _qmax = 0, 15
+        qmin, qmax = 0, 15
     elif bit == 8:
-        _qmin, _qmax = -128, 127
+        qmin, qmax = -128, 127
     elif bit == 16:
-        _qmin, _qmax = -32768, 32767
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        _qmin, _qmax = -8388608, 8388607
+        qmin, qmax = -8388608, 8388607
     else:
-        _qmin, _qmax = -2147483648, 2147483647
+        qmin, qmax = -2147483648, 2147483647
 
-    _x = (torch.clamp(torch.round(x.detach() / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+    _x = (torch.clamp(torch.round(x.detach() / scale + zero_point), qmin, qmax) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
@@ -122,19 +122,19 @@ def fake_quantize(x, scale, zero_point, bit, use_ste=False):
 
 def fake_quantize_per_cluster_2d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
     if bit == 4:
-        _qmin, _qmax = 0, 15
+        qmin, qmax = 0, 15
     elif bit == 8:
-        _qmin, _qmax = -128, 127
+        qmin, qmax = -128, 127
     elif bit == 16:
-        _qmin, _qmax = -32768, 32767
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        _qmin, _qmax = -8388608, 8388607
+        qmin, qmax = -8388608, 8388607
     else:
-        _qmin, _qmax = -2147483648, 2147483647
+        qmin, qmax = -2147483648, 2147483647
 
     s = torch.index_select(scale, 0, cluster_per_data)[:, None]
     z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
-    _x = (torch.clamp(torch.round(x.detach() / s + z), _qmin, _qmax) - z) * s
+    _x = (torch.clamp(torch.round(x.detach() / s + z), qmin, qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
@@ -142,19 +142,19 @@ def fake_quantize_per_cluster_2d(x, scale, zero_point, bit, cluster_per_data, us
 
 def fake_quantize_per_cluster_4d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
     if bit == 4:
-        _qmin, _qmax = 0, 15
+        qmin, qmax = 0, 15
     elif bit == 8:
-        _qmin, _qmax = -128, 127
+        qmin, qmax = -128, 127
     elif bit == 16:
-        _qmin, _qmax = -32768, 32767
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        _qmin, _qmax = -8388608, 8388607
+        qmin, qmax = -8388608, 8388607
     else:
-        _qmin, _qmax = -2147483648, 2147483647
+        qmin, qmax = -2147483648, 2147483647
 
     s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
     z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
-    _x = (torch.clamp(torch.round(x.detach() / s + z), _qmin, _qmax) - z) * s
+    _x = (torch.clamp(torch.round(x.detach() / s + z), qmin, qmax) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
@@ -162,18 +162,18 @@ def fake_quantize_per_cluster_4d(x, scale, zero_point, bit, cluster_per_data, us
 
 def apply_qn(x, scale, zero_point, bit, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
     if bit == 4:
-        _qmin, _qmax = 0, 15
+        qmin, qmax = 0, 15
     elif bit == 8:
-        _qmin, _qmax = -128, 127
+        qmin, qmax = -128, 127
     elif bit == 16:
-        _qmin, _qmax = -32768, 32767
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        _qmin, _qmax = -8388608, 8388607
+        qmin, qmax = -8388608, 8388607
     else:
-        _qmin, _qmax = -2147483648, 2147483647
+        qmin, qmax = -2147483648, 2147483647
 
     _x = x.detach()
-    fq_x = (torch.clamp(torch.round(_x / scale + zero_point), _qmin, _qmax) - zero_point) * scale
+    fq_x = (torch.clamp(torch.round(_x / scale + zero_point), qmin, qmax) - zero_point) * scale
     if kernel_size is None:
         mask = torch.zeros_like(_x)
         mask.bernoulli_(1 - qn_prob)
@@ -198,15 +198,18 @@ def apply_qn(x, scale, zero_point, bit, qn_prob, kernel_size=None, each_channel=
 
 def quantize_matrix(x, scale, zero_point, bit=None):
     quantized = torch.round(x / scale + zero_point)
+
     if bit == 4:
-        return torch.clamp(quantized, 0, 15)
+        qmin, qmax = 0, 15
     elif bit == 8:
-        return torch.clamp(quantized, -128, 127)
+        qmin, qmax = -128, 127
     elif bit == 16:
-        return torch.clamp(quantized, -32768, 32767)
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        return torch.clamp(quantized, -8388608, 8388607)
-    return torch.clamp(quantized, -2147483648, 2147483647)
+        qmin, qmax = -8388608, 8388607
+    else:
+        qmin, qmax = -2147483648, 2147483647
+    return torch.clamp(quantized, qmin, qmax)
 
 
 def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None):
@@ -214,14 +217,16 @@ def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None):
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None]
     quantized = torch.round(x / scale + zero_point)
     if bit == 4:
-        return torch.clamp(quantized, 0, 15)
+        qmin, qmax = 0, 15
     elif bit == 8:
-        return torch.clamp(quantized, -128, 127)
+        qmin, qmax = -128, 127
     elif bit == 16:
-        return torch.clamp(quantized, -32768, 32767)
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        return torch.clamp(quantized, -8388608, 8388607)
-    return torch.clamp(quantized, -2147483648, 2147483647)
+        qmin, qmax = -8388608, 8388607
+    else:
+        qmin, qmax = -2147483648, 2147483647
+    return torch.clamp(quantized, qmin, qmax)
 
 
 def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
@@ -229,14 +234,16 @@ def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
     quantized = torch.round(x / scale + zero_point)
     if bit == 4:
-        return torch.clamp(quantized, 0, 15)
+        qmin, qmax = 0, 15
     elif bit == 8:
-        return torch.clamp(quantized, -128, 127)
+        qmin, qmax = -128, 127
     elif bit == 16:
-        return torch.clamp(quantized, -32768, 32767)
+        qmin, qmax = -32768, 32767
     elif bit == 24:
-        return torch.clamp(quantized, -8388608, 8388607)
-    return torch.clamp(quantized, -2147483648, 2147483647)
+        qmin, qmax = -8388608, 8388607
+    else:
+        qmin, qmax = -2147483648, 2147483647
+    return torch.clamp(quantized, qmin, qmax)
 
 
 def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
@@ -255,16 +262,16 @@ def rescale_matrix_4d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
                                  runtime_helper.one_4d[:batch_size])
     _x = _x.add(z2)
     if target_bit == 4:
-        _x = torch.clamp(_x, 0, 15)
+        qmin, qmax = 0, 15
     elif target_bit == 8:
-        _x = torch.clamp(_x, -128, 127)
+        qmin, qmax = -128, 127
     elif target_bit == 16:
-        _x = torch.clamp(_x, -32768, 32767)
+        qmin, qmax = -32768, 32767
     elif target_bit == 24:
-        _x = torch.clamp(_x, -8388608, 8388607)
-    elif target_bit == 32:
-        _x = torch.clamp(_x, -2147483648, 2147483647)
-    return _x
+        qmin, qmax = -8388608, 8388607
+    else:
+        qmin, qmax = -2147483648, 2147483647
+    return torch.clamp(_x, qmin, qmax)
 
 
 def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
@@ -283,16 +290,16 @@ def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
                                  runtime_helper.one_2d[:batch_size])
     _x = _x.add(z2)
     if target_bit == 4:
-        _x = torch.clamp(_x, 0, 15)
+        qmin, qmax = 0, 15
     elif target_bit == 8:
-        _x = torch.clamp(_x, -128, 127)
+        qmin, qmax = -128, 127
     elif target_bit == 16:
-        _x = torch.clamp(_x, -32768, 32767)
+        qmin, qmax = -32768, 32767
     elif target_bit == 24:
-        _x = torch.clamp(_x, -8388608, 8388607)
-    elif target_bit == 32:
-        _x = torch.clamp(_x, -2147483648, 2147483647)
-    return _x
+        qmin, qmax = -8388608, 8388607
+    else:
+        qmin, qmax = -2147483648, 2147483647
+    return torch.clamp(_x, qmin, qmax)
 
 
 def dequantize_matrix(x, scale, zero_point):
@@ -360,11 +367,6 @@ def shifting_without_cast(cur, shift):
 
 
 def shifting2d_without_cast(cur, shift, mask, zero, one):
-    # shape = (cur.shape[0], 1)
-    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    # mask = (mask << shift) - 1
-    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
     _mask = (mask << shift) - 1
     remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
@@ -374,13 +376,7 @@ def shifting2d_without_cast(cur, shift, mask, zero, one):
 
 
 def shifting4d_without_cast(cur, shift, mask, zero, one):
-    # shape = (cur.shape[0], 1, 1, 1)
-    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    # mask = (mask << shift) - 1
-    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
     _mask = (mask << shift) - 1
-
     remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
     threshold = ((_mask >> one) + (maskiflessthan & one)).type(torch.cuda.IntTensor)
@@ -404,11 +400,6 @@ def shifting(cur, shift):
 
 
 def shifting2d(cur, shift, mask, zero, one):
-    # shape = (cur.shape[0], 1)
-    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    # mask = (mask << shift) - 1
-    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
     _mask = (mask << shift) - 1
     remainder = (cur & _mask).type(torch.cuda.IntTensor)
     maskiflessthan = torch.where(cur < zero, ~zero, zero)
@@ -420,11 +411,6 @@ def shifting2d(cur, shift, mask, zero, one):
 
 
 def shifting4d(cur, shift, mask, zero, one):
-    # shape = (cur.shape[0], 1, 1, 1)
-    # mask = torch.ones(shape, dtype=torch.int64, device='cuda:0')
-    # mask = (mask << shift) - 1
-    # zero = torch.zeros(shape, dtype=torch.int32, device='cuda:0')
-    # one = torch.ones(shape, dtype=torch.int32, device='cuda:0')
     _mask = (mask << shift) - 1
 
     remainder = (cur & _mask).type(torch.cuda.IntTensor)
@@ -434,6 +420,20 @@ def shifting4d(cur, shift, mask, zero, one):
 
     total = ((cur >> shift).add(maskifgreaterthan & one)).type(torch.cuda.IntTensor)
     return total
+
+
+def clamp_matrix(x, bit):
+    if bit == 4:
+        qmin, qmax = 0, 15
+    elif bit == 8:
+        qmin, qmax = -128, 127
+    elif bit == 16:
+        qmin, qmax = -32768, 32767
+    elif bit == 24:
+        qmin, qmax = -8388608, 8388607
+    else:
+        qmin, qmax = -2147483648, 2147483647
+    return torch.clamp(x, qmin, qmax)
 
 
 def transfer_qparams(_fp, _int):

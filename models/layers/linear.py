@@ -13,7 +13,7 @@ from .activation import *
 class QuantizedLinear(nn.Linear):
     batch_cluster = None
 
-    def __init__(self, in_features, out_features, bias=False, activation=None, arg_dict=None):
+    def __init__(self, in_features, out_features, bias=False, activation=None, multiplication=True, arg_dict=None):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
         bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
@@ -25,6 +25,7 @@ class QuantizedLinear(nn.Linear):
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features), dtype=torch.int32), requires_grad=False)
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_features), dtype=torch.int32), requires_grad=False)
         self.total = None  # For faster inference
+        self.multiplication = multiplication
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -44,19 +45,28 @@ class QuantizedLinear(nn.Linear):
         self.activation = activation
 
     def forward(self, x):
-        sum_q1q2 = F.linear(x, self.weight, None)
-        if self.runtime_helper.batch_cluster is not None:
-            return self.pcq_totalsum(x.type(torch.cuda.IntTensor), sum_q1q2.type(torch.cuda.IntTensor))
-        else:
-            return self.general_totalsum(x.type(torch.cuda.IntTensor), sum_q1q2.type(torch.cuda.IntTensor))
+        out = F.linear(x, self.weight, None)
+        out = self._subsum(x, out.type(torch.cuda.LongTensor))
+        if self.multiplication:
+            out = self._totalsum(out)
+        return out
 
-    def pcq_totalsum(self, x, sum_q1q2):
+    def _subsum(self, x, y):
+        if self.num_clusters > 1:
+            return self._pcq_subsum(x, y)
+        else:
+            return self._general_subsum(x, y)
+
+    def _totalsum(self, x):
+        if self.num_clusters > 1:
+            out = self._pcq_totalsum(x)
+        else:
+            out = self._general_totalsum(x)
+        return clamp_matrix(out, self.a_bit)
+
+    def _pcq_subsum(self, x, sum_q1q2):
         bc = self.runtime_helper.batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None]
-        z3 = torch.index_select(self.z3, 0, bc)[:, None]
-        M0 = torch.index_select(self.M0, 0, bc)[:, None]
-        shift = torch.index_select(self.shift, 0, bc)[:, None]
-        batch_size = x.size(0)
 
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
@@ -69,44 +79,9 @@ class QuantizedLinear(nn.Linear):
         subsum = sum_q1q2.add(nz1z2)
         subsum = subsum.sub(sum_a1[:, None])
         subsum = subsum.sub(sum_a2)
+        return subsum
 
-        if not self.is_shift_neg:
-            multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), M0)
-            total = shifting2d(multiplied, shift,
-                               self.runtime_helper.mask_2d[:batch_size],
-                               self.runtime_helper.zero_2d[:batch_size],
-                               self.runtime_helper.one_2d[:batch_size])
-            total = total.add(z3)
-        else:
-            if self.total is None:
-                self.total = torch.zeros(subsum.shape, dtype=torch.int32, device='cuda')
-            neg = (shift < 0).nonzero(as_tuple=True)[0]
-            pos = (shift >= 0).nonzero(as_tuple=True)[0]
-            n_pos = len(pos)
-            if len(neg) > 0:
-                multiplied = multiply_M((subsum[neg].type(torch.cuda.LongTensor) << - shift[neg]), M0[neg])
-                self.total[neg] = shifting(multiplied, 0)
-            if n_pos > 0:
-                multiplied = multiply_M(subsum[pos].type(torch.cuda.LongTensor), M0[pos])
-                self.total[pos] = shifting2d(multiplied, shift[pos],
-                                             self.runtime_helper.mask_2d[:n_pos],
-                                             self.runtime_helper.zero_2d[:n_pos],
-                                             self.runtime_helper.one_2d[:n_pos])
-            total = self.total[:batch_size].add(z3)
-
-        if self.a_bit == 4:
-            total = torch.clamp(total, 0, 15)
-        elif self.a_bit == 8:
-            total = torch.clamp(total, -128, 127)
-        elif self.a_bit == 16:
-            total = torch.clamp(total, -32768, 32767)
-        elif self.a_bit == 24:
-            total = torch.clamp(total, -8388608, 8388607)
-        elif self.a_bit == 32:
-            total = torch.clamp(total, -2147483648, 2147483647)
-        return total
-
-    def general_totalsum(self, x, sum_q1q2):
+    def _general_subsum(self, x, sum_q1q2):
         if self.is_bias:
             sum_q1q2.add_(self.quantized_bias[0][None, :])
 
@@ -114,38 +89,51 @@ class QuantizedLinear(nn.Linear):
         sum_a2 = self.sum_a2.mul(self.z1)
 
         nz1z2 = x.size(1) * self.z1 * self.z2
-        sum_q1q2 = sum_q1q2.add(nz1z2)
-        sum_q1q2 = sum_q1q2.sub(sum_a1[:, None])
-        sum_q1q2 = sum_q1q2.sub(sum_a2)
+        subsum = sum_q1q2.add(nz1z2)
+        subsum = subsum.sub(sum_a1[:, None])
+        subsum = subsum.sub(sum_a2)
+        return subsum
 
-        if self.shift < 0:
-            multiplied = multiply_M((sum_q1q2.type(torch.cuda.LongTensor) << - self.shift.item()), self.M0)
-            total = shifting(multiplied, 0)
+    def _pcq_totalsum(self, subsum):
+        bc = self.runtime_helper.batch_cluster
+        z3 = torch.index_select(self.z3, 0, bc)[:, None]
+        M0 = torch.index_select(self.M0, 0, bc)[:, None]
+        shift = torch.index_select(self.shift, 0, bc)[:, None]
+        batch_size = subsum.size(0)
+
+        if not self.is_shift_neg:
+            multiplied = multiply_M(subsum.type(torch.cuda.LongTensor), M0)
+            total = shifting2d_without_cast(multiplied, shift,
+                                            self.runtime_helper.mask_2d[:batch_size],
+                                            self.runtime_helper.zero_2d[:batch_size],
+                                            self.runtime_helper.one_2d[:batch_size])
+            total = total.add(z3)
         else:
-            multiplied = multiply_M(sum_q1q2.type(torch.cuda.LongTensor), self.M0)
-            total = shifting(multiplied, self.shift.item())
-        total = total.add(self.z3)
-
-        if self.activation is not None:
-            hs_total = total + self.hardswish_3
-            hs_total = torch.clamp(hs_total, self.z3.item(), self.hardswish_6.item())
-            hs_total = hs_total / self.hardswish_6
-            if self.activation == 'Hardswish':
-                total = total * hs_total
-            else:
-                total = hs_total
-
-        if self.a_bit == 4:
-            total = torch.clamp(total, 0, 15)
-        elif self.a_bit == 8:
-            total = torch.clamp(total, -128, 127)
-        elif self.a_bit == 16:
-            total = torch.clamp(total, -32768, 32767)
-        elif self.a_bit == 24:
-            total = torch.clamp(total, -8388608, 8388607)
-        elif self.a_bit == 32:
-            total = torch.clamp(total, -2147483648, 2147483647)
+            if self.total is None:
+                self.total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
+            neg = (shift < 0).nonzero(as_tuple=True)[0]
+            pos = (shift >= 0).nonzero(as_tuple=True)[0]
+            n_pos = len(pos)
+            if len(neg) > 0:
+                multiplied = multiply_M((subsum[neg] << - shift[neg]), M0[neg])
+                self.total[neg] = shifting_without_cast(multiplied, 0)
+            if n_pos > 0:
+                multiplied = multiply_M(subsum[pos], M0[pos])
+                self.total[pos] = shifting2d_without_cast(multiplied, shift[pos],
+                                                          self.runtime_helper.mask_2d[:n_pos],
+                                                          self.runtime_helper.zero_2d[:n_pos],
+                                                          self.runtime_helper.one_2d[:n_pos])
+            total = self.total[:batch_size].add(z3)
         return total
+
+    def _general_totalsum(self, subsum):
+        if self.shift < 0:
+            multiplied = multiply_M((subsum << - self.shift.item()), self.M0)
+            total = shifting_without_cast(multiplied, 0)
+        else:
+            multiplied = multiply_M(subsum, self.M0)
+            total = shifting_without_cast(multiplied, self.shift.item())
+        return total.add(self.z3)
 
 
 class PCQLinear(nn.Module):

@@ -62,14 +62,14 @@ class QuantizedBasicBlock(nn.Module):
                                        self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
         out = self.conv1(conv_x)
-        out = self.bn1(out.type(torch.cuda.FloatTensor))
+        out = self.bn1(out)
 
         out = self.conv2(out.type(torch.cuda.FloatTensor))
-        out = self.bn2(out.type(torch.cuda.FloatTensor))
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(conv_x)
-            identity = self.bn_down(identity.type(torch.cuda.FloatTensor))
+            identity = self.bn_down(identity)
 
         out = self.shortcut(identity, out)
         return out
@@ -120,15 +120,15 @@ class QuantizedBottleneck(nn.Module):
         conv_x = conv_x.type(torch.cuda.FloatTensor)
 
         out = self.conv1(conv_x)
-        out = self.bn1(out.type(torch.cuda.FloatTensor))
+        out = self.bn1(out)
         out = self.conv2(out.type(torch.cuda.FloatTensor))
-        out = self.bn2(out.type(torch.cuda.FloatTensor))
+        out = self.bn2(out)
         out = self.conv3(out.type(torch.cuda.FloatTensor))
-        out = self.bn3(out.type(torch.cuda.FloatTensor))
+        out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(conv_x)
-            identity = self.bn_down(identity.type(torch.cuda.FloatTensor))
+            identity = self.bn_down(identity)
         out = self.shortcut(identity, out)
         return out
 
@@ -205,7 +205,7 @@ class QuantizedResNet(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
-        x = self.bn1(x.type(torch.cuda.FloatTensor))
+        x = self.bn1(x)
         x = self.maxpool(x.type(torch.cuda.FloatTensor))
 
         x = self.layer1(x.type(torch.cuda.LongTensor))
@@ -278,7 +278,7 @@ class QuantizedResNet20(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
-        x = self.bn1(x.type(torch.cuda.FloatTensor))
+        x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)

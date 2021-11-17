@@ -27,10 +27,9 @@ class QuantizedAdd(nn.Module):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
     def forward(self, bypass, prev):
-        if self.runtime_helper.batch_cluster is None:
-            return self.general_bypass(bypass, prev)
+        if self.num_clusters == 1:
+            return self._general_add(bypass, prev)
 
-        batch_size = bypass.size(0)
         bc = self.runtime_helper.batch_cluster
         z_bypass = torch.index_select(self.z_bypass, 0, bc)[:, None, None, None]
         z_prev = torch.index_select(self.z_prev, 0, bc)[:, None, None, None]
@@ -41,35 +40,28 @@ class QuantizedAdd(nn.Module):
         shift_prev = torch.index_select(self.shift_prev, 0, bc)[:, None, None, None]
 
         if not self.is_bypass_shift_neg:
-            x1 = multiply_M((bypass.sub(z_bypass)), M0_bypass)
-            x1 = shifting4d_without_cast(x1, shift_bypass,
-                                         self.runtime_helper.mask_4d[:batch_size],
-                                         self.runtime_helper.zero_4d[:batch_size],
-                                         self.runtime_helper.one_4d[:batch_size])
+            x1 = self._pcq_add(bypass, z_bypass, M0_bypass, shift_bypass)
         else:
-            x1 = self._pcq_with_negative_value(bypass, z_bypass, M0_bypass, shift_bypass)
+            x1 = self._pcq_add_with_negative_value(bypass, z_bypass, M0_bypass, shift_bypass)
 
         if not self.is_prev_shift_neg:
-            x2 = multiply_M((prev.sub(z_prev)), M0_prev)
-            x2 = shifting4d_without_cast(x2, shift_prev,
-                                         self.runtime_helper.mask_4d[:batch_size],
-                                         self.runtime_helper.zero_4d[:batch_size],
-                                         self.runtime_helper.one_4d[:batch_size])
+            x2 = self._pcq_add(prev, z_prev, M0_prev, shift_prev)
         else:
-            x2 = self._pcq_with_negative_value(prev, z_prev, M0_prev, shift_prev)
+            x2 = self._pcq_add_with_negative_value(prev, z_prev, M0_prev, shift_prev)
 
         total = (x1 + x2).add(z3)
-        if self.a_bit == 4:
-            total = torch.clamp(total, 0, 15)
-        elif self.a_bit == 8:
-            total = torch.clamp(total, -128, 127)
-        elif self.a_bit == 16:
-            total = torch.clamp(total, -32768, 32767)
-        elif self.a_bit == 32:
-            total = torch.clamp(total, -2147483648, 2147483647)
-        return total
+        return clamp_matrix(total, self.a_bit)
 
-    def _pcq_with_negative_value(self, x, z, M0, shift):
+    def _pcq_add(self, x, z, M0, shift):
+        batch_size = x.size(0)
+        x = multiply_M((x.sub(z)), M0)
+        x = shifting4d_without_cast(x, shift,
+                                    self.runtime_helper.mask_4d[:batch_size],
+                                    self.runtime_helper.zero_4d[:batch_size],
+                                    self.runtime_helper.one_4d[:batch_size])
+        return x
+
+    def _pcq_add_with_negative_value(self, x, z, M0, shift):
         _x = torch.zeros(x.shape, dtype=torch.int64, device='cuda')
         under = (shift < 0).nonzero(as_tuple=True)[0]
         over = (shift >= 0).nonzero(as_tuple=True)[0]
@@ -89,7 +81,7 @@ class QuantizedAdd(nn.Module):
             _x[over] = x_over
         return _x
 
-    def general_bypass(self, bypass, prev):
+    def _general_add(self, bypass, prev):
         if self.shift_bypass < 0:
             x1 = multiply_M((bypass.sub(self.z_bypass) << - self.shift_bypass), self.M0_bypass)
             x1 = shifting(x1, 0)
@@ -105,15 +97,7 @@ class QuantizedAdd(nn.Module):
             x2 = shifting(x2, self.shift_prev.item())
 
         total = (x1 + x2).add(self.z3)
-        if self.a_bit == 4:
-            total = torch.clamp(total, 0, 15)
-        elif self.a_bit == 8:
-            total = torch.clamp(total, -128, 127)
-        elif self.a_bit == 16:
-            total = torch.clamp(total, -32768, 32767)
-        elif self.a_bit == 32:
-            total = torch.clamp(total, -2147483648, 2147483647)
-        return total
+        return clamp_matrix(total, self.a_bit)
 
 
 class QuantizedMul(nn.Module):
