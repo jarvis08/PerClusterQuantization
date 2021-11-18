@@ -45,14 +45,7 @@ class QuantizedBn2d(nn.Module):
 
     def _totalsum(self, x):
         if self.num_clusters > 1:
-            bc = self.runtime_helper.batch_cluster
-            z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
-            M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
-            shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
-            if self.is_shift_neg:
-                out = self._pcq_totalsum_with_negative_shift(x, M0, shift, z3)
-            else:
-                out = self._pcq_totalsum(x, M0, shift, z3)
+            out = self._pcq_totalsum(x)
         else:
             out = self._general_totalsum(x)
         return clamp_matrix(out, self.a_bit)
@@ -68,45 +61,34 @@ class QuantizedBn2d(nn.Module):
         q2z1 = weight.mul(z1)
         return q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
 
-    def _pcq_totalsum(self, subsum, M0, shift, z3):
-        batch_size = subsum.size(0)
-        multiplied = multiply_M(subsum, M0)
-        total = shifting4d_without_cast(multiplied, shift,
-                                        self.runtime_helper.mask_4d[:batch_size],
-                                        self.runtime_helper.zero_4d[:batch_size],
-                                        self.runtime_helper.one_4d[:batch_size])
-        return total.add(z3)
+    def _pcq_totalsum(self, subsum):
+        bc = self.runtime_helper.batch_cluster
+        z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
+        M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
+        shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
+        shape = subsum.shape
+        mask = self.runtime_helper.mask_4d[:shape[0]]
 
-    def _pcq_totalsum_with_negative_shift(self, subsum, M0, shift, z3):
+        if not self.is_shift_neg:
+            total = mul_and_shift(subsum, M0, shift, mask)
+            return total.add(z3)
+
         if self.total is None:
             self.total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
-        neg = (shift < 0).nonzero(as_tuple=True)[0]
-        pos = (shift >= 0).nonzero(as_tuple=True)[0]
-        n_pos = len(pos)
-        if len(neg) > 0:
-            multiplied = multiply_M((subsum[neg] << - shift[neg]), M0[neg])
-            self.total[neg] = shifting_without_cast(multiplied, 0)
-        if n_pos > 0:
-            multiplied = multiply_M(subsum[pos], M0[pos])
-            self.total[pos] = shifting4d_without_cast(multiplied, shift[pos],
-                                                      self.runtime_helper.mask_4d[:n_pos],
-                                                      self.runtime_helper.zero_4d[:n_pos],
-                                                      self.runtime_helper.one_4d[:n_pos])
+        pos_and_neg_shift(subsum, M0, shift, mask, self.total)
         return self.total[:subsum.size(0)].add(z3)
 
-    def _general_subum(self, x):
+    def _general_subsum(self, x):
         q1q2 = x.mul(self.weight[0][None, :, None, None])
         q1z2 = x.mul(self.z2)
         q2z1 = self.weight[0].mul(self.z1)
         return q1q2 - q1z2 - q2z1[None, :, None, None] + self.z1 * self.z2 + self.bias[0][None, :, None, None]
 
     def _general_totalsum(self, subsum):
-        if self.shift.item() < 0:
-            multiplied = multiply_M((subsum << - self.shift.item()), self.M0)
-            total = shifting_without_cast(multiplied, 0)
+        if self.shift < 0:
+            total = mul_and_shift(subsum << - self.shift.item(), self.M0, 0)
         else:
-            multiplied = multiply_M(subsum, self.M0)
-            total = shifting_without_cast(multiplied, self.shift.item())
+            total = mul_and_shift(subsum, self.M0, self.shift.item())
         return total.add(self.z3)
 
 
@@ -239,7 +221,7 @@ class FusedBnReLU(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
-        self.apply_ema = False
+        self.apply_ema = nn.Parameter(torch.zeros(1, dtype=torch.bool), requires_grad=False)
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
@@ -287,7 +269,7 @@ class FusedBnReLU(nn.Module):
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
         else:
             self.act_range[0], self.act_range[1] = get_range(x)
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:

@@ -27,9 +27,13 @@ class QuantizedAdd(nn.Module):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
     def forward(self, bypass, prev):
-        if self.num_clusters == 1:
-            return self._general_add(bypass, prev)
+        if self.num_clusters > 1:
+            out = self._pcq_add(bypass, prev)
+        else:
+            out = self._general_add(bypass, prev)
+        return clamp_matrix(out, self.a_bit)
 
+    def _pcq_add(self, bypass, prev):
         bc = self.runtime_helper.batch_cluster
         z_bypass = torch.index_select(self.z_bypass, 0, bc)[:, None, None, None]
         z_prev = torch.index_select(self.z_prev, 0, bc)[:, None, None, None]
@@ -38,66 +42,38 @@ class QuantizedAdd(nn.Module):
         M0_prev = torch.index_select(self.M0_prev, 0, bc)[:, None, None, None]
         shift_bypass = torch.index_select(self.shift_bypass, 0, bc)[:, None, None, None]
         shift_prev = torch.index_select(self.shift_prev, 0, bc)[:, None, None, None]
+        shape = bypass.shape
+        mask = self.runtime_helper.mask_4d[:shape[0]]
+
+        bypass = bypass - z_bypass
+        prev = prev - z_prev
 
         if not self.is_bypass_shift_neg:
-            x1 = self._pcq_add(bypass, z_bypass, M0_bypass, shift_bypass)
+            total = mul_and_shift(bypass, M0_bypass, shift_bypass, mask)
         else:
-            x1 = self._pcq_add_with_negative_value(bypass, z_bypass, M0_bypass, shift_bypass)
+            total = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
+            pos_and_neg_shift(bypass, M0_bypass, shift_bypass, mask, total)
 
         if not self.is_prev_shift_neg:
-            x2 = self._pcq_add(prev, z_prev, M0_prev, shift_prev)
+            total = total + mul_and_shift(prev, M0_prev, shift_prev, mask)
         else:
-            x2 = self._pcq_add_with_negative_value(prev, z_prev, M0_prev, shift_prev)
-
-        total = (x1 + x2).add(z3)
-        return clamp_matrix(total, self.a_bit)
-
-    def _pcq_add(self, x, z, M0, shift):
-        batch_size = x.size(0)
-        x = multiply_M((x.sub(z)), M0)
-        x = shifting4d_without_cast(x, shift,
-                                    self.runtime_helper.mask_4d[:batch_size],
-                                    self.runtime_helper.zero_4d[:batch_size],
-                                    self.runtime_helper.one_4d[:batch_size])
-        return x
-
-    def _pcq_add_with_negative_value(self, x, z, M0, shift):
-        _x = torch.zeros(x.shape, dtype=torch.int64, device='cuda')
-        under = (shift < 0).nonzero(as_tuple=True)[0]
-        over = (shift >= 0).nonzero(as_tuple=True)[0]
-        n_over = len(over)
-        if len(under) > 0:
-            _shift = - shift[under]
-            x_under = multiply_M((x[under].sub(z[under]) << _shift), M0[under])
-            x_under = shifting_without_cast(x_under, 0)
-            _x[under] = x_under
-        if n_over > 0:
-            _shift = shift[over]
-            x_over = multiply_M((x[over].sub(z[over])), M0[over])
-            x_over = shifting4d_without_cast(x_over, _shift,
-                                             self.runtime_helper.mask_4d[:n_over],
-                                             self.runtime_helper.zero_4d[:n_over],
-                                             self.runtime_helper.one_4d[:n_over])
-            _x[over] = x_over
-        return _x
+            total = add_pos_and_neg_shift(prev, M0_prev, shift_prev, mask, total)
+        return total.add(z3)
 
     def _general_add(self, bypass, prev):
-        if self.shift_bypass < 0:
-            x1 = multiply_M((bypass.sub(self.z_bypass) << - self.shift_bypass), self.M0_bypass)
-            x1 = shifting(x1, 0)
-        else:
-            x1 = multiply_M(bypass.sub(self.z_bypass), self.M0_bypass)
-            x1 = shifting(x1, self.shift_bypass.item())
-        
-        if self.shift_prev < 0:
-            x2 = multiply_M((prev.sub(self.z_prev) << - self.shift_prev), self.M0_prev)
-            x2 = shifting(x2, 0)
-        else:
-            x2 = multiply_M(prev.sub(self.z_prev), self.M0_prev)
-            x2 = shifting(x2, self.shift_prev.item())
+        bypass = bypass - self.z_bypass
+        prev = prev - self.z_prev
 
-        total = (x1 + x2).add(self.z3)
-        return clamp_matrix(total, self.a_bit)
+        if self.shift_bypass < 0:
+            x1 = mul_and_shift(bypass << -self.shift_bypass.item(), self.M0_bypass, 0)
+        else:
+            x1 = mul_and_shift(bypass, self.M0_bypass, self.shift_bypass.item())
+
+        if self.shift_prev < 0:
+            x2 = mul_and_shift(prev << -self.shift_prev.item(), self.M0_prev, 0)
+        else:
+            x2 = mul_and_shift(prev, self.M0_prev, self.shift_prev.item())
+        return (x1 + x2).add(self.z3)
 
 
 class QuantizedMul(nn.Module):

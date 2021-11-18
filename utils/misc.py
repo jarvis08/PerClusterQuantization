@@ -28,8 +28,8 @@ class RuntimeHelper(object):
         self.qn_prob = 0.0
         self.num_clusters = None
         self.val_batch = None
-        self.mask_4d, self.zero_4d, self.one_4d = None, None, None
-        self.mask_2d, self.zero_2d, self.one_2d = None, None, None
+        self.mask_4d = None
+        self.mask_2d = None
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster

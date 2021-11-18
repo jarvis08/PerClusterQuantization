@@ -58,8 +58,8 @@ class QuantizedBasicBlock(nn.Module):
 
         conv_x = x
         if self.a_bit > self.target_bit:
-            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift,
-                                       self.target_bit, self.runtime_helper)
+            conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
+                                    self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
         out = self.conv1(conv_x)
         out = self.bn1(out)
@@ -115,8 +115,8 @@ class QuantizedBottleneck(nn.Module):
 
         conv_x = x
         if self.a_bit > self.target_bit:
-            conv_x = rescale_matrix_4d(x, self.z1, self.z_target, self.M0, self.shift,
-                                       self.target_bit, self.runtime_helper)
+            conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
+                                    self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
 
         out = self.conv1(conv_x)
@@ -218,8 +218,8 @@ class QuantizedResNet(nn.Module):
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
-            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                                  self.shift, self.target_bit, self.runtime_helper)
+            x = rescale_matrix(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                               self.shift, self.target_bit, self.runtime_helper)
             x = self.fc(x.type(torch.cuda.FloatTensor))
         else:
             x = self.fc(x)
@@ -288,8 +288,8 @@ class QuantizedResNet20(nn.Module):
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
-            x = rescale_matrix_2d(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                                  self.shift, self.target_bit, self.runtime_helper)
+            x = rescale_matrix(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                               self.shift, self.target_bit, self.runtime_helper)
             x = self.fc(x.type(torch.cuda.FloatTensor))
         else:
             x = self.fc(x)
