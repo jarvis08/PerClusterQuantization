@@ -25,7 +25,6 @@ class QuantizedBn2d(nn.Module):
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
-        self.total = None  # For faster inference
         self.multiplication = multiplication
 
         self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
@@ -71,12 +70,13 @@ class QuantizedBn2d(nn.Module):
 
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, M0, shift, mask)
-            return total.add(z3)
-
-        if self.total is None:
-            self.total = torch.zeros(subsum.shape, dtype=torch.int64, device='cuda')
-        pos_and_neg_shift(subsum, M0, shift, mask, self.total)
-        return self.total[:subsum.size(0)].add(z3)
+        else:
+            zero = self.runtime_helper.zero
+            neg_shift = torch.where(shift < zero, - shift, zero)
+            shift = torch.where(shift >= zero, shift, zero)
+            subsum = subsum << neg_shift
+            total = mul_and_shift(subsum, M0, shift, mask)
+        return total.add(z3)
 
     def _general_subsum(self, x):
         q1q2 = x.mul(self.weight[0][None, :, None, None])

@@ -53,6 +53,30 @@ def calc_qparams(range_min, range_max, bit):
     return s, torch.tensor(0, device='cuda')
 
 
+def calc_qparams_per_output_channel(mat, bit):
+    _mat = mat.view(mat.size(0), -1)
+    _min = _mat.min(dim=1).values
+    _max = _mat.max(dim=1).values
+
+    if bit == 4:
+        s = (_max - _min) / 15
+        z = - torch.round(_min / s)
+        return s, torch.clamp(z, 0, 15)
+    elif bit == 8:
+        s = (_max - _min) / 255
+        z = -128 - torch.round(_min / s)
+        return s, torch.clamp(z, -128, 127)
+    elif bit == 16:
+        s = (_max - _min) / 65535
+        z = -32768 - torch.round(_min / s)
+        return s, torch.clamp(z, -32768, 32767)
+    elif bit == 24:
+        s = _max.sub(_min).div(16777215)
+        return s, torch.zeros(s.shape, device='cuda')
+    s = (_max - _min) / 4294967295
+    return s, torch.tensor(0, device='cuda')
+
+
 @torch.no_grad()
 def calc_qparams_per_cluster(ranges, bit):
     zero = torch.tensor(0.0, device='cuda')
@@ -125,77 +149,48 @@ def update_activation_max(x, past, smooth, granular_level=0):
 
 
 def fake_quantize(x, scale, zero_point, bit, use_ste=False):
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
+    _x = x.detach()
+    _x = (clamp_matrix(torch.round(_x / scale + zero_point), bit) - zero_point) * scale
+    if use_ste:
+        return STE.apply(x, _x)
+    return _x
 
-    _x = (torch.clamp(torch.round(x.detach() / scale + zero_point), qmin, qmax) - zero_point) * scale
+
+def fake_quantize_per_output_channel(x, bit, use_ste=False):
+    _x = x.detach()
+    scale, zero_point = calc_qparams_per_output_channel(_x, bit)
+    scale = scale[:, None, None, None]
+    zero_point = zero_point[:, None, None, None]
+
+    _x = (clamp_matrix(torch.round(_x / scale + zero_point), bit) - zero_point) * scale
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def fake_quantize_per_cluster_2d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
-
+    _x = x.detach()
     s = torch.index_select(scale, 0, cluster_per_data)[:, None]
     z = torch.index_select(zero_point, 0, cluster_per_data)[:, None]
-    _x = (torch.clamp(torch.round(x.detach() / s + z), qmin, qmax) - z) * s
+    _x = (clamp_matrix(torch.round(_x / s + z), bit) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def fake_quantize_per_cluster_4d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
-
+    _x = x.detach()
     s = torch.index_select(scale, 0, cluster_per_data)[:, None, None, None]
     z = torch.index_select(zero_point, 0, cluster_per_data)[:, None, None, None]
-    _x = (torch.clamp(torch.round(x.detach() / s + z), qmin, qmax) - z) * s
+    _x = (clamp_matrix(torch.round(_x / s + z), bit) - z) * s
     if use_ste:
         return STE.apply(x, _x)
     return _x
 
 
 def apply_qn(x, scale, zero_point, bit, qn_prob, kernel_size=None, each_channel=False, in_feature=0, out_feature=0):
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
-
     _x = x.detach()
-    fq_x = (torch.clamp(torch.round(_x / scale + zero_point), qmin, qmax) - zero_point) * scale
+    fq_x = (clamp_matrix(torch.round(_x / scale + zero_point), bit) - zero_point) * scale
     if kernel_size is None:
         mask = torch.zeros_like(_x)
         mask.bernoulli_(1 - qn_prob)
@@ -220,52 +215,21 @@ def apply_qn(x, scale, zero_point, bit, qn_prob, kernel_size=None, each_channel=
 
 def quantize_matrix(x, scale, zero_point, bit=None):
     quantized = torch.round(x / scale + zero_point)
-
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
-    return torch.clamp(quantized, qmin, qmax)
+    return clamp_matrix(quantized, bit)
 
 
 def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None):
     scale = torch.index_select(scale, 0, batch_cluster)[:, None]
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None]
     quantized = torch.round(x / scale + zero_point)
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
-    return torch.clamp(quantized, qmin, qmax)
+    return clamp_matrix(quantized, bit)
 
 
 def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
     scale = torch.index_select(scale, 0, batch_cluster)[:, None, None, None]
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
     quantized = torch.round(x / scale + zero_point)
-    if bit == 4:
-        qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
-    else:
-        qmin, qmax = -2147483648, 2147483647
-    return torch.clamp(quantized, qmin, qmax)
+    return clamp_matrix(quantized, bit)
 
 
 def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
@@ -340,13 +304,13 @@ def quantize_M(M):
     return q_M, shift
 
 
-def multiply_M(sub_sum, q_M):
+def multiply_M(x, q_M):
     max_int = 9223372036854775807
-    overflow_max = torch.where(sub_sum == q_M, True, False)
-    overflow_min = torch.where(sub_sum == -max_int - 1, True, False)
+    overflow_max = torch.where(x == q_M, True, False)
+    overflow_min = torch.where(x == -max_int - 1, True, False)
     overflow = torch.logical_and(overflow_max, overflow_min)
 
-    subsummultiplier = sub_sum.mul(q_M)
+    subsummultiplier = x.mul(q_M)
     nudge = torch.where(subsummultiplier >= 0, (1 << 30), (1 - (1 << 30))).type(torch.cuda.IntTensor)
     subsummultiplier_high = ((subsummultiplier + nudge) / (1 << 31)).type(torch.cuda.LongTensor)
     return torch.where(overflow, max_int, subsummultiplier_high)
@@ -375,7 +339,7 @@ def shifting(cur, shift, mask=1):
     return total
 
 
-def clamp_matrix(x, bit):
+def clamp_matrix(x, bit=None):
     if bit == 4:
         qmin, qmax = 0, 15
     elif bit == 8:
@@ -392,17 +356,6 @@ def clamp_matrix(x, bit):
 def mul_and_shift(x, M0, shift, mask=1):
     multiplied = multiply_M(x, M0)
     return shifting_without_cast(multiplied, shift, mask)
-
-
-def pos_and_neg_shift(x, M0, shift, mask, out):
-    neg = (shift < 0).nonzero(as_tuple=True)[0]
-    pos = (shift >= 0).nonzero(as_tuple=True)[0]
-    n_neg, n_pos = len(neg), len(pos)
-    if n_neg > 0:
-        out[neg] = mul_and_shift(x[neg] << - shift[neg], M0[neg], 0, mask[:n_neg])
-    if n_pos > 0:
-        out[pos] = mul_and_shift(x[pos], M0[pos], shift[pos], mask[:n_pos])
-    return out
 
 
 def add_pos_and_neg_shift(x, M0, shift, mask, out):
@@ -435,7 +388,13 @@ def transfer_qparams(_fp, _int):
 
 
 def quantize_conv2d_weight(_fp, _int):
-    _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+    # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+    # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+    if _int.per_channel:
+        _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2[:, None, None, None],
+                                               _int.z2[:, None, None, None], _int.w_bit))
+    else:
+        _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
     _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     return _int
 

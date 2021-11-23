@@ -24,7 +24,6 @@ class QuantizedLinear(nn.Linear):
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features), dtype=torch.int32), requires_grad=False)
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_features), dtype=torch.int32), requires_grad=False)
-        self.total = None  # For faster inference
         self.multiplication = multiplication
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -91,12 +90,13 @@ class QuantizedLinear(nn.Linear):
 
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, M0, shift, mask)
-            return total.add(z3)
-
-        if self.total is None:
-            self.total = torch.zeros(shape, dtype=torch.int64, device='cuda')
-        self.total = pos_and_neg_shift(subsum, M0, shift, mask, self.total)
-        return self.total[:shape[0]].add(z3)
+        else:
+            zero = self.runtime_helper.zero
+            neg_shift = torch.where(shift < zero, - shift, zero)
+            shift = torch.where(shift >= zero, shift, zero)
+            subsum = subsum << neg_shift
+            total = mul_and_shift(subsum, M0, shift, mask)
+        return total.add(z3)
 
     def _general_subsum(self, x, sum_q1q2):
         if self.is_bias:

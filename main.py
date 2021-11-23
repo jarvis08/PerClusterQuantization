@@ -30,6 +30,8 @@ parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quan
 
 parser.add_argument('--quant_base', default='qat', type=str,
                     help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
+parser.add_argument('--per_channel', default=False, type=str,
+                    help='Use per output-channel quantization, or per tensor quantization')
 
 parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through Estimator in Fake Quantization")
 parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-quantize activations.'

@@ -10,7 +10,6 @@ class QuantizedAdd(nn.Module):
         self.layer_type = 'QuantizedAdd'
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.total = None  # for faster inference
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.z_bypass = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
@@ -47,17 +46,23 @@ class QuantizedAdd(nn.Module):
 
         bypass = bypass - z_bypass
         prev = prev - z_prev
+        zero = self.runtime_helper.zero
 
         if not self.is_bypass_shift_neg:
             total = mul_and_shift(bypass, M0_bypass, shift_bypass, mask)
         else:
-            total = torch.zeros(bypass.shape, dtype=torch.int64, device='cuda')
-            pos_and_neg_shift(bypass, M0_bypass, shift_bypass, mask, total)
+            neg_shift = torch.where(shift_bypass < zero, - shift_bypass, zero)
+            shift = torch.where(shift_bypass >= zero, shift_bypass, zero)
+            bypass = bypass << neg_shift
+            total = mul_and_shift(bypass, M0_bypass, shift, mask)
 
         if not self.is_prev_shift_neg:
             total = total + mul_and_shift(prev, M0_prev, shift_prev, mask)
         else:
-            total = add_pos_and_neg_shift(prev, M0_prev, shift_prev, mask, total)
+            neg_shift = torch.where(shift_prev < zero, - shift_prev, zero)
+            shift = torch.where(shift_prev >= zero, shift_prev, zero)
+            prev = prev << neg_shift
+            total = total + mul_and_shift(prev, M0_prev, shift, mask)
         return total.add(z3)
 
     def _general_add(self, bypass, prev):
