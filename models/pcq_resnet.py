@@ -82,7 +82,7 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.target_bit)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.target_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.target_bit, use_ste=self.use_ste)
 
     @torch.no_grad()
@@ -103,8 +103,9 @@ class PCQBasicBlock(nn.Module):
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         self.bn2.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
-        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit)
+        zero = self.runtime_helper.fzero
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -179,7 +180,7 @@ class PCQBottleneck(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.target_bit)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.target_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.target_bit)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
@@ -201,8 +202,9 @@ class PCQBottleneck(nn.Module):
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
-        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit)
+        zero = self.runtime_helper.fzero
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -299,15 +301,16 @@ class PCQResNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.in_bit)
 
     @torch.no_grad()
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit)
+        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, zero)
 
         blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
         for block in blocks:
@@ -394,16 +397,17 @@ class PCQResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.in_bit)
 
     @torch.no_grad()
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit)
+        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, zero)
 
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:

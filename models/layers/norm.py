@@ -71,7 +71,7 @@ class QuantizedBn2d(nn.Module):
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, M0, shift, mask)
         else:
-            zero = self.runtime_helper.zero
+            zero = self.runtime_helper.izero
             neg_shift = torch.where(shift < zero, - shift, zero)
             shift = torch.where(shift >= zero, shift, zero)
             subsum = subsum << neg_shift
@@ -137,8 +137,6 @@ class PCQBnReLU(nn.Module):
         cluster = self.runtime_helper.batch_cluster
         bn = self.norms[cluster]
         out = bn(x)
-        if self.activation:
-            out = self.activation(out)
 
         with torch.no_grad():
             _x = x.detach()
@@ -147,13 +145,14 @@ class PCQBnReLU(nn.Module):
 
             weight = bn.weight.div(torch.sqrt(var + bn.eps))
             bias = bn.bias - weight * mean
-            scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_bit, self.runtime_helper.fzero)
             weight = fake_quantize(weight, scale, zero_point, self.w_bit)
 
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
-            if self.activation:
-                fake_out = self.activation(fake_out)
-        return STE.apply(out, fake_out)
+        out = STE.apply(out, fake_out)
+        if self.activation:
+            out = self.activation(out)
+        return out
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
@@ -178,14 +177,16 @@ class PCQBnReLU(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
+        zero = self.runtime_helper.fzero
         if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
         else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
 
         _weights = torch.zeros((self.num_clusters, self.num_features), device='cuda')
@@ -194,12 +195,12 @@ class PCQBnReLU(nn.Module):
             _weights[c] = self.norms[c].weight
             _vars[c] = self.norms[c].running_var
         weight = _weights.div(torch.sqrt(_vars + self.norms[0].eps))
-        self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_bit)
+        self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_bit, zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
+            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
 
         self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
         self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)

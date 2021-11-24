@@ -182,22 +182,20 @@ def _finetune(args, tools):
         json.dump(tmp, f, indent=4)
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
-    method = ''
-    if args.quant_noise:
-        method += 'QN{:.1f}+'.format(args.qn_prob)
     if args.cluster > 1:
-        method += 'PCQ({}), K: {}'.format(args.clustering_method, args.cluster)
-    elif not args.quant_noise:
-        method += 'QAT'
+        method = 'DAQ({}, K{})+{}'.format(args.clustering_method, args.cluster, args.quant_base)
+    else:
+        method = args.quant_base
 
-    bn = ''
-    if args.bn_momentum < 0.1:
-        bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
+    pc = ''
+    if args.per_channel:
+        pc = 'PerChannel, '
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, LR: {}, {}Epoch: {}, Batch: {}, Bit(First/Last): {}({}/{}), FQ: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.arch, method, args.lr, bn, args.epoch, args.batch, args.bit,
-                    args.bit_first, args.bit_classifier, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
+        f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch,
+                        pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
+                        tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):

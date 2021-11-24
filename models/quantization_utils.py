@@ -29,11 +29,7 @@ def get_range(x):
     return _x.min().item(), _x.max().item()
 
 
-@torch.no_grad()
-def calc_qparams(range_min, range_max, bit):
-    _min = torch.tensor(0.0, device='cuda') if range_min > 0.0 else range_min
-    _max = torch.tensor(0.0, device='cuda') if range_max < 0.0 else range_max
-
+def get_scale_and_zeropoint(_min, _max, bit):
     if bit == 4:
         s = (_max - _min) / 15
         z = - torch.round(_min / s)
@@ -53,53 +49,31 @@ def calc_qparams(range_min, range_max, bit):
     return s, torch.tensor(0, device='cuda')
 
 
-def calc_qparams_per_output_channel(mat, bit):
+def calc_qparams(range_min, range_max, bit, zero=None):
+    if zero is None:
+        zero = torch.tensor(0.0, device='cuda')
+    _min = zero if range_min > 0.0 else range_min
+    _max = zero if range_max < 0.0 else range_max
+    return get_scale_and_zeropoint(_min, _max, bit)
+
+
+def calc_qparams_per_output_channel(mat, bit, zero=None):
+    if zero is None:
+        zero = torch.tensor(0.0, device='cuda')
     _mat = mat.view(mat.size(0), -1)
     _min = _mat.min(dim=1).values
     _max = _mat.max(dim=1).values
-
-    if bit == 4:
-        s = (_max - _min) / 15
-        z = - torch.round(_min / s)
-        return s, torch.clamp(z, 0, 15)
-    elif bit == 8:
-        s = (_max - _min) / 255
-        z = -128 - torch.round(_min / s)
-        return s, torch.clamp(z, -128, 127)
-    elif bit == 16:
-        s = (_max - _min) / 65535
-        z = -32768 - torch.round(_min / s)
-        return s, torch.clamp(z, -32768, 32767)
-    elif bit == 24:
-        s = _max.sub(_min).div(16777215)
-        return s, torch.zeros(s.shape, device='cuda')
-    s = (_max - _min) / 4294967295
-    return s, torch.tensor(0, device='cuda')
+    _min = torch.where(_min <= zero, _min, zero)
+    _max = torch.where(_max >= zero, _max, zero)
+    return get_scale_and_zeropoint(_min, _max, bit)
 
 
-@torch.no_grad()
-def calc_qparams_per_cluster(ranges, bit):
-    zero = torch.tensor(0.0, device='cuda')
+def calc_qparams_per_cluster(ranges, bit, zero=None):
+    if zero is None:
+        zero = torch.tensor(0.0, device='cuda')
     _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
     _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
-
-    if bit == 4:
-        s = _max.sub(_min).div(15)
-        z = - torch.round(_min / s)
-        return s, torch.clamp(z, 0, 15)
-    elif bit == 8:
-        s = _max.sub(_min).div(255)
-        z = -128 - torch.round(_min / s)
-        return s, torch.clamp(z, -128, 127)
-    elif bit == 16:
-        s = _max.sub(_min).div(65535)
-        z = -32768 - torch.round(_min / s)
-        return s, torch.clamp(z, -32768, 32767)
-    elif bit == 24:
-        s = _max.sub(_min).div(16777215)
-        return s, torch.zeros(s.shape, device='cuda')
-    s = _max.sub(_min).div(4294967295)
-    return s, torch.zeros(s.shape, device='cuda')
+    return get_scale_and_zeropoint(_min, _max, bit)
 
 
 @torch.no_grad()
@@ -110,44 +84,6 @@ def ema(x, averaged, smooth):
     return updated_min, updated_max
 
 
-@torch.no_grad()
-def get_min_value(x, granular_level=0):
-    if granular_level:
-        data = x.view(x.size(0) // granular_level, -1)
-        return data.min(dim=1).values.mean()
-    else:
-        return x.min()
-
-
-@torch.no_grad()
-def get_min_value(x, granular_level=0):
-    if granular_level:
-        data = x.view(x.size(0) // granular_level, -1)
-        return data.max(dim=1).values.mean()
-    else:
-        return x.max()
-
-
-@torch.no_grad()
-def update_activation_min(x, past, smooth, granular_level=0):
-    if granular_level:
-        data = x.view(x.size(0) // granular_level, -1)
-        _min = data.min(dim=1).values.mean()
-        return past * smooth + _min * (1 - smooth)
-    else:
-        return past * smooth + x.min() * (1 - smooth)
-
-
-@torch.no_grad()
-def update_activation_max(x, past, smooth, granular_level=0):
-    if granular_level:
-        data = x.view(x.size(0) // granular_level, -1)
-        _max = data.max(dim=1).values.mean()
-        return past * smooth + _max * (1 - smooth)
-    else:
-        return past * smooth + x.max() * (1 - smooth)
-
-
 def fake_quantize(x, scale, zero_point, bit, use_ste=False):
     _x = x.detach()
     _x = (clamp_matrix(torch.round(_x / scale + zero_point), bit) - zero_point) * scale
@@ -156,9 +92,9 @@ def fake_quantize(x, scale, zero_point, bit, use_ste=False):
     return _x
 
 
-def fake_quantize_per_output_channel(x, bit, use_ste=False):
+def fake_quantize_per_output_channel(x, bit, zero, use_ste=False):
     _x = x.detach()
-    scale, zero_point = calc_qparams_per_output_channel(_x, bit)
+    scale, zero_point = calc_qparams_per_output_channel(_x, bit, zero)
     scale = scale[:, None, None, None]
     zero_point = zero_point[:, None, None, None]
 

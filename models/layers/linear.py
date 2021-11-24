@@ -91,7 +91,7 @@ class QuantizedLinear(nn.Linear):
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, M0, shift, mask)
         else:
-            zero = self.runtime_helper.zero
+            zero = self.runtime_helper.izero
             neg_shift = torch.where(shift < zero, - shift, zero)
             shift = torch.where(shift >= zero, shift, zero)
             subsum = subsum << neg_shift
@@ -161,7 +161,8 @@ class PCQLinear(nn.Module):
         return x
 
     def _pcq(self, x):
-        s, z = calc_qparams(self.fc.weight.detach().min(), self.fc.weight.detach().max(), self.w_bit)
+        w = self.fc.weight.detach()
+        s, z = calc_qparams(w.min(), w.max(), self.w_bit, self.runtime_helper.fzero)
         if not self.quant_noise:
             w = fake_quantize(self.fc.weight, s, z, self.w_bit, use_ste=self.use_ste)
         else:
@@ -200,21 +201,23 @@ class PCQLinear(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
+        zero = self.runtime_helper.fzero
         if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
         else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit)
+        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit, zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
+            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
 
         self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
         self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)

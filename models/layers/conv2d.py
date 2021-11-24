@@ -34,23 +34,17 @@ class QuantizedConv2d(nn.Conv2d):
         self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.activation = activation
-
         self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
-        if not self.per_channel:
-            self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
-            self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
-            self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-            self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        else:
+        if self.per_channel:
             self.s2 = nn.Parameter(torch.zeros(out_channels, dtype=torch.float32), requires_grad=False)
             self.z2 = nn.Parameter(torch.zeros(out_channels, dtype=torch.int32), requires_grad=False)
             self.M0 = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
             self.shift = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
+        else:
+            self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+            self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+            self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+            self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
     def forward(self, x):
         x, out = self._conv_impl(x)
@@ -152,7 +146,7 @@ class QuantizedConv2d(nn.Conv2d):
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, M0, shift, mask)
         else:
-            zero = self.runtime_helper.zero
+            zero = self.runtime_helper.izero
             neg_shift = torch.where(shift < zero, - shift, zero)
             shift = torch.where(shift >= zero, shift, zero)
             subsum = subsum << neg_shift
@@ -242,11 +236,12 @@ class PCQConv2d(nn.Module):
         return x
 
     def _pcq(self, x):
-        # s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit)
+        zero = self.runtime_helper.fzero
         if self.per_channel:
-            w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, use_ste=self.use_ste)
+            w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero, use_ste=self.use_ste)
         else:
-            s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit)
+            w = self.conv.weight.detach()
+            s, z = calc_qparams(w.min(), w.max(), self.w_bit, zero)
             w = fake_quantize(self.conv.weight, s, z, self.w_bit, use_ste=self.use_ste)
         # if not self.quant_noise:
         #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, use_ste=self.use_ste)
@@ -281,30 +276,27 @@ class PCQConv2d(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.batch_cluster
+        zero = self.runtime_helper.fzero
         if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
         else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
-        # self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit)
         if self.per_channel:
-            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit)
+            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit, zero)
         else:
-            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit)
+            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit, zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit)
+            self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
 
-        # self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
-        # self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
-        # for c in range(self.num_clusters):
-        #     self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
         if self.per_channel:
             self.M0 = torch.zeros((self.num_clusters, self.out_channels), dtype=torch.int32)
             self.shift = torch.zeros((self.num_clusters, self.out_channels), dtype=torch.int32)

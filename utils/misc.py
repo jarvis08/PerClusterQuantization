@@ -30,7 +30,8 @@ class RuntimeHelper(object):
         self.val_batch = None
         self.mask_4d = None
         self.mask_2d = None
-        self.zero = None
+        self.izero = None
+        self.fzero = None
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
@@ -39,7 +40,8 @@ class RuntimeHelper(object):
         mask = torch.ones(self.val_batch, dtype=torch.int64, device='cuda')
         self.mask_4d = mask.view(-1, 1, 1, 1)
         self.mask_2d = mask.view(-1, 1)
-        self.zero = torch.tensor([0], dtype=torch.int32, device='cuda')
+        self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
+        self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
 
 
 class InputContainer(object):

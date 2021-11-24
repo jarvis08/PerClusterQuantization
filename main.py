@@ -8,14 +8,14 @@ from evaluate import _evaluate
 from utils.lipschitz import check_lipschitz
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--mode', default='eval', type=str, help="pre/fine/eval/lip")
-parser.add_argument('--arch', default='alexnet', type=str, help='Architecture to train/eval')
+parser.add_argument('--mode', default='fine', type=str, help="pre/fine/eval/lip")
+parser.add_argument('--arch', default='resnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
-parser.add_argument('--dali', default=False, type=bool, help='Use GPU data augmentation DALI')
+parser.add_argument('--dali', action='store_true', help='Use GPU data augmentation DALI')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
@@ -24,37 +24,41 @@ parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rat
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
 parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d's momentum factor")
 
-parser.add_argument('--fused', default=False, type=bool, help="Evaluate fine-tuned, fused model")
-parser.add_argument('--quantized', default=False, type=bool, help="Evaluate quantized model")
+parser.add_argument('--fused', action='store_true', help='Evaluate or fine-tune fused model')
+parser.add_argument('--quantized', action='store_true', help='Evaluate quantized model')
 
 
 parser.add_argument('--quant_base', default='qat', type=str,
                     help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
-parser.add_argument('--per_channel', default=False, type=str,
+parser.add_argument('--per_channel', action='store_true',
                     help='Use per output-channel quantization, or per tensor quantization')
+parser.add_argument('--fold_convbn', action='store_true',
+                    help="Fake Quantize CONV's weight after folding BatchNormalization")
 
 parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through Estimator in Fake Quantization")
 parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-quantize activations.'
                                                       ' PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
-parser.add_argument('--bit_conv_act', default=16, type=int, help="CONV's activation bit size when not using CONV & BN folding")
+parser.add_argument('--bit_conv_act', default=16, type=int,
+                    help="CONV's activation bit size when not using Conv&BN folding")
 parser.add_argument('--bit_bn_w', default=8, type=int, help="BN's weight bit size when not using CONV & BN folding")
 parser.add_argument('--bit_addcat', default=0, type=int, help="Bit size used in Skip-connection")
 parser.add_argument('--bit_first', default=0, type=int, help="First layer's bit size")
 parser.add_argument('--bit_classifier', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
-parser.add_argument('--fold_convbn', default=False, type=bool, help="Fake Quantize CONV's weight after folding BatchNormalization")
 
-parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means/BIRCH) to use in PCQ")
+parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means or BIRCH)")
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
-parser.add_argument('--partition', default=4, type=int, help="Number of partitions to divide a channel in kmeans clustering's input")
+parser.add_argument('--partition', default=4, type=int,
+                    help="Number of partitions to divide per channel for clustering's input")
 parser.add_argument('--partition_method', default='square', type=str, help="How to divide image into partitions")
 parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
 
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")
-parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model multiple times, and use the best model")
-parser.add_argument('--visualize_clustering', default=False, type=bool, help="Visualize clustering result with PCA-ed training dataset")
+parser.add_argument('--kmeans_init', default=10, type=int, help="Train K-means model n-times, and use the best model")
+parser.add_argument('--visualize_clustering', action='store_true',
+                    help="Visualize clustering result with PCA-ed training dataset")
 
 parser.add_argument('--quant_noise', default=False, type=bool, help='Apply quant noise')
 parser.add_argument('--qn_prob', default=0.2, type=float, help='quant noise probaility 0.05~0.2')
@@ -64,7 +68,6 @@ parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
-
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 

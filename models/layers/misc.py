@@ -46,24 +46,24 @@ class QuantizedAdd(nn.Module):
 
         bypass = bypass - z_bypass
         prev = prev - z_prev
-        zero = self.runtime_helper.zero
+        zero = self.runtime_helper.izero
 
         if not self.is_bypass_shift_neg:
-            total = mul_and_shift(bypass, M0_bypass, shift_bypass, mask)
+            x1 = mul_and_shift(bypass, M0_bypass, shift_bypass, mask)
         else:
             neg_shift = torch.where(shift_bypass < zero, - shift_bypass, zero)
             shift = torch.where(shift_bypass >= zero, shift_bypass, zero)
             bypass = bypass << neg_shift
-            total = mul_and_shift(bypass, M0_bypass, shift, mask)
+            x1 = mul_and_shift(bypass, M0_bypass, shift, mask)
 
         if not self.is_prev_shift_neg:
-            total = total + mul_and_shift(prev, M0_prev, shift_prev, mask)
+            x2 = mul_and_shift(prev, M0_prev, shift_prev, mask)
         else:
             neg_shift = torch.where(shift_prev < zero, - shift_prev, zero)
             shift = torch.where(shift_prev >= zero, shift_prev, zero)
             prev = prev << neg_shift
-            total = total + mul_and_shift(prev, M0_prev, shift, mask)
-        return total.add(z3)
+            x2 = mul_and_shift(prev, M0_prev, shift, mask)
+        return (x1 + x2).add(z3)
 
     def _general_add(self, bypass, prev):
         bypass = bypass - self.z_bypass
