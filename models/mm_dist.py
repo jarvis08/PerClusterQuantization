@@ -87,7 +87,7 @@ class MinMaxDistClustering(object):
             indices = (dataset[:, model[dim]['index']] > model[dim]['value']).nonzero(as_tuple=True)[0]
 
             if dim != n_points - 1:
-                dataset[indices] = dataset
+                dataset = dataset[indices]
                 var_per_dim = torch.var(dataset, dim=0)
                 topk_dims = torch.topk(var_per_dim, n_points).indices
 
