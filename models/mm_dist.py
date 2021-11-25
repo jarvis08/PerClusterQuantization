@@ -34,8 +34,9 @@ class MinMaxDistClustering(object):
         found = set()
         rst = torch.full(data.size(0), self.args.cluster - 1, dtype=torch.int64)
         for c in range(self.args.cluster - 1):
-            dim = self.model[c]['index']
-            value = self.model[c]['value']
+            cluster_key = str(c)
+            dim = self.model[cluster_key]['index']
+            value = self.model[cluster_key]['value']
             indices = set((data[:, dim] < value).nonzero(as_tuple=True)[0].tolist())
             newly_found = indices - found
             found.update(newly_found)
