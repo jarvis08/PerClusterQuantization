@@ -83,7 +83,7 @@ class MinMaxDistClustering(object):
         topk_dims = torch.topk(var_per_dim, n_points).indices
         for dim in range(n_points):
             model[dim]['index'] = topk_dims[dim].item()
-            model[dim]['value'] = torch.quantile(dataset[:, topk_dims[dim]], [to_percentile]).item()
+            model[dim]['value'] = torch.quantile(dataset[:, topk_dims[dim]], to_percentile).item()
             indices = (dataset[:, model[dim]['index']] > model[dim]['value']).nonzero(as_tuple=True)[0]
 
             if dim != n_points - 1:
