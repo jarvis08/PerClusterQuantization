@@ -92,7 +92,7 @@ class MinMaxDistClustering(object):
                 topk_dims = torch.topk(var_per_dim, n_points).indices
 
         path = self.args.clustering_path
-        with open(os.path.join(path + 'model.json'), "w") as f:
+        with open(os.path.join(path, 'model.json'), "w") as f:
             json.dump(model, f, indent=4)
         with open(os.path.join(path, "params.json"), 'w') as f:
             args_to_save = {'k': self.args.cluster, 'partition_method': self.args.partition_method,
