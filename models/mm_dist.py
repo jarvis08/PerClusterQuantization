@@ -32,7 +32,7 @@ class MinMaxDistClustering(object):
     @torch.no_grad()
     def predict(self, data):
         found = set()
-        rst = torch.full(data.size(0), self.args.cluster - 1, dtype=torch.int64)
+        rst = torch.full((data.size(0), 1), self.args.cluster - 1, dtype=torch.int64)
         for c in range(self.args.cluster - 1):
             cluster_key = str(c)
             dim = self.model[cluster_key]['index']
@@ -40,8 +40,8 @@ class MinMaxDistClustering(object):
             indices = set((data[:, dim] < value).nonzero(as_tuple=True)[0].tolist())
             newly_found = indices - found
             found.update(newly_found)
-            rst[list(newly_found)] = c
-        return rst
+            rst[list(newly_found), 0] = c
+        return rst.view(-1)
 
     def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
