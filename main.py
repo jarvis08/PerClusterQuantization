@@ -105,6 +105,8 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
     if is_pcq:
         if clustering_method == 'kmeans':
             setattr(tools, 'clustering_method', KMeans)
+        elif clustering_method == 'dist':
+            setattr(tools, 'clustering_method', MinMaxDistClustering)
         else:
             setattr(tools, 'clustering_method', BIRCH)
 
@@ -210,7 +212,7 @@ def specify_target_arch(arch, dataset, num_clusters):
     return arch, model_initializers
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     assert args.arch in ['mlp', 'alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
     if args.mode == 'fine':
