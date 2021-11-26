@@ -77,19 +77,20 @@ class MinMaxDistClustering(object):
                     dataset = torch.cat((dataset, batch))
 
         n_points = self.args.cluster - 1
-        to_percentile = 1 / self.args.cluster
-
+        left_n_cluster = self.args.cluster
         var_per_dim = torch.var(dataset, dim=0)
         topk_dims = torch.topk(var_per_dim, n_points).indices
         for dim in range(n_points):
+            percentage = 1 / left_n_cluster
             model[dim]['index'] = topk_dims[dim].item()
-            model[dim]['value'] = torch.quantile(dataset[:, topk_dims[dim]], to_percentile).item()
+            model[dim]['value'] = torch.quantile(dataset[:, topk_dims[dim]], percentage).item()
             indices = (dataset[:, model[dim]['index']] > model[dim]['value']).nonzero(as_tuple=True)[0]
 
             if dim != n_points - 1:
                 dataset = dataset[indices]
                 var_per_dim = torch.var(dataset, dim=0)
                 topk_dims = torch.topk(var_per_dim, n_points).indices
+                left_n_cluster -= 1
 
         path = self.args.clustering_path
         with open(os.path.join(path, 'model.json'), "w") as f:
