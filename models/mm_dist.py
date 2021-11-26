@@ -64,8 +64,9 @@ class MinMaxDistClustering(object):
     def train_clustering_model(self, train_loader):
         print("Making clustering model by parsing index of representation whose var is the largest among the left data")
         model = dict()
-        for i in range(self.args.cluster):
-            model[i] = {'index': 0, 'value': 0.0}
+        for c in range(self.args.cluster):
+            cluster_key = str(c)
+            model[cluster_key] = {'index': 0, 'value': 0.0}
 
         dataset = None
         with tqdm(train_loader, unit="batch", ncols=90) as t:
@@ -76,21 +77,32 @@ class MinMaxDistClustering(object):
                 else:
                     dataset = torch.cat((dataset, batch))
 
-        n_points = self.args.cluster - 1
+        n_dims_to_choose = self.args.cluster - 1
+        used_dims = []
         left_n_cluster = self.args.cluster
         var_per_dim = torch.var(dataset, dim=0)
-        topk_dims = torch.topk(var_per_dim, n_points).indices
-        for dim in range(n_points):
-            percentage = 1 / left_n_cluster
-            dim_key = str(dim)
-            model[dim_key]['index'] = topk_dims[dim].item()
-            model[dim_key]['value'] = torch.quantile(dataset[:, topk_dims[dim]], percentage).item()
-            indices = (dataset[:, model[dim_key]['index']] > model[dim_key]['value']).nonzero(as_tuple=True)[0]
+        topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
+        for c in range(n_dims_to_choose):
+            idx = -1
+            while True:
+                idx += 1
+                dim = topk_dims[idx].item()
+                if dim not in used_dims:
+                    used_dims.append(dim)
+                    break
 
-            if dim != n_points - 1:
+            target_dim = used_dims[-1]
+            percentage = 1 / left_n_cluster
+            cluster_key = str(c)
+
+            model[cluster_key]['index'] = target_dim
+            model[cluster_key]['value'] = torch.quantile(dataset[:, target_dim], percentage).item()
+            indices = (dataset[:, model[cluster_key]['index']] > model[cluster_key]['value']).nonzero(as_tuple=True)[0]
+
+            if c != n_dims_to_choose - 1:
                 dataset = dataset[indices]
                 var_per_dim = torch.var(dataset, dim=0)
-                topk_dims = torch.topk(var_per_dim, n_points).indices
+                topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
                 left_n_cluster -= 1
 
         path = self.args.clustering_path
