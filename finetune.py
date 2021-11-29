@@ -47,6 +47,7 @@ def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
 
+    clustering_train_loader = None
     test_loader = None
     augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
     if args.dataset != 'imagenet':
@@ -54,7 +55,13 @@ def _finetune(args, tools):
         train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
 
         non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
-        _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
+        if args.cluster > 1 and not args.clustering_path:
+            non_augmented_train_dataset, val_dataset = \
+                split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
+            clustering_train_loader = get_data_loader(non_augmented_train_dataset,
+                                                      batch_size=128, shuffle=True, workers=args.worker)
+        else:
+            _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
 
         test_dataset = get_test_dataset(args, normalizer)
         test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
@@ -88,7 +95,7 @@ def _finetune(args, tools):
         clustering_model = tools.clustering_method(args)
         if not args.clustering_path:
             args.clustering_path = set_clustering_dir(args)
-            clustering_model.train_clustering_model(train_loader)
+            clustering_model.train_clustering_model(clustering_train_loader)
         else:
             clustering_model.load_clustering_model()
 

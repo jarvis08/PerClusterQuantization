@@ -4,6 +4,11 @@ from tqdm import tqdm
 import json
 import os
 
+# import pandas as pd
+# import seaborn as sns
+# sns.set(style="darkgrid", font_scale=1.2)
+# import matplotlib.pyplot as plt
+
 
 class MinMaxDistClustering(object):
     def __init__(self, args):
@@ -17,10 +22,10 @@ class MinMaxDistClustering(object):
         channel = data.size(1)
         _size = data.size(2)
 
-        n_part = int((self.args.partition / 2)
-                     if self.args.partition % 2 == 0
-                     else (self.args.partition / 3))  # Per row & col
-        n_data = int(_size / n_part)  # Per part
+        n_part = self.args.partition // 2      \
+                 if self.args.partition % 2 == 0 \
+                 else self.args.partition // 3  # Per row & col
+        n_data = _size // n_part  # Per part
 
         data = data.view(batch, channel, n_part, n_data, _size).transpose(3, 4)
         data = data.reshape(batch, channel, n_part * n_part, -1)
@@ -31,17 +36,48 @@ class MinMaxDistClustering(object):
 
     @torch.no_grad()
     def predict(self, data):
-        found = set()
-        rst = torch.full((data.size(0), 1), self.args.cluster - 1, dtype=torch.int64)
-        for c in range(self.args.cluster - 1):
-            cluster_key = str(c)
-            dim = self.model[cluster_key]['index']
-            value = self.model[cluster_key]['value']
-            indices = set((data[:, dim] < value).nonzero(as_tuple=True)[0].tolist())
-            newly_found = indices - found
-            found.update(newly_found)
-            rst[list(newly_found), 0] = c
-        return rst.view(-1)
+        rst = torch.zeros(data.size(0), dtype=torch.int64)
+        indices = torch.arange(data.size(0))
+        wip_indices = indices
+
+        path_per_cluster = self.model['path']
+        model_ptr = self.model['root']
+        for path in path_per_cluster:
+            for step, p in enumerate(path[1:]):
+                dim = model_ptr['dim']
+                value = model_ptr['value']
+
+                if p == 'gt':
+                    found = (data[wip_indices, dim] >= value).nonzero(as_tuple=True)[0]
+                else:
+                    found = (data[wip_indices, dim] < value).nonzero(as_tuple=True)[0]
+
+                if found.size(0) == 0:
+                    break
+
+                wip_indices = wip_indices[found]
+                if step == len(path[1:]) - 1:
+                    rst[wip_indices] = model_ptr[p]['cluster']
+                else:
+                    model_ptr = model_ptr[p]
+            model_ptr = self.model['root']
+            wip_indices = indices
+        _, counts = torch.unique(rst, return_counts=True)
+        return rst
+
+    # @torch.no_grad()
+    # def predict(self, data):
+    #     found = set()
+    #     rst = torch.full((data.size(0), 1), self.args.cluster - 1, dtype=torch.int64)
+    #     for c in range(self.args.cluster - 1):
+    #         cluster_key = str(c)
+    #         dim = self.model[cluster_key]['index']
+    #         value = self.model[cluster_key]['value']
+    #         indices = set((data[:, dim] < value).nonzero(as_tuple=True)[0].tolist())
+    #         newly_found = indices - found
+    #         found.update(newly_found)
+    #         rst[list(newly_found), 0] = c
+    #     return rst.view(-1)
 
     def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
@@ -61,13 +97,21 @@ class MinMaxDistClustering(object):
         cluster_info = self.predict(partitioned_minmax)
         return torch.LongTensor(cluster_info)
 
+    @torch.no_grad()
     def train_clustering_model(self, train_loader):
-        print("Making clustering model by parsing index of representation whose var is the largest among the left data")
-        model = dict()
-        for c in range(self.args.cluster):
-            cluster_key = str(c)
-            model[cluster_key] = {'index': 0, 'value': 0.0}
+        def check_dividable_cluster(level, identity):
+            if level['divided']:
+                gt_rst = check_dividable_cluster(level['gt'], 'gt')
+                lt_rst = check_dividable_cluster(level['lt'], 'lt')
 
+                paths = gt_rst + lt_rst
+                for i in range(len(paths)):
+                    paths[i] = [identity] + paths[i]
+                return paths
+            else:
+                return [[identity]]
+
+        print("Making clustering model by parsing index of representation whose var is the largest among the left data")
         dataset = None
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
@@ -77,33 +121,180 @@ class MinMaxDistClustering(object):
                 else:
                     dataset = torch.cat((dataset, batch))
 
+        num_data = dataset.size(0)
+        min_data_per_cluster = num_data // (self.args.cluster * 2)
         n_dims_to_choose = self.args.cluster - 1
-        used_dims = []
-        left_n_cluster = self.args.cluster
-        var_per_dim = torch.var(dataset, dim=0)
-        topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
-        for c in range(n_dims_to_choose):
-            idx = -1
-            while True:
-                idx += 1
-                dim = topk_dims[idx].item()
-                if dim not in used_dims:
-                    used_dims.append(dim)
+
+        builder = dict()
+        builder['root'] = {'index': torch.arange(num_data), 'num_data': num_data, 'divided': False}
+
+        used_dims = []  # len(chosen) + 1 == found_num_clusters
+        indivisible_cluster_paths = []
+        while True:
+            candidate_paths = check_dividable_cluster(builder['root'], 'root')
+            candidate_ptrs = []
+            candidate_vars = []
+            candidate_dim = []
+            for c in range(len(candidate_paths)):
+                cdd_ptr = builder
+                for p in candidate_paths[c]:
+                    cdd_ptr = cdd_ptr[p]
+                candidate_ptrs.append(cdd_ptr)
+
+                if cdd_ptr['num_data'] < min_data_per_cluster * 2:
+                    continue
+                cdd_data = dataset[cdd_ptr['index']]
+
+                var_per_dim = torch.var(cdd_data, dim=0)
+                variables, indices = torch.topk(var_per_dim, n_dims_to_choose)
+                for var, dim in zip(variables, indices):
+                    if dim not in used_dims:
+                        candidate_vars.append(var.item())
+                        candidate_dim.append(dim.item())
+                        break
+            assert len(candidate_vars), f"Can't divide dataset into {self.args.cluster} clusters. Change clustering criteria."
+
+            candidate_vars = torch.tensor(candidate_vars)
+            _, cdd_indices = torch.sort(candidate_vars, dim=0)
+
+            target_dict = None
+            target_dim = None
+            value = None
+            gt_indices = None
+            lt_indices = None
+            found = False
+            for target in cdd_indices:
+                if "".join(candidate_paths[target]) in indivisible_cluster_paths:
+                    continue
+
+                target_dict = candidate_ptrs[target]
+                target_idx = target_dict['index']
+                target_dim = candidate_dim[target]
+                target_data = dataset[target_idx]
+
+                is_max = True if target_dim % 2 != 0 else False
+                cnt_per_bin_of_the_dim = torch.histc(target_data[:, target_dim], bins=100)  # In ascending order
+                max_bin_value, max_bin_index = torch.max(cnt_per_bin_of_the_dim, dim=0)
+                if is_max:
+                    if max_bin_index != cnt_per_bin_of_the_dim.size(0) - 1:
+                        idx = max_bin_index + (cnt_per_bin_of_the_dim.size(0) - 1 - max_bin_index) // 2
+                        ratio = torch.sum(cnt_per_bin_of_the_dim[:idx]) / target_data.size(0)
+                        while ratio * target_data.size(0) < min_data_per_cluster:
+                            ratio *= 2
+                        if ratio > 1.0:
+                            continue
+                    else:
+                        ratio = 0.25
+                else:
+                    if max_bin_index != 0:
+                        idx = max_bin_index // 2
+                        ratio = torch.sum(cnt_per_bin_of_the_dim[:idx]) / target_data.size(0)
+                        while ratio * target_data.size(0) < min_data_per_cluster:
+                            ratio *= 2
+                        if ratio > 1.0:
+                            continue
+                    else:
+                        ratio = 0.75
+                value = torch.quantile(target_data[:, target_dim], ratio)
+
+                target_idx = set(target_idx.tolist())
+                gt_indices = set((dataset[:, target_dim] >= value).nonzero(as_tuple=True)[0].tolist())
+                lt_indices = set((dataset[:, target_dim] < value).nonzero(as_tuple=True)[0].tolist())
+                gt_indices = torch.tensor(list(gt_indices.intersection(target_idx)), dtype=torch.int64)
+                lt_indices = torch.tensor(list(lt_indices.intersection(target_idx)), dtype=torch.int64)
+                if gt_indices.size(0) < min_data_per_cluster or lt_indices.size(0) < min_data_per_cluster:
+                    indivisible_cluster_paths.append("".join(candidate_paths[target]))
+                else:
+                    found = True
                     break
+            assert found, f"Can't divide dataset into {self.args.cluster} clusters. Change clustering criteria."
 
-            target_dim = used_dims[-1]
-            percentage = 1 / left_n_cluster
-            cluster_key = str(c)
+            target_dict['divided'] = True
+            target_dict['dim'] = target_dim
+            target_dict['value'] = value
+            target_dict['gt'] = dict({'index': gt_indices, 'num_data': gt_indices.size(0), 'divided': False})
+            target_dict['lt'] = dict({'index': lt_indices, 'num_data': lt_indices.size(0), 'divided': False})
+            used_dims.append(target_dim)
 
-            model[cluster_key]['index'] = target_dim
-            model[cluster_key]['value'] = torch.quantile(dataset[:, target_dim], percentage).item()
-            indices = (dataset[:, model[cluster_key]['index']] > model[cluster_key]['value']).nonzero(as_tuple=True)[0]
+            # d = target_dict['dim']
+            # if d % 2:
+            #     min_or_max = 'max'
+            # else:
+            #     min_or_max = 'min'
+            # kind = 'hist'
+            # pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs/SVHN'
+            #
+            # total = pd.DataFrame(dataset[target_dict['index']].numpy())
+            # total.columns = [f'dim{d}' for d in range(24)]
+            # sns.displot(
+            #     data=total,
+            #     x=f'dim{d}',
+            #     kind=kind,
+            #     aspect=1.4,
+            #     bins=100,
+            # )
+            # plt.title(f"All, std={total.std(axis=0)[d]:.4f}")
+            # plt.savefig(pwd + f"[K{self.args.cluster}][{'-'.join(candidate_paths[target])}][{min_or_max}.dim{d}]]-All.png",
+            #             format="png", dpi=200, bbox_inches='tight')
+            # plt.cla()
+            #
+            # gt = pd.DataFrame(dataset[target_dict['gt']['index']].numpy())
+            # gt.columns = [f'dim{d}' for d in range(24)]
+            # sns.displot(
+            #     data=gt,
+            #     x=f'dim{d}',
+            #     kind=kind,
+            #     aspect=1.4,
+            #     bins=100,
+            # )
+            # plt.title(f"GreaterThan, std={total.std(axis=0)[d]:.4f}")
+            # plt.savefig(pwd + f"[K{self.args.cluster}][{'-'.join(candidate_paths[target])}][{min_or_max}.dim{d}]-GT.png",
+            #             format="png", dpi=200, bbox_inches='tight')
+            # plt.cla()
+            #
+            # lt = pd.DataFrame(dataset[target_dict['lt']['index']].numpy())
+            # lt.columns = [f'dim{d}' for d in range(24)]
+            # sns.displot(
+            #     data=lt,
+            #     x=f'dim{d}',
+            #     kind=kind,
+            #     aspect=1.4,
+            #     bins=100,
+            # )
+            # plt.title(f"LessThan, std={total.std(axis=0)[d]:.4f}")
+            # plt.savefig(pwd + f"[K{self.args.cluster}][{'-'.join(candidate_paths[target])}][{min_or_max}.dim{d}]-LT.png",
+            #             format="png", dpi=200, bbox_inches='tight')
+            # plt.cla()
 
-            if c != n_dims_to_choose - 1:
-                dataset = dataset[indices]
-                var_per_dim = torch.var(dataset, dim=0)
-                topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
-                left_n_cluster -= 1
+            if len(used_dims) == n_dims_to_choose:
+                break
+
+        model = dict()
+        cluster_id = -1
+        clusters_info = check_dividable_cluster(builder['root'], 'root')
+        model['path'] = clusters_info
+        for path in clusters_info:
+            depth = len(path)
+            model_ptr = model
+            builder_ptr = builder
+
+            for d in range(depth):
+                p = path[d]
+                builder_ptr = builder_ptr[p]
+                if model_ptr.get(p) is None:
+                    model_ptr[p] = dict()
+                    model_ptr = model_ptr[p]
+
+                    if d == depth - 1:
+                        cluster_id += 1
+                        model_ptr['cluster'] = cluster_id
+                        model_ptr['num_training_data'] = builder_ptr['num_data']
+                    else:
+                        model_ptr['dim'] = builder_ptr['dim']
+                        model_ptr['value'] = builder_ptr['value'].item()
+                else:
+                    model_ptr = model_ptr[p]
+        from pprint import pprint
 
         path = self.args.clustering_path
         with open(os.path.join(path, 'model.json'), "w") as f:
@@ -113,3 +304,56 @@ class MinMaxDistClustering(object):
                             'num_partitions': self.args.partition}
             json.dump(args_to_save, f, indent=4)
         self.model = model
+
+    # def train_clustering_model(self, train_loader):
+    #     print("Making clustering model by parsing index of representation whose var is the largest among the left data")
+    #     model = dict()
+    #     for c in range(self.args.cluster):
+    #         cluster_key = str(c)
+    #         model[cluster_key] = {'index': 0, 'value': 0.0}
+
+    #     dataset = None
+    #     with tqdm(train_loader, unit="batch", ncols=90) as t:
+    #         for i, (input, target) in enumerate(t):
+    #             batch = self.get_partitioned_batch(input)
+    #             if dataset is None:
+    #                 dataset = batch
+    #             else:
+    #                 dataset = torch.cat((dataset, batch))
+
+    #     n_dims_to_choose = self.args.cluster - 1
+    #     used_dims = []
+    #     left_n_cluster = self.args.cluster
+    #     var_per_dim = torch.var(dataset, dim=0)
+    #     topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
+    #     for c in range(n_dims_to_choose):
+    #         idx = -1
+    #         while True:
+    #             idx += 1
+    #             dim = topk_dims[idx].item()
+    #             if dim not in used_dims:
+    #                 used_dims.append(dim)
+    #                 break
+
+    #         target_dim = used_dims[-1]
+    #         percentage = 1 / left_n_cluster
+    #         cluster_key = str(c)
+
+    #         model[cluster_key]['index'] = target_dim
+    #         model[cluster_key]['value'] = torch.quantile(dataset[:, target_dim], percentage).item()
+    #         indices = (dataset[:, model[cluster_key]['index']] > model[cluster_key]['value']).nonzero(as_tuple=True)[0]
+
+    #         if c != n_dims_to_choose - 1:
+    #             dataset = dataset[indices]
+    #             var_per_dim = torch.var(dataset, dim=0)
+    #             topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
+    #             left_n_cluster -= 1
+
+    #     path = self.args.clustering_path
+    #     with open(os.path.join(path, 'model.json'), "w") as f:
+    #         json.dump(model, f, indent=4)
+    #     with open(os.path.join(path, "params.json"), 'w') as f:
+    #         args_to_save = {'k': self.args.cluster, 'partition_method': self.args.partition_method,
+    #                         'num_partitions': self.args.partition}
+    #         json.dump(args_to_save, f, indent=4)
+    #     self.model = model
