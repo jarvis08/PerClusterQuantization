@@ -65,20 +65,6 @@ class MinMaxDistClustering(object):
         _, counts = torch.unique(rst, return_counts=True)
         return rst
 
-    # @torch.no_grad()
-    # def predict(self, data):
-    #     found = set()
-    #     rst = torch.full((data.size(0), 1), self.args.cluster - 1, dtype=torch.int64)
-    #     for c in range(self.args.cluster - 1):
-    #         cluster_key = str(c)
-    #         dim = self.model[cluster_key]['index']
-    #         value = self.model[cluster_key]['value']
-    #         indices = set((data[:, dim] < value).nonzero(as_tuple=True)[0].tolist())
-    #         newly_found = indices - found
-    #         found.update(newly_found)
-    #         rst[list(newly_found), 0] = c
-    #     return rst.view(-1)
-
     def load_clustering_model(self):
         # Load k-means model's hparams, and check dependencies
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
@@ -98,7 +84,7 @@ class MinMaxDistClustering(object):
         return torch.LongTensor(cluster_info)
 
     @torch.no_grad()
-    def train_clustering_model(self, train_loader):
+    def train_clustering_model(self, train_loader, aug_loader):
         def check_dividable_cluster(level, identity):
             if level['divided']:
                 gt_rst = check_dividable_cluster(level['gt'], 'gt')
@@ -120,6 +106,46 @@ class MinMaxDistClustering(object):
                     dataset = batch
                 else:
                     dataset = torch.cat((dataset, batch))
+
+        with tqdm(aug_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                batch = self.get_partitioned_batch(input)
+                dataset = torch.cat((dataset, batch))
+
+        with tqdm(aug_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                batch = self.get_partitioned_batch(input)
+                dataset = torch.cat((dataset, batch))
+
+        dataset = dataset[torch.randperm(dataset.size()[0])]  # shuffle batch
+
+        ##########################################################
+        ################### Input distribution ###################
+        ##########################################################
+        # total = dataset.numpy()
+        # total = pd.DataFrame(total)
+        # total.columns = [f'dim{d}' for d in range(24)]
+        # pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization'
+        # for d in range(24):
+        #     kind = 'hist'
+        #     sns.displot(
+        #         data=total,
+        #         x=f'dim{d}',
+        #         kind=kind,
+        #         aspect=1.4,
+        #         # bins=100
+        #         bins=100
+        #     )
+        #     if d % 2:
+        #         min_or_max = 'max'
+        #     else:
+        #         min_or_max = 'min'
+        #     plt.title(f"[SVHN] NumData={dataset.size(0)}, Dim={d}({min_or_max}), Std={total.std(axis=0)[d]:.4f}")
+        #     plt.savefig(f"{pwd}/figs/[SVHN-WithAug] {kind}-dim{d}.png", format="png", dpi=200, bbox_inches='tight')
+        #     plt.cla()
+        ##########################################################
+        ##########################################################
+        ##########################################################
 
         num_data = dataset.size(0)
         min_data_per_cluster = num_data // (self.args.cluster * 2)
@@ -216,55 +242,41 @@ class MinMaxDistClustering(object):
             target_dict['lt'] = dict({'index': lt_indices, 'num_data': lt_indices.size(0), 'divided': False})
             used_dims.append(target_dim)
 
-            # d = target_dict['dim']
-            # if d % 2:
-            #     min_or_max = 'max'
-            # else:
-            #     min_or_max = 'min'
+            ##########################################################
+            ################### Input distribution ###################
+            ##########################################################
             # kind = 'hist'
-            # pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs/SVHN'
+            # d = target_dict['dim']
+            #
+            # min_or_max = 'max' if d % 2 != 0 else 'min'
+            # pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs'
+            # d_name = 'SVHN'
+            # clustered = '-'.join(candidate_paths[target])
+            # f_base = f'{pwd}/[{d_name}]K{self.args.cluster}.{clustered}.{min_or_max}.dim{d}'
             #
             # total = pd.DataFrame(dataset[target_dict['index']].numpy())
             # total.columns = [f'dim{d}' for d in range(24)]
-            # sns.displot(
-            #     data=total,
-            #     x=f'dim{d}',
-            #     kind=kind,
-            #     aspect=1.4,
-            #     bins=100,
-            # )
-            # plt.title(f"All, std={total.std(axis=0)[d]:.4f}")
-            # plt.savefig(pwd + f"[K{self.args.cluster}][{'-'.join(candidate_paths[target])}][{min_or_max}.dim{d}]]-All.png",
-            #             format="png", dpi=200, bbox_inches='tight')
+            # sns.displot(data=total, x=f'dim{d}', kind=kind, aspect=1.4, bins=100)
+            # plt.title(f"All, NumData={total.shape[0]}, SplitVar={target_dict['value']:.4f}, std={total.std(axis=0)[d]:.4f}")
+            # plt.savefig(f"{f_base}.All.png", format="png", dpi=200, bbox_inches='tight')
             # plt.cla()
             #
             # gt = pd.DataFrame(dataset[target_dict['gt']['index']].numpy())
             # gt.columns = [f'dim{d}' for d in range(24)]
-            # sns.displot(
-            #     data=gt,
-            #     x=f'dim{d}',
-            #     kind=kind,
-            #     aspect=1.4,
-            #     bins=100,
-            # )
-            # plt.title(f"GreaterThan, std={total.std(axis=0)[d]:.4f}")
-            # plt.savefig(pwd + f"[K{self.args.cluster}][{'-'.join(candidate_paths[target])}][{min_or_max}.dim{d}]-GT.png",
-            #             format="png", dpi=200, bbox_inches='tight')
+            # sns.displot(data=gt, x=f'dim{d}', kind=kind, aspect=1.4, bins=100)
+            # plt.title(f"GreaterThan, NumData={gt.shape[0]}, std={total.std(axis=0)[d]:.4f}")
+            # plt.savefig(f"{f_base}.GT.png", format="png", dpi=200, bbox_inches='tight')
             # plt.cla()
             #
             # lt = pd.DataFrame(dataset[target_dict['lt']['index']].numpy())
             # lt.columns = [f'dim{d}' for d in range(24)]
-            # sns.displot(
-            #     data=lt,
-            #     x=f'dim{d}',
-            #     kind=kind,
-            #     aspect=1.4,
-            #     bins=100,
-            # )
-            # plt.title(f"LessThan, std={total.std(axis=0)[d]:.4f}")
-            # plt.savefig(pwd + f"[K{self.args.cluster}][{'-'.join(candidate_paths[target])}][{min_or_max}.dim{d}]-LT.png",
-            #             format="png", dpi=200, bbox_inches='tight')
+            # sns.displot(data=lt, x=f'dim{d}', kind=kind, aspect=1.4, bins=100)
+            # plt.title(f"LessThan, NumData={lt.shape[0]}, std={total.std(axis=0)[d]:.4f}")
+            # plt.savefig(f"{pwd}.LT.png", format="png", dpi=200, bbox_inches='tight')
             # plt.cla()
+            ##########################################################
+            ##########################################################
+            ##########################################################
 
             if len(used_dims) == n_dims_to_choose:
                 break
@@ -294,7 +306,6 @@ class MinMaxDistClustering(object):
                         model_ptr['value'] = builder_ptr['value'].item()
                 else:
                     model_ptr = model_ptr[p]
-        from pprint import pprint
 
         path = self.args.clustering_path
         with open(os.path.join(path, 'model.json'), "w") as f:
@@ -305,55 +316,70 @@ class MinMaxDistClustering(object):
             json.dump(args_to_save, f, indent=4)
         self.model = model
 
-    # def train_clustering_model(self, train_loader):
-    #     print("Making clustering model by parsing index of representation whose var is the largest among the left data")
-    #     model = dict()
-    #     for c in range(self.args.cluster):
-    #         cluster_key = str(c)
-    #         model[cluster_key] = {'index': 0, 'value': 0.0}
+    @torch.no_grad()
+    def predict_v1(self, data):
+        found = set()
+        rst = torch.full((data.size(0), 1), self.args.cluster - 1, dtype=torch.int64)
+        for c in range(self.args.cluster - 1):
+            cluster_key = str(c)
+            dim = self.model[cluster_key]['index']
+            value = self.model[cluster_key]['value']
+            indices = set((data[:, dim] < value).nonzero(as_tuple=True)[0].tolist())
+            newly_found = indices - found
+            found.update(newly_found)
+            rst[list(newly_found), 0] = c
+        return rst.view(-1)
 
-    #     dataset = None
-    #     with tqdm(train_loader, unit="batch", ncols=90) as t:
-    #         for i, (input, target) in enumerate(t):
-    #             batch = self.get_partitioned_batch(input)
-    #             if dataset is None:
-    #                 dataset = batch
-    #             else:
-    #                 dataset = torch.cat((dataset, batch))
+    @torch.no_grad()
+    def train_clustering_model_v1(self, train_loader):
+        print("Making clustering model by parsing index of representation whose var is the largest among the left data")
+        model = dict()
+        for c in range(self.args.cluster):
+            cluster_key = str(c)
+            model[cluster_key] = {'index': 0, 'value': 0.0}
 
-    #     n_dims_to_choose = self.args.cluster - 1
-    #     used_dims = []
-    #     left_n_cluster = self.args.cluster
-    #     var_per_dim = torch.var(dataset, dim=0)
-    #     topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
-    #     for c in range(n_dims_to_choose):
-    #         idx = -1
-    #         while True:
-    #             idx += 1
-    #             dim = topk_dims[idx].item()
-    #             if dim not in used_dims:
-    #                 used_dims.append(dim)
-    #                 break
+        dataset = None
+        with tqdm(train_loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                batch = self.get_partitioned_batch(input)
+                if dataset is None:
+                    dataset = batch
+                else:
+                    dataset = torch.cat((dataset, batch))
 
-    #         target_dim = used_dims[-1]
-    #         percentage = 1 / left_n_cluster
-    #         cluster_key = str(c)
+        n_dims_to_choose = self.args.cluster - 1
+        used_dims = []
+        left_n_cluster = self.args.cluster
+        var_per_dim = torch.var(dataset, dim=0)
+        topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
+        for c in range(n_dims_to_choose):
+            idx = -1
+            while True:
+                idx += 1
+                dim = topk_dims[idx].item()
+                if dim not in used_dims:
+                    used_dims.append(dim)
+                    break
 
-    #         model[cluster_key]['index'] = target_dim
-    #         model[cluster_key]['value'] = torch.quantile(dataset[:, target_dim], percentage).item()
-    #         indices = (dataset[:, model[cluster_key]['index']] > model[cluster_key]['value']).nonzero(as_tuple=True)[0]
+            target_dim = used_dims[-1]
+            percentage = 1 / left_n_cluster
+            cluster_key = str(c)
 
-    #         if c != n_dims_to_choose - 1:
-    #             dataset = dataset[indices]
-    #             var_per_dim = torch.var(dataset, dim=0)
-    #             topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
-    #             left_n_cluster -= 1
+            model[cluster_key]['index'] = target_dim
+            model[cluster_key]['value'] = torch.quantile(dataset[:, target_dim], percentage).item()
+            indices = (dataset[:, model[cluster_key]['index']] > model[cluster_key]['value']).nonzero(as_tuple=True)[0]
 
-    #     path = self.args.clustering_path
-    #     with open(os.path.join(path, 'model.json'), "w") as f:
-    #         json.dump(model, f, indent=4)
-    #     with open(os.path.join(path, "params.json"), 'w') as f:
-    #         args_to_save = {'k': self.args.cluster, 'partition_method': self.args.partition_method,
-    #                         'num_partitions': self.args.partition}
-    #         json.dump(args_to_save, f, indent=4)
-    #     self.model = model
+            if c != n_dims_to_choose - 1:
+                dataset = dataset[indices]
+                var_per_dim = torch.var(dataset, dim=0)
+                topk_dims = torch.topk(var_per_dim, n_dims_to_choose).indices
+                left_n_cluster -= 1
+
+        path = self.args.clustering_path
+        with open(os.path.join(path, 'model.json'), "w") as f:
+            json.dump(model, f, indent=4)
+        with open(os.path.join(path, "params.json"), 'w') as f:
+            args_to_save = {'k': self.args.cluster, 'partition_method': self.args.partition_method,
+                            'num_partitions': self.args.partition}
+            json.dump(args_to_save, f, indent=4)
+        self.model = model
