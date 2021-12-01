@@ -4,10 +4,10 @@ from tqdm import tqdm
 import json
 import os
 
-# import pandas as pd
-# import seaborn as sns
-# sns.set(style="darkgrid", font_scale=1.2)
-# import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+sns.set(style="darkgrid", font_scale=1.2)
+import matplotlib.pyplot as plt
 
 
 class MinMaxDistClustering(object):
@@ -148,7 +148,7 @@ class MinMaxDistClustering(object):
         ##########################################################
 
         num_data = dataset.size(0)
-        min_data_per_cluster = num_data // (self.args.cluster * 2)
+        min_data_per_cluster = num_data // (self.args.cluster * 4)
         n_dims_to_choose = self.args.cluster - 1
 
         builder = dict()
@@ -165,10 +165,11 @@ class MinMaxDistClustering(object):
                 cdd_ptr = builder
                 for p in candidate_paths[c]:
                     cdd_ptr = cdd_ptr[p]
-                candidate_ptrs.append(cdd_ptr)
 
                 if cdd_ptr['num_data'] < min_data_per_cluster * 2:
                     continue
+
+                candidate_ptrs.append(cdd_ptr)
                 cdd_data = dataset[cdd_ptr['index']]
 
                 var_per_dim = torch.var(cdd_data, dim=0)
@@ -186,6 +187,7 @@ class MinMaxDistClustering(object):
             target_dict = None
             target_dim = None
             value = None
+            ratio = None
             gt_indices = None
             lt_indices = None
             found = False
@@ -193,43 +195,103 @@ class MinMaxDistClustering(object):
                 if "".join(candidate_paths[target]) in indivisible_cluster_paths:
                     continue
 
+                target_dim = candidate_dim[target]
                 target_dict = candidate_ptrs[target]
                 target_idx = target_dict['index']
-                target_dim = candidate_dim[target]
                 target_data = dataset[target_idx]
 
                 is_max = True if target_dim % 2 != 0 else False
-                cnt_per_bin_of_the_dim = torch.histc(target_data[:, target_dim], bins=100)  # In ascending order
-                max_bin_value, max_bin_index = torch.max(cnt_per_bin_of_the_dim, dim=0)
-                if is_max:
-                    if max_bin_index != cnt_per_bin_of_the_dim.size(0) - 1:
-                        idx = max_bin_index + (cnt_per_bin_of_the_dim.size(0) - 1 - max_bin_index) // 2
-                        ratio = torch.sum(cnt_per_bin_of_the_dim[:idx]) / target_data.size(0)
-                        while ratio * target_data.size(0) < min_data_per_cluster:
-                            ratio *= 2
-                        if ratio > 1.0:
-                            continue
-                    else:
-                        ratio = 0.25
-                else:
-                    if max_bin_index != 0:
-                        idx = max_bin_index // 2
-                        ratio = torch.sum(cnt_per_bin_of_the_dim[:idx]) / target_data.size(0)
-                        while ratio * target_data.size(0) < min_data_per_cluster:
-                            ratio *= 2
-                        if ratio > 1.0:
-                            continue
-                    else:
-                        ratio = 0.75
-                value = torch.quantile(target_data[:, target_dim], ratio)
+                n_bins = 100
+                n_data = target_data.size(0)
+                bins = torch.histc(target_data[:, target_dim], bins=n_bins)  # In ascending order
+                max_bin_value, max_bin_index = torch.max(bins, dim=0)
+                topk_bin_values, topk_bin_index = torch.topk(bins, 10)
 
+                """
+                    dist_type == 1 :: Absolutely biased
+                    dist_type == 2 :: Gaussian
+                    dist_type == 3 :: Gaussian + Abs.biased
+                    dist_type == 4 :: Etc. (including diagonal shape)
+                """
+                mid_sum = torch.sum(bins[45:55])
+                included = False
+                type1 = max_bin_index in [0, n_bins - 1] and topk_bin_values[0] > topk_bin_values[1] * 10
+                type2 = bins[0] + bins[-1] < topk_bin_values[0] * 0.4
+                type3 = mid_sum > bins[0] * 5 or mid_sum > bins[-1] * 5
+                ratio = None
+
+                if type1 or type3:
+                    included = True
+                    if is_max:
+                        last_3_bins = torch.sum(bins[-3:])
+                        ratio = 1 - last_3_bins / n_data 
+                    else:
+                        first_3_bins = torch.sum(bins[:3])
+                        ratio = first_3_bins / n_data
+
+                # Type-2
+                if type2:
+                    from_left, from_right = [], []
+                    to_check = 4
+                    for i in range(to_check + 1):
+                        idx1, idx2 = i * 10, (i + 1) * 10
+                        from_left.append(torch.sum(bins[idx1:idx2]).item())
+                        from_right.append(torch.sum(bins[- idx2:- idx1]).item())
+
+                    avg_left_increased, avg_right_increased = sum(from_left) / to_check, sum(from_right) / to_check
+                    if avg_left_increased >  avg_right_increased:
+                        ratio = 0.90
+                    else:
+                        ratio = 0.10
+
+                    # all_positive = True
+                    # left_increased, right_increased = [], []
+                    # for i in range(to_check):
+                    #     left = from_left[i] - from_left[i + 1]
+                    #     right = from_right[i] - from_right[i + 1]
+                    #     if left < 0 or right < 0:
+                    #         all_positive = False
+                    #         break
+                    #     else:
+                    #         left_increased.append(left.item())
+                    #         right_increased.append(right.item())
+
+                    # if all_positive:
+                    #     type2, included = True, True
+                    #     avg_left_increased, avg_right_increased = sum(left_increased) / to_check, sum(right_increased) / to_check
+                    #     if avg_left_increased >  avg_right_increased:
+                    #         ratio = 0.90
+                    #     else:
+                    #         ratio = 0.10
+
+                if ratio is None:
+                    if is_max:
+                        last_3_bins = torch.sum(bins[-3:])
+                        ratio = 1 - last_3_bins / n_data 
+                    else:
+                        first_3_bins = torch.sum(bins[:3])
+                        ratio = first_3_bins / n_data
+
+                if type1: dist_type = 1
+                elif type2: dist_type = 2
+                elif type3: dist_type = 3
+                else: dist_type = 4
+                print(f"Type-{dist_type}")
+
+                while ratio * n_data < min_data_per_cluster:
+                    ratio += 0.01
+                while (1 - ratio) * n_data < min_data_per_cluster:
+                    ratio -= 0.01
+
+                value = torch.quantile(target_data[:, target_dim], ratio)
                 target_idx = set(target_idx.tolist())
                 gt_indices = set((dataset[:, target_dim] >= value).nonzero(as_tuple=True)[0].tolist())
                 lt_indices = set((dataset[:, target_dim] < value).nonzero(as_tuple=True)[0].tolist())
                 gt_indices = torch.tensor(list(gt_indices.intersection(target_idx)), dtype=torch.int64)
                 lt_indices = torch.tensor(list(lt_indices.intersection(target_idx)), dtype=torch.int64)
                 if gt_indices.size(0) < min_data_per_cluster or lt_indices.size(0) < min_data_per_cluster:
-                    indivisible_cluster_paths.append("".join(candidate_paths[target]))
+                    print(f"[Path] {''.join(candidate_paths[target])}\n[Min-req-data] {min_data_per_cluster}\n[GT-data] {gt_indices.size(0)} [LT-data] {lt_indices.size(0)}")
+                    indivisible_cluster_paths.append(''.join(candidate_paths[target]))
                 else:
                     found = True
                     break
@@ -242,41 +304,44 @@ class MinMaxDistClustering(object):
             target_dict['lt'] = dict({'index': lt_indices, 'num_data': lt_indices.size(0), 'divided': False})
             used_dims.append(target_dim)
 
-            ##########################################################
-            ################### Input distribution ###################
-            ##########################################################
-            # kind = 'hist'
-            # d = target_dict['dim']
-            #
-            # min_or_max = 'max' if d % 2 != 0 else 'min'
-            # pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs'
-            # d_name = 'SVHN'
-            # clustered = '-'.join(candidate_paths[target])
-            # f_base = f'{pwd}/[{d_name}]K{self.args.cluster}.{clustered}.{min_or_max}.dim{d}'
-            #
-            # total = pd.DataFrame(dataset[target_dict['index']].numpy())
-            # total.columns = [f'dim{d}' for d in range(24)]
-            # sns.displot(data=total, x=f'dim{d}', kind=kind, aspect=1.4, bins=100)
-            # plt.title(f"All, NumData={total.shape[0]}, SplitVar={target_dict['value']:.4f}, std={total.std(axis=0)[d]:.4f}")
-            # plt.savefig(f"{f_base}.All.png", format="png", dpi=200, bbox_inches='tight')
-            # plt.cla()
-            #
-            # gt = pd.DataFrame(dataset[target_dict['gt']['index']].numpy())
-            # gt.columns = [f'dim{d}' for d in range(24)]
-            # sns.displot(data=gt, x=f'dim{d}', kind=kind, aspect=1.4, bins=100)
-            # plt.title(f"GreaterThan, NumData={gt.shape[0]}, std={total.std(axis=0)[d]:.4f}")
-            # plt.savefig(f"{f_base}.GT.png", format="png", dpi=200, bbox_inches='tight')
-            # plt.cla()
-            #
-            # lt = pd.DataFrame(dataset[target_dict['lt']['index']].numpy())
-            # lt.columns = [f'dim{d}' for d in range(24)]
-            # sns.displot(data=lt, x=f'dim{d}', kind=kind, aspect=1.4, bins=100)
-            # plt.title(f"LessThan, NumData={lt.shape[0]}, std={total.std(axis=0)[d]:.4f}")
-            # plt.savefig(f"{pwd}.LT.png", format="png", dpi=200, bbox_inches='tight')
-            # plt.cla()
-            ##########################################################
-            ##########################################################
-            ##########################################################
+            ####################################################################
+            ################### Dist comparison in splitting ###################
+            ####################################################################
+            kind = 'hist'
+            d = target_dict['dim']
+            d_name = f'dim{d}'
+            n_found = len(used_dims)
+
+            min_or_max = 'max' if d % 2 != 0 else 'min'
+            pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs'
+            clustered = '-'.join(candidate_paths[target])
+            f_base = f'{pwd}/{self.args.dataset}.k{self.args.cluster}.{n_found}.({clustered}).{min_or_max}.dim{d}.type{dist_type}'
+
+            total = pd.DataFrame(dataset[target_dict['index'], d].numpy())
+            total.columns = [d_name]
+            sns.displot(data=total, x=d_name, kind=kind, aspect=1.4, bins=100)
+            plt.axvline(target_dict['value'], color='r')
+            plt.title(f"[All] NumData={total.shape[0]}, SplitValue={target_dict['value']:.4f}({ratio}%),"
+                      f" Var={total.var().loc[d_name]:.4f}")
+            plt.savefig(f"{f_base}.All.png", format="png", dpi=200, bbox_inches='tight')
+            plt.cla()
+
+            gt = pd.DataFrame(dataset[target_dict['gt']['index'], d].numpy())
+            gt.columns = [d_name]
+            sns.displot(data=gt, x=d_name, kind=kind, aspect=1.4, bins=100)
+            plt.title(f"[GreaterThan] NumData={gt.shape[0]}(Min={min_data_per_cluster}), Var={gt.var().loc[d_name]:.4f}")
+            plt.savefig(f"{f_base}.GT.png", format="png", dpi=200, bbox_inches='tight')
+            plt.cla()
+
+            lt = pd.DataFrame(dataset[target_dict['lt']['index'], d].numpy())
+            lt.columns = [d_name]
+            sns.displot(data=lt, x=d_name, kind=kind, aspect=1.4, bins=100)
+            plt.title(f"[LessThan] NumData={lt.shape[0]}(Min={min_data_per_cluster}), Var={lt.var().loc[d_name]:.4f}")
+            plt.savefig(f"{f_base}.LT.png", format="png", dpi=200, bbox_inches='tight')
+            plt.cla()
+            ####################################################################
+            ####################################################################
+            ####################################################################
 
             if len(used_dims) == n_dims_to_choose:
                 break
