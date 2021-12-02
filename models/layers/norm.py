@@ -137,6 +137,7 @@ class PCQBnReLU(nn.Module):
         cluster = self.runtime_helper.batch_cluster
         bn = self.norms[cluster]
         out = bn(x)
+        out = self.activation(out)
 
         with torch.no_grad():
             _x = x.detach()
@@ -149,10 +150,12 @@ class PCQBnReLU(nn.Module):
             weight = fake_quantize(weight, scale, zero_point, self.w_bit)
 
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
-        out = STE.apply(out, fake_out)
-        if self.activation:
-            out = self.activation(out)
-        return out
+            fake_out = self.activation(fake_out)
+        return STE.apply(out, fake_out)
+        # out = STE.apply(out, fake_out)
+        # if self.activation:
+        #     out = self.activation(out)
+        # return out
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):

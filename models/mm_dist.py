@@ -4,10 +4,10 @@ from tqdm import tqdm
 import json
 import os
 
-import pandas as pd
-import seaborn as sns
-sns.set(style="darkgrid", font_scale=1.2)
-import matplotlib.pyplot as plt
+# import pandas as pd
+# import seaborn as sns
+# sns.set(style="darkgrid", font_scale=1.2)
+# import matplotlib.pyplot as plt
 
 
 class MinMaxDistClustering(object):
@@ -307,38 +307,38 @@ class MinMaxDistClustering(object):
             ####################################################################
             ################### Dist comparison in splitting ###################
             ####################################################################
-            kind = 'hist'
-            d = target_dict['dim']
-            d_name = f'dim{d}'
-            n_found = len(used_dims)
+            # kind = 'hist'
+            # d = target_dict['dim']
+            # d_name = f'dim{d}'
+            # n_found = len(used_dims)
 
-            min_or_max = 'max' if d % 2 != 0 else 'min'
-            pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs'
-            clustered = '-'.join(candidate_paths[target])
-            f_base = f'{pwd}/{self.args.dataset}.k{self.args.cluster}.{n_found}.({clustered}).{min_or_max}.dim{d}.type{dist_type}'
+            # min_or_max = 'max' if d % 2 != 0 else 'min'
+            # pwd = '/home/ken/Documents/Lab/Quantization/PerClusterQuantization/figs'
+            # clustered = '-'.join(candidate_paths[target])
+            # f_base = f'{pwd}/{self.args.dataset}.k{self.args.cluster}.{n_found}.({clustered}).{min_or_max}.dim{d}.type{dist_type}'
 
-            total = pd.DataFrame(dataset[target_dict['index'], d].numpy())
-            total.columns = [d_name]
-            sns.displot(data=total, x=d_name, kind=kind, aspect=1.4, bins=100)
-            plt.axvline(target_dict['value'], color='r')
-            plt.title(f"[All] NumData={total.shape[0]}, SplitValue={target_dict['value']:.4f}({ratio}%),"
-                      f" Var={total.var().loc[d_name]:.4f}")
-            plt.savefig(f"{f_base}.All.png", format="png", dpi=200, bbox_inches='tight')
-            plt.cla()
+            # total = pd.DataFrame(dataset[target_dict['index'], d].numpy())
+            # total.columns = [d_name]
+            # sns.displot(data=total, x=d_name, kind=kind, aspect=1.4, bins=100)
+            # plt.axvline(target_dict['value'], color='r')
+            # plt.title(f"[All] NumData={total.shape[0]}, SplitValue={target_dict['value']:.4f}({ratio}%),"
+            #           f" Var={total.var().loc[d_name]:.4f}")
+            # plt.savefig(f"{f_base}.All.png", format="png", dpi=200, bbox_inches='tight')
+            # plt.cla()
 
-            gt = pd.DataFrame(dataset[target_dict['gt']['index'], d].numpy())
-            gt.columns = [d_name]
-            sns.displot(data=gt, x=d_name, kind=kind, aspect=1.4, bins=100)
-            plt.title(f"[GreaterThan] NumData={gt.shape[0]}(Min={min_data_per_cluster}), Var={gt.var().loc[d_name]:.4f}")
-            plt.savefig(f"{f_base}.GT.png", format="png", dpi=200, bbox_inches='tight')
-            plt.cla()
+            # gt = pd.DataFrame(dataset[target_dict['gt']['index'], d].numpy())
+            # gt.columns = [d_name]
+            # sns.displot(data=gt, x=d_name, kind=kind, aspect=1.4, bins=100)
+            # plt.title(f"[GreaterThan] NumData={gt.shape[0]}(Min={min_data_per_cluster}), Var={gt.var().loc[d_name]:.4f}")
+            # plt.savefig(f"{f_base}.GT.png", format="png", dpi=200, bbox_inches='tight')
+            # plt.cla()
 
-            lt = pd.DataFrame(dataset[target_dict['lt']['index'], d].numpy())
-            lt.columns = [d_name]
-            sns.displot(data=lt, x=d_name, kind=kind, aspect=1.4, bins=100)
-            plt.title(f"[LessThan] NumData={lt.shape[0]}(Min={min_data_per_cluster}), Var={lt.var().loc[d_name]:.4f}")
-            plt.savefig(f"{f_base}.LT.png", format="png", dpi=200, bbox_inches='tight')
-            plt.cla()
+            # lt = pd.DataFrame(dataset[target_dict['lt']['index'], d].numpy())
+            # lt.columns = [d_name]
+            # sns.displot(data=lt, x=d_name, kind=kind, aspect=1.4, bins=100)
+            # plt.title(f"[LessThan] NumData={lt.shape[0]}(Min={min_data_per_cluster}), Var={lt.var().loc[d_name]:.4f}")
+            # plt.savefig(f"{f_base}.LT.png", format="png", dpi=200, bbox_inches='tight')
+            # plt.cla()
             ####################################################################
             ####################################################################
             ####################################################################
