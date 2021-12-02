@@ -137,7 +137,8 @@ class PCQBnReLU(nn.Module):
         cluster = self.runtime_helper.batch_cluster
         bn = self.norms[cluster]
         out = bn(x)
-        out = self.activation(out)
+        if self.activation:
+            out = self.activation(out)
 
         with torch.no_grad():
             _x = x.detach()
