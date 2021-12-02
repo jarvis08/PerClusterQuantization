@@ -321,7 +321,7 @@ class MinMaxDistClustering(object):
             # total.columns = [d_name]
             # sns.displot(data=total, x=d_name, kind=kind, aspect=1.4, bins=100)
             # plt.axvline(target_dict['value'], color='r')
-            # plt.title(f"[All] NumData={total.shape[0]}, SplitValue={target_dict['value']:.4f}({ratio}%),"
+            # plt.title(f"[All] NumData={total.shape[0]}, SplitValue={target_dict['value']:.4f}({ratio * 100:.2f}%),"
             #           f" Var={total.var().loc[d_name]:.4f}")
             # plt.savefig(f"{f_base}.All.png", format="png", dpi=200, bbox_inches='tight')
             # plt.cla()

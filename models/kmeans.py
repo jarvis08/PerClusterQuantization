@@ -21,16 +21,21 @@ class KMeans(object):
         channel = data.size(1)
         _size = data.size(2)
         if self.args.partition_method == 'square':
-            n_part = int((self.args.partition / 2)
-                         if self.args.partition % 2 == 0
-                         else (self.args.partition / 3))  # Per row & col
+            # n_part = int((self.args.partition / 2)
+            #              if self.args.partition % 2 == 0
+            #              else (self.args.partition / 3))  # Per row & col
+            n_part = self.args.partition
             n_data = int(_size / n_part)  # Per part
             data = data.view(batch, channel, n_part, n_data, _size).transpose(3, 4)
             data = data.reshape(batch, channel, n_part * n_part, -1)
-            _min = data.min(-1, keepdim=True).values
-            _max = data.max(-1, keepdim=True).values
-            rst = torch.cat((_min, _max), dim=-1)
-            return rst.view(rst.size(0), -1).numpy()
+            if self.args.repr_method == 'mean':
+                _mean = data.mean(-1, keepdim=True)
+                return _mean.view(_mean.size(0), -1).numpy()
+            else:
+                _min = data.min(-1, keepdim=True).values
+                _max = data.max(-1, keepdim=True).values
+                rst = torch.cat((_min, _max), dim=-1)
+                return rst.view(rst.size(0), -1).numpy()
         else:
             # To make clustering model more robust about augmentation's horizontal flip
             n_part = 4
