@@ -16,7 +16,7 @@ class QuantizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=False, activation=None, multiplication=True, arg_dict=None):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
         self.layer_type = 'QuantizedLinear'
-        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        bit, self.symmetric, self.num_clusters, self.runtime_helper = itemgetter('bit', 'symmetric', 'cluster', 'runtime_helper')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.out_features = out_features
@@ -71,13 +71,16 @@ class QuantizedLinear(nn.Linear):
             bias = torch.index_select(self.quantized_bias, 0, bc)
             sum_q1q2 = sum_q1q2.add(bias)
 
-        sum_a1 = torch.sum(x, dim=1).mul(self.z2)
-        sum_a2 = self.sum_a2.mul(z1)
+        if not self.symmetric:
+            sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+            sum_a2 = self.sum_a2.mul(z1)
 
-        nz1z2 = x.size(1) * z1 * self.z2
-        subsum = sum_q1q2.add(nz1z2)
-        subsum = subsum.sub(sum_a1[:, None])
-        subsum = subsum.sub(sum_a2)
+            nz1z2 = x.size(1) * z1 * self.z2
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = subsum.sub(sum_a1[:, None])
+            subsum = subsum.sub(sum_a2)
+        else:
+            subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
         return subsum
 
     def _pcq_totalsum(self, subsum):
@@ -102,13 +105,16 @@ class QuantizedLinear(nn.Linear):
         if self.is_bias:
             sum_q1q2.add_(self.quantized_bias[0][None, :])
 
-        sum_a1 = torch.sum(x, dim=1).mul(self.z2)
-        sum_a2 = self.sum_a2.mul(self.z1)
+        if not self.symmetric:
+            sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+            sum_a2 = self.sum_a2.mul(self.z1)
 
-        nz1z2 = x.size(1) * self.z1 * self.z2
-        subsum = sum_q1q2.add(nz1z2)
-        subsum = subsum.sub(sum_a1[:, None])
-        subsum = subsum.sub(sum_a2)
+            nz1z2 = x.size(1) * self.z1 * self.z2
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = subsum.sub(sum_a1[:, None])
+            subsum = subsum.sub(sum_a2)
+        else:
+            subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
         return subsum
 
     def _general_totalsum(self, subsum):
@@ -128,8 +134,8 @@ class PCQLinear(nn.Module):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
         
-        bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.symmetric, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'symmetric', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
@@ -162,9 +168,9 @@ class PCQLinear(nn.Module):
 
     def _pcq(self, x):
         w = self.fc.weight.detach()
-        s, z = calc_qparams(w.min(), w.max(), self.w_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=self.runtime_helper.fzero)
         if not self.quant_noise:
-            w = fake_quantize(self.fc.weight, s, z, self.w_bit, use_ste=self.use_ste)
+            w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = apply_qn(self.fc.weight, s, z, self.w_bit, qn_prob=self.qn_prob)
 
@@ -203,16 +209,17 @@ class PCQLinear(nn.Module):
         cluster = self.runtime_helper.batch_cluster
         zero = self.runtime_helper.fzero
         if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero=zero)
         else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero=zero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit, zero)
+        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
+                                        symmetric=self.symmetric, zero=zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
@@ -236,8 +243,8 @@ class FusedLinear(nn.Module):
         self.layer_type = 'FusedLinear'
 
         self.arg_dict = arg_dict
-        bit, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
@@ -257,9 +264,10 @@ class FusedLinear(nn.Module):
                 x = self._activation(x)
             return x
 
-        s, z = calc_qparams(self.fc.weight.detach().min(), self.fc.weight.detach().max(), self.w_bit)
+        w = self.fc.weight.detach()
+        s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
         if not self.quant_noise:
-            w = fake_quantize(self.fc.weight, s, z, self.w_bit, self.use_ste)
+            w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = apply_qn(self.fc.weight, s, z, self.w_bit, qn_prob=self.qn_prob)
 
@@ -271,7 +279,7 @@ class FusedLinear(nn.Module):
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, self.use_ste)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
@@ -279,7 +287,8 @@ class FusedLinear(nn.Module):
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit)
+        self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
+                                        symmetric=self.symmetric)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external

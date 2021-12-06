@@ -32,6 +32,8 @@ parser.add_argument('--quant_base', default='qat', type=str,
                     help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
 parser.add_argument('--per_channel', action='store_true',
                     help='Use per output-channel quantization, or per tensor quantization')
+parser.add_argument('--symmetric', action='store_true',
+                    help="Use symmetric quantization for layers' weights")
 parser.add_argument('--fold_convbn', action='store_true',
                     help="Fake Quantize CONV's weight after folding BatchNormalization")
 
@@ -82,6 +84,12 @@ if not args.val_batch:
 
 if args.quant_base == 'qn':
     args.quant_noise = True
+
+# Default symmetric/asymmetric quantization setting
+if args.quant_base == 'hawq':
+    args.per_channel = True
+    if args.cluster == 1:
+        args.symmetric = True
 
 # First/Last layers' bit level
 if args.quant_base == 'hawq':

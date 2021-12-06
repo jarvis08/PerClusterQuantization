@@ -15,8 +15,8 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        self.base, bit, self.per_channel, self.num_clusters, self.runtime_helper, self.default_batch = \
-            itemgetter('quant_base', 'bit', 'per_channel', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
+        bit, self.per_channel, self.symmetric, self.num_clusters, self.runtime_helper, self.default_batch = \
+            itemgetter('bit', 'per_channel', 'symmetric', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.is_first = is_first
@@ -97,37 +97,38 @@ class QuantizedConv2d(nn.Conv2d):
         bc = self.runtime_helper.batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
 
-        input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-        filter_batch, filter_ch, filter_col, filter_row =\
-            self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
-        stride = self.stride[0]
-
         if self.is_bias:
             bias = torch.index_select(self.quantized_bias, 0, bc)
             sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
 
-        output_col = sum_q1q2.shape[2]
-        output_row = sum_q1q2.shape[3]
-        if self.sum_a1 is None:
-            self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
-        for o_col in range(output_col):
-            for o_row in range(output_row):
-                col_st, col_end = o_col * stride, o_col * stride + filter_col
-                row_st, row_end = o_row * stride, o_row * stride + filter_row
-                self.sum_a1[:batch_size, 0, o_col, o_row] = \
-                    torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+        if not self.symmetric:
+            input_batch, input_ch = x.shape[0], x.shape[1]
+            filter_batch, filter_ch, filter_col, filter_row = \
+                self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+            stride = self.stride[0]
+            output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
+            if self.sum_a1 is None:
+                self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
+            for o_col in range(output_col):
+                for o_row in range(output_row):
+                    col_st, col_end = o_col * stride, o_col * stride + filter_col
+                    row_st, row_end = o_row * stride, o_row * stride + filter_row
+                    self.sum_a1[:batch_size, 0, o_col, o_row] = \
+                        torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
 
-        if self.per_channel:
-            sum_a1 = self.sum_a1[:batch_size] * self.z2[None, :, None, None]
-            nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2[None, :, None, None]
+            if self.per_channel:
+                sum_a1 = self.sum_a1[:batch_size] * self.z2[None, :, None, None]
+                nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2[None, :, None, None]
+            else:
+                sum_a1 = self.sum_a1[:batch_size] * self.z2
+                nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
+            sum_a2 = self.sum_a2.mul(z1)
+
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = torch.sub(subsum, sum_a1)
+            subsum = torch.sub(subsum, sum_a2)
         else:
-            sum_a1 = self.sum_a1[:batch_size] * self.z2
-            nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-        sum_a2 = self.sum_a2.mul(z1)
-
-        subsum = sum_q1q2.add(nz1z2)
-        subsum = torch.sub(subsum, sum_a1)
-        subsum = torch.sub(subsum, sum_a2)
+            subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
         return subsum
 
     def _pcq_totalsum(self, subsum):
@@ -154,36 +155,54 @@ class QuantizedConv2d(nn.Conv2d):
         return total.add(z3)
 
     def _general_subsum(self, x, sum_q1q2):
-        input_batch, input_ch, input_col, input_row = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-        filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
-        stride = self.stride[0]
-
         if self.is_bias:
             sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :, None, None])
-        output_col = sum_q1q2.shape[2]
-        output_row = sum_q1q2.shape[3]
 
-        if self.sum_a1 is None:
-            self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
-        for o_col in range(output_col):
-            for o_row in range(output_row):
-                col_st, col_end = o_col * stride, o_col * stride + filter_col
-                row_st, row_end = o_row * stride, o_row * stride + filter_row
-                self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
-        sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+        if not self.symmetric:
+            input_batch, input_ch = x.shape[0], x.shape[1]
+            filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
+            stride = self.stride[0]
+            output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
+            if self.sum_a1 is None:
+                self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
+            for o_col in range(output_col):
+                for o_row in range(output_row):
+                    col_st, col_end = o_col * stride, o_col * stride + filter_col
+                    row_st, row_end = o_row * stride, o_row * stride + filter_row
+                    self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+            sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
 
-        sum_a2 = self.sum_a2.mul(self.z1)
-        nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
-        subsum = sum_q1q2.add(nz1z2)
-        subsum = torch.sub(subsum, sum_a1[:, None, :, :])
-        subsum = torch.sub(subsum, sum_a2)
+            sum_a2 = self.sum_a2.mul(self.z1)
+            nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = torch.sub(subsum, sum_a1[:, None, :, :])
+            subsum = torch.sub(subsum, sum_a2)
+        else:
+            subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
         return subsum
 
     def _general_totalsum(self, subsum):
-        if self.shift < 0:
-            total = mul_and_shift(subsum << - self.shift.item(), self.M0, 0)
+        # if self.shift < 0:
+        #     total = mul_and_shift(subsum << - self.shift.item(), self.M0, 0)
+        # else:
+        #     total = mul_and_shift(subsum, self.M0, self.shift.item())
+
+        if self.per_channel:
+            M0 = self.M0[:, :, None, None]
+            shift = self.shift[:, :, None, None]
         else:
-            total = mul_and_shift(subsum, self.M0, self.shift.item())
+            M0 = self.M0
+            shift = self.shift
+
+        mask = self.runtime_helper.mask_4d[:subsum.size(0)]
+        if not self.is_shift_neg:
+            total = mul_and_shift(subsum, M0, shift, mask)
+        else:
+            zero = self.runtime_helper.izero
+            neg_shift = torch.where(shift < zero, - shift, zero)
+            shift = torch.where(shift >= zero, shift, zero)
+            subsum = subsum << neg_shift
+            total = mul_and_shift(subsum, M0, shift, mask)
         return total.add(self.z3)
 
 
@@ -198,9 +217,9 @@ class PCQConv2d(nn.Module):
         self.out_channels = out_channels
         self.groups = groups
 
-        self.per_channel, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, \
+        self.per_channel, self.symmetric, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, \
             self.quant_noise, self.qn_prob, self.qn_each_channel \
-            = itemgetter('per_channel', 'smooth', 'cluster', 'runtime_helper', 'ste',
+            = itemgetter('per_channel', 'symmetric', 'smooth', 'cluster', 'runtime_helper', 'ste',
                          'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit']
@@ -238,11 +257,13 @@ class PCQConv2d(nn.Module):
     def _pcq(self, x):
         zero = self.runtime_helper.fzero
         if self.per_channel:
-            w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero, use_ste=self.use_ste)
+            w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
+                                                 symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = self.conv.weight.detach()
-            s, z = calc_qparams(w.min(), w.max(), self.w_bit, zero)
-            w = fake_quantize(self.conv.weight, s, z, self.w_bit, use_ste=self.use_ste)
+            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
+            w = fake_quantize(self.conv.weight, s, z, self.w_bit,
+                              symmetric=self.symmetric, use_ste=self.use_ste)
         # if not self.quant_noise:
         #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, use_ste=self.use_ste)
         # else:
@@ -288,9 +309,11 @@ class PCQConv2d(nn.Module):
         zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
         if self.per_channel:
-            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit, zero)
+            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit,
+                                                               symmetric=self.symmetric, zero=zero)
         else:
-            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit, zero)
+            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
+                                            symmetric=self.symmetric, zero=zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
@@ -323,8 +346,8 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
-            = itemgetter('smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
+        self.per_channel, self.symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
+            = itemgetter('per_channel', 'symmetric', 'smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
         
         w_bit = w_bit if w_bit is not None else arg_dict['bit']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -356,13 +379,24 @@ class FusedConv2d(nn.Module):
             return self._general(x, external_range)
 
     def _general(self, x, external_range=None):
-        s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit)
-        if not self.quant_noise:
-            w = fake_quantize(self.conv.weight, s, z, self.w_bit, self.use_ste)
+        zero = self.runtime_helper.fzero
+        if self.per_channel:
+            w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
+                                                 symmetric=self.symmetric, use_ste=self.use_ste)
         else:
-            w = apply_qn(self.conv.weight, s, z, self.w_bit, qn_prob=self.qn_prob,
-                         kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
-                         in_feature=self.in_channels, out_feature=self.out_channels)
+            w = self.conv.weight.detach()
+            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
+            w = fake_quantize(self.conv.weight, s, z, self.w_bit,
+                              symmetric=self.symmetric, use_ste=self.use_ste)
+
+        # s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit,
+        #                     symmetric=self.symmetric)
+        # if not self.quant_noise:
+        #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
+        # else:
+        #     w = apply_qn(self.conv.weight, s, z, self.w_bit, qn_prob=self.qn_prob,
+        #                  kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
+        #                  in_feature=self.in_channels, out_feature=self.out_channels)
 
         out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
@@ -371,13 +405,13 @@ class FusedConv2d(nn.Module):
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, self.use_ste)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
         else:
             if self.apply_ema:
                 self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                    out = fake_quantize(out, s, z, self.a_bit, self.use_ste)
+                    out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
             else:
                 self.act_range[0], self.act_range[1] = get_range(out)
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
@@ -400,7 +434,7 @@ class FusedConv2d(nn.Module):
                 folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
                 folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
 
-            s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit)
+            s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit, symmetric=self.symmetric)
             fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
 
             folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
@@ -438,13 +472,27 @@ class FusedConv2d(nn.Module):
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
-        self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit)
+
+        zero = self.runtime_helper.fzero
+        if self.per_channel:
+            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit,
+                                                               symmetric=self.symmetric, zero=zero)
+        else:
+            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
+                                            symmetric=self.symmetric, zero=zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
 
-        self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
+        if self.per_channel:
+            self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
+            self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
+            m_per_channel = self.s1 * self.s2 / self.s3
+            for channel in range(self.out_channels):
+                self.M0[0][channel], self.shift[0][channel] = quantize_M(m_per_channel[channel])
+        else:
+            self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
 
