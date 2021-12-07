@@ -1,15 +1,16 @@
 import torch
-from sklearn.cluster import MiniBatchKMeans
+
+from sklearn.cluster import KMeans, MiniBatchKMeans
 import numpy as np
 
-import tqdm
+from tqdm import tqdm
 import joblib
 from copy import deepcopy
 import json
 import os
 
 
-class KMeans(object):
+class KMeansClustering(object):
     def __init__(self, args):
         self.args = args
         self.model = None
@@ -21,21 +22,19 @@ class KMeans(object):
         channel = data.size(1)
         _size = data.size(2)
         if self.args.partition_method == 'square':
-            # n_part = int((self.args.partition / 2)
-            #              if self.args.partition % 2 == 0
-            #              else (self.args.partition / 3))  # Per row & col
             n_part = self.args.partition
             n_data = int(_size / n_part)  # Per part
+
             data = data.view(batch, channel, n_part, n_data, _size).transpose(3, 4)
             data = data.reshape(batch, channel, n_part * n_part, -1)
+
             if self.args.repr_method == 'mean':
-                _mean = data.mean(-1, keepdim=True)
-                return _mean.view(_mean.size(0), -1).numpy()
+                rst = data.mean(-1, keepdim=True)
             else:
                 _min = data.min(-1, keepdim=True).values
                 _max = data.max(-1, keepdim=True).values
                 rst = torch.cat((_min, _max), dim=-1)
-                return rst.view(rst.size(0), -1).numpy()
+            return rst.view(rst.size(0), -1).numpy()
         else:
             # To make clustering model more robust about augmentation's horizontal flip
             n_part = 4
@@ -72,54 +71,69 @@ class KMeans(object):
         return torch.LongTensor(cluster_info)
 
     def train_clustering_model(self, train_loader):
-        def check_convergence(prev, cur, tol):
-            """
-                Relative tolerance with regards to Frobenius norm of the difference in the cluster centers
-                of two consecutive iterations to declare convergence.
-            """
-            diff = np.subtract(prev, cur)
-            normed = np.linalg.norm(diff)
-            if normed > tol:
-                return False
-            return True
-
-        prev_centers = None
-        is_converged = False
         best_model = None
-        best_model_inertia = 9999999999999999
-        print("Train K-means model 10 times, and choose the best model")
-        for trial in range(1, 11):
-            model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
-            early_stopped = False
-            t_epoch = tqdm.tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
-            for e in range(self.args.kmeans_epoch):
-                for image, _ in train_loader:
-                    train_data = self.get_partitioned_batch(image)
-                    model = model.partial_fit(train_data)
+        if self.args.dataset == 'imagenet':
+            print(">> Use Mini-batch K-means Clustering for ImageNet dataset")
+            def check_convergence(prev, cur, tol):
+                """
+                    Relative tolerance with regards to Frobenius norm of the difference in the cluster centers
+                    of two consecutive iterations to declare convergence.
+                """
+                diff = np.subtract(prev, cur)
+                normed = np.linalg.norm(diff)
+                if normed > tol:
+                    return False
+                return True
 
-                    if prev_centers is not None:
-                        is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
-                        if is_converged:
-                            break
-                    prev_centers = deepcopy(model.cluster_centers_)
-                t_epoch.update(1)
-                if is_converged:
-                    early_stopped = True
-                    if model.inertia_ < best_model_inertia:
-                        best_model = model
-                        best_model_inertia = model.inertia_
-                    break
-            t_epoch.close()
-            if early_stopped:
-                print("Early stop training trial-{} kmeans model".format(trial))
+            prev_centers = None
+            is_converged = False
+            best_model_inertia = 9999999999999999
+            print("Train K-means model 10 times, and choose the best model")
+            for trial in range(1, 11):
+                model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
+                early_stopped = False
+                t_epoch = tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
+                for e in range(self.args.kmeans_epoch):
+                    for image, _ in train_loader:
+                        train_data = self.get_partitioned_batch(image)
+                        model = model.partial_fit(train_data)
+
+                        if prev_centers is not None:
+                            is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
+                            if is_converged:
+                                break
+                        prev_centers = deepcopy(model.cluster_centers_)
+                    t_epoch.update(1)
+                    if is_converged:
+                        early_stopped = True
+                        if model.inertia_ < best_model_inertia:
+                            best_model = model
+                            best_model_inertia = model.inertia_
+                        break
+                t_epoch.close()
+                if early_stopped:
+                    print("Early stop training trial-{} kmeans model".format(trial))
+        else:
+            x = None
+            print(">> Load dataset & get representations for clustering")
+            with tqdm(train_loader, unit="batch", ncols=90) as t:
+                for i, (input, _) in enumerate(t):
+                    batch = torch.tensor(self.get_partitioned_batch(input))
+                    if x is None:
+                        x = batch
+                    else:
+                        x = torch.cat((x, batch))
+            best_model = KMeans(n_clusters=self.args.cluster, random_state=0).fit(x)
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
         with open(os.path.join(path, "params.json"), 'w') as f:
-            args_to_save = {'k': self.args.cluster, 'partition_method': self.args.partition_method,
-                            'num_partitions': self.args.partition, 'tol': self.args.kmeans_tol,
+            args_to_save = {'repr_method': self.args.repr_method,
+                            'partition_method': self.args.partition_method, 'num_partitions': self.args.partition, 
+                            'k': self.args.cluster, 'tol': self.args.kmeans_tol,
                             'n_inits': self.args.kmeans_init, 'epoch': self.args.kmeans_epoch, 'batch': self.args.batch}
             json.dump(args_to_save, f, indent=4)
+        exit()
         self.model = best_model
 
 

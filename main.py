@@ -113,7 +113,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
 
     if is_pcq:
         if clustering_method == 'kmeans':
-            setattr(tools, 'clustering_method', KMeans)
+            setattr(tools, 'clustering_method', KMeansClustering)
         elif clustering_method == 'dist':
             setattr(tools, 'clustering_method', MinMaxDistClustering)
         else:

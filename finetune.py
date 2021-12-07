@@ -59,7 +59,7 @@ def _finetune(args, tools):
             non_augmented_train_dataset, val_dataset = \
                 split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
             clustering_train_loader = get_data_loader(non_augmented_train_dataset,
-                                                      batch_size=128, shuffle=True, workers=args.worker)
+                                                      batch_size=256, shuffle=True, workers=args.worker)
         else:
             _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
 
