@@ -200,6 +200,8 @@ def _finetune(args, tools):
     pc = ''
     if args.per_channel:
         pc = 'PerChannel, '
+    if args.symmetric:
+        pc += 'Symmetric, '
 
     with open('./exp_results.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
