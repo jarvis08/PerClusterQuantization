@@ -67,7 +67,7 @@ class KMeansClustering(object):
     
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
-        cluster_info = self.model.predict(kmeans_input)
+        cluster_info = self.model.predict(np.float64(kmeans_input))
         return torch.LongTensor(cluster_info)
 
     def train_clustering_model(self, train_loader):
