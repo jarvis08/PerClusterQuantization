@@ -13,19 +13,16 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     losses = AverageMeter()
     top1 = AverageMeter()
     model.train()
-    container = InputContainer(runtime_helper.num_clusters, clustering_model.args.dataset, clustering_model.args.batch)
-    with tqdm(train_loader, unit="batch", ncols=90) as t:
-        for i, (images, targets) in enumerate(t):
-            t.set_description("Epoch {}".format(epoch))
-
-            cluster_info = clustering_model.predict_cluster_of_batch(images)
-
-            input, target, runtime_helper.batch_cluster = container.gather_and_get_data(images, targets, cluster_info)
-            if input is None:
-                continue
-
+    container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
+                               clustering_model.args.dataset, clustering_model.args.batch)
+    container.initialize_generator()
+    container.set_next_batch()
+    with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
+        for i, _ in enumerate(t):
+            input, target, runtime_helper.batch_cluster = container.get_batch()
             input, target = input.cuda(), target.cuda()
             output = model(input)
+
             loss = criterion(output, target)
 
             prec = accuracy(output, target)[0]
@@ -36,38 +33,21 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             loss.backward()
             optimizer.step()
 
+            container.set_next_batch()
+
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, prec.item(), top1.avg))
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
-    leftover = container.check_leftover()
-    if leftover:
-        with tqdm(range(leftover), unit="batch", ncols=90) as t:
-            for _ in t:
-                t.set_description("Leftover")
-                input, target, runtime_helper.batch_cluster = container.get_leftover()
-                input = input.cuda()
-                target = target.cuda()
-                output = model(input)
-
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
+            if container.ready_cluster is None:
+                break
 
 
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
 
+    clustering_train_loader = None
     test_loader = None
     augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
     if args.dataset != 'imagenet':
@@ -75,7 +55,13 @@ def _finetune(args, tools):
         train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
 
         non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
-        _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
+        if args.cluster > 1 and not args.clustering_path:
+            non_augmented_train_dataset, val_dataset = \
+                split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
+            clustering_train_loader = get_data_loader(non_augmented_train_dataset,
+                                                      batch_size=256, shuffle=True, workers=args.worker)
+        else:
+            _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
 
         test_dataset = get_test_dataset(args, normalizer)
         test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
@@ -104,16 +90,16 @@ def _finetune(args, tools):
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         save_path_fp, best_epoch, best_int_val_score = load_tuning_info(args.dnn_path)
 
-    if args.quant_noise:
-        runtime_helper.qn_prob = args.qn_prob - 0.1
-        tools.shift_qn_prob(model)
-
     clustering_model = None
     if args.cluster > 1:
         clustering_model = tools.clustering_method(args)
         if not args.clustering_path:
             args.clustering_path = set_clustering_dir(args)
-            clustering_model.train_clustering_model(train_loader)
+            # if args.clustering_method == 'dist':
+            #     clustering_model.train_clustering_model(clustering_train_loader, train_loader)
+            # else:
+            #     clustering_model.train_clustering_model(clustering_train_loader)
+            clustering_model.train_clustering_model(clustering_train_loader, train_loader)
         else:
             clustering_model.load_clustering_model()
 
@@ -128,11 +114,6 @@ def _finetune(args, tools):
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
-
-        # Only for QuantNoise prob-increasing
-        if args.quant_noise and e % args.qn_increment_epoch == 1:
-            model.runtime_helper.qn_prob += 0.1
-            tools.shift_qn_prob(model)
 
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
@@ -212,21 +193,22 @@ def _finetune(args, tools):
         json.dump(tmp, f, indent=4)
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
-    method = ''
-    if args.quant_noise:
-        method += 'QN{:.1f}+'.format(args.qn_prob)
     if args.cluster > 1:
-        method += 'PCQ({}), K: {}'.format(args.clustering_method, args.cluster)
-    elif not args.quant_noise:
-        method += 'QAT'
+        method = f'DAQ({args.clustering_method}, K{args.cluster}P{args.partition}-{args.repr_method})+{args.quant_base}'
+    else:
+        method = args.quant_base
 
-    bn = ''
-    if args.bn_momentum < 0.1:
-        bn += 'BN-momentum: {:.3f}, '.format(args.bn_momentum)
+    pc = ''
+    if args.per_channel:
+        pc = 'PerChannel, '
+    if args.symmetric:
+        pc += 'Symmetric, '
 
     with open('./exp_results.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, LR: {}, {}Epoch: {}, Batch: {}, FQ: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.arch, method, args.lr, bn, args.epoch, args.batch, args.fq, best_epoch, tuning_time_cost, args.gpu, save_path_fp))
+        f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch,
+                        pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
+                        tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):

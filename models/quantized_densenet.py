@@ -125,7 +125,8 @@ class QuantizedDenseNet(nn.Module):
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
-            ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False, arg_dict=arg_dict)),
+            ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3,
+                                           is_first=True, arg_dict=arg_dict)),
             ('first_norm', QuantizedBn2d(num_init_features, arg_dict)),
             ('maxpool', QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict))
         ]))
@@ -223,6 +224,8 @@ def quantize_pcq_densenet(fp_model, int_model):
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
     int_model.features.first_conv = quantize(fp_model.features.first_conv, int_model.features.first_conv)
     int_model.features.first_norm = quantize(fp_model.features.first_norm, int_model.features.first_norm)
+    int_model.features.maxpool.bit.data = int_model.features.first_norm.a_bit.data
+    int_model.features.maxpool.zero_point.data = int_model.features.first_norm.z3.data
     int_model.features.denseblock1 = quantize_block(fp_model.features.denseblock1, int_model.features.denseblock1)
     int_model.features.transition1 = quantize_trans(fp_model.features.transition1, int_model.features.transition1)
     int_model.features.denseblock2 = quantize_block(fp_model.features.denseblock2, int_model.features.denseblock2)
