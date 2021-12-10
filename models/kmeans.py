@@ -70,7 +70,7 @@ class KMeansClustering(object):
         cluster_info = self.model.predict(np.float64(kmeans_input))
         return torch.LongTensor(cluster_info)
 
-    def train_clustering_model(self, train_loader):
+    def train_clustering_model(self, nonaug_loader, aug_loader):
         best_model = None
         if self.args.dataset == 'imagenet':
             print(">> Use Mini-batch K-means Clustering for ImageNet dataset")
@@ -94,7 +94,7 @@ class KMeansClustering(object):
                 early_stopped = False
                 t_epoch = tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
                 for e in range(self.args.kmeans_epoch):
-                    for image, _ in train_loader:
+                    for image, _ in nonaug_loader:
                         train_data = self.get_partitioned_batch(image)
                         model = model.partial_fit(train_data)
 
@@ -115,20 +115,44 @@ class KMeansClustering(object):
                     print("Early stop training trial-{} kmeans model".format(trial))
         else:
             x = None
-            print(">> Load dataset & get representations for clustering")
-            with tqdm(train_loader, unit="batch", ncols=90) as t:
-                for i, (input, _) in enumerate(t):
-                    batch = torch.tensor(self.get_partitioned_batch(input))
+            print(">> Load Non-augmented dataset & get representations for clustering..")
+            with tqdm(nonaug_loader, unit="batch", ncols=90) as t:
+                for image, _ in t:
+                    batch = torch.tensor(self.get_partitioned_batch(image))
                     if x is None:
                         x = batch
                     else:
                         x = torch.cat((x, batch))
+
+            # print(">> Load 2 sets of Augmented datasets & get representations for clustering..")
+            # with tqdm(aug_loader, unit="batch", ncols=90) as t:
+            #     for image, _ in t:
+            #         batch = torch.tensor(self.get_partitioned_batch(image))
+            #         x = torch.cat((x, batch))
+            # with tqdm(aug_loader, unit="batch", ncols=90) as t:
+            #     for image, _ in t:
+            #         batch = torch.tensor(self.get_partitioned_batch(image))
+            #         x = torch.cat((x, batch))
+
             best_model = KMeans(n_clusters=self.args.cluster, random_state=0).fit(x)
+
+        # # Print Centroids
+        # with open(f'{self.args.dataset}-{self.args.repr_method}-k{self.args.cluster}-centroids.csv', 'w') as f:
+        #     centroids = best_model.cluster_centers_
+        #     for c in range(self.args.cluster):
+        #         for i in range(12):
+        #             if i == 23:
+        #                 f.write(f'{centroids[c][i]}\n')
+        #             else:
+        #                 f.write(f'{centroids[c][i]},')
+        #         f.write('\n')
+        # exit()
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
         with open(os.path.join(path, "params.json"), 'w') as f:
-            args_to_save = {'repr_method': self.args.repr_method,
+            args_to_save = {'dataset': self.args.dataset, 'clustering_method': self.args.clustering_method,
+                            'repr_method': self.args.repr_method,
                             'partition_method': self.args.partition_method, 'num_partitions': self.args.partition, 
                             'k': self.args.cluster, 'tol': self.args.kmeans_tol,
                             'n_inits': self.args.kmeans_init, 'epoch': self.args.kmeans_epoch, 'batch': self.args.batch}

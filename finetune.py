@@ -95,10 +95,11 @@ def _finetune(args, tools):
         clustering_model = tools.clustering_method(args)
         if not args.clustering_path:
             args.clustering_path = set_clustering_dir(args)
-            if args.clustering_method == 'dist':
-                clustering_model.train_clustering_model(clustering_train_loader, train_loader)
-            else:
-                clustering_model.train_clustering_model(clustering_train_loader)
+            # if args.clustering_method == 'dist':
+            #     clustering_model.train_clustering_model(clustering_train_loader, train_loader)
+            # else:
+            #     clustering_model.train_clustering_model(clustering_train_loader)
+            clustering_model.train_clustering_model(clustering_train_loader, train_loader)
         else:
             clustering_model.load_clustering_model()
 
