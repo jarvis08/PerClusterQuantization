@@ -122,11 +122,11 @@ class FusedBottleneck(nn.Module):
 
         if self.downsample is not None:
             self.bn_down = FusedBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
-        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, a_bit=bit_conv_act, arg_dict=self.arg_dict)
+        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, a_bit=bit_conv_act, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
                                    a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn2 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=self.arg_dict)
+        self.bn2 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion,
                                    a_bit=bit_conv_act, arg_dict=arg_dict)
         self.bn3 = FusedBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
