@@ -11,7 +11,6 @@ from datetime import datetime
 import json
 import logging
 import random
-from time import time
 
 
 class RuntimeHelper(object):
@@ -534,7 +533,7 @@ def initialize_pcq_model(model, loader, criterion):
     return top1.avg
 
 
-def get_finetuning_model(arg_dict, tools):
+def get_finetuning_model(arg_dict, tools, pretrained_model=None):
     if arg_dict['dataset'] == 'cifar100':
         fused_model = tools.fused_model_initializer(arg_dict, num_classes=100)
     else:
@@ -544,7 +543,8 @@ def get_finetuning_model(arg_dict, tools):
         checkpoint = torch.load(arg_dict['dnn_path'])
         fused_model.load_state_dict(checkpoint['state_dict'], strict=False)
     else:
-        pretrained_model = load_dnn_model(arg_dict, tools)
+        if pretrained_model is None:
+            pretrained_model = load_dnn_model(arg_dict, tools)
         fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
