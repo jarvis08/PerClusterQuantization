@@ -75,7 +75,28 @@ def _finetune(args, tools):
 
     arg_dict = deepcopy(vars(args))
     arg_dict['runtime_helper'] = runtime_helper
-    model = get_finetuning_model(arg_dict, tools)
+
+    pretrained_model = None
+    clustering_model = None
+    if args.cluster > 1:
+        clustering_model = tools.clustering_method(args)
+        if not args.clustering_path:
+            args.clustering_path = set_clustering_dir(args)
+            clustering_model.train_clustering_model(clustering_train_loader, train_loader)
+
+            if args.nnac:
+                pretrained_model = load_dnn_model(arg_dict, tools)
+                pretrained_model.cuda()
+                clustering_model.nn_aware_clutering(pretrained_model, train_loader)
+        else:
+            clustering_model.load_clustering_model()
+            if args.sub_cluster and clustering_model.final_cluster is None:
+                print("Start training NN-aware Clustering with loaded general clustering model..")
+                clustering_model.nn_aware_clutering(pretrained_model, train_loader)
+
+    model = get_finetuning_model(arg_dict, tools, pretrained_model)
+    if pretrained_model:
+        del pretrained_model
     model.cuda()
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -89,19 +110,6 @@ def _finetune(args, tools):
     if args.fused:
         optimizer, epoch_to_start = load_optimizer(optimizer, args.dnn_path)
         save_path_fp, best_epoch, best_int_val_score = load_tuning_info(args.dnn_path)
-
-    clustering_model = None
-    if args.cluster > 1:
-        clustering_model = tools.clustering_method(args)
-        if not args.clustering_path:
-            args.clustering_path = set_clustering_dir(args)
-            # if args.clustering_method == 'dist':
-            #     clustering_model.train_clustering_model(clustering_train_loader, train_loader)
-            # else:
-            #     clustering_model.train_clustering_model(clustering_train_loader)
-            clustering_model.train_clustering_model(clustering_train_loader, train_loader)
-        else:
-            clustering_model.load_clustering_model()
 
     if not save_path_fp:
         save_path_fp = set_save_dir(args, allow_existence=False)

@@ -27,7 +27,6 @@ parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d'
 parser.add_argument('--fused', action='store_true', help='Evaluate or fine-tune fused model')
 parser.add_argument('--quantized', action='store_true', help='Evaluate quantized model')
 
-
 parser.add_argument('--quant_base', default='qat', type=str,
                     help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
 parser.add_argument('--per_channel', action='store_true',
@@ -38,8 +37,8 @@ parser.add_argument('--fold_convbn', action='store_true',
                     help="Fake Quantize CONV's weight after folding BatchNormalization")
 
 parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through Estimator in Fake Quantization")
-parser.add_argument('--fq', default=1, type=int, help='Epoch to wait for fake-quantize activations.'
-                                                      ' PCQ requires at least one epoch.')
+parser.add_argument('--fq', default=1, type=int,
+                    help='Epoch to wait for fake-quantize activations. PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--bit_conv_act', default=16, type=int,
                     help="CONV's activation bit size when not using Conv&BN folding")
@@ -49,8 +48,14 @@ parser.add_argument('--bit_first', default=0, type=int, help="First layer's bit 
 parser.add_argument('--bit_classifier', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
 
+parser.add_argument('--nnac', action='store_true', help="Use Neural Network Aware Clustering")
+parser.add_argument('--sim_threshold', default=0.7, type=float,
+                    help='Similarity threshold of ratio for considering similar clusters in nnac')
 parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means or BIRCH)")
+parser.add_argument('--mixrate', default=2, type=int,
+                    help='Number of epochs to mix augmented dataset to non-augmented dataset in training of clustering')
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
+parser.add_argument('--sub_cluster', default=0, type=int, help='Number of sub-clusters in NN-aware Clustering')
 parser.add_argument('--partition', default=2, type=int,
                     help="Number of partitions to divide per channel for clustering's input")
 parser.add_argument('--partition_method', default='square', type=str, help="How to divide image into partitions")
@@ -105,6 +110,10 @@ if not args.bit_addcat:
         args.bit_addcat = 16
     else:
         args.bit_addcat = args.bit
+
+# NN-aware Clustering
+if args.cluster > 1 and args.sub_cluster:
+    args.nnac = True
 print(vars(args))
 
 

@@ -76,6 +76,66 @@ class AlexNetSmall(nn.Module):
         x = self.classifier(x)
         return x
 
+    def initialize_counter(self, x, n_clusters):
+        self.zero_counter = []
+        indices = [2, 5, 8, 10, 12]
+        _to = None
+        for i in range(len(indices)):
+            _from = 0 if i == 0 else indices[i - 1]
+            _to = indices[i]
+            x = self.features[_from:_to](x)
+            n_features = x.view(-1).size(0)
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        # Classifier make 0 ratio
+        # x = self.features[_to:](x)  # left feature extractions
+        # x = self.avgpool(x)
+        # x = torch.flatten(x, 1)
+
+        # indices = [3, 6, 7]
+        # for i in range(len(indices)):
+        #     _from = 0 if i == 0 else indices[i - 1]
+        #     _to = indices[i]
+        #     x = self.classifier[_from:_to](x)
+        #     n_features = x.view(-1).size(0)
+        #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+        # self.zero_counter.append(torch.zeros((n_clusters, x.shape[1]), device='cuda'))
+
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        if not hasattr(self, 'zero_counter'):
+            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+        indices = [2, 5, 8, 10, 12]
+        for l in range(len(indices)):
+            _from = 0 if l == 0 else indices[l - 1]
+            _to = indices[l]
+            x = self.features[_from:_to](x)
+
+            n_features = self.zero_counter[l].size(1)
+            for idx in range(x.size(0)):
+                flattened = x[idx].view(-1)
+                zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+                zeros_idx %= n_features
+                self.zero_counter[l][cluster, zeros_idx] += 1
+
+        # Classifier make 0 ratio
+        # x = self.features[_to:](x)  # left feature extractions
+        # x = self.avgpool(x)
+        # x = torch.flatten(x, 1)
+
+        # indices = [3, 6, 7]
+        # for i in range(len(indices)):
+        #     _from = 0 if i == 0 else indices[i - 1]
+        #     _to = indices[i]
+        #     x = self.classifier[_from:_to](x)
+
+        #     n_features = self.zero_counter[l].size(1)
+        #     for idx in range(x.size(0)):
+        #         flattened = x[idx].view(-1)
+        #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+        #         zeros_idx %= n_features
+        #         self.zero_counter[l][cluster, zeros_idx] += 1
+
 
 def alexnet(**kwargs: Any) -> AlexNet:
     r"""AlexNet model architecture from the
