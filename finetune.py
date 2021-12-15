@@ -200,7 +200,7 @@ def _finetune(args, tools):
 
     tuning_time_cost = get_time_cost_in_string(time() - tuning_start_time)
     if args.cluster > 1:
-        method = f'DAQ({args.clustering_method}, K{args.cluster}P{args.partition}-{args.repr_method})+{args.quant_base}'
+        method = f'DAQ({args.clustering_method}, K{args.cluster}/{args.sub_cluster}P{args.partition}-{args.repr_method})+{args.quant_base}'
     else:
         method = args.quant_base
 
