@@ -218,7 +218,7 @@ class KMeansClustering(object):
                     n_commonly_zero = torch.logical_and(dnn_model.zero_counter[l][_from], dnn_model.zero_counter[l][_to]).sum()
                     similarity = n_commonly_zero / n_features
                     distances[l][_from][_to] = similarity
-                    # distances[l][_to][_from] = similarity  # Comment this line to make duplicated values 0
+                    # distances[l][_to][_from] = similarity  # Comment this line to make duplicated pairs 0
             with open(f'./sims/sim{int(self.args.sim_threshold * 100)}/Similarity-{self.args.arch}-{self.args.dataset}-k{n_sub_clusters}-l{l}.csv', 'w') as f:
                 for _from in range(n_sub_clusters):
                     for _to in range(n_sub_clusters):
@@ -275,7 +275,6 @@ class KMeansClustering(object):
         merged_clusters = []
         n_per_sub = torch.tensor(n_per_sub)
         print(f'Merge', end='')
-        # for pair in similar_cluster_pairs:
         for p in range(len(similar_cluster_pairs)):
             pair = similar_cluster_pairs[p]
             c1, c2 = pair[0][0], pair[0][1]
@@ -321,28 +320,26 @@ class KMeansClustering(object):
             if n_merged == to_merge:
                 print()
                 break
-        # assert n_merged == to_merge, "Not similar clusters to be merged"
 
         final_clusters = dict()
         n_per_final = [0 for _ in range(self.args.cluster)]
 
-        # Update the number of data per cluster with merged number
-        k = 0
+        k = 0  # Final cluster ID
         leftover_clusters = set(range(n_sub_clusters))
         print("\n>>> Merged clusters")
         for merged_single_cluster in merged_clusters:
-            clusters = merged_single_cluster[0]
-            print(f"C{k}: {tuple(clusters)}")
+            group = merged_single_cluster[0]
+            print(f"C{k}: {tuple(group)}")
 
-            leftover_clusters = leftover_clusters.difference(clusters)
-            for c in clusters:
-                final_clusters[str(c)] = k
+            leftover_clusters = leftover_clusters.difference(group)
+            for cluster in group:
+                final_clusters[str(cluster)] = k
             n_per_final[k] = merged_single_cluster[1]
             k += 1
 
-        for ctr in leftover_clusters:
-            final_clusters[ctr] = k
-            n_per_final[k] = n_per_sub[ctr]
+        for cluster in leftover_clusters:
+            final_clusters[str(cluster)] = k
+            n_per_final[k] = n_per_sub[cluster]
             k += 1
 
         print(f"\n>>> [Final] Number of data per cluster (Max.limit: {max_data_num_per_merged_cluster})")
