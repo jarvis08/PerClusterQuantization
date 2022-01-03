@@ -17,20 +17,20 @@ def get_normalizer(dataset_name):
 
 
 def split_dataset_into_train_and_val(full_dataset, dataset_name):
-        n_data = len(full_dataset)
-        indices = list(range(n_data))
+    n_data = len(full_dataset)
+    indices = list(range(n_data))
 
-        if dataset_name == 'svhn':
-            train_idx = indices[:n_data - 6000]
-            val_idx = indices[n_data - 6000:]
-        else:
-            train_size = int(n_data * 0.9)
-            train_idx = indices[:train_size]
-            val_idx = indices[train_size:]
+    if dataset_name == 'svhn':
+        train_idx = indices[:n_data - 6000]
+        val_idx = indices[n_data - 6000:]
+    else:
+        train_size = int(n_data * 0.9)
+        train_idx = indices[:train_size]
+        val_idx = indices[train_size:]
 
-        train_dataset = torch.utils.data.Subset(full_dataset, train_idx)
-        val_dataset = torch.utils.data.Subset(full_dataset, val_idx)
-        return train_dataset, val_dataset
+    train_dataset = torch.utils.data.Subset(full_dataset, train_idx)
+    val_dataset = torch.utils.data.Subset(full_dataset, val_idx)
+    return train_dataset, val_dataset
 
 
 def get_augmented_train_dataset(args, normalizer):

@@ -36,7 +36,7 @@ class QuantizedLinear(nn.Linear):
         self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
+        self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)    #
         self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
@@ -187,7 +187,7 @@ class PCQLinear(nn.Module):
         if self.is_classifier:
             _min, _max = get_range(x)
         else:
-            data = x.view(x.size(0) // 4, -1)
+            data = x.view(x.size(0) // 4, -1)   #
             if self._activation is None:
                 _min = data.min(dim=1).values.mean()
             _max = data.max(dim=1).values.mean()

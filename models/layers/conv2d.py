@@ -20,7 +20,7 @@ class QuantizedConv2d(nn.Conv2d):
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
-        self.sum_a1 = None  # for faster inference
+        self.sum_a1 = None  # for faster inference      ###
 
         self.out_channels = out_channels
         self.multiplication = multiplication
@@ -71,7 +71,7 @@ class QuantizedConv2d(nn.Conv2d):
                         indices = (bc == c).nonzero(as_tuple=True)[0]
                         padded[indices] = F.pad(x[indices], to_pad, mode='constant', value=self.z1[c])
                 else:
-                    padded = F.pad(x, to_pad, mode='constant', value=0)
+                    padded = F.pad(x, to_pad, mode='constant', value=0) #
 
         out = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
         return padded.type(torch.cuda.IntTensor), out.type(torch.cuda.LongTensor)
@@ -104,7 +104,7 @@ class QuantizedConv2d(nn.Conv2d):
                 self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
-            if self.sum_a1 is None:
+            if self.sum_a1 is None:     #
                 self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
             for o_col in range(output_col):
                 for o_row in range(output_row):

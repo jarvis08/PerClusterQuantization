@@ -71,7 +71,7 @@ def calc_symmetric_qparams(_min, _max, bit):
         s = _max.sub(_min).div(16777215)
     else:
         s = (_max - _min) / 4294967295
-    return s, torch.zeros_like(s, device='cuda')
+    return s, torch.zeros_like(s, device='cuda')    #
 
 
 def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
