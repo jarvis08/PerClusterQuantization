@@ -365,11 +365,14 @@ def add_path(prev_path, to_add, allow_existence=True):
 
 
 def set_clustering_dir(args):
-    name = f'k{args.cluster}p{args.partition}'
     path = add_path('', 'result')
     path = add_path(path, args.clustering_method)
     path = add_path(path, args.dataset)
-    path = add_path(path, args.repr_method)
+
+    if args.sub_cluster:
+        name = f'k{args.cluster}.sub{args.sub_cluster}.part{args.partition}.{args.repr_method}'
+    else:
+        name = f'k{args.cluster}.part{args.partition}.{args.repr_method}'
     path = add_path(path, name, allow_existence=False)
     return path
 
