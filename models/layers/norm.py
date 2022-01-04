@@ -276,7 +276,7 @@ class FusedBnReLU(nn.Module):
             s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
         else:
             s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, self.use_ste)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
