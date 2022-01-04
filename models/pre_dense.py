@@ -57,11 +57,11 @@ class FusedDenseLayer(nn.Module):
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                _out = fake_quantize(out, s, z, self.q_max, use_ste=self.use_ste)
         else:
             self.act_range[0] = torch.min(out).item()
             self.act_range[1] = torch.max(out).item()
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return _out
 
     def set_layer_qparams(self, s1, z1):
@@ -100,11 +100,11 @@ class FusedTransition(nn.Sequential):
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                _out = fake_quantize(out, s, z, self.q_max, use_ste=self.use_ste)
         else:
             self.act_range[0] = torch.min(out).item()
             self.act_range[1] = torch.max(out).item()
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return _out
 
     def set_transition_qparams(self, s1, z1):
@@ -160,11 +160,11 @@ class FusedDenseBlock(nn.ModuleDict):
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                _out = fake_quantize(out, s, z, self.q_max, self.use_ste)
+                _out = fake_quantize(out, s, z, self.q_max, use_ste=self.use_ste)
         else:
             self.act_range[0] = torch.min(out).item()
             self.act_range[1] = torch.max(out).item()
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return _out
 
     def set_block_qparams(self, prev_s, prev_z):
@@ -232,7 +232,7 @@ class FusedDenseNet(nn.Module):
             else:
                 self.in_range[0] = torch.min(x).item()
                 self.in_range[1] = torch.max(x).item()
-                self.apply_ema = True
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         out = self.features(x)
         out = F.adaptive_avg_pool2d(out, (1, 1))

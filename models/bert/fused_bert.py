@@ -173,7 +173,7 @@ class FusedBertLayerNorm(nn.Module):
         else:
             self.in_range[0] = torch.min(x).item()
             self.in_range[0] = torch.max(x).item()
-            # self.apply_ema = True
+            # self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         u = x.mean(-1, keepdim=True)
         s = (x - u).pow(2).mean(-1, keepdim=True)
@@ -186,7 +186,7 @@ class FusedBertLayerNorm(nn.Module):
         else:
             self.act_range[0] = torch.min(_out).item()
             self.act_range[1] = torch.max(_out).item()
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         return _out
 
@@ -774,7 +774,7 @@ class FusedBertModel(PreTrainedBertModel):
             else:
                 self.in_range[0] = torch.min(embedding_output).item()
                 self.in_range[1] = torch.max(embedding_output).item()
-                self.apply_ema = True
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,

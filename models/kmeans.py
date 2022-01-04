@@ -204,6 +204,7 @@ class KMeansClustering(object):
         for c in range(n_sub_clusters):
             print(f"C{c}: {n_per_sub[c]}")
         n_per_sub = torch.tensor(n_per_sub)
+        max_data_num_per_merged_cluster = sum(n_per_sub) / 2
 
         def check_other_groups(groups, cluster_id, cur_idx):
             for idx in range(len(groups)):
@@ -277,7 +278,6 @@ class KMeansClustering(object):
                 print(f"Cluster {similar_cluster_pairs[pair][0][0]}&{similar_cluster_pairs[pair][0][1]}, "
                       f"in {similar_cluster_pairs[pair][1]} layers")
 
-            max_data_num_per_merged_cluster = sum(n_per_sub) / 2
             print(f'Merge', end='')
             for p in range(len(similar_cluster_pairs)):
                 merged = False

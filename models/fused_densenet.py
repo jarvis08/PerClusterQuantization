@@ -134,7 +134,7 @@ class FusedDenseBlock(nn.ModuleDict):
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return _out
 
     def set_block_qparams(self):
@@ -204,7 +204,7 @@ class FusedDenseNet(nn.Module):
                     x = fake_quantize(x, s, z, self.q_max)
             else:
                 self.in_range[0], self.in_range[1] = get_range(x)
-                self.apply_ema = True
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         # out = self.features(x)
         out = self.features.first_conv(x)

@@ -44,7 +44,7 @@ class PCQActivation(nn.Module):
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, self.use_ste)
+                    out[done:done + n] = fake_quantize(x[done:done + n], s, z, self.q_max, use_ste=self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(x[done:done + n]).item()
                 self.act_range[c][1] = torch.max(x[done:done + n]).item()
@@ -88,11 +88,11 @@ class QActivation(nn.Module):
             self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.q_max)
-                out = fake_quantize(x, s, z, self.q_max, self.use_ste)
+                out = fake_quantize(x, s, z, self.q_max, use_ste=self.use_ste)
         else:
             self.act_range[0] = torch.min(x).item()
             self.act_range[1] = torch.max(x).item()
-            self.apply_ema = True
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return out
 
     def set_qparams(self, s1, z1):

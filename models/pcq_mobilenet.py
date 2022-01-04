@@ -62,7 +62,7 @@ class PCQSqueezeExcitation(nn.Module):
                 self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, use_ste=self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(out).item()
                 self.act_range[c][1] = torch.max(out).item()
@@ -148,7 +148,7 @@ class PCQInvertedResidual(nn.Module):
                 self.act_range[c][0], self.act_range[c][1] = ema(out[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
                     s, z = calc_qparams(self.act_range[c][0], self.act_range[c][1], self.q_max)
-                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, self.use_ste)
+                    _out[done:done + n] = fake_quantize(out[done:done + n], s, z, self.q_max, use_ste=self.use_ste)
             else:
                 self.act_range[c][0] = torch.min(out).item()
                 self.act_range[c][1] = torch.max(out).item()
