@@ -226,7 +226,7 @@ class FusedBnReLU(nn.Module):
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
-        self._activation = activation(inplace=True) if activation else None
+        self.activation = activation(inplace=True) if activation else None
 
     def forward(self, x, external_range=None):
         if not self.training:
@@ -241,8 +241,8 @@ class FusedBnReLU(nn.Module):
 
     def _forward_impl(self, x):
         x = self.bn(x)
-        if self._activation:
-            x = self._activation(x)
+        if self.activation:
+            x = self.activation(x)
         return x
 
     def _fake_quantized_bn(self, x):
