@@ -247,8 +247,6 @@ class FusedBnReLU(nn.Module):
 
     def _fake_quantized_bn(self, x):
         out = self.bn(x)
-        if self._activation:
-            out = self._activation(out)
 
         with torch.no_grad():
             _x = x.detach()
@@ -259,11 +257,12 @@ class FusedBnReLU(nn.Module):
             bias = self.bn.bias - weight * mean
             s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
             weight = fake_quantize(weight, s, z, self.w_bit)
-
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
-            if self._activation:
-                fake_out = self._activation(fake_out)
-        return STE.apply(out, fake_out)
+
+        out = STE.apply(out, fake_out)
+        if self.activation:
+            out = self.activation(out)
+        return out
 
     def _update_activation_range(self, x):
         if self.apply_ema:
