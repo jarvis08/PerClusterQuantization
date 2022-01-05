@@ -10,9 +10,6 @@ from .fused_resnet import *
 from .fused_mobilenet import *
 from .fused_densenet import *
 
-from .kmeans import *
-from .mm_dist import *
-from .birch import *
 from .pcq_mlp import *
 from .pcq_alexnet import *
 from .pcq_resnet import *
