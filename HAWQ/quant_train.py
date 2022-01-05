@@ -156,23 +156,26 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
-args = parser.parse_args()
-if not os.path.exists(args.save_path):
-    os.makedirs(args.save_path)
 
-hook_counter = args.checkpoint_iter
+args_hawq, _ = parser.parse_known_args()
+if not os.path.exists(args_hawq.save_path):
+    os.makedirs(args_hawq.save_path)
+
+hook_counter = args_hawq.checkpoint_iter
 hook_keys = []
 hook_keys_counter = 0
 
 logging.basicConfig(format='%(asctime)s - %(message)s',
-                    datefmt='%d-%b-%y %H:%M:%S', filename=args.save_path + 'log.log')
+                    datefmt='%d-%b-%y %H:%M:%S', filename=args_hawq.save_path + 'log.log')
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
 
-logging.info(args)
+logging.info(args_hawq)
 
 
-def main():
+def main(args_daq):
+    args = argparse.Namespace(**vars(args_hawq), **vars(args_daq))
+    print(vars(args))
     if args.seed is not None:
         random.seed(args.seed)
         torch.manual_seed(args.seed)

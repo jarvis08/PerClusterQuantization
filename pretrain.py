@@ -3,7 +3,7 @@ import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
 
-from models import *
+from QAT.models import *
 from utils import *
 
 

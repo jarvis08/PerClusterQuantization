@@ -2,7 +2,7 @@ from torch import nn
 import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
-from models import *
+from .models import *
 from utils import *
 from tqdm import tqdm
 

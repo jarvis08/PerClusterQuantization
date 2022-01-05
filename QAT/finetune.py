@@ -4,7 +4,7 @@ import torch
 from torchsummary import summary
 
 from utils import *
-from models import *
+from .models import *
 from tqdm import tqdm
 from time import time
 
