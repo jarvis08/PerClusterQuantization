@@ -571,3 +571,40 @@ def modify_fused_resnet_qn_pre_hook(model):
     model.fc.quant_noise = False
     model.qn_prob = model.runtime_helper.qn_prob
     # return model
+
+
+def set_hawq_resnet(hawq, pre, bn_momentum=0.99):
+    """
+        Copy from pre model's params to fused layers.
+        Use fused architecture, but not really fused (use CONV & BN seperately)
+    """
+    # First layer
+    hawq.quant_init_convbn.conv = copy_weight_from_pretrained(hawq.quant_init_convbn.conv, pre.conv1)
+    hawq.quant_init_convbn.bn = copy_bn_from_pretrained(hawq.quant_init_convbn.bn, pre.bn1)
+    channel = hawq.channel
+    # Block 1
+    for stage_num in range(0, 4):
+        pre_layer = getattr(pre, f'layer{stage_num+1}')
+        for channel_num in range(channel[stage_num]):
+            unit = getattr(hawq, f'stage{stage_num+1}.' + f'unit{channel_num+1}')
+            pre_unit = pre_layer[channel_num]
+            unit.quant_convbn1.conv = copy_weight_from_pretrained(unit.quant_convbn1.conv, pre_unit.conv1)
+            unit.quant_convbn1.bn = copy_bn_from_pretrained(unit.quant_convbn1.bn, pre_unit.bn1)
+            unit.quant_convbn1.bn.momentum = bn_momentum
+            unit.quant_convbn2.conv = copy_weight_from_pretrained(unit.quant_convbn2.conv, pre_unit.conv2)
+            unit.quant_convbn2.bn = copy_bn_from_pretrained(unit.quant_convbn2.bn, pre_unit.bn2)
+            unit.quant_convbn2.bn.momentum = bn_momentum
+            unit.quant_convbn3.conv = copy_weight_from_pretrained(unit.quant_convbn3.conv, pre_unit.conv3)
+            unit.quant_convbn3.bn = copy_bn_from_pretrained(unit.quant_convbn3.bn, pre_unit.bn3)
+            unit.quant_convbn3.bn.momentum = bn_momentum
+            try:
+                if unit.quant_identity_convbn is not None:
+                    unit.quant_identity_convbn.conv = copy_weight_from_pretrained(unit.quant_identity_convbn.conv,
+                                                                                  pre_unit.downsample[0])
+                    unit.quant_identity_convbn.bn = copy_bn_from_pretrained(unit.quant_identity_convbn.bn,
+                                                                                  pre_unit.downsample[1])
+                    unit.quant_identity_convbn.bn.momentum = bn_momentum
+            except:
+                pass
+    hawq.quant_output = copy_weight_from_pretrained(hawq.quant_output, pre.fc)
+    return hawq

@@ -3,8 +3,13 @@ import torch.backends.cudnn as cudnn
 from torchsummary import summary
 
 from models import *
+from models.hawq.q_resnet import q_resnet50
 from utils import *
 from tqdm import tqdm
+
+from pytorchcv.models.common import ConvBlock
+from pytorchcv.models.shufflenetv2 import ShuffleUnit, ShuffleInitBlock
+from pytorchcv.model_provider import get_model as ptcv_get_model
 
 
 def _evaluate(args, tools):
@@ -24,6 +29,11 @@ def _evaluate(args, tools):
     criterion = nn.CrossEntropyLoss().cuda()
     cudnn.benchmark = True
 
+
+    # ptcv_model = ptcv_get_model(args.arch, pretrained=True)
+    # hawq_resnet50 = q_resnet50(ptcv_model)
+    # model = tools.set_hawq_model(hawq_resnet50, model)
+    # model.cuda()
     if args.darknet:
         darknet_loader = load_preprocessed_cifar10_from_darknet()
         validate_darknet_dataset(model, darknet_loader, criterion)

@@ -494,4 +494,3 @@ class FusedConv2d(nn.Module):
         else:
             self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
         return self.s3, self.z3
-

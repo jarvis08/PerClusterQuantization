@@ -95,7 +95,6 @@ def calc_qparams_per_cluster(ranges, bit, zero=None):
     _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
     return get_scale_and_zeropoint(_min, _max, bit)
 
-
 @torch.no_grad()
 def ema(x, averaged, smooth):
     _min, _max = torch.min(x).item(), torch.max(x).item()
@@ -466,8 +465,14 @@ def copy_pcq_bn_from_pretrained(_to, _from, num_clusters, momentum):
 def copy_weight_from_pretrained(_to, _from):
     # Copy weights from pretrained FP model
     with torch.no_grad():
+        # Origin
         if 'Conv' in _to.layer_type:
             _to.conv.weight.copy_(_from.weight)
+
+        # To HAWQ
+        # if 'Conv' in str(type(_to)).split('.')[-1]:
+        #     _to.weight.copy_(_from.weight)
         else:
-            _to.fc.weight.copy_(_from.weight)
+            _to.fc.weight.copy_(_from.weight)       # Origin
+            # _to.weight.copy_(_from.weight)        # To HAWQ
     return _to

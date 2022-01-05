@@ -167,6 +167,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
 
         if '50' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet50)
+            setattr(tools, 'set_hawq_model', set_hawq_resnet)       # TEST
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet50)
                 # setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
