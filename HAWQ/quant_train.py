@@ -19,8 +19,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-from bit_config import *
-from utils import *
+from .bit_config import *
+from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
