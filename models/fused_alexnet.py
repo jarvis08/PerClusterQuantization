@@ -41,7 +41,7 @@ class FusedAlexNet(nn.Module):
                     x = fake_quantize(x, s, z, self.bit)
             else:
                 self.in_range[0], self.in_range[1] = get_range(x)
-                self.apply_ema = True
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -107,7 +107,7 @@ class FusedAlexNetSmall(nn.Module):
                     x = fake_quantize(x, s, z, self.in_bit)
             else:
                 self.in_range[0], self.in_range[1] = get_range(x)
-                self.apply_ema = True
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         x = self.conv1(x)
         x = self.maxpool(x)

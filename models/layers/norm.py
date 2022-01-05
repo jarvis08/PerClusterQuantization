@@ -226,7 +226,7 @@ class FusedBnReLU(nn.Module):
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
-        self._activation = activation(inplace=True) if activation else None
+        self.activation = activation(inplace=True) if activation else None
 
     def forward(self, x, external_range=None):
         if not self.training:
@@ -241,14 +241,12 @@ class FusedBnReLU(nn.Module):
 
     def _forward_impl(self, x):
         x = self.bn(x)
-        if self._activation:
-            x = self._activation(x)
+        if self.activation:
+            x = self.activation(x)
         return x
 
     def _fake_quantized_bn(self, x):
         out = self.bn(x)
-        if self._activation:
-            out = self._activation(out)
 
         with torch.no_grad():
             _x = x.detach()
@@ -259,11 +257,12 @@ class FusedBnReLU(nn.Module):
             bias = self.bn.bias - weight * mean
             s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
             weight = fake_quantize(weight, s, z, self.w_bit)
-
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
-            if self._activation:
-                fake_out = self._activation(fake_out)
-        return STE.apply(out, fake_out)
+
+        out = STE.apply(out, fake_out)
+        if self.activation:
+            out = self.activation(out)
+        return out
 
     def _update_activation_range(self, x):
         if self.apply_ema:
@@ -277,7 +276,7 @@ class FusedBnReLU(nn.Module):
             s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
         else:
             s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, self.use_ste)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
