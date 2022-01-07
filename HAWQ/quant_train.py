@@ -154,6 +154,7 @@ parser.add_argument('--fixed-point-quantization',
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
+                      'resnet20_cifar100': q_resnet20,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
@@ -171,6 +172,7 @@ logging.getLogger().setLevel(logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
 
 logging.info(args_hawq)
+
 
 
 def main(args_daq):
@@ -227,6 +229,13 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     if args.pretrained and not args.resume:
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
+
+        # Custom model for CIFAR10 & CIFAR100
+        if args.arch == 'resnet20':
+            if args.data.lower() == 'CIFAR10':
+                args.arch = 'resnet20_cifar10'
+            else:
+                args.arch = 'resnet20_cifar100'
         model = ptcv_get_model(args.arch, pretrained=True)
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
@@ -391,7 +400,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    # Data loading code
+    # Data loading code - Origin Code - HAWQ
     traindir = os.path.join(args.data, 'train')
     valdir = os.path.join(args.data, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -401,20 +410,37 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.arch == "inceptionv3":
         train_resolution = 299
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(train_resolution),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+    if args.data.lower() == 'cifar100':
+        normalizer = transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+        transformer = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                          transforms.RandomHorizontalFlip(),
+                                          transforms.ToTensor(),
+                                          normalizer])
+        train_dataset = datasets.CIFAR100(root='./data', train=True, download=True, transform=transformer)
+    elif args.data.lower() == 'cifar10':
+        normalizer = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        transformer = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                          transforms.RandomHorizontalFlip(),
+                                          transforms.ToTensor(),
+                                          normalizer])
+        train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transformer)
+    else:
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(train_resolution),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
 
+    # Distribute
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
         train_sampler = None
 
+    # Data parsing and Loader
     dataset_length = int(len(train_dataset) * args.data_percentage)
     if args.data_percentage == 1:
         train_loader = torch.utils.data.DataLoader(
@@ -430,17 +456,30 @@ def main_worker(gpu, ngpus_per_node, args):
     test_resolution = (256, 224)
     if args.arch == 'inceptionv3':
         test_resolution = (342, 299)
+    elif args.data.lower() in ['cifar10', 'cifar100']:
+        test_resolution = (32, 32)
 
     # evaluate on validation set
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(test_resolution[0]),
-            transforms.CenterCrop(test_resolution[1]),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+    if args.data.lower() == 'cifar10':
+        normalizer = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        transformer = transforms.Compose([transforms.ToTensor(), normalizer])
+        test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transformer)
+        val_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    elif args.data.lower() == 'cifar100':
+        normalizer = transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+        transformer = transforms.Compose([transforms.ToTensor(), normalizer])
+        test_dataset = datasets.CIFAR100(root='./data', train=False, download=True, transform=transformer)
+        val_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    else:
+        val_loader = torch.utils.data.DataLoader(
+            datasets.ImageFolder(valdir, transforms.Compose([
+                transforms.Resize(test_resolution[0]),
+                transforms.CenterCrop(test_resolution[1]),
+                transforms.ToTensor(),
+                normalize,
+            ])),
+            batch_size=args.batch_size, shuffle=False,
+            num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
         validate(val_loader, model, criterion, args)
