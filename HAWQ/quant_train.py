@@ -19,6 +19,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
@@ -173,7 +174,7 @@ logging.getLogger().addHandler(logging.StreamHandler())
 logging.info(args_hawq)
 
 
-def main(args_daq):
+def main(args_daq, data_loaders, clustering_model):
     args = argparse.Namespace(**vars(args_hawq), **vars(args_daq))
     print(vars(args))
     if args.seed is not None:
@@ -205,10 +206,10 @@ def main(args_daq):
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args)
+        main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
 
 
-def main_worker(gpu, ngpus_per_node, args):
+def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     global best_acc1
     args.gpu = gpu
 
@@ -391,75 +392,35 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    train_loader = data_loaders['aug_train']
+    val_loader = data_loaders['val']
+    test_loader = data_loaders['test']
 
-    train_resolution = 224
-    if args.arch == "inceptionv3":
-        train_resolution = 299
+    runtime_helper = None
+    if args.cluster > 1:
+        runtime_helper = RuntimeHelper()
+        runtime_helper.set_pcq_arguments(args)
+        model.set_daq_helper = runtime_helper
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(train_resolution),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-    dataset_length = int(len(train_dataset) * args.data_percentage)
-    if args.data_percentage == 1:
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-            num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-    else:
-        partial_train_dataset, _ = torch.utils.data.random_split(train_dataset,
-                                                                 [dataset_length, len(train_dataset) - dataset_length])
-        train_loader = torch.utils.data.DataLoader(
-            partial_train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-            num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-
-    test_resolution = (256, 224)
-    if args.arch == 'inceptionv3':
-        test_resolution = (342, 299)
-
-    # evaluate on validation set
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(test_resolution[0]),
-            transforms.CenterCrop(test_resolution[1]),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
-        validate(val_loader, model, criterion, args)
+        validate(test_loader, model, criterion, args)
         return
 
     best_epoch = 0
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
+        # if args.distributed:
+        #     train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
-        # train for one epoch
-        if args.distill_method != 'None':
-            train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_loader,
-                     args, ngpus_per_node, dataset_length)
+        if args.cluster > 1:
+            pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
+                      fix_BN=args.fix_BN)
+            acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
+
         else:
             train(train_loader, model, criterion, optimizer, epoch, args)
-
-        acc1 = validate(val_loader, model, criterion, args)
+            acc1 = validate(val_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1

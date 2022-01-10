@@ -9,18 +9,12 @@ from .evaluate import _evaluate
 from utils.lipschitz import check_lipschitz
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--mode', default='fine', type=str, help="pre/fine/eval/lip")
 parser.add_argument('--arch', default='resnet', type=str, help='Architecture to train/eval')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 
-parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
-parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
 parser.add_argument('--dali', action='store_true', help='Use GPU data augmentation DALI')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
-parser.add_argument('--batch', default=128, type=int, help='Mini-batch size')
-parser.add_argument('--val_batch', default=0, type=int, help='Validation batch size')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
 parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d's momentum factor")
@@ -53,18 +47,10 @@ parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant 
 parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply conv each channel')
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
-# args = parser.parse_args()
 args_qat, _ = parser.parse_known_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
 
 # General
-if args_qat.imagenet:
-    args_qat.dataset = 'imagenet'
-if args_qat.dataset == 'cifar':
-    args_qat.dataset = 'cifar10'
-if not args_qat.val_batch:
-    args_qat.val_batch = 256 if args_qat.dataset != 'imagenet' else 128
-
 if not args_qat.bit_first:
     args_qat.bit_first = args_qat.bit
 if not args_qat.bit_classifier:
@@ -73,24 +59,15 @@ if not args_qat.bit_addcat:
     args_qat.bit_addcat = args_qat.bit
 
 
-def set_func_for_target_arch(arch, clustering_method, is_pcq):
+def set_func_for_target_arch(arch, is_pcq):
     tools = QuantizationTool()
-
-    if is_pcq:
-        if clustering_method == 'kmeans':
-            setattr(tools, 'clustering_method', KMeansClustering)
-        elif clustering_method == 'dist':
-            setattr(tools, 'clustering_method', MinMaxDistClustering)
-        else:
-            setattr(tools, 'clustering_method', BIRCH)
-
     if arch == 'MLP':
         setattr(tools, 'pretrained_model_initializer', mlp)
         setattr(tools, 'fused_model_initializer', pcq_mlp if is_pcq else fused_mlp)
         setattr(tools, 'quantized_model_initializer', quantized_mlp)
         setattr(tools, 'fuser', set_fused_mlp)
         setattr(tools, 'quantizer', quantize_mlp)
-        setattr(tools, 'shift_qn_prob', modify_fused_mlp_qn_pre_hook)
+        # setattr(tools, 'shift_qn_prob', modify_fused_mlp_qn_pre_hook)
 
     if 'AlexNet' in arch:
         setattr(tools, 'fuser', set_fused_alexnet)
@@ -99,19 +76,15 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'pretrained_model_initializer', alexnet_small)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_alexnet_small)
-                # setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_alexnet_small)
-                # setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_alexnet_small)
         else:
             setattr(tools, 'pretrained_model_initializer', alexnet)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_alexnet)
-                # setattr(tools, 'shift_qn_prob', modify_pcq_alexnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_alexnet)
-                # setattr(tools, 'shift_qn_prob', modify_fused_alexnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
@@ -125,19 +98,15 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'pretrained_model_initializer', resnet50)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet50)
-                # setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet50)
-                # setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet50)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet20)
-                # setattr(tools, 'shift_qn_prob', modify_pcq_resnet_qn_pre_hook)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet20)
-                # setattr(tools, 'shift_qn_prob', modify_fused_resnet_qn_pre_hook)
             setattr(tools, 'quantized_model_initializer', quantized_resnet20)
 
     elif arch == 'MobileNetV3':
@@ -153,16 +122,14 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'fused_model_initializer', pcq_densenet)
             setattr(tools, 'fuser', set_pcq_densenet)
             setattr(tools, 'quantizer', quantize_pcq_densenet)
-            # setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
         else:
             setattr(tools, 'fused_model_initializer', fused_densenet)
             setattr(tools, 'fuser', set_fused_densenet)
             setattr(tools, 'quantizer', quantize_densenet)
-            # setattr(tools, 'shift_qn_prob', modify_fused_densenet_qn_pre_hook)
     return tools
 
 
-def main(args_daq):
+def main(args_daq, data_loaders, clustering_model):
     args = argparse.Namespace(**vars(args_qat), **vars(args_daq))
     print(vars(args))
     assert args.arch in ['mlp', 'alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
@@ -192,14 +159,14 @@ def main(args_daq):
             arch = 'DenseNet121'
 
         is_pcq = True if num_clusters > 1 else False
-        model_initializers = set_func_for_target_arch(arch, args.clustering_method, is_pcq)
+        model_initializers = set_func_for_target_arch(arch, is_pcq)
         return arch, model_initializers
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
 
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
-        _finetune(args, tools)
+        _finetune(args, tools, data_loaders, clustering_model)
     elif args.mode == 'eval':
         _evaluate(args, tools)
     elif args.mode == 'lip':

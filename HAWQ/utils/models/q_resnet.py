@@ -73,6 +73,21 @@ class Q_ResNet18(nn.Module):
 
         return x
 
+    def set_daq_helper(self, runtime_helper):
+        self.runtime_helper = runtime_helper
+        self.quant_input.runtime_helper = runtime_helper
+        self.quant_init_block_convbn.runtime_helper = runtime_helper
+        self.quant_act_int32.runtime_helper = runtime_helper
+
+        for stage_num in range(0, 4):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+                tmp_func.runtime_helper = runtime_helper
+
+        self.final_pool.runtime_helper = runtime_helper
+        self.quant_act_output.runtime_helper = runtime_helper
+        self.quant_output.runtime_helper = runtime_helper
+
 
 class Q_ResNet50(nn.Module):
     """

@@ -9,66 +9,8 @@ from tqdm import tqdm
 from time import time
 
 
-def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    model.train()
-    container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
-                               clustering_model.args.dataset, clustering_model.args.batch)
-    container.initialize_generator()
-    container.set_next_batch()
-    with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
-        for i, _ in enumerate(t):
-            input, target, runtime_helper.batch_cluster = container.get_batch()
-            input, target = input.cuda(), target.cuda()
-            output = model(input)
-
-            loss = criterion(output, target)
-
-            prec = accuracy(output, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec.item(), input.size(0))
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            container.set_next_batch()
-
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, prec.item(), top1.avg))
-            t.set_postfix(loss=losses.avg, acc=top1.avg)
-
-            if container.ready_cluster is None:
-                break
-
-
-def _finetune(args, tools):
+def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
-    normalizer = get_normalizer(args.dataset)
-
-    clustering_train_loader = None
-    test_loader = None
-    augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
-    if args.dataset != 'imagenet':
-        augmented_train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
-        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
-
-        non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
-        if args.cluster > 1 and not args.clustering_path:
-            non_augmented_train_dataset, val_dataset = \
-                split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
-            clustering_train_loader = get_data_loader(non_augmented_train_dataset,
-                                                      batch_size=256, shuffle=True, workers=args.worker)
-        else:
-            _, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
-
-        test_dataset = get_test_dataset(args, normalizer)
-        test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
-    else:
-        train_loader = get_data_loader(augmented_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
-        val_dataset = get_test_dataset(args, normalizer)
-    val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
 
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
@@ -78,19 +20,12 @@ def _finetune(args, tools):
 
     pretrained_model = load_dnn_model(arg_dict, tools)
     pretrained_model.cuda()
-    clustering_model = None
-    if args.cluster > 1:
-        clustering_model = tools.clustering_method(args)
-        if not args.clustering_path:
-            args.clustering_path = set_clustering_dir(args)
-            clustering_model.train_clustering_model(clustering_train_loader, train_loader)
-        else:
-            clustering_model.load_clustering_model()
-            if args.nnac and clustering_model.final_cluster is None:
-                print("Start training NN-aware Clustering with loaded general clustering model..")
 
-        if args.nnac and clustering_model.final_cluster is None:
-            clustering_model.nn_aware_clutering(pretrained_model, train_loader)
+    train_loader = data_loaders['aug_train']
+    val_loader = data_loaders['val']
+    test_loader = data_loaders['test']
+    if args.nnac and clustering_model.final_cluster is None:
+        clustering_model.nn_aware_clutering(pretrained_model, train_loader)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
     if pretrained_model:

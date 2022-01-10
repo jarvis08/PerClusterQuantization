@@ -260,6 +260,46 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
+def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger, fix_BN=False):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    # switch to train mode
+    if fix_BN:
+        model.eval()
+    else:
+        model.train()
+
+    container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
+                               clustering_model.args.dataset, clustering_model.args.batch)
+    container.initialize_generator()
+    container.set_next_batch()
+    with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
+        for i, _ in enumerate(t):
+            input, target, runtime_helper.batch_cluster = container.get_batch()
+            input, target = input.cuda(), target.cuda()
+            output = model(input)
+
+            loss = criterion(output, target)
+
+            prec = accuracy(output, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec.item(), input.size(0))
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            container.set_next_batch()
+
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, prec.item(), top1.avg))
+            t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+            if container.ready_cluster is None:
+                break
+
+
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
