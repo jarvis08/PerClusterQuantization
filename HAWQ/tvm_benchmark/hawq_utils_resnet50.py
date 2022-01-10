@@ -114,9 +114,9 @@ def save_weights(save_path, kernel_dtype, num_stages, units):
     int8_ops_list = ['module.quant_init_convbn.weight_integer', 'module.quant_output.weight_integer']
 
     for (key, tensor) in weight_integer.items():
-        print(key)
+        # print(key)
         tensor_np = tensor.cpu().numpy().astype('int32')
-        print(tensor_np.shape)
+        # print(tensor_np.shape)
         # If it is convolutio weight, transpose it
         if len(tensor_np.shape) == 4:
             tensor_np = np.transpose(tensor_np, (2, 3, 0, 1))

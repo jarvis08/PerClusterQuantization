@@ -155,6 +155,7 @@ parser.add_argument('--fixed-point-quantization',
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
+                      'resnet20_cifar100': q_resnet20,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
@@ -228,6 +229,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     # create model
     if args.pretrained and not args.resume:
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
+
+        # Custom model for CIFAR10 & CIFAR100
+        if args.arch == 'resnet20':
+            if args.data.lower() == 'CIFAR10':
+                args.arch = 'resnet20_cifar10'
+            else:
+                args.arch = 'resnet20_cifar100'
         model = ptcv_get_model(args.arch, pretrained=True)
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
@@ -401,7 +409,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         runtime_helper = RuntimeHelper()
         runtime_helper.set_pcq_arguments(args)
         model.set_daq_helper = runtime_helper
-
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)

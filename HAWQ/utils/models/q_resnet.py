@@ -89,6 +89,67 @@ class Q_ResNet18(nn.Module):
         self.quant_output.runtime_helper = runtime_helper
 
 
+class Q_ResNet20(nn.Module):
+    """
+        Quantized ResNet20 model for dataset CIFAR100, CIFAR10
+    """
+    def __init__(self, model):
+        super().__init__()
+        features = getattr(model, 'features')
+        init_block = getattr(features, 'init_block')
+
+        self.quant_input = QuantAct()
+
+        self.quant_init_block_convbn = QuantBnConv2d()
+        self.quant_init_block_convbn.set_param(init_block.conv, init_block.bn)
+
+        self.quant_act_int32 = QuantAct()
+
+        # self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.act = nn.ReLU()
+
+        self.channel = [3, 3, 3]
+
+        for stage_num in range(0, 3):
+            stage = getattr(features, "stage{}".format(stage_num + 1))
+            for unit_num in range(0, self.channel[stage_num]):
+                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
+                quant_unit = Q_ResBlockBn()
+                quant_unit.set_param(unit)
+                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
+
+        self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
+
+        self.quant_act_output = QuantAct()
+
+        output = getattr(model, 'output')
+        self.quant_output = QuantLinear()
+        self.quant_output.set_param(output)
+
+    def forward(self, x):
+        x, act_scaling_factor = self.quant_input(x)
+
+        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
+
+        # x = self.pool(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
+
+        x = self.act(x)
+
+        for stage_num in range(0,3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+
+        x = self.final_pool(x, act_scaling_factor)
+
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+        x = x.view(x.size(0), -1)
+        x = self.quant_output(x, act_scaling_factor)
+
+        return x
+
+
 class Q_ResNet50(nn.Module):
     """
         Quantized ResNet50 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
@@ -333,6 +394,10 @@ class Q_ResBlockBn(nn.Module):
 
 def q_resnet18(model):
     net = Q_ResNet18(model)
+    return net
+
+def q_resnet20(model):
+    net = Q_ResNet20(model)
     return net
 
 
