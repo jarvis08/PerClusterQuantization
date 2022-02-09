@@ -548,7 +548,10 @@ def get_finetuning_model(arg_dict, tools, pretrained_model=None):
     else:
         if pretrained_model is None:
             pretrained_model = load_dnn_model(arg_dict, tools)
-        fused_model = tools.fuser(fused_model, pretrained_model)
+        if arg_dict['fold_convbn']:
+            fused_model = tools.folded_fuser(fused_model, pretrained_model)
+        else:
+            fused_model = tools.fuser(fused_model, pretrained_model)
     return fused_model
 
 

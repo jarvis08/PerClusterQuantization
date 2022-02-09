@@ -18,6 +18,7 @@ class STE(torch.autograd.Function):
 class QuantizationTool(object):
     def __init__(self):
         self.fuser = None
+        self.folded_fuser = None
         self.quantizer = None
         self.pretrained_model_initializer = None
         self.fused_model_initializer = None
@@ -470,4 +471,13 @@ def copy_weight_from_pretrained(_to, _from):
             _to.conv.weight.copy_(_from.weight)
         else:
             _to.fc.weight.copy_(_from.weight)
+    return _to
+
+
+def copy_weight_from_pretrained_folded(_to, _from_conv, _from_bn, momentum):
+    # Copy weights from pretrained FP model
+    with torch.no_grad():
+        _to.conv.weight.copy_(_from_conv.weight)
+        _to.norm_layer = deepcopy(_from_bn)
+        _to.norm_layer.momentum = momentum
     return _to

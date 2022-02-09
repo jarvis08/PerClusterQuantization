@@ -162,6 +162,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
         setattr(tools, 'quantizer', quantize_pcq_resnet)
         if is_pcq:
             setattr(tools, 'fuser', set_pcq_resnet)
+            setattr(tools, 'folded_fuser', set_folded_pcq_resnet)
         else:
             setattr(tools, 'fuser', set_fused_resnet)
 

@@ -32,8 +32,8 @@ class PCQBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper, self.fold_convbn \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
@@ -51,14 +51,21 @@ class PCQBasicBlock(nn.Module):
     def forward(self, x):
         identity = x
 
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
+        if self.fold_convbn:
+            out = self.conv1(x)
+            out = self.conv2(out)
 
-        if self.downsample is not None:
-            identity = self.downsample(x)
-            identity = self.bn_down(identity)
+            if self.downsample is not None:
+                identity = self.downsample(x)
+        else:
+            out = self.conv1(x)
+            out = self.bn1(out)
+            out = self.conv2(out)
+            out = self.bn2(out)
+
+            if self.downsample is not None:
+                identity = self.downsample(x)
+                identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -121,8 +128,8 @@ class PCQBottleneck(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper, self.fold_convbn \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
@@ -146,16 +153,24 @@ class PCQBottleneck(nn.Module):
     def forward(self, x):
         identity = x
 
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.conv3(out)
-        out = self.bn3(out)
+        if self.fold_convbn:
+            out = self.conv1(x)
+            out = self.conv2(out)
+            out = self.conv3(out)
 
-        if self.downsample is not None:
-            identity = self.downsample(x)
-            identity = self.bn_down(identity)
+            if self.downsample is not None:
+                identity = self.downsample(x)
+        else:
+            out = self.conv1(x)
+            out = self.bn1(out)
+            out = self.conv2(out)
+            out = self.bn2(out)
+            out = self.conv3(out)
+            out = self.bn3(out)
+
+            if self.downsample is not None:
+                identity = self.downsample(x)
+                identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -212,8 +227,8 @@ class PCQResNet(nn.Module):
                  width_per_group=64, replace_stride_with_dilation=None):
         super(PCQResNet, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper, self.fold_convbn \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -233,6 +248,7 @@ class PCQResNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
+
         self.first_conv = PCQConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                     w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
         self.bn1 = PCQBnReLU(self.inplanes, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=self.arg_dict)
@@ -272,7 +288,8 @@ class PCQResNet(nn.Module):
                 x = self._fake_quantize_input(x)
 
         x = self.first_conv(x)
-        x = self.bn1(x)
+        if not self.fold_convbn:
+            x = self.bn1(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -329,8 +346,8 @@ class PCQResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(PCQResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper, self.fold_convbn \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -372,7 +389,8 @@ class PCQResNet20(nn.Module):
                 x = self._fake_quantize_input(x)
 
         x = self.first_conv(x)
-        x = self.bn1(x)
+        if not self.fold_convbn:
+            x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -497,6 +515,69 @@ def set_pcq_resnet(fused, pre):
             block[i].bn1 = copy_pcq_bn_from_pretrained(block[i].bn1, pre.layer4[i].bn1, n, momentum)
             block[i].bn2 = copy_pcq_bn_from_pretrained(block[i].bn2, pre.layer4[i].bn2, n, momentum)
             block[i].bn3 = copy_pcq_bn_from_pretrained(block[i].bn3, pre.layer4[i].bn3, n, momentum)
+
+    # Classifier
+    fused.fc = copy_from_pretrained(fused.fc, pre.fc)
+    return fused
+
+
+def set_folded_pcq_resnet(fused, pre):
+    """
+        Copy from pre model's params to fused layers.
+        Use fused architecture, but not really fused (use CONV & BN seperately)
+    """
+    n = fused.arg_dict['cluster']
+    momentum = fused.arg_dict['bn_momentum']
+    # First layer
+    fused.first_conv = copy_weight_from_pretrained_folded(fused.first_conv, pre.conv1, pre.bn1, momentum)
+
+    # Block 1
+    block = fused.layer1
+    if block[0].downsample is not None:
+        block[0].downsample = copy_weight_from_pretrained_folded(block[0].downsample, pre.layer1[0].downsample[0], pre.layer1[0].downsample[1], momentum)
+    for i in range(len(block)):
+        block[i].conv1 = copy_weight_from_pretrained_folded(block[i].conv1, pre.layer1[i].conv1, pre.layer1[i].bn1, momentum)
+        block[i].conv2 = copy_weight_from_pretrained_folded(block[i].conv2, pre.layer1[i].conv2, pre.layer1[i].bn2, momentum)
+        if type(block[i]) == PCQBottleneck:
+            block[i].conv3 = copy_weight_from_pretrained_folded(block[i].conv3, pre.layer1[i].conv3, pre.layer1[i].bn3, momentum)
+
+    # Block 2
+    block = fused.layer2
+    block[0].downsample = copy_weight_from_pretrained_folded(block[0].downsample, pre.layer2[0].downsample[0], pre.layer2[0].downsample[1], momentum)
+    for i in range(len(block)):
+        block[i].conv1 = copy_weight_from_pretrained_folded(block[i].conv1, pre.layer2[i].conv1, pre.layer2[i].bn1,
+                                                            momentum)
+        block[i].conv2 = copy_weight_from_pretrained_folded(block[i].conv2, pre.layer2[i].conv2, pre.layer2[i].bn2,
+                                                            momentum)
+        if type(block[i]) == PCQBottleneck:
+            block[i].conv3 = copy_weight_from_pretrained_folded(block[i].conv3, pre.layer2[i].conv3, pre.layer2[i].bn3,
+                                                                momentum)
+
+    # Block 3
+    block = fused.layer3
+    block[0].downsample = copy_weight_from_pretrained_folded(block[0].downsample, pre.layer3[0].downsample[0],
+                                                             pre.layer3[0].downsample[1], momentum)
+    for i in range(len(block)):
+        block[i].conv1 = copy_weight_from_pretrained_folded(block[i].conv1, pre.layer3[i].conv1, pre.layer3[i].bn1,
+                                                            momentum)
+        block[i].conv2 = copy_weight_from_pretrained_folded(block[i].conv2, pre.layer3[i].conv2, pre.layer3[i].bn2,
+                                                            momentum)
+        if type(block[i]) == PCQBottleneck:
+            block[i].conv3 = copy_weight_from_pretrained_folded(block[i].conv3, pre.layer3[i].conv3, pre.layer3[i].bn3,
+                                                                momentum)
+
+    # Block 4
+    if fused.num_blocks == 4:
+        block = fused.layer4
+        block[0].downsample = copy_weight_from_pretrained_folded(block[0].downsample, pre.layer4[0].downsample[0],
+                                                                 pre.layer4[0].downsample[1], momentum)
+        for i in range(len(block)):
+            block[i].conv1 = copy_weight_from_pretrained_folded(block[i].conv1, pre.layer4[i].conv1, pre.layer4[i].bn1,
+                                                                momentum)
+            block[i].conv2 = copy_weight_from_pretrained_folded(block[i].conv2, pre.layer4[i].conv2, pre.layer4[i].bn2,
+                                                                momentum)
+            block[i].conv3 = copy_weight_from_pretrained_folded(block[i].conv3, pre.layer4[i].conv3, pre.layer4[i].bn3,
+                                                                momentum)
 
     # Classifier
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
