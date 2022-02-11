@@ -32,7 +32,7 @@ class QuantizedBasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.runtime_helper, self.fold_convbn = itemgetter('cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
@@ -61,15 +61,21 @@ class QuantizedBasicBlock(nn.Module):
             conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
                                     self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
-        out = self.conv1(conv_x)
-        out = self.bn1(out)
+        if self.fold_convbn:
+            out = self.conv1(conv_x)
+            out = self.conv2(out.type(torch.cuda.FloatTensor))
+            if self.downsample is not None:
+                identity = self.downsample(conv_x)
+        else:
+            out = self.conv1(conv_x)
+            out = self.bn1(out)
 
-        out = self.conv2(out.type(torch.cuda.FloatTensor))
-        out = self.bn2(out)
+            out = self.conv2(out.type(torch.cuda.FloatTensor))
+            out = self.bn2(out)
 
-        if self.downsample is not None:
-            identity = self.downsample(conv_x)
-            identity = self.bn_down(identity)
+            if self.downsample is not None:
+                identity = self.downsample(conv_x)
+                identity = self.bn_down(identity)
 
         out = self.shortcut(identity, out)
         return out
@@ -85,7 +91,7 @@ class QuantizedBottleneck(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.runtime_helper, self.fold_convbn = itemgetter('cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
@@ -119,16 +125,24 @@ class QuantizedBottleneck(nn.Module):
                                     self.target_bit, self.runtime_helper)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
 
-        out = self.conv1(conv_x)
-        out = self.bn1(out)
-        out = self.conv2(out.type(torch.cuda.FloatTensor))
-        out = self.bn2(out)
-        out = self.conv3(out.type(torch.cuda.FloatTensor))
-        out = self.bn3(out)
+        if self.fold_convbn:
+            out = self.conv1(conv_x)
+            out = self.conv2(out.type(torch.cuda.FloatTensor))
+            out = self.conv3(out.type(torch.cuda.FloatTensor))
+            if self.downsample is not None:
+                identity = self.downsample(conv_x)
 
-        if self.downsample is not None:
-            identity = self.downsample(conv_x)
-            identity = self.bn_down(identity)
+        else:
+            out = self.conv1(conv_x)
+            out = self.bn1(out)
+            out = self.conv2(out.type(torch.cuda.FloatTensor))
+            out = self.bn2(out)
+            out = self.conv3(out.type(torch.cuda.FloatTensor))
+            out = self.bn3(out)
+
+            if self.downsample is not None:
+                identity = self.downsample(conv_x)
+                identity = self.bn_down(identity)
         out = self.shortcut(identity, out)
         return out
 
@@ -137,7 +151,7 @@ class QuantizedResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(QuantizedResNet, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.runtime_helper, self.fold_convbn = itemgetter('cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
@@ -205,7 +219,8 @@ class QuantizedResNet(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
-        x = self.bn1(x)
+        if not self.fold_convbn:
+            x = self.bn1(x)
         x = self.maxpool(x.type(torch.cuda.FloatTensor))
 
         x = self.layer1(x.type(torch.cuda.LongTensor))
@@ -229,7 +244,7 @@ class QuantizedResNet(nn.Module):
 class QuantizedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(QuantizedResNet20, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.runtime_helper, self.fold_convbn = itemgetter('cluster', 'runtime_helper', 'fold_convbn')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
@@ -278,7 +293,8 @@ class QuantizedResNet20(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
-        x = self.bn1(x)
+        if not self.fold_convbn:
+            x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -402,6 +418,40 @@ def quantize_pcq_block(_fp, _int):
     return _int
 
 
+def quantize_folded_pcq_block(_fp, _int):
+    for i in range(len(_int)):
+        _int[i].target_bit.data = _fp[i].target_bit
+        _int[i].a_bit.data = _fp[i].a_bit
+        _int[i].s1.data = _fp[i].s1              # S, Z of 8/16/32 bit
+        _int[i].z1.data = _fp[i].z1
+        _int[i].s_target.data = _fp[i].s_target  # S, Z of 4/8 bit
+        _int[i].z_target.data = _fp[i].z_target
+        _int[i].M0.data = _fp[i].M0
+        _int[i].shift.data = _fp[i].shift
+
+        _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
+        _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
+        if type(_int[i]) == QuantizedBottleneck:
+            _int[i].conv3 = quantize(_fp[i].conv3, _int[i].conv3)
+
+        if _int[i].downsample:
+            _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
+            bypass = _int[i].downsample.s3, _int[i].downsample.z3
+        else:
+            bypass = _int[i].s1, _int[i].z1
+
+        if type(_int[i]) == QuantizedBottleneck:
+            prev = _int[i].conv3.s3, _int[i].conv3.z3
+        else:
+            prev = _int[i].conv2.s3, _int[i].conv2.z3
+
+        _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                                                bypass[0], bypass[1],
+                                                prev[0], prev[1],
+                                                _fp[i].s3, _fp[i].z3)
+    return _int
+
+
 def quantize_resnet(fp_model, int_model):
     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
@@ -442,3 +492,28 @@ def quantize_pcq_resnet(fp_model, int_model):
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
 
+
+def quantize_folded_pcq_resnet(fp_model, int_model):
+    int_model.target_bit.data = fp_model.target_bit
+    int_model.in_bit.data = fp_model.in_bit
+    int_model.scale.data = fp_model.scale
+    int_model.zero_point.data = fp_model.zero_point
+    int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+    int_model.layer1 = quantize_folded_pcq_block(fp_model.layer1, int_model.layer1)
+    int_model.layer2 = quantize_folded_pcq_block(fp_model.layer2, int_model.layer2)
+    int_model.layer3 = quantize_folded_pcq_block(fp_model.layer3, int_model.layer3)
+    if int_model.num_blocks == 4:
+        int_model.layer4 = quantize_folded_pcq_block(fp_model.layer4, int_model.layer4)
+        int_model.maxpool.bit.data = int_model.first_conv.a_bit.data
+        int_model.maxpool.zero_point.data = int_model.first_conv.z3.data
+
+    int_model.a_bit.data = fp_model.a_bit
+    int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
+    int_model.z1.data = fp_model.z1
+    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
+    int_model.z_target.data = fp_model.z_target
+    int_model.M0.data = fp_model.M0
+    int_model.shift.data = fp_model.shift
+
+    int_model.fc = quantize(fp_model.fc, int_model.fc)
+    return int_model

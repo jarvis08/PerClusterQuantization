@@ -146,10 +146,15 @@ def _finetune(args, tools):
             model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
+                    print("AAAAAAAAAA")
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+                    print("BBBBBBBBBBBB")
                 else:
                     quantized_model = tools.quantized_model_initializer(arg_dict)
-            quantized_model = tools.quantizer(model, quantized_model)
+            if args.fold_convbn:
+                quantized_model = tools.folded_quantizer(model, quantized_model)
+            else:
+                quantized_model = tools.quantizer(model, quantized_model)
             quantized_model.cuda()
 
             if args.cluster > 1:

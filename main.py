@@ -117,7 +117,7 @@ if args.cluster > 1 and args.sub_cluster:
 print(vars(args))
 
 
-def set_func_for_target_arch(arch, clustering_method, is_pcq):
+def set_func_for_target_arch(arch, clustering_method, is_pcq, is_folded):
     tools = QuantizationTool()
 
     if is_pcq:
@@ -159,10 +159,15 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
-        setattr(tools, 'quantizer', quantize_pcq_resnet)
+        if is_folded:
+            setattr(tools, 'folded_quantizer', quantize_folded_pcq_resnet)
+        else:
+            setattr(tools, 'quantizer', quantize_pcq_resnet)
         if is_pcq:
-            setattr(tools, 'fuser', set_pcq_resnet)
-            setattr(tools, 'folded_fuser', set_folded_pcq_resnet)
+            if is_folded:
+                setattr(tools, 'folded_fuser', set_folded_pcq_resnet)
+            else:
+                setattr(tools, 'fuser', set_pcq_resnet)
         else:
             setattr(tools, 'fuser', set_fused_resnet)
 
@@ -207,7 +212,7 @@ def set_func_for_target_arch(arch, clustering_method, is_pcq):
     return tools
 
 
-def specify_target_arch(arch, dataset, num_clusters):
+def specify_target_arch(arch, dataset, num_clusters, is_folded):
     arch = 'MLP' if arch == 'mlp' else arch
     if arch == 'alexnet':
         if dataset == 'imagenet':
@@ -227,7 +232,7 @@ def specify_target_arch(arch, dataset, num_clusters):
         arch = 'DenseNet121'
 
     is_pcq = True if num_clusters > 1 else False
-    model_initializers = set_func_for_target_arch(arch, args.clustering_method, is_pcq)
+    model_initializers = set_func_for_target_arch(arch, args.clustering_method, is_pcq, is_folded)
     return arch, model_initializers
 
 
@@ -239,7 +244,7 @@ if __name__ == '__main__':
         if args.dataset != 'imagenet':
             assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 
-    args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
+    args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster, args.fold_convbn)
     if args.mode == 'pre':
         _pretrain(args, tools)
     elif args.mode == 'fine':
