@@ -424,8 +424,8 @@ def quantize_folded_pcq_block(_fp, _int):
         _int[i].a_bit.data = _fp[i].a_bit
         _int[i].s1.data = _fp[i].s1              # S, Z of 8/16/32 bit
         _int[i].z1.data = _fp[i].z1
-        _int[i].s_target.data = _fp[i].s_target  # S, Z of 4/8 bit
-        _int[i].z_target.data = _fp[i].z_target
+        #_int[i].s_target.data = _fp[i].s_target  # S, Z of 4/8 bit
+        #_int[i].z_target.data = _fp[i].z_target
         _int[i].M0.data = _fp[i].M0
         _int[i].shift.data = _fp[i].shift
 
@@ -510,8 +510,8 @@ def quantize_folded_pcq_resnet(fp_model, int_model):
     int_model.a_bit.data = fp_model.a_bit
     int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
     int_model.z1.data = fp_model.z1
-    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
-    int_model.z_target.data = fp_model.z_target
+    #int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
+    #int_model.z_target.data = fp_model.z_target
     int_model.M0.data = fp_model.M0
     int_model.shift.data = fp_model.shift
 

@@ -43,29 +43,28 @@ class PCQBasicBlock(nn.Module):
         if self.downsample is not None:
             self.bn_down = PCQBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
         self.conv1 = pcq_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=bit_conv_act)
-        self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
+        #self.bn1 = PCQBnReLU(planes, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv2 = pcq_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=bit_conv_act)
-        self.bn2 = PCQBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
+        #self.bn2 = PCQBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         identity = x
 
-        if self.fold_convbn:
-            out = self.conv1(x)
-            out = self.conv2(out)
+        out = self.conv1(x)
+        out = self.conv2(out)
 
-            if self.downsample is not None:
-                identity = self.downsample(x)
-        else:
-            out = self.conv1(x)
-            out = self.bn1(out)
-            out = self.conv2(out)
-            out = self.bn2(out)
+        if self.downsample is not None:
+            identity = self.downsample(x)
 
-            if self.downsample is not None:
-                identity = self.downsample(x)
-                identity = self.bn_down(identity)
+        # out = self.conv1(x)
+        # out = self.bn1(out)
+        # out = self.conv2(out)
+        # out = self.bn2(out)
+        #
+        # if self.downsample is not None:
+        #     identity = self.downsample(x)
+        #     identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -80,7 +79,8 @@ class PCQBasicBlock(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
         data = x.view(x.size(0), -1)
-        _max = data.max(dim=1).values.mean()
+        #_max = data.max(dim=1).values.mean()
+        _max = torch.max(data).item()
         if self.apply_ema[cluster]:
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
@@ -114,6 +114,26 @@ class PCQBasicBlock(nn.Module):
         self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
         nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
+
+    @torch.no_grad()
+    def set_folded_block_qparams(self, s1, z1):
+        self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
+        self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
+        self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
+        for c in range(self.num_clusters):
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c])
+
+        if self.downsample:
+            prev_s, prev_z = self.downsample.set_qparams(s1, z1)
+
+        prev_s, prev_z = self.conv1.set_qparams(s1, z1)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+
+        zero = self.runtime_helper.fzero
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
+        #nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
+        #return self.s3, self.z3, nxt_s_target, nxt_z_target
+        return self.s3, self.z3
 
 
 class PCQBottleneck(nn.Module):
@@ -215,6 +235,25 @@ class PCQBottleneck(nn.Module):
         prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
+
+        zero = self.runtime_helper.fzero
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
+        return self.s3, self.z3, nxt_s_target, nxt_z_target
+
+    def set_folded_block_qparams(self, s1, z1):
+        self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
+        self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
+        self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
+        for c in range(self.num_clusters):
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c] / self.s_target[c])
+
+        if self.downsample:
+            prev_s, prev_z = self.downsample.set_qparams(s1, z1)
+
+        prev_s, prev_z = self.conv1.set_qparams(s1, z1)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
 
         zero = self.runtime_helper.fzero
         self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
@@ -361,7 +400,7 @@ class PCQResNet20(nn.Module):
 
         self.first_conv = PCQConv2d(3, 16, kernel_size=3, stride=1, padding=1,
                                     w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=self.arg_dict)
-        self.bn1 = PCQBnReLU(16, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)
+        #self.bn1 = PCQBnReLU(16, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
@@ -389,8 +428,7 @@ class PCQResNet20(nn.Module):
                 x = self._fake_quantize_input(x)
 
         x = self.first_conv(x)
-        if not self.fold_convbn:
-            x = self.bn1(x)
+        #x = self.bn1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -403,8 +441,10 @@ class PCQResNet20(nn.Module):
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.batch_cluster
         data = x.view(x.size(0), -1)
-        _min = data.min(dim=1).values.mean()
-        _max = data.max(dim=1).values.mean()
+        # _min = data.min(dim=1).values.mean()
+        # _max = data.max(dim=1).values.mean()
+        _min = torch.min(data).item()
+        _max = torch.max(data).item()
         if self.apply_ema[cluster]:
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
@@ -438,6 +478,26 @@ class PCQResNet20(nn.Module):
         for c in range(self.num_clusters):
             self.M0[c], self.shift[c] = quantize_M(self.s1[c] / self.s_target[c])
         self.fc.set_qparams(self.s_target, self.z_target)
+
+    @torch.no_grad()
+    def set_folded_quantization_params(self):
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
+        s1, z1 = self.first_conv.set_qparams(self.scale, self.zero_point)
+
+        blocks = [self.layer1, self.layer2, self.layer3]
+        for block in blocks:
+            for b in range(len(block)):
+                s1, z1 = block[b].set_folded_block_qparams(s1, z1)
+
+        self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
+        self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
+        self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
+        for c in range(self.num_clusters):
+            #self.M0[c], self.shift[c] = quantize_M(self.s1[c] / self.s_target[c])
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c])
+        # self.fc.set_qparams(self.s_target, self.z_target)
+        self.fc.set_qparams(self.s1, self.z1)
 
 
 def pcq_resnet18(arg_dict, **kwargs):

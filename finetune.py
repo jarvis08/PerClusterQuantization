@@ -42,7 +42,6 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
-
 def _finetune(args, tools):
     tuning_start_time = time()
     normalizer = get_normalizer(args.dataset)
@@ -143,12 +142,13 @@ def _finetune(args, tools):
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
-            model.set_quantization_params()
+            if args.fold_convbn:
+                model.set_folded_quantization_params()
+            else:
+                model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
-                    print("AAAAAAAAAA")
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
-                    print("BBBBBBBBBBBB")
                 else:
                     quantized_model = tools.quantized_model_initializer(arg_dict)
             if args.fold_convbn:
