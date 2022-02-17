@@ -150,6 +150,7 @@ class InputContainer(object):
                 break
         return next_input, next_target, next_cluster
 
+    # Under make Code, Hansung
     def prepare_validate_per_cluster(self):
         self.set_next_batch()
         while True:
@@ -158,14 +159,12 @@ class InputContainer(object):
 
     def check_leftover(self):
         self.leftover_cluster_data = [False for i in range(self.num_clusters)]
-        self.leftover_batch = [0 for i in range(self.num_clusters)]
+        self.leftover_batch = [[None, None] for i in range(self.num_clusters)]
         for c in range(self.num_clusters):
             if self.container[c][0].size(0) > 0:
                 self.leftover_cluster_data[c] = True
-
-    def validate_leftover(self):
-        for c in range(self.num_clusters):
-            if self.leftover_cluster_data[c]:
+                self.leftover_batch[c][0] = self.container[c][0][:-1]
+                self.leftover_batch[c][1] = self.container[c][1][:-1]
 
 
 
@@ -360,9 +359,18 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
 
             container.check_leftover()
-            for isLeft in container.leftover_cluster_data:
-                output = model()
+            for c in range(container.num_clusters):
+                if container.leftover_cluster_data[c]:
+                    input, target =  container.leftover_batch[c][0], container.leftover_batch[c][1]
+                    input, target = input.cuda(), target.cuda()
+                    output = model(input)
 
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
+                    losses.update(loss.item(), input.size(0))
+                    top1.update(prec.item(), input.size(0))
+
+                    t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     if logger:
         if hvd:
