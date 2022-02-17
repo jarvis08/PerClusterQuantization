@@ -150,6 +150,29 @@ class InputContainer(object):
                 break
         return next_input, next_target, next_cluster
 
+    def prepare_validate_per_cluster(self):
+        self.set_next_batch()
+        while True:
+            if self.ready_cluster is not None:
+                break
+
+    def check_leftover(self):
+        self.leftover_cluster_data = [False for i in range(self.num_clusters)]
+        self.leftover_batch = [0 for i in range(self.num_clusters)]
+        for c in range(self.num_clusters):
+            if self.container[c][0].size(0) > 0:
+                self.leftover_cluster_data[c] = True
+
+    def validate_leftover(self):
+        for c in range(self.num_clusters):
+            if self.leftover_cluster_data[c]:
+
+
+
+
+
+
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -305,22 +328,41 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     top1 = AverageMeter()
 
     model.eval()
+
+    container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,
+                               clustering_model.args.dataset, clustering_model.args.batch)
+    container.initialize_generator()
+    # container.set_next_batch()
+    container.prepare_validate_per_cluster()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
+            # for i, (input, target) in enumerate(t):
+            for i, _ in enumerate(t):
                 t.set_description("Validate")
-                input_gpu = input.cuda(non_blocking=True)
-                target = target.cuda(non_blocking=True)
-                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
+                # input_gpu = input.cuda(non_blocking=True)
+                # target = target.cuda(non_blocking=True)
+                # input_gpu, target, c = container.get_batch()
+                # runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                # runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
+                # output = model(input_gpu)
 
-                output = model(input_gpu)
+                input, target, runtime_helper.batch_cluster = container.get_batch()
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
+
+                container.prepare_validate_per_cluster()
+
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+            container.check_leftover()
+            for isLeft in container.leftover_cluster_data:
+                output = model()
+
 
     if logger:
         if hvd:

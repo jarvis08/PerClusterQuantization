@@ -155,6 +155,7 @@ parser.add_argument('--fixed-point-quantization',
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
+                      'resnet20_cifar10': q_resnet20,
                       'resnet20_cifar100': q_resnet20,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
@@ -213,6 +214,7 @@ def main(args_daq, data_loaders, clustering_model):
 def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     global best_acc1
     args.gpu = gpu
+    runtime_helper = None
 
     if args.gpu is not None:
         logging.info("Use GPU: {} for training".format(args.gpu))
@@ -232,7 +234,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
         # Custom model for CIFAR10 & CIFAR100
         if args.arch == 'resnet20':
-            if args.data.lower() == 'CIFAR10':
+            if args.data.lower() == 'cifar10':
                 args.arch = 'resnet20_cifar10'
             else:
                 args.arch = 'resnet20_cifar100'
@@ -271,7 +273,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     quantize_arch = quantize_arch_dict[args.arch]
 
-    model = quantize_arch(model)
+
+    if args.cluster > 1:
+        runtime_helper = RuntimeHelper()
+        runtime_helper.set_pcq_arguments(args)
+        model = quantize_arch(model, runtime_helper)
+        # model.set_daq_helper(runtime_helper)
+    else:
+        model = quantize_arch(model)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     name_counter = 0
@@ -404,11 +413,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     val_loader = data_loaders['val']
     test_loader = data_loaders['test']
 
-    runtime_helper = None
-    if args.cluster > 1:
-        runtime_helper = RuntimeHelper()
-        runtime_helper.set_pcq_arguments(args)
-        model.set_daq_helper = runtime_helper
+    # if args.cluster > 1:
+    #     runtime_helper = RuntimeHelper()
+    #     runtime_helper.set_pcq_arguments(args)
+    #     model.set_daq_helper(runtime_helper)
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)
@@ -443,6 +451,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             if not os.path.exists(args.save_path):
                 os.makedirs(args.save_path)
 
+            # print(model)
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,

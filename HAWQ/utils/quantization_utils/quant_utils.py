@@ -37,6 +37,40 @@ def transfer_numpy_float(inputs):
     return np.array(tmp_output)
 
 
+def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False, num_cluster=1):
+    """
+    Calculate the percentile max and min values in a given tensor
+
+    Parameters:
+    ----------
+    input: tensor
+        the tensor to calculate percentile max and min
+    lower_percentile: float
+        if 0.1, means we return the value of the smallest 0.1% value in the tensor as percentile min
+    upper_percentile: float
+        if 99.9, means we return the value of the largest 0.1% value in the tensor as percentile max
+    output_tensor: bool, default False
+        if True, this function returns tensors, otherwise it returns values
+    """
+
+    data_num = input.shape[0]
+    data_length = input.shape[1]
+    lower_index = round(data_length * (1 - lower_percentile * 0.01))
+    upper_index = round(data_length * upper_percentile * 0.01)
+
+    upper_bound = torch.kthvalue(input, k=upper_index).values.mean()
+
+    if lower_percentile == 0:
+        lower_bound = (upper_bound * 0).values.mean()
+    else:
+        lower_bound = -torch.kthvalue(-input, k=lower_index).values.mean()
+
+    if not output_tensor:
+        lower_bound = lower_bound.item()
+        upper_bound = upper_bound.item()
+    return lower_bound, upper_bound
+
+
 def get_percentile_min_max(input, lower_percentile, upper_percentile, output_tensor=False):
     """
     Calculate the percentile max and min values in a given tensor
@@ -202,6 +236,7 @@ def batch_frexp(inputs):
     output_m, output_e = np.frexp(inputs.cpu().numpy())
 
     tmp_m = []
+    # print(inputs)
     for m in output_m:
         int_m_shifted = int(Decimal(m * (2 ** 31)).quantize(Decimal('1'), rounding=decimal.ROUND_HALF_UP))
         tmp_m.append(int_m_shifted)
