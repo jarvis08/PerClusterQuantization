@@ -615,6 +615,8 @@ def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_load
 
 
 def validate(val_loader, model, criterion, args):
+    print(model)
+    exit()
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')

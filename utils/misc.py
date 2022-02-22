@@ -166,13 +166,6 @@ class InputContainer(object):
                 self.leftover_batch[c][0] = self.container[c][0][:-1]
                 self.leftover_batch[c][1] = self.container[c][1][:-1]
 
-
-
-
-
-
-
-
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
