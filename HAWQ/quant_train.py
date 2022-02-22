@@ -158,6 +158,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
                       'resnet20_cifar10': q_resnet20,
                       'resnet20_cifar100': q_resnet20,
+                      'resnet20_svhn': q_resnet20,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
@@ -237,6 +238,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if args.arch == 'resnet20':
             if args.data.lower() == 'cifar10':
                 args.arch = 'resnet20_cifar10'
+            elif args.data.lower() == 'svhn':
+                args.arch = 'resnet20_svhn'
             else:
                 args.arch = 'resnet20_cifar100'
         model = ptcv_get_model(args.arch, pretrained=True)
@@ -470,7 +473,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open('hawq_finetune_result.txt', 'a') as f:
         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Best Epoch:{}, Time:{}'.format(
-            args.quant_scheme, register_acc, args.lr, best_epoch, time_cost))
+            args.quant_scheme, register_acc, args.lr, args.batch_size, best_epoch, time_cost))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):

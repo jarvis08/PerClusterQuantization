@@ -1,5 +1,71 @@
 bit_config_dict = {
 # Change first, last layer bit to 4bit
+"bit_config_resnet20_svhn_uniform4" : {
+'quant_input': 4,
+'quant_init_block_convbn': 4,
+'quant_act_int32': 16,
+
+'stage1.unit1.quant_act': 4,
+'stage1.unit1.quant_convbn1': 4,
+'stage1.unit1.quant_act1': 4,
+'stage1.unit1.quant_convbn2': 4,
+'stage1.unit1.quant_act_int32': 16,
+
+'stage1.unit2.quant_act': 4,
+'stage1.unit2.quant_convbn1': 4,
+'stage1.unit2.quant_act1': 4,
+'stage1.unit2.quant_convbn2': 4,
+'stage1.unit2.quant_act_int32': 16,
+
+'stage1.unit3.quant_act': 4,
+'stage1.unit3.quant_convbn1': 4,
+'stage1.unit3.quant_act1': 4,
+'stage1.unit3.quant_convbn2': 4,
+'stage1.unit3.quant_act_int32': 16,
+
+'stage2.unit1.quant_act': 4,
+'stage2.unit1.quant_convbn1': 4,
+'stage2.unit1.quant_act1': 4,
+'stage2.unit1.quant_convbn2': 4,
+'stage2.unit1.quant_identity_convbn': 4,
+'stage2.unit1.quant_act_int32': 16,
+
+'stage2.unit2.quant_act': 4,
+'stage2.unit2.quant_convbn1': 4,
+'stage2.unit2.quant_act1': 4,
+'stage2.unit2.quant_convbn2': 4,
+'stage2.unit2.quant_act_int32': 16,
+
+'stage2.unit3.quant_act': 4,
+'stage2.unit3.quant_convbn1': 4,
+'stage2.unit3.quant_act1': 4,
+'stage2.unit3.quant_convbn2': 4,
+'stage2.unit3.quant_act_int32': 16,
+
+'stage3.unit1.quant_act': 4,
+'stage3.unit1.quant_convbn1': 4,
+'stage3.unit1.quant_act1': 4,
+'stage3.unit1.quant_convbn2': 4,
+'stage3.unit1.quant_identity_convbn': 4,
+'stage3.unit1.quant_act_int32': 16,
+
+'stage3.unit2.quant_act': 4,
+'stage3.unit2.quant_convbn1': 4,
+'stage3.unit2.quant_act1': 4,
+'stage3.unit2.quant_convbn2': 4,
+'stage3.unit2.quant_act_int32': 16,
+
+'stage3.unit3.quant_act': 4,
+'stage3.unit3.quant_convbn1': 4,
+'stage3.unit3.quant_act1': 4,
+'stage3.unit3.quant_convbn2': 4,
+'stage3.unit3.quant_act_int32': 16,
+
+'quant_act_output': 4,
+'quant_output': 4
+},
+
+# Change first, last layer bit to 4bit
 "bit_config_resnet20_cifar100_uniform4" : {
 'quant_input': 4,
 'quant_init_block_convbn': 4,
