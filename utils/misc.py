@@ -379,8 +379,12 @@ def set_clustering_dir(args):
 def set_save_dir(args, allow_existence=True):
     path = add_path('', 'result')
     path = add_path(path, args.mode)
+    if args.cluster > 1:
+        path = add_path(path,'DAQ')
+    else:
+        path = add_path(path,'QAT')
     path = add_path(path, args.dataset)
-    path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
+    path = add_path(path, args.arch + '_' + str(args.bit) + 'bit_' + str(args.batch) + '_' + str(args.lr))
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"), allow_existence=allow_existence)
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)

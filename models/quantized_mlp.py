@@ -29,12 +29,11 @@ class QuantizedMLP(nn.Module):
             x = quantize_matrix_2d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
-
         x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.fc3(x)
-        x = self.fc4(x)
-        return x
+        x = self.fc2(x.type(torch.cuda.FloatTensor))
+        x = self.fc3(x.type(torch.cuda.FloatTensor))
+        x = self.fc4(x.type(torch.cuda.FloatTensor))
+        return x.type(torch.cuda.FloatTensor)
 
 
 def quantized_mlp(arg_dict: dict, n_channels: int = 3, num_classes: int = 10) -> QuantizedMLP:
