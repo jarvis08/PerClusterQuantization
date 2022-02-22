@@ -423,11 +423,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         return
 
     best_epoch = 0
-
-    # print(args)
-    # print(args_hawq)
-    # exit()
-
     for epoch in range(args.start_epoch, args.epochs):
         # if args.distributed:
         #     train_sampler.set_epoch(epoch)
@@ -464,8 +459,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
             }, is_best, args.save_path)
-
-    get_time_cost_in_string()
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
