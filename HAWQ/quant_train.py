@@ -19,10 +19,11 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
+
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data', metavar='DIR',
@@ -423,6 +424,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         return
 
     best_epoch = 0
+    register_acc = 0
+    tuning_start_time = time.time()
+    tuning_fin_time = None
     for epoch in range(args.start_epoch, args.epochs):
         # if args.distributed:
         #     train_sampler.set_epoch(epoch)
@@ -431,10 +435,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
                       fix_BN=args.fix_BN)
+            tuning_fin_time = time.time()
             acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
 
         else:
             train(train_loader, model, criterion, optimizer, epoch, args)
+            tuning_fin_time = time.time()
             acc1 = validate(val_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
@@ -445,6 +451,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if is_best:
             # record the best epoch
             best_epoch = epoch
+            register_acc = best_acc1
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                                                     and args.rank % ngpus_per_node == 0):
@@ -459,6 +466,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
             }, is_best, args.save_path)
+
+    time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+    with open('hawq_finetune_result.txt', 'a') as f:
+        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Best Epoch:{}, Time:{}'.format(
+            args.quant_scheme, register_acc, args.lr, best_epoch, time_cost))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
