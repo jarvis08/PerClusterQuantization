@@ -19,7 +19,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
@@ -423,6 +423,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         return
 
     best_epoch = 0
+
+    # print(args)
+    # print(args_hawq)
+    # exit()
+
     for epoch in range(args.start_epoch, args.epochs):
         # if args.distributed:
         #     train_sampler.set_epoch(epoch)
@@ -459,6 +464,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
             }, is_best, args.save_path)
+
+    get_time_cost_in_string()
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -603,6 +610,8 @@ def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_load
 
 
 def validate(val_loader, model, criterion, args):
+    print(model)
+    exit()
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
