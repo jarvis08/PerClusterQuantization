@@ -154,6 +154,9 @@ parser.add_argument('--fixed-point-quantization',
                     help='whether to skip deployment-oriented operations and '
                          'use fixed-point rather than integer-only quantization')
 
+parser.add_argument('--transfer_param', action='store_true', help='copy params of torchcv pretrained models')
+parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
+
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
@@ -232,10 +235,19 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
+    
+    # Custom model for CIFAR10 & CIFAR100
+    if args.arch == 'resnet20':
+        if args.data.lower() == 'cifar10':
+            args.arch = 'resnet20_cifar10'
+        elif args.data.lower() == 'svhn':
+            args.arch = 'resnet20_svhn'
+        else:
+            args.arch = 'resnet20_cifar100'
+    
     # create model
     if args.pretrained and not args.resume:
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
-
         # Custom model for CIFAR10 & CIFAR100
         if args.arch.lower() == 'resnet20':
             if args.data.lower() == 'cifar10':
@@ -251,10 +263,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             teacher = ptcv_get_model(args.teacher_arch, pretrained=True)
     else:
         logging.info("=> creating PyTorchCV model '{}'".format(args.arch))
+        
         model = ptcv_get_model(args.arch, pretrained=False)
         if args.distill_method != 'None':
             logging.info("=> creating PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
+        
+        if args.transfer_param:
+            checkpoint = torch.load(args.dnn_path)
+            loaded_dict = checkpoint['state_dict']
+            model_dict = model.state_dict()
+            for cur, from_  in zip(model_dict.items(), loaded_dict.items()):
+                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
 
     if args.resume and not args.resume_quantize:
         if os.path.isfile(args.resume):
