@@ -19,6 +19,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
+from HAWQ.utils.models.q_alexnet import q_alexnet
 from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
 from .bit_config import *
 from .utils import *
@@ -159,6 +160,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet20_cifar10': q_resnet20,
                       'resnet20_cifar100': q_resnet20,
                       'resnet20_svhn': q_resnet20,
+                      'alexnet': q_alexnet,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
@@ -235,7 +237,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
 
         # Custom model for CIFAR10 & CIFAR100
-        if args.arch == 'resnet20':
+        if args.arch.lower() == 'resnet20':
             if args.data.lower() == 'cifar10':
                 args.arch = 'resnet20_cifar10'
             elif args.data.lower() == 'svhn':
@@ -243,6 +245,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             else:
                 args.arch = 'resnet20_cifar100'
         model = ptcv_get_model(args.arch, pretrained=True)
+
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=True)
@@ -276,7 +279,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
     quantize_arch = quantize_arch_dict[args.arch]
-
+    # pretrained_model = model
 
     if args.cluster > 1:
         runtime_helper = RuntimeHelper()
@@ -285,6 +288,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         # model.set_daq_helper(runtime_helper)
     else:
         model = quantize_arch(model)
+        # model = pretrained_model
+
+    # print(model)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     name_counter = 0
@@ -618,8 +624,6 @@ def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_load
 
 
 def validate(val_loader, model, criterion, args):
-    print(model)
-    exit()
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')

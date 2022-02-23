@@ -53,6 +53,8 @@ class QuantLinear(Module):
         self.quant_mode = quant_mode
         self.counter = 0
 
+        self.is_classifier = False
+
     def __repr__(self):
         s = super(QuantLinear, self).__repr__()
         s = "(" + s + " weight_bit={}, full_precision_flag={}, quantize_fn={})".format(
@@ -127,8 +129,11 @@ class QuantLinear(Module):
         x_int = x / prev_act_scaling_factor
         correct_output_scale = bias_scaling_factor[0].view(1, -1)
 
-        return ste_round.apply(
-            F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
+        if self.is_classifier:
+            return ste_round.apply(
+                F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
+        else:
+            return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
 
 class QuantAct(Module):
     """
@@ -813,10 +818,9 @@ class QuantConv2d(Module):
 
     def __repr__(self):
         s = super(QuantConv2d, self).__repr__()
-        s = "(" + s + " weight_bit={}, full_precision_flag={}, quant_mode={}, x_min={}, x_max={}) ".format(self.weight_bit,
+        s = "(" + s + " weight_bit={}, full_precision_flag={}, quant_mode={})".format(self.weight_bit,
                                                                                       self.full_precision_flag,
-                                                                                      self.quant_mode,
-                                                                                      self.x_min, self.x_max)
+                                                                                      self.quant_mode)
         return s
 
     def set_param(self, conv):
