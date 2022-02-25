@@ -153,8 +153,9 @@ parser.add_argument('--fixed-point-quantization',
                     action='store_true',
                     help='whether to skip deployment-oriented operations and '
                          'use fixed-point rather than integer-only quantization')
-
-parser.add_argument('--transfer_param', action='store_true', help='copy params of torchcv pretrained models')
+parser.add_argument('--transfer_param',
+                    action='store_true',
+                    help='copy params of our pretrained models')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 
 best_acc1 = 0
@@ -269,12 +270,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             logging.info("=> creating PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
         
-        if args.transfer_param:
-            checkpoint = torch.load(args.dnn_path)
+        if args_hawq.transfer_param:
+            checkpoint = torch.load(args_hawq.dnn_path)
             loaded_dict = checkpoint['state_dict']
-            model_dict = model.state_dict()
-            for cur, from_  in zip(model_dict.items(), loaded_dict.items()):
-                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+            for cur, from_  in zip(model.state_dict().items(), loaded_dict.items()):
+                model.state_dict()[cur[0]].copy_(loaded_dict[from_[0]])
+
 
     if args.resume and not args.resume_quantize:
         if os.path.isfile(args.resume):
