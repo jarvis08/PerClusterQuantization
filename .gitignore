@@ -7,6 +7,6 @@ test.txt
 tags
 .idea
 *.pyc
-__pycache__
+*__pycache__*
 .vscode
 .*.swp

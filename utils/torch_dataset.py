@@ -92,3 +92,28 @@ def get_test_dataset(args, normalizer):
 
 def get_data_loader(dataset, batch_size=128, shuffle=False, workers=4):
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers)
+
+
+def get_data_loaders(args):
+    normalizer = get_normalizer(args.dataset)
+
+    test_dataset = get_test_dataset(args, normalizer)
+    test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+    if args.mode == 'eval':
+        return test_loader
+
+    clustering_train_loader = None
+    aug_train_dataset = get_augmented_train_dataset(args, normalizer)
+    if args.dataset == 'imagenet':
+        val_loader = test_loader
+    else:
+        aug_train_dataset, _ = split_dataset_into_train_and_val(aug_train_dataset, args.dataset)
+        non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+        non_aug_train_dataset, val_dataset = split_dataset_into_train_and_val(non_aug_train_dataset, args.dataset)
+        if args.cluster > 1 and not args.clustering_path:
+            clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=256, shuffle=True,
+                                                      workers=args.worker)
+        val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+    train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+
+    return {'aug_train': train_loader, 'val': val_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}

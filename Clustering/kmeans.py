@@ -179,7 +179,7 @@ class KMeansClustering(object):
     @torch.no_grad()
     def nn_aware_clutering(self, dnn_model, train_loader):
         print('\n>>> NN-aware Clustering..')
-        from utils.misc import InputContainer
+        from ..utils.misc import InputContainer
 
         n_sub_clusters = self.args.sub_cluster
         container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch)

@@ -151,6 +151,21 @@ class InputContainer(object):
                 break
         return next_input, next_target, next_cluster
 
+    # Under make Code, Hansung
+    def prepare_validate_per_cluster(self):
+        self.set_next_batch()
+        while True:
+            if self.ready_cluster is not None:
+                break
+
+    def check_leftover(self):
+        self.leftover_cluster_data = [False for i in range(self.num_clusters)]
+        self.leftover_batch = [[None, None] for i in range(self.num_clusters)]
+        for c in range(self.num_clusters):
+            if self.container[c][0].size(0) > 0:
+                self.leftover_cluster_data[c] = True
+                self.leftover_batch[c][0] = self.container[c][0][:-1]
+                self.leftover_batch[c][1] = self.container[c][1][:-1]
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -261,27 +276,95 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
+def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger, fix_BN=False):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
+    # switch to train mode
+    if fix_BN:
+        model.eval()
+    else:
+        model.train()
+
+    container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
+                               clustering_model.args.dataset, clustering_model.args.batch)
+    container.initialize_generator()
+    container.set_next_batch()
+    with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
+        for i, _ in enumerate(t):
+            input, target, runtime_helper.batch_cluster = container.get_batch()
+            input, target = input.cuda(), target.cuda()
+            output = model(input)
+
+            loss = criterion(output, target)
+
+            prec = accuracy(output, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec.item(), input.size(0))
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            container.set_next_batch()
+
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, prec.item(), top1.avg))
+            t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+            if container.ready_cluster is None:
+                break
+
+
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
     model.eval()
+
+    container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,
+                               clustering_model.args.dataset, clustering_model.args.batch)
+    container.initialize_generator()
+    # container.set_next_batch()
+    container.prepare_validate_per_cluster()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
+            # for i, (input, target) in enumerate(t):
+            for i, _ in enumerate(t):
                 t.set_description("Validate")
-                input_gpu = input.cuda(non_blocking=True)
-                target = target.cuda(non_blocking=True)
-                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
+                # input_gpu = input.cuda(non_blocking=True)
+                # target = target.cuda(non_blocking=True)
+                # input_gpu, target, c = container.get_batch()
+                # runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                # runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
+                # output = model(input_gpu)
 
-                output = model(input_gpu)
+                input, target, runtime_helper.batch_cluster = container.get_batch()
+                input, target = input.cuda(), target.cuda()
+                output = model(input)
+
+                container.prepare_validate_per_cluster()
+
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+            container.check_leftover()
+            for c in range(container.num_clusters):
+                if container.leftover_cluster_data[c]:
+                    input, target =  container.leftover_batch[c][0], container.leftover_batch[c][1]
+                    input, target = input.cuda(), target.cuda()
+                    output = model(input)
+
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
+                    losses.update(loss.item(), input.size(0))
+                    top1.update(prec.item(), input.size(0))
+
+                    t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     if logger:
         if hvd:
