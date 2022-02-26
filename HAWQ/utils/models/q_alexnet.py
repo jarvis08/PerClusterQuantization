@@ -23,6 +23,11 @@ class Q_AlexNet(nn.Module):
         # stage1
         stage = getattr(features, 'stage1')
         conv_block = getattr(stage, 'unit1')
+        conv_block.in_channels = 3 
+        conv_block.out_channels = 96
+        conv_block.stride = (1, 1)
+        conv_block.kernel_size = (5, 5)
+        conv_block.padding = (2, 2)
         # conv_block = getattr(features, 'conv')
 
         self.conv1 = QuantConv2d()
@@ -36,6 +41,11 @@ class Q_AlexNet(nn.Module):
         # stage2
         stage = getattr(features, 'stage2')
         conv_block = getattr(stage, 'unit1')
+        conv_block.in_channels = 96
+        conv_block.out_channel = 256
+        conv_block.stride = (1, 1)
+        conv_block.kernel_size = (5, 5)
+        conv_block.padding = (2, 2)
         self.conv2 = QuantConv2d()
         self.conv2.set_param(conv_block.conv)
         self.quant_act2 = QuantAct()
@@ -47,18 +57,33 @@ class Q_AlexNet(nn.Module):
         # stage3
         stage = getattr(features, 'stage3')
         conv_block = getattr(stage, 'unit1')
+        conv_block.in_channels = 256
+        conv_block.out_channels = 384
+        conv_block.kernel_size = (3, 3)
+        conv_block.stride = (1, 1)
+        conv_block.padding = (1, 1)
         self.conv3 = QuantConv2d()
         self.conv3.set_param(conv_block.conv)
         self.quant_act3 = QuantAct()
         self.act3 = nn.ReLU()
 
         conv_block = getattr(stage, 'unit2')
+        conv_block.in_channels  = 384
+        conv_block.out_channels = 384
+        conv_block.kernel_size = (3, 3)
+        conv_block.stride = (1, 1)
+        conv_block.padding = (1, 1)
         self.conv4 = QuantConv2d()
         self.conv4.set_param(conv_block.conv)
         self.quant_act4 = QuantAct()
         self.act4 = nn.ReLU()
 
         conv_block = getattr(stage, 'unit3')
+        conv_block.in_channels = 384
+        conv_block.out_channels = 256
+        conv_block.kernel_size = (3, 3)
+        conv_block.stride = (1, 1)
+        conv_block.padding = (1, 1)
         self.conv5 = QuantConv2d()
         self.conv5.set_param(conv_block.conv)
         self.quant_act5 = QuantAct()
@@ -73,6 +98,8 @@ class Q_AlexNet(nn.Module):
 
         # fc1
         fc_block = getattr(output, 'fc1')
+        fc_block.in_channels = 256
+        fc_block.out_channels = 4096
         self.fc1 = QuantLinear()
         self.fc1.set_param(fc_block.fc)
         self.quant_act6 = QuantAct()
@@ -80,6 +107,8 @@ class Q_AlexNet(nn.Module):
 
         # fc2
         fc_block = getattr(output, 'fc2')
+        fc_block.in_channels = 4096
+        fc_block.out_channels = 4096
         self.fc2 = QuantLinear()
         self.fc2.set_param(fc_block.fc)
         self.quant_act7 = QuantAct()
@@ -87,6 +116,8 @@ class Q_AlexNet(nn.Module):
 
         # fc3
         fc = getattr(output, 'fc3')
+        fc.in_channels = 4096
+        fc.out_channels = 10
         self.fc3 = QuantLinear()
         self.fc3.set_param(fc)
         

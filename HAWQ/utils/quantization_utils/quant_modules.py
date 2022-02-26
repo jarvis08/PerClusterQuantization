@@ -592,7 +592,7 @@ class QuantBnConv2d(Module):
             w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
             w_min = w_transform.min(dim=1).values
             w_max = w_transform.max(dim=1).values
-
+            
             conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
             weight_integer = self.weight_function(self.conv.weight, self.weight_bit, conv_scaling_factor)
             conv_output = F.conv2d(x, weight_integer, self.conv.bias, self.conv.stride, self.conv.padding,

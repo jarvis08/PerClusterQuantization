@@ -132,9 +132,16 @@ parser.add_argument('--weight-percentile',
                     default=0,
                     help='the percentage used for weight percentile'
                          '(0 means no percentile, 99.9 means cut off 0.1%)')
+"""
 parser.add_argument('--channel-wise',
                     action='store_false',
                     help='whether to use channel-wise quantizaiton or not')
+"""
+parser.add_argument('--channel-wise',
+                    type=bool,
+                    default='True',
+                    help='whether to use channel-wise quantizaiton or not')
+
 parser.add_argument('--bias-bit',
                     type=int,
                     default=32,
@@ -277,11 +284,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
 
     if args.transfer_param:
-        checkpoint = torch.load(args.dnn_path)
-        loaded_dict = checkpoint['state_dict']
-        model_dict = model.state_dict()
-        for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-            model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+        if args.arch.lower() == 'alexnet':
+            checkpoint = torch.load(args.dnn_path)
+            loaded_dict = checkpoint['state_dict']
+            model_dict = model.state_dict()
+            for cv, our in zip(model_dict.items(), loaded_dict.items()):
+                model_dict[cv[0]] = loaded_dict[our[0]]
+        else:        
+            checkpoint = torch.load(args.dnn_path)
+            loaded_dict = checkpoint['state_dict']
+            model_dict = model.state_dict()
+            for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
 
 
     if args.resume and not args.resume_quantize:
