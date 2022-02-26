@@ -3,29 +3,32 @@ bit_config_dict = {
 "bit_config_alexnet_uniform4" : {
     'quant_input': 4,
 
-    'stage1.unit1.quant_act': 4,
-    'stage1.unit1.quant_conv': 4,
+    'conv1': 4,
+    'quant_act1': 4,
+    'quant_act1_1': 4,
 
-    'stage2.unit1.quant_act': 4,
-    'stage2.unit1.quant_conv': 4,
+    'conv2': 4,
+    'quant_act2': 4,
+    'quant_act2_1': 4,
 
-    'stage3.unit1.quant_act': 4,
-    'stage3.unit1.quant_conv': 4,
-    'stage3.unit2.quant_act':4,
-    'stage3.unit2.quant_conv': 4,
-    'stage3.unit3.quant_act': 4,
-    'stage3.unit3.quant_conv': 4,
+    'conv3': 4,
+    'quant_act3': 4,
 
-    'quant_output.quant_act': 4,
-    'quant_output.quant_fc1.fc': 4,
-    'quant_output.quant_act1': 4,
-    'quant_output.quant_fc2.fc': 4,
-    'quant_output.quant_act2': 4,
-    'quant_output.quant_fc3.fc': 4,
-    'quant_output.quant_act3': 4,
+    'conv4': 4,
+    'quant_act4': 4,
 
-    'quant_output': 4,
-    'quant_act_output': 4,
+    'conv5': 4,
+    'quant_act5': 4,
+    'quant_act5_1': 4,
+
+    'fc1': 4,
+    'quant_act6': 4,
+
+    'fc2': 4,
+    'quant_act7': 4,
+
+    'fc3': 4
+
 
 },
 

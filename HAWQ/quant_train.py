@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import random
 import shutil
@@ -19,6 +20,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
+#from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
 from .bit_config import *
@@ -163,6 +165,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet20_cifar10': q_resnet20,
                       'resnet20_cifar100': q_resnet20,
                       'resnet20_svhn': q_resnet20,
+                      'resnet20_unfold': q_resnet20_unfold,
                       'alexnet': q_alexnet,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
@@ -249,14 +252,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.pretrained and not args.resume:
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
         # Custom model for CIFAR10 & CIFAR100
-        if args.arch.lower() == 'resnet20':
-            if args.data.lower() == 'cifar10':
-                args.arch = 'resnet20_cifar10'
-            elif args.data.lower() == 'svhn':
-                args.arch = 'resnet20_svhn'
-            else:
-                args.arch = 'resnet20_cifar100'
-        model = ptcv_get_model(args.arch, pretrained=True)
+        if 'unfold' not in args.arch:
+            if args.arch.lower() == 'resnet20':
+                if args.data.lower() == 'cifar10':
+                    args.arch = 'resnet20_cifar10'
+                elif args.data.lower() == 'svhn':
+                    args.arch = 'resnet20_svhn'
+                else:
+                    args.arch = 'resnet20_cifar100'
+            model = ptcv_get_model(args.arch, pretrained=True)
+
+        elif args.arch.lower() == 'resnet20_unfold':
+            model = ptcv_get_model('resnet20_cifar10', pretrained=True)
 
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
@@ -268,13 +275,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if args.distill_method != 'None':
             logging.info("=> creating PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
-        
-        if args.transfer_param:
-            checkpoint = torch.load(args.dnn_path)
-            loaded_dict = checkpoint['state_dict']
-            model_dict = model.state_dict()
-            for cur, from_  in zip(model_dict.items(), loaded_dict.items()):
-                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+
+    if args.transfer_param:
+        checkpoint = torch.load(args.dnn_path)
+        loaded_dict = checkpoint['state_dict']
+        model_dict = model.state_dict()
+        for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+            model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+
 
     if args.resume and not args.resume_quantize:
         if os.path.isfile(args.resume):
@@ -310,9 +318,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         model = quantize_arch(model)
         # model = pretrained_model
 
-    # print(model)
+    if "unfold" not in args.arch:
+        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
+    else:
+        bit_config = bit_config_dict["bit_config_" + "resnet20_cifar10" + "_" + args.quant_scheme]
 
-    bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     name_counter = 0
 
     for name, m in model.named_modules():
@@ -530,6 +540,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # compute output
         output = model(images)
+        output = output[0]
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -666,6 +677,7 @@ def validate(val_loader, model, criterion, args):
 
             # compute output
             output = model(images)
+            output = output[0]
             loss = criterion(output, target)
 
             # measure accuracy and record loss

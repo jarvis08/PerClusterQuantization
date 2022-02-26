@@ -88,6 +88,84 @@ class Q_ResNet18(nn.Module):
         self.quant_act_output.runtime_helper = runtime_helper
         self.quant_output.runtime_helper = runtime_helper
 
+
+class Q_ResNet20_unfold(nn.Module):
+    """
+        Quantized ResNet20 model for dataset CIFAR100, CIFAR10
+    """
+    def __init__(self, model):
+        super().__init__()
+        features = getattr(model, 'features')
+        init_block = getattr(features, 'init_block')
+
+        self.quant_input = QuantAct()
+
+        self.quant_init_block_conv = QuantConv2d()
+        self.quant_init_block_conv.set_param(init_block.conv)
+        self.quant_init_block_bn = QuantBn()
+        self.quant_init_block_bn.set_param(init_block.bn)
+
+        self.quant_act_int32 = QuantAct()
+
+        self.act = nn.ReLU()
+
+        self.channel = [3, 3, 3]
+
+        for stage_num in range(0, 3):
+            stage = getattr(features, "stage{}".format(stage_num + 1))
+            for unit_num in range(0, self.channel[stage_num]):
+                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
+                quant_unit = Q_ResBlockBn_unfold()
+                quant_unit.set_param(unit)
+                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
+
+        self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
+
+        self.quant_act_output = QuantAct()
+
+        output = getattr(model, 'output')
+        self.quant_output = QuantLinear()
+        self.quant_output.set_param(output)
+
+    def forward(self, x):
+        x, act_scaling_factor = self.quant_input(x)
+
+        x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
+        x, bn_scaling_factor = self.quant_init_block_bn(x, conv_scaling_factor)
+
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor)
+
+        x = self.act(x)
+
+        for stage_num in range(0,3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+
+        x = self.final_pool(x, act_scaling_factor)
+
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+        x = x.view(x.size(0), -1)
+        x = self.quant_output(x, act_scaling_factor)
+
+        return x
+
+    def set_daq_helper(self, runtime_helper):
+        self.runtime_helper = runtime_helper
+        self.quant_input.runtime_helper = runtime_helper
+        self.quant_init_block_convbn.runtime_helper = runtime_helper
+        self.quant_act_int32.runtime_helper = runtime_helper
+
+        for stage_num in range(0, 3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+                tmp_func.runtime_helper = runtime_helper
+
+        self.final_pool.runtime_helper = runtime_helper
+        self.quant_act_output.runtime_helper = runtime_helper
+        self.quant_output.runtime_helper = runtime_helper
+
+
 class Q_ResNet20_Daq(nn.Module):
     """
         Quantized ResNet20 model for dataset CIFAR100, CIFAR10
@@ -502,6 +580,71 @@ class Q_ResUnitBn(nn.Module):
 
         return x, act_scaling_factor
 
+class Q_ResBlockBn_unfold(nn.Module):
+    """
+        Quantized ResNet block with residual path.
+    """
+    def __init__(self):
+        super(Q_ResBlockBn_unfold, self).__init__()
+
+    def set_param(self, unit):
+        self.resize_identity = unit.resize_identity
+
+        self.quant_act = QuantAct()
+
+        convbn1 = unit.body.conv1
+        self.quant_conv1 = QuantConv2d()
+        self.quant_conv1.set_param(convbn1.conv)
+        self.quant_bn1 = QuantBn()
+        self.quant_bn1.set_param(convbn1.bn)
+
+        self.quant_act1 = QuantAct()
+
+        convbn2 = unit.body.conv2
+        self.quant_conv2 = QuantConv2d()
+        self.quant_conv2.set_param(convbn2.conv)
+        self.quant_bn2 = QuantBn()
+        self.quant_bn2.set_param(convbn2.bn)
+
+
+        if self.resize_identity:
+            self.quant_identity_conv = QuantConv2d()
+            self.quant_identity_conv.set_param(unit.identity_conv.conv)
+            self.quant_identity_bn = QuantBn()
+            self.quant_identity_bn.set_param(unit.identity_conv.bn)
+
+        self.quant_act_int32 = QuantAct()
+
+    def forward(self, x, scaling_factor_int32=None):
+        # forward using the quantized modules
+        if self.resize_identity:
+            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
+            identity_act_scaling_factor = act_scaling_factor.clone()
+            identity, identity_conv_scaling_factor = self.quant_identity_conv(x, act_scaling_factor)
+            identity, identity_weight_scaling_factor = self.quant_identity_bn(identity, identity_conv_scaling_factor)
+        else:
+            identity = x
+            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
+
+        x, conv_scaling_factor = self.quant_conv1(x, act_scaling_factor)
+        x, bn_scaling_factor = self.quant_bn1(x, conv_scaling_factor)
+        x = nn.ReLU()(x)
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
+
+        x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
+        x, bn_scaling_factor = self.quant_bn2(x, conv_scaling_factor)
+
+        x = x + identity
+
+        if self.resize_identity:
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
+        else:
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor, identity, scaling_factor_int32, None)
+
+        x = nn.ReLU()(x)
+
+        return x, act_scaling_factor
+
 class Q_ResBlockBn_Daq(nn.Module):
     """
         Quantized ResNet block with residual path.
@@ -629,6 +772,9 @@ def q_resnet20(model, runtime_helper=None):
         net = Q_ResNet20_Daq(model, runtime_helper)
     return net
 
+def q_resnet20_unfold(model):
+    net = Q_ResNet20_unfold(model)
+    return net
 
 def q_resnet50(model):
     net = Q_ResNet50(model)

@@ -1,3 +1,8 @@
+
+"""
+    Quantized ResNet for ImageNet-1K, implemented in PyTorch.
+    Original paper: 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
+"""
 import torch
 import torch.nn as nn
 import copy
@@ -9,140 +14,139 @@ import logging
 
 
 class Q_AlexNet(nn.Module):
-    """
-        Quantized Alexnet model for dataset CIFAR100, CIFAR10
-    """
     def __init__(self, model):
         super().__init__()
         features = getattr(model, 'features')
 
         self.quant_input = QuantAct()
 
-        self.channel = [1, 1, 3]
+        # stage1
+        stage = getattr(features, 'stage1')
+        conv_block = getattr(stage, 'unit1')
+        # conv_block = getattr(features, 'conv')
 
-        for stage_num in range(0, 3):
-            stage = getattr(features, "stage{}".format(stage_num + 1))
-            for unit_num in range(0, self.channel[stage_num]):
-                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
-                quant_conv = Q_AlexConv()
-                quant_conv.set_param(unit)
-                pool = getattr(stage, 'pool{}'.format(stage_num + 1))
-                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_conv)
-                setattr(self, f'stage{stage_num + 1}.unit{stage_num + 1}', pool)
+        self.conv1 = QuantConv2d()
+        self.conv1.set_param(conv_block.conv)
+        self.quant_act1 = QuantAct()
+        self.act1 = nn.ReLU()
 
+        self.maxpool1 = QuantMaxPool2d(ceil_mode=True)
+        self.quant_act1_1 = QuantAct()
 
-        self.quant_act_output = QuantAct()
+        # stage2
+        stage = getattr(features, 'stage2')
+        conv_block = getattr(stage, 'unit1')
+        self.conv2 = QuantConv2d()
+        self.conv2.set_param(conv_block.conv)
+        self.quant_act2 = QuantAct()
+        self.act2 = nn.ReLU()
+
+        self.maxpool2 = QuantMaxPool2d(ceil_mode=True)
+        self.quant_act2_1 = QuantAct()
+
+        # stage3
+        stage = getattr(features, 'stage3')
+        conv_block = getattr(stage, 'unit1')
+        self.conv3 = QuantConv2d()
+        self.conv3.set_param(conv_block.conv)
+        self.quant_act3 = QuantAct()
+        self.act3 = nn.ReLU()
+
+        conv_block = getattr(stage, 'unit2')
+        self.conv4 = QuantConv2d()
+        self.conv4.set_param(conv_block.conv)
+        self.quant_act4 = QuantAct()
+        self.act4 = nn.ReLU()
+
+        conv_block = getattr(stage, 'unit3')
+        self.conv5 = QuantConv2d()
+        self.conv5.set_param(conv_block.conv)
+        self.quant_act5 = QuantAct()
+        self.act5 = nn.ReLU()
+
+        self.maxpool3 = QuantMaxPool2d(ceil_mode=True)
+        self.quant_act5_1 = QuantAct()
+        #self.avgpool = QuantAveragePool2d()
+
         output = getattr(model, 'output')
-        self.quant_output = Q_AlexOutputBlock()
-        self.quant_output.set_param(output)
+        # fc_block = getattr(features, 'fc')
 
+        # fc1
+        fc_block = getattr(output, 'fc1')
+        self.fc1 = QuantLinear()
+        self.fc1.set_param(fc_block.fc)
+        self.quant_act6 = QuantAct()
+        self.act6 = nn.ReLU()
+
+        # fc2
+        fc_block = getattr(output, 'fc2')
+        self.fc2 = QuantLinear()
+        self.fc2.set_param(fc_block.fc)
+        self.quant_act7 = QuantAct()
+        self.act7 = nn.ReLU()
+
+        # fc3
+        fc = getattr(output, 'fc3')
+        self.fc3 = QuantLinear()
+        self.fc3.set_param(fc)
+        
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)
 
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_alex_conv = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}.quant_conv')
-                print(tmp_alex_conv)
-                x, act_scaling_factor = tmp_alex_conv(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor)
 
+        x = self.act1(x)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
+        x = self.maxpool1(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act1_1(x, act_scaling_factor) 
 
-        return x
+        x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
 
-    def set_daq_helper(self, runtime_helper):
-        self.runtime_helper = runtime_helper
-        self.quant_input.runtime_helper = runtime_helper
-        self.quant_init_block_convbn.runtime_helper = runtime_helper
-        self.quant_act_int32.runtime_helper = runtime_helper
+        x = self.act2(x)
 
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                print(tmp_func)
-                tmp_func.runtime_helper = runtime_helper
-                if isinstance(tmp_func, QuantAct):
-                    tmp_func.set_daq_ema_params(runtime_helper)
+        x = self.maxpool2(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act2_1(x, act_scaling_factor)
 
-        self.final_pool.runtime_helper = runtime_helper
-        self.quant_act_output.runtime_helper = runtime_helper
-        self.quant_output.runtime_helper = runtime_helper
+        x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor)
 
-        self.quant_input.set_daq_ema_params(runtime_helper)
-        self.quant_act_int32.set_daq_ema_params(runtime_helper)
-        self.quant_act_output.set_daq_ema_params(runtime_helper)
+        x = self.act3(x)
 
-class Q_AlexConv(nn.Module):
-    """
-        Quantized AlexNet unit
-    """
-    def __init__(self):
-        super(Q_AlexConv, self).__init__()
+        x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor)
 
-    def set_param(self, unit):
-        self.quant_act = QuantAct()
+        x = self.act4(x)
+        
+        x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor)
 
-        conv = unit.conv
-        self.quant_conv = QuantConv2d()
-        self.quant_conv.set_param(conv)
+        x = self.act5(x)
 
-    def forward(self, x, scaling_factor_int32=None):
-        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
+        x = self.maxpool3(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act5_1(x, act_scaling_factor)
 
-        x, weight_scaling_factor = self.quant_conv(x, act_scaling_factor)
-        x = nn.ReLU()(x)
+        x = torch.flatten(x, 1)
 
-        return x,
+        x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor)
 
+        x = self.act6(x)
 
-class Q_AlexOutputBlock(nn.Module):
-    """
-        Quantized AlexNet output Block
-    """
-    def __init__(self):
-        super(Q_AlexOutputBlock, self).__init__()
+        x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act7(x, act_scaling_factor, fc_scaling_factor)
 
-    def set_param(self, block):
-        self.quant_act = QuantAct()
+        x = self.act7(x)
 
-        fc1 = block.fc1
-        self.quant_fc1 = QuantLinear()
-        self.quant_fc1.set_param(fc1.fc)
-        self.quant_fc1.is_classifier = False
-        self.quant_act1 = QuantAct()
-
-        fc2 = block.fc2
-        self.quant_fc2 = QuantLinear()
-        self.quant_fc2.set_param(fc2.fc)
-        self.quant_fc2.is_classifier = False
-        self.quant_act2 = QuantAct()
-
-        fc3 = block.fc3
-        self.quant_fc3 = QuantLinear()
-        self.quant_fc3.set_param(fc3)
-        self.quant_fc3.is_classifier = True
-        self.quant_act3 = QuantAct()
-
-
-    def forward(self,x , scaling_factor_int32=None):
-        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
-
-        x, weight_scaling_factor = self.quant_fc1(x, act_scaling_factor)
-        x = nn.ReLU()(x)
-        x = nn.Dropout()(x)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
-
-        x, weight_scaling_factor = self.quant_fc21(x, act_scaling_factor)
-        x = nn.ReLU()(x)
-        x = nn.Dropout()(x)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor)
-
-        x = self.quant_fc3(x, act_scaling_factor)
+        x, _ = self.fc3(x, act_scaling_factor)
 
         return x
+
+    # def transfer_params(self, pretrined):
+
 
 def q_alexnet(model):
-    net = Q_AlexNet(model)
-    return net
+    return Q_AlexNet(model)
+
+

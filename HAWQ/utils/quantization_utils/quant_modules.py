@@ -668,6 +668,85 @@ class QuantBnConv2d(Module):
                              self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
 
 
+class QuantBn(Module):
+    """
+    Quantized Batch Normalization Layer
+
+    Parameters:
+    """
+    def __init__(self,
+               per_channel=False,
+               fix_flag=False,
+               fix_BN=False,
+               fix_BN_threshold=None):
+        super(QuantBn, self).__init__()
+        self.per_channel = per_channel
+        self.fix_flag = fix_flag
+        self.fix_BN = fix_BN
+        self.training_BN_mode = fix_BN
+        self.fix_BN_threshold = fix_BN_threshold
+        self.counter = 1
+
+    def set_param(self, bn):
+        self.bn = bn
+        self.bn.momentum = 0.99
+
+    def __repr__(self):
+        s = super(QuantBn, self).__repr__()
+        
+        return s
+
+    def fix(self):
+        """
+        fix the BN statistics by setting fix_BN to True
+        """
+        self.fix_flag = True
+        self.fix_BN = True
+
+    def unfix(self):
+        """
+        change the mode (fixed or not) of BN statistics to its original status
+        """
+        self.fix_flag = False
+        self.fix_BN = self.training_BN_mode
+
+    def forward(self, x, pre_act_scaling_factor=None):
+        if type(x) is tuple:
+            x_scaling_factor = x[1]
+            x = x[0]
+        
+        if self.fix_flag == False:
+            self.counter += 1
+            if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+                self.fix_BN = self.training_BN_mode
+            else:
+                if self.counter == self.fix_BN_threshold:
+                    print("Start fixed BN training")
+                self.fix_BN = True
+
+        if self.fix_BN == False:
+            batch_mean = torch.mean(x, dim=(0, 2, 3))
+            batch_var = torch.var(x, dim=(0, 2, 3))
+
+            # update mean and variance in running stats
+            self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
+                        1 - self.bn.momentum) * batch_mean
+            self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
+
+            output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
+            output = output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1)
+
+            return (output, pre_act_scaling_factor.view(1,-1) * output_factor.view(1, -1, 1, 1))
+        else:
+            output_factor = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
+            scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scale_factor
+
+            output = scale_factor * x + scaled_bias
+
+            return (output, pre_act_scaling_factor.view(1,-1) * output_factor.view(1, -1, 1, 1))
+
+
+
 class QuantMaxPool2d(Module):
     """
     Quantized MaxPooling Layer
@@ -685,14 +764,15 @@ class QuantMaxPool2d(Module):
     def __init__(self,
                  kernel_size=3,
                  stride=2,
-                 padding=0):
+                 padding=0,
+                 ceil_mode=False):
         super(QuantMaxPool2d, self).__init__()
 
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
-        self.pool = nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=padding)
-
+        self.ceil_mode = ceil_mode
+        self.pool = nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=padding, ceil_mode=self.ceil_mode)
     def forward(self, x, x_scaling_factor=None):
         if type(x) is tuple:
             x_scaling_factor = x[1]
@@ -901,13 +981,15 @@ class QuantConv2d(Module):
         x_int = x / pre_act_scaling_factor
         correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-        if self.bias is None:
-            return (F.conv2d(x_int, self.weight_integer, torch.zeros_like(bias_scaling_factor.view(-1)),
-                             self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-                    * correct_output_scale, self.conv_scaling_factor)
-        else:
-            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+        # if self.bias is None:
+        #     return (F.conv2d(x_int, self.weight_integer, torch.zeros_like(bias_scaling_factor.view(-1)),
+        #                      self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+        #             * correct_output_scale, self.conv_scaling_factor)
+        # else:
+        #     return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+        #                      self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+        return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                         self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
 
 
 def freeze_model(model):

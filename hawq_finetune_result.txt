@@ -1,0 +1,1 @@
+Bit:uniform4, Acc:81.62, LR:0.0001, Batch:128, Best Epoch:42, Time:1.2hBit:uniform4, Acc:81.04, LR:0.0001, Batch:128, Best Epoch:42, Time:1.1hBit:uniform4, Acc:81.22, LR:0.0001, Batch:128, Best Epoch:32, Time:1.2hBit:uniform4, Acc:81.40, LR:0.0001, Batch:128, Best Epoch:42, Time:1.2h
