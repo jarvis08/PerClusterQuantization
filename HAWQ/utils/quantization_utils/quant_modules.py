@@ -736,14 +736,20 @@ class QuantBn(Module):
             output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
             output = output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1)
 
-            return (output, pre_act_scaling_factor.view(1,-1) * output_factor.view(1, -1, 1, 1))
+            if pre_act_scaling_factor is not None:
+                return (output, pre_act_scaling_factor.view(1,-1) * output_factor.view(1, -1, 1, 1))
+            else :
+                return (output, output_factor.view(1, -1, 1, 1))
         else:
             output_factor = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
             scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scale_factor
 
             output = scale_factor * x + scaled_bias
 
-            return (output, pre_act_scaling_factor.view(1,-1) * output_factor.view(1, -1, 1, 1))
+            if pre_act_scaling_factor is not None:
+                return (output, pre_act_scaling_factor.view(1,-1) * output_factor.view(1, -1, 1, 1))
+            else :
+                return (output, output_factor.view(1, -1, 1, 1))
 
 
 

@@ -314,8 +314,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         model = quantize_arch(model)
         # model = pretrained_model
 
-    # print(model)
-
     if "unfold" not in args.arch:
         bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     else:
