@@ -100,8 +100,8 @@ bit_config_dict = {
 
 # Change first, last layer bit to 4bit
 "bit_config_resnet20_cifar100_uniform4" : {
-'quant_input': 4,
-'quant_init_block_convbn': 4,
+'quant_input': 8,
+'quant_init_block_convbn': 8,
 'quant_act_int32': 16,
 
 'stage1.unit1.quant_act': 4,
@@ -160,8 +160,8 @@ bit_config_dict = {
 'stage3.unit3.quant_convbn2': 4,
 'stage3.unit3.quant_act_int32': 16,
 
-'quant_act_output': 4,
-'quant_output': 4
+'quant_act_output': 8,
+'quant_output': 8
 },
 # Change first, last layer bit to 4bit
 "bit_config_resnet20_cifar10_uniform4" : {

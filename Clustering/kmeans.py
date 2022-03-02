@@ -58,7 +58,7 @@ class KMeansClustering(object):
         # Load k-means model's hparams, and check dependencies
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             loaded_args = json.load(f)
-
+        
         assert self.args.dataset == loaded_args['dataset'], \
             f"Dataset of model doesn't match (args: {self.args.dataset}, loaded: {loaded_args['dataset']})"
         assert self.args.clustering_method == loaded_args['clustering_method'], \

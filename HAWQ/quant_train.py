@@ -284,6 +284,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
 
     if args.transfer_param:
+        # need to edit
         if args.arch.lower() == 'alexnet':
             checkpoint = torch.load(args.dnn_path)
             loaded_dict = checkpoint['state_dict']
@@ -522,8 +523,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open('hawq_finetune_result.txt', 'a') as f:
-        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Best Epoch:{}, Time:{}'.format(
-            args.quant_scheme, register_acc, args.lr, args.batch_size, best_epoch, time_cost))
+        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Best Epoch:{}, Time:{}, Data:{}\n'.format(
+            args.quant_scheme, register_acc, args.lr, args.batch_size, best_epoch, time_cost, args.data))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
