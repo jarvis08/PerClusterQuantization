@@ -522,7 +522,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             }, is_best, args.save_path)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-    with open('hawq_finetune_result.txt', 'a') as f:
+    with open(f'hawq_{args.arch}_{args.data}_{args.gpu}.txt', 'a') as f:
         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Best Epoch:{}, Time:{}, Data:{}\n'.format(
             args.quant_scheme, register_acc, args.lr, args.batch_size, best_epoch, time_cost, args.data))
 
