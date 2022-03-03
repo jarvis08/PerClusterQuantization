@@ -139,7 +139,7 @@ parser.add_argument('--channel-wise',
 """
 parser.add_argument('--channel-wise',
                     type=bool,
-                    default='True',
+                    default=True,
                     help='whether to use channel-wise quantizaiton or not')
 
 parser.add_argument('--bias-bit',

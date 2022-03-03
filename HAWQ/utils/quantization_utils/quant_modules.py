@@ -825,13 +825,17 @@ class QuantAveragePool2d(Module):
     def __init__(self,
                  kernel_size=7,
                  stride=1,
-                 padding=0):
+                 padding=0,
+                 output=None):
         super(QuantAveragePool2d, self).__init__()
 
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
-        self.final_pool = nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=padding)
+        if output is None:
+            self.final_pool = nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=padding)
+        else:
+            self.final_pool = nn.AdaptiveAvgPool2d(output_size=output)
 
     def set_param(self, pool):
         self.final_pool = pool
