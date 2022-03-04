@@ -291,6 +291,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             model_dict = model.state_dict()
             for cv, our in zip(model_dict.items(), loaded_dict.items()):
                 model_dict[cv[0]] = loaded_dict[our[0]]
+
         else:        
             checkpoint = torch.load(args.dnn_path)
             loaded_dict = checkpoint['state_dict']
@@ -328,9 +329,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         runtime_helper = RuntimeHelper()
         runtime_helper.set_pcq_arguments(args)
         model = quantize_arch(model, runtime_helper)
-        # model.set_daq_helper(runtime_helper)
     else:
-        model = quantize_arch(model)
+        if args.arch.lower() == 'alexnet':
+            model = quantize_arch(model, model_dict)
+        else:
+            model = quantize_arch(model)
         # model = pretrained_model
 
     if "unfold" not in args.arch:
@@ -555,7 +558,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # compute output
         output = model(images)
-        output = output[0]
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -692,7 +694,6 @@ def validate(val_loader, model, criterion, args):
 
             # compute output
             output = model(images)
-            output = output[0]
             loss = criterion(output, target)
 
             # measure accuracy and record loss
