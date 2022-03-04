@@ -284,20 +284,27 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
 
     if args.transfer_param:
-        # need to edit
-        if args.arch.lower() == 'alexnet':
-            checkpoint = torch.load(args.dnn_path)
-            loaded_dict = checkpoint['state_dict']
+        if args.arch.lower() == 'resnet50':
+            import torchvision.models as vision_models
+            vision = vision_models.resnet50(pretrained=True)
+            vision_dict = vision.state_dict()
             model_dict = model.state_dict()
-            for cv, our in zip(model_dict.items(), loaded_dict.items()):
-                model_dict[cv[0]] = loaded_dict[our[0]]
+            for cv, our in zip(model_dict.items(), vision_dict.items()):
+                model_dict[cv[0]].copy_(vision_dict[our[0]])
+        else:
+            if args.arch.lower() == 'alexnet':
+                checkpoint = torch.load(args.dnn_path)
+                loaded_dict = checkpoint['state_dict']
+                model_dict = model.state_dict()
+                for cv, our in zip(model_dict.items(), loaded_dict.items()):
+                    model_dict[cv[0]] = loaded_dict[our[0]]
 
-        else:        
-            checkpoint = torch.load(args.dnn_path)
-            loaded_dict = checkpoint['state_dict']
-            model_dict = model.state_dict()
-            for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+            else:
+                checkpoint = torch.load(args.dnn_path)
+                loaded_dict = checkpoint['state_dict']
+                model_dict = model.state_dict()
+                for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+                    model_dict[cur[0]].copy_(loaded_dict[from_[0]])
 
 
     if args.resume and not args.resume_quantize:
