@@ -335,7 +335,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.cluster > 1:
         runtime_helper = RuntimeHelper()
         runtime_helper.set_pcq_arguments(args)
-        model = quantize_arch(model, runtime_helper)
+        if args.arch.lower() == 'alexnet':
+            model = quantize_arch(model, model_dict, runtime_helper)
+        else:
+            model =quantize_arch(model, runtime_helper)
     else:
         if args.arch.lower() == 'alexnet':
             model = quantize_arch(model, model_dict)
