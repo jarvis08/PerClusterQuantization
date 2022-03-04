@@ -327,7 +327,7 @@ class Q_AlexNet_Daq(nn.Module):
         x, act_scaling_factor = self.quant_act7(x, act_scaling_factor, fc_scaling_factor)
         x = self.act7(x)
 
-        x, _ = self.fc3(x, act_scaling_factor)
+        x = self.fc3(x, act_scaling_factor)
 
         return x
 
