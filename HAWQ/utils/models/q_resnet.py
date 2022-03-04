@@ -203,6 +203,7 @@ class Q_ResNet20_Daq(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -280,6 +281,7 @@ class Q_ResNet20(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -362,6 +364,7 @@ class Q_ResNet50(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -425,6 +428,7 @@ class Q_ResNet50_Daq(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
