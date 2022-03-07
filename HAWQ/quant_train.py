@@ -550,7 +550,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}\n'.format(
-            args.quant_scheme, register_acc, args.lr, args.batch_size, args.wd, args.cluster, best_epoch, time_cost, args.data))
+            args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
