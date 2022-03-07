@@ -269,8 +269,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     args.arch = 'resnet20_cifar100'
             model = ptcv_get_model(args.arch, pretrained=True)
 
-        elif args.arch.lower() == 'resnet20_unfold':
-            model = ptcv_get_model('resnet20_cifar10', pretrained=True)
+        elif 'unfold' in args.arch:
+            if args.data.lower() == 'cifar10':
+                model = ptcv_get_model('resnet20_cifar10', pretrained=True)
+            elif args.data.lower() == 'cifar100':
+                model = ptcv_get_model('resnet20_cifar100', pretrained=True)
+            elif args.data.lower() == 'svhn':
+                model = ptcv_get_model('resnet20_svhn', pretrained=True)
 
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
@@ -278,7 +283,15 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     else:
         logging.info("=> creating PyTorchCV model '{}'".format(args.arch))
         
-        model = ptcv_get_model(args.arch, pretrained=False)
+        if 'unfold' in args.arch:
+            if args.data.lower() == 'cifar10':
+                model = ptcv_get_model('resnet20_cifar10', pretrained=True)
+            elif args.data.lower() == 'cifar100':
+                model = ptcv_get_model('resnet20_cifar100', pretrained=True)
+            elif args.data.lower() == 'svhn':
+                model = ptcv_get_model('resnet20_svhn', pretrained=True)
+        else :
+           model = ptcv_get_model(args.arch, pretrained=False)
         if args.distill_method != 'None':
             logging.info("=> creating PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
@@ -346,10 +359,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             model = quantize_arch(model)
         # model = pretrained_model
 
-    if "unfold" not in args.arch:
+    if 'unfold' not in args.arch:
         bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
-    else:
-        bit_config = bit_config_dict["bit_config_" + "resnet20_cifar10" + "_" + args.quant_scheme]
+    else :
+        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.data.lower() + "_" + args.quant_scheme]
 
     name_counter = 0
 
