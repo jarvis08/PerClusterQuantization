@@ -104,7 +104,7 @@ class QuantizedConv2d(nn.Conv2d):
                 self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
-            if self.sum_a1 is None:     #
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:     #
                 self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
             for o_col in range(output_col):
                 for o_row in range(output_row):
@@ -160,7 +160,7 @@ class QuantizedConv2d(nn.Conv2d):
             filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
-            if self.sum_a1 is None:
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:
                 self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
             for o_col in range(output_col):
                 for o_row in range(output_row):
