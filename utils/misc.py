@@ -33,6 +33,8 @@ class RuntimeHelper(object):
         self.izero = None   ###
         self.fzero = None   ###
 
+        self.qat_batch_cluster = None
+
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
@@ -129,13 +131,6 @@ class InputContainer(object):
                 self.container[c][1] = self.container[c][1][self.batch_size:]
                 next_cluster = c
         return next_input, next_target, next_cluster
-
-    def check_leftover(self):
-        leftover_batch = 0
-        for c in range(self.num_clusters):
-            if self.container[c][0].size(0) >= 128:
-                leftover_batch += self.container[c][0].size(0) // self.batch_size
-        return leftover_batch
 
     def get_leftover(self):
         next_cluster = None
@@ -293,6 +288,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
         for i, _ in enumerate(t):
             input, target, runtime_helper.batch_cluster = container.get_batch()
+            runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster).cuda()
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -355,8 +351,10 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
             container.check_leftover()
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
-                    input, target =  container.leftover_batch[c][0], container.leftover_batch[c][1]
+                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
                     input, target = input.cuda(), target.cuda()
+                    runtime_helper.qat_batch_cluster = torch.tensor(c).cuda()
+
                     output = model(input)
 
                     loss = criterion(output, target)

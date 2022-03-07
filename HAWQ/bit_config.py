@@ -29,7 +29,6 @@ bit_config_dict = {
 
     'fc3': 8
 
-
 },
 
 # Change first, last layer bit to 4bit
