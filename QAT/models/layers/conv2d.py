@@ -321,14 +321,14 @@ class PCQConv2d(nn.Module):
             self.M0 = torch.zeros((self.num_clusters, self.out_channels), dtype=torch.int32)
             self.shift = torch.zeros((self.num_clusters, self.out_channels), dtype=torch.int32)
             for cluster in range(self.num_clusters):
-                m_per_channel = self.s1[cluster] * self.s2 / self.s3[cluster]
+                m_per_channel = self.s1[cluster].type(torch.double) * self.s2.type(torch.double) / self.s3[cluster].type(torch.double)
                 for channel in range(self.out_channels):
                     self.M0[cluster][channel], self.shift[cluster][channel] = quantize_M(m_per_channel[channel])
         else:
             self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
             self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
             for c in range(self.num_clusters):
-                self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
+                self.M0[c], self.shift[c] = quantize_M(self.s1[c].type(torch.double) * self.s2.type(torch.double) / self.s3[c].type(torch.double))
         return self.s3, self.z3
 
 
@@ -488,9 +488,9 @@ class FusedConv2d(nn.Module):
         if self.per_channel:
             self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
             self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
-            m_per_channel = self.s1 * self.s2 / self.s3
+            m_per_channel = self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double)
             for channel in range(self.out_channels):
                 self.M0[0][channel], self.shift[0][channel] = quantize_M(m_per_channel[channel])
         else:
-            self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
+            self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
         return self.s3, self.z3

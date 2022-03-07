@@ -297,19 +297,27 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
 
     if args.transfer_param:
-        # need to edit
-        if args.arch.lower() == 'alexnet':
-            checkpoint = torch.load(args.dnn_path)
-            loaded_dict = checkpoint['state_dict']
+        if args.arch.lower() == 'resnet50':
+            import torchvision.models as vision_models
+            vision = vision_models.resnet50(pretrained=True)
+            vision_dict = vision.state_dict()
             model_dict = model.state_dict()
-            for cv, our in zip(model_dict.items(), loaded_dict.items()):
-                model_dict[cv[0]] = loaded_dict[our[0]]
-        else:        
-            checkpoint = torch.load(args.dnn_path)
-            loaded_dict = checkpoint['state_dict']
-            model_dict = model.state_dict()
-            for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+            for cv, our in zip(model_dict.items(), vision_dict.items()):
+                model_dict[cv[0]].copy_(vision_dict[our[0]])
+        else:
+            if args.arch.lower() == 'alexnet':
+                checkpoint = torch.load(args.dnn_path)
+                loaded_dict = checkpoint['state_dict']
+                model_dict = model.state_dict()
+                for cv, our in zip(model_dict.items(), loaded_dict.items()):
+                    model_dict[cv[0]] = loaded_dict[our[0]]
+
+            else:
+                checkpoint = torch.load(args.dnn_path)
+                loaded_dict = checkpoint['state_dict']
+                model_dict = model.state_dict()
+                for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+                    model_dict[cur[0]].copy_(loaded_dict[from_[0]])
 
 
     if args.resume and not args.resume_quantize:
@@ -340,10 +348,15 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.cluster > 1:
         runtime_helper = RuntimeHelper()
         runtime_helper.set_pcq_arguments(args)
-        model = quantize_arch(model, runtime_helper)
-        # model.set_daq_helper(runtime_helper)
+        if args.arch.lower() == 'alexnet':
+            model = quantize_arch(model, model_dict, runtime_helper)
+        else:
+            model =quantize_arch(model, runtime_helper)
     else:
-        model = quantize_arch(model)
+        if args.arch.lower() == 'alexnet':
+            model = quantize_arch(model, model_dict)
+        else:
+            model = quantize_arch(model)
         # model = pretrained_model
 
     if 'unfold' not in args.arch:
@@ -535,9 +548,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             }, is_best, args.save_path)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-    with open('hawq_finetune_result.txt', 'a') as f:
-        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Best Epoch:{}, Time:{}, Data:{}\n'.format(
-            args.quant_scheme, register_acc, args.lr, args.batch_size, best_epoch, time_cost, args.data))
+    with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
+        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}\n'.format(
+            args.quant_scheme, register_acc, args.lr, args.batch_size, args.wd, args.cluster, best_epoch, time_cost, args.data))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -568,7 +581,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # compute output
         output = model(images)
-        output = output[0]
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -705,7 +717,6 @@ def validate(val_loader, model, criterion, args):
 
             # compute output
             output = model(images)
-            output = output[0]
             loss = criterion(output, target)
 
             # measure accuracy and record loss

@@ -207,6 +207,7 @@ class Q_ResNet20_Daq(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -248,10 +249,6 @@ class Q_ResNet20_Daq(nn.Module):
         self.quant_act_output.runtime_helper = runtime_helper
         self.quant_output.runtime_helper = runtime_helper
 
-        # self.quant_input.set_daq_ema_params(runtime_helper)
-        # self.quant_act_int32.set_daq_ema_params(runtime_helper)
-        # self.quant_act_output.set_daq_ema_params(runtime_helper)
-
 
 class Q_ResNet20(nn.Module):
     """
@@ -281,12 +278,13 @@ class Q_ResNet20(nn.Module):
                 quant_unit.set_param(unit)
                 setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
 
-        self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
+        self.final_pool = QuantAveragePool2d(kernel_size=8, stride=1)
 
         self.quant_act_output = QuantAct()
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -367,6 +365,71 @@ class Q_ResNet50(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
+        self.quant_output.set_param(output)
+
+    def forward(self, x):
+        x, act_scaling_factor = self.quant_input(x)
+
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
+
+        x = self.pool(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
+
+        x = self.act(x)
+
+        for stage_num in range(0, 4):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+
+        x = self.final_pool(x, act_scaling_factor)
+
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+        x = x.view(x.size(0), -1)
+        x = self.quant_output(x, act_scaling_factor)
+
+        return x
+
+class Q_ResNet50_Daq(nn.Module):
+    """
+        Quantized ResNet50 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
+    """
+    def __init__(self, model, runtime_helper=None):
+        super().__init__()
+
+        features = getattr(model, 'features')
+        init_block = getattr(features, 'init_block')
+
+        self.runtime_helper = runtime_helper
+
+        self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
+        self.quant_init_convbn = QuantBnConv2d()
+        self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
+
+        self.quant_act_int32 = QuantAct(runtime_helper=runtime_helper)
+
+        self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.act = nn.ReLU()
+
+        self.channel = [3, 4, 6, 3]
+
+        for stage_num in range(0, 4):
+            stage = getattr(features, "stage{}".format(stage_num + 1))
+            for unit_num in range(0, self.channel[stage_num]):
+                unit = getattr(stage, "unit{}".format(unit_num + 1))
+                quant_unit = Q_ResUnitBn_Daq()
+                quant_unit.set_param(unit, runtime_helper)
+                setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
+
+        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
+
+        self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
+        self.quant_act_output.isClassifier = True
+
+        output = getattr(model, 'output')
+        self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -785,8 +848,11 @@ def q_resnet20_unfold(model):
     net = Q_ResNet20_unfold(model)
     return net
 
-def q_resnet50(model):
-    net = Q_ResNet50(model)
+def q_resnet50(model, runtime_helper=None):
+    if runtime_helper is None:
+        net = Q_ResNet50(model)
+    else:
+        net = Q_ResNet50_Daq(model, runtime_helper)
     return net
 
 

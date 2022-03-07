@@ -205,7 +205,7 @@ class PCQBnReLU(nn.Module):
         self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
         self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
         for c in range(self.num_clusters):
-            self.M0[c], self.shift[c] = quantize_M(self.s1[c] * self.s2 / self.s3[c])
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c].type(torch.double) * self.s2.type(torch.double) / self.s3[c].type(torch.double))
         return self.s3, self.z3
 
 
@@ -294,7 +294,7 @@ class FusedBnReLU(nn.Module):
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
 
-        self.M0, self.shift = quantize_M(self.s1 * self.s2 / self.s3)
+        self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
         return self.s3, self.z3
 
     def get_weight_qparams(self):
