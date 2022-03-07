@@ -150,7 +150,7 @@ class Q_ResNet20_unfold(nn.Module):
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
+        x, _ = self.quant_output(x, act_scaling_factor)
 
         return x
 
