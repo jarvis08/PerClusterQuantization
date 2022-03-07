@@ -358,7 +358,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                     input, target =  container.leftover_batch[c][0], container.leftover_batch[c][1]
                     input, target = input.cuda(), target.cuda()
                     output = model(input)
-                    
+
                     loss = criterion(output, target)
                     prec = accuracy(output, target)[0]
                     losses.update(loss.item(), input.size(0))
