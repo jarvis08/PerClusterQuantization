@@ -102,6 +102,9 @@ class Q_ResNet20_unfold(nn.Module):
 
         self.quant_init_block_conv = QuantConv2d()
         self.quant_init_block_conv.set_param(init_block.conv)
+       
+        self.quant_init_block_conv_act = QuantAct()
+
         self.quant_init_block_bn = QuantBn()
         self.quant_init_block_bn.set_param(init_block.bn)
 
@@ -131,8 +134,9 @@ class Q_ResNet20_unfold(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, bn_scaling_factor = self.quant_init_block_bn(x, conv_scaling_factor)
+        x, act_scaling_factor = self.quant_init_block_conv_act(x, act_scaling_factor, conv_scaling_factor)
 
+        x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor)
 
         x = self.act(x)
@@ -290,7 +294,6 @@ class Q_ResNet20(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
@@ -595,21 +598,24 @@ class Q_ResBlockBn_unfold(nn.Module):
         convbn1 = unit.body.conv1
         self.quant_conv1 = QuantConv2d()
         self.quant_conv1.set_param(convbn1.conv)
+        self.quant_conv1_act = QuantAct()
+
         self.quant_bn1 = QuantBn()
         self.quant_bn1.set_param(convbn1.bn)
-
         self.quant_act1 = QuantAct()
 
         convbn2 = unit.body.conv2
         self.quant_conv2 = QuantConv2d()
         self.quant_conv2.set_param(convbn2.conv)
+        self.quant_conv2_act = QuantAct()
+
         self.quant_bn2 = QuantBn()
         self.quant_bn2.set_param(convbn2.bn)
-
 
         if self.resize_identity:
             self.quant_identity_conv = QuantConv2d()
             self.quant_identity_conv.set_param(unit.identity_conv.conv)
+            self.quant_identity_act = QuantAct()
             self.quant_identity_bn = QuantBn()
             self.quant_identity_bn.set_param(unit.identity_conv.bn)
 
@@ -621,19 +627,24 @@ class Q_ResBlockBn_unfold(nn.Module):
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
             identity_act_scaling_factor = act_scaling_factor.clone()
             identity, identity_conv_scaling_factor = self.quant_identity_conv(x, act_scaling_factor)
-            identity, identity_weight_scaling_factor = self.quant_identity_bn(identity, identity_conv_scaling_factor)
+            identity, identity_act_scaling_factor = self.quant_identity_act(identity, identity_act_scaling_factor, identity_conv_scaling_factor) #
+            identity, identity_weight_scaling_factor = self.quant_identity_bn(identity, act_scaling_factor)
         else:
             identity = x
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
         x, conv_scaling_factor = self.quant_conv1(x, act_scaling_factor)
-        x, bn_scaling_factor = self.quant_bn1(x, conv_scaling_factor)
+        x, act_scaling_factor = self.quant_conv1_act(x, act_scaling_factor, conv_scaling_factor)
+        x, bn_scaling_factor = self.quant_bn1(x, act_scaling_factor)
+        
         x = nn.ReLU()(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
 
         x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
-        x, bn_scaling_factor = self.quant_bn2(x, conv_scaling_factor)
+        x, act_scaling_factor = self.quant_conv2_act(x, act_scaling_factor, conv_scaling_factor)
+        x, bn_scaling_factor = self.quant_bn2(x, act_scaling_factor)
 
+        weight_scaling_factor = conv_scaling_factor * bn_scaling_factor
         x = x + identity
 
         if self.resize_identity:
