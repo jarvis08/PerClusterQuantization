@@ -1,1 +1,48 @@
-Bit:uniform4, Acc:81.62, LR:0.0001, Batch:128, Best Epoch:42, Time:1.2hBit:uniform4, Acc:81.04, LR:0.0001, Batch:128, Best Epoch:42, Time:1.1hBit:uniform4, Acc:81.22, LR:0.0001, Batch:128, Best Epoch:32, Time:1.2hBit:uniform4, Acc:81.40, LR:0.0001, Batch:128, Best Epoch:42, Time:1.2h
+Bit:uniform4, Acc:81.62, LR:0.0001, Batch:128, Best Epoch:42, Time:1.2h
+Bit:uniform4, Acc:81.04, LR:0.0001, Batch:128, Best Epoch:42, Time:1.1h
+Bit:uniform4, Acc:81.22, LR:0.0001, Batch:128, Best Epoch:32, Time:1.2h
+Bit:uniform4, Acc:81.40, LR:0.0001, Batch:128, Best Epoch:42, Time:1.2h
+Bit:uniform4, Acc:76.42, LR:0.001, Batch:128, Best Epoch:20, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.84, LR:0.001, Batch:64, Best Epoch:18, Time:34.0m, Data:cifar10
+Bit:uniform4, Acc:76.72, LR:0.001, Batch:64, Best Epoch:26, Time:34.2m, Data:cifar10
+Bit:uniform4, Acc:76.48, LR:0.001, Batch:64, Best Epoch:25, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.18, LR:0.001, Batch:64, Best Epoch:14, Time:34.3m, Data:cifar10
+Bit:uniform4, Acc:76.60, LR:0.001, Batch:64, Best Epoch:23, Time:34.2m, Data:cifar10
+Bit:uniform4, Acc:76.74, LR:0.001, Batch:32, Best Epoch:15, Time:34.3m, Data:cifar10
+Bit:uniform4, Acc:76.46, LR:0.001, Batch:32, Best Epoch:18, Time:34.2m, Data:cifar10
+Bit:uniform4, Acc:76.24, LR:0.001, Batch:32, Best Epoch:17, Time:33.9m, Data:cifar10
+Bit:uniform4, Acc:76.60, LR:0.001, Batch:32, Best Epoch:15, Time:34.3m, Data:cifar10
+Bit:uniform4, Acc:76.58, LR:0.001, Batch:32, Best Epoch:13, Time:34.0m, Data:cifar10
+Bit:uniform4, Acc:10.58, LR:0.01, Batch:128, Best Epoch:13, Time:33.9m, Data:cifar10
+
+## More Experiment LR=0.001
+Bit:uniform4, Acc:76.36, LR:0.001, Batch:128, Best Epoch:18, Time:34.0m, Data:cifar10
+Bit:uniform4, Acc:76.44, LR:0.001, Batch:128, Best Epoch:12, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.10, LR:0.001, Batch:128, Best Epoch:15, Time:33.9m, Data:cifar10
+Bit:uniform4, Acc:76.88, LR:0.001, Batch:128, Best Epoch:12, Time:34.0m, Data:cifar10
+Bit:uniform4, Acc:76.32, LR:0.001, Batch:128, Best Epoch:20, Time:34.2m, Data:cifar10
+Bit:uniform4, Acc:76.20, LR:0.001, Batch:64, Best Epoch:15, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.80, LR:0.001, Batch:64, Best Epoch:14, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:77.12, LR:0.001, Batch:64, Best Epoch:18, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.66, LR:0.001, Batch:64, Best Epoch:16, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.54, LR:0.001, Batch:64, Best Epoch:17, Time:34.2m, Data:cifar10
+Bit:uniform4, Acc:76.20, LR:0.001, Batch:32, Best Epoch:19, Time:34.0m, Data:cifar10
+Bit:uniform4, Acc:76.52, LR:0.001, Batch:32, Best Epoch:14, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:76.60, LR:0.001, Batch:32, Best Epoch:15, Time:34.3m, Data:cifar10
+Bit:uniform4, Acc:76.52, LR:0.001, Batch:32, Best Epoch:19, Time:34.3m, Data:cifar10
+Bit:uniform4, Acc:76.84, LR:0.001, Batch:32, Best Epoch:12, Time:34.1m, Data:cifar10
+Bit:uniform4, Acc:39.94, LR:0.001, Batch:128, Best Epoch:15, Time:33.9m, Data:cifar100
+Bit:uniform4, Acc:39.76, LR:0.001, Batch:128, Best Epoch:15, Time:33.9m, Data:cifar100
+Bit:uniform4, Acc:39.10, LR:0.001, Batch:128, Best Epoch:14, Time:33.9m, Data:cifar100
+Bit:uniform4, Acc:39.84, LR:0.001, Batch:128, Best Epoch:13, Time:33.7m, Data:cifar100
+Bit:uniform4, Acc:39.56, LR:0.001, Batch:128, Best Epoch:9, Time:33.7m, Data:cifar100
+Bit:uniform4, Acc:39.66, LR:0.001, Batch:64, Best Epoch:11, Time:33.8m, Data:cifar100
+Bit:uniform4, Acc:40.22, LR:0.001, Batch:64, Best Epoch:16, Time:34.1m, Data:cifar100
+Bit:uniform4, Acc:40.12, LR:0.001, Batch:64, Best Epoch:13, Time:34.0m, Data:cifar100
+Bit:uniform4, Acc:40.02, LR:0.001, Batch:64, Best Epoch:13, Time:33.8m, Data:cifar100
+Bit:uniform4, Acc:39.78, LR:0.001, Batch:64, Best Epoch:13, Time:33.9m, Data:cifar100
+Bit:uniform4, Acc:40.00, LR:0.001, Batch:32, Best Epoch:13, Time:33.8m, Data:cifar100
+Bit:uniform4, Acc:39.76, LR:0.001, Batch:32, Best Epoch:13, Time:34.1m, Data:cifar100
+Bit:uniform4, Acc:40.12, LR:0.001, Batch:32, Best Epoch:11, Time:33.9m, Data:cifar100
+Bit:uniform4, Acc:40.32, LR:0.001, Batch:32, Best Epoch:9, Time:33.8m, Data:cifar100
+Bit:uniform4, Acc:40.06, LR:0.001, Batch:32, Best Epoch:16, Time:33.9m, Data:cifar100
