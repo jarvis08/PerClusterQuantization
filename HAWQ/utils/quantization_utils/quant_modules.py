@@ -65,19 +65,23 @@ class QuantLinear(Module):
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.register_buffer('fc_scaling_factor', torch.zeros(self.out_features))
-        self.weight = Parameter(linear.weight.data.clone())
-        if model_dict is not None:
-            our_weight = model_dict[dict_idx + '.weight']
-            self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
-        self.register_buffer('weight_integer', torch.zeros_like(self.weight))
         self.register_buffer('bias_integer', torch.zeros_like(linear.bias))
-        try:
-            self.bias = Parameter(linear.bias.data.clone())
-            if model_dict is not None:
-                our_bias = model_dict[dict_idx + '.bias']
+        if model_dict is not None :
+            self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
+        else :
+            self.weight = Parameter(linear.weight.data.clone())
+        self.register_buffer('weight_integer', torch.zeros_like(self.weight))
+
+        if model_dict is not None :
+            try : 
                 self.bias = Parameter(model_dict[dict_idx + '.bias'].data.clone())
-        except AttributeError:
-            self.bias = None
+            except AttributeError:
+                self.bias = None
+        else :
+            try:
+                self.bias = Parameter(linear.bias.data.clone())
+            except AttributeError:
+                self.bias = None
 
     def fix(self):
         self.fix_flag = True
@@ -941,6 +945,7 @@ class QuantConv2d(Module):
             self.quant_mode)
         return s
 
+<<<<<<< HEAD
     # def set_param(self, conv):
     #     #self.in_channels = conv.in_channels
     #     #self.out_channels = conv.out_channels
@@ -952,6 +957,12 @@ class QuantConv2d(Module):
     #     self.conv = conv
     #     self.register_buffer('conv_scaling_factor', torch.zeros(self.conv.out_channels))
     #     self.register_buffer('weight_integer', torch.zeros_like(conv.weight.data))
+=======
+    def set_param(self, conv):
+        self.conv = conv
+        self.register_buffer('conv_scaling_factor', torch.zeros(self.conv.out_channels))
+        self.register_buffer('weight_integer', torch.zeros_like(conv.weight.data))
+>>>>>>> c181612af5f1aa4e1fe8000f152ac821d64e9bca
 
     def set_param(self, conv, model_dict=None, dict_idx=None):
         self.in_channels = conv.in_channels
@@ -963,17 +974,29 @@ class QuantConv2d(Module):
         self.groups = conv.groups
         self.conv = conv
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
+<<<<<<< HEAD
         self.weight = Parameter(conv.weight.data.clone())
         if model_dict is not None:
             our_weight = model_dict[dict_idx+'.weight']
             self.weight.data = Parameter(model_dict[dict_idx+'.weight'].data.clone())
+=======
+        if model_dict is not None :
+            self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
+        else :
+            self.weight = Parameter(conv.weight.data.clone())
+>>>>>>> c181612af5f1aa4e1fe8000f152ac821d64e9bca
         self.register_buffer('weight_integer', torch.zeros_like(self.weight))
-        try:
-            self.bias = Parameter(conv.bias.data.clone())
-            if model_dict is not None:
+
+        if model_dict is not None :
+            try : 
                 self.bias = Parameter(model_dict[dict_idx + '.bias'].data.clone())
-        except AttributeError:
-            self.bias = None
+            except AttributeError:
+                self.bias = None
+        else :
+            try:
+                self.bias = Parameter(conv.bias.data.clone())
+            except AttributeError:
+                self.bias = None
 
     def fix(self):
         self.fix_flag = True
