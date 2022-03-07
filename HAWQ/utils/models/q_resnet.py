@@ -240,7 +240,6 @@ class Q_ResNet20_Daq(nn.Module):
         for stage_num in range(0, 3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                print(tmp_func)
                 tmp_func.runtime_helper = runtime_helper
                 if isinstance(tmp_func, QuantAct):
                     tmp_func.set_daq_ema_params(runtime_helper)
@@ -320,7 +319,6 @@ class Q_ResNet20(nn.Module):
         for stage_num in range(0, 3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                print(tmp_func)
                 tmp_func.runtime_helper = runtime_helper
                 if isinstance(tmp_func, QuantAct):
                     tmp_func.set_daq_ema_params(runtime_helper)

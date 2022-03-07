@@ -17,7 +17,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --act-range-momentum 0.99 \
     --lr 0.001 \
     --epochs 100 \
-    --batch-size 128 \
+    --batch-size 64 \
     --gpu 0 \
     --fix-BN \
     --quant-scheme uniform4 \

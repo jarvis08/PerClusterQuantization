@@ -17,12 +17,11 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --act-range-momentum 0.99 \
     --lr 0.001 \
     --epochs 100 
-    --batch-size 32
+    --batch-size 128
     --gpu 0 \
     --fix-BN \
     --quant-scheme uniform4 \
     --transfer_param \
-    --channel-wise \
+    --channel-wise true \
     --pretrained \
-    --cluster 4
-
+    #--cluster 4
