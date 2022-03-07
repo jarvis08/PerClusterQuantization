@@ -33,7 +33,7 @@ class QuantizedAdd(nn.Module):
         return clamp_matrix(out, self.a_bit)
 
     def _pcq_add(self, bypass, prev):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         z_bypass = torch.index_select(self.z_bypass, 0, bc)[:, None, None, None]
         z_prev = torch.index_select(self.z_prev, 0, bc)[:, None, None, None]
         z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
@@ -98,7 +98,7 @@ class QuantizedMul(nn.Module):
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
     def forward(self, prev, bypass):
-        if self.runtime_helper.batch_cluster is not None:
+        if self.runtime_helper.qat_batch_cluster is not None:
             return self.pcq_mul(bypass, prev)
         else:
             return self.general_mul(prev, bypass)

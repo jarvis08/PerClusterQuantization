@@ -11,7 +11,7 @@ from .activation import *
 
 
 class QuantizedLinear(nn.Linear):
-    batch_cluster = None
+    qat_batch_cluster = None
 
     def __init__(self, in_features, out_features, bias=False, activation=None, multiplication=True, arg_dict=None):
         super(QuantizedLinear, self).__init__(in_features, out_features, bias)
@@ -65,7 +65,7 @@ class QuantizedLinear(nn.Linear):
         return clamp_matrix(out, self.a_bit)
 
     def _pcq_subsum(self, x, sum_q1q2):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None]
 
         if self.is_bias:
@@ -85,7 +85,7 @@ class QuantizedLinear(nn.Linear):
         return subsum
 
     def _pcq_totalsum(self, subsum):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         z3 = torch.index_select(self.z3, 0, bc)[:, None]
         M0 = torch.index_select(self.M0, 0, bc)[:, None]
         shift = torch.index_select(self.shift, 0, bc)[:, None]
@@ -182,7 +182,7 @@ class PCQLinear(nn.Module):
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         _min, _max = None, None
         if self.is_classifier:
             _min, _max = get_range(x)
@@ -207,7 +207,7 @@ class PCQLinear(nn.Module):
                 self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         zero = self.runtime_helper.fzero
         if external_range is not None:
             s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero=zero)

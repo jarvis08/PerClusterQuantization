@@ -37,9 +37,9 @@ class PCQActivation(nn.Module):
             out = x
 
         done = 0
-        for i in range(self.runtime_helper.batch_cluster.shape[0]):
-            c = self.runtime_helper.batch_cluster[i][0]
-            n = self.runtime_helper.batch_cluster[i][1]
+        for i in range(self.runtime_helper.qat_batch_cluster.shape[0]):
+            c = self.runtime_helper.qat_batch_cluster[i][0]
+            n = self.runtime_helper.qat_batch_cluster[i][1]
             if self.apply_ema[c]:
                 self.act_range[c][0], self.act_range[c][1] = ema(x[done:done + n], self.act_range[c], self.smooth)
                 if self.runtime_helper.apply_fake_quantization:

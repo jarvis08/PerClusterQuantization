@@ -31,7 +31,7 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
             return self.maxpool(x)
 
         # Pad with a single zero-point
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         if bc is None:
             x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point.item())
             return self.maxpool(x)

@@ -33,8 +33,8 @@ class QuantizedAlexNet(nn.Module):
         self.fc3 = QuantizedLinear(4096, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
+        if self.runtime_helper.qat_batch_cluster is not None:
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.q_max)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 
@@ -80,8 +80,8 @@ class QuantizedAlexNetSmall(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
+        if self.runtime_helper.qat_batch_cluster is not None:
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
