@@ -941,17 +941,17 @@ class QuantConv2d(Module):
             self.quant_mode)
         return s
 
-    def set_param(self, conv):
-        #self.in_channels = conv.in_channels
-        #self.out_channels = conv.out_channels
-        #self.kernel_size = conv.kernel_size
-        #self.stride = conv.stride
-        #self.padding = conv.padding
-        #self.dilation = conv.dilation
-        #self.groups = conv.groups
-        self.conv = conv
-        self.register_buffer('conv_scaling_factor', torch.zeros(self.conv.out_channels))
-        self.register_buffer('weight_integer', torch.zeros_like(conv.weight.data))
+    # def set_param(self, conv):
+    #     #self.in_channels = conv.in_channels
+    #     #self.out_channels = conv.out_channels
+    #     #self.kernel_size = conv.kernel_size
+    #     #self.stride = conv.stride
+    #     #self.padding = conv.padding
+    #     #self.dilation = conv.dilation
+    #     #self.groups = conv.groups
+    #     self.conv = conv
+    #     self.register_buffer('conv_scaling_factor', torch.zeros(self.conv.out_channels))
+    #     self.register_buffer('weight_integer', torch.zeros_like(conv.weight.data))
 
     def set_param(self, conv, model_dict=None, dict_idx=None):
         self.in_channels = conv.in_channels
@@ -966,7 +966,7 @@ class QuantConv2d(Module):
         self.weight = Parameter(conv.weight.data.clone())
         if model_dict is not None:
             our_weight = model_dict[dict_idx+'.weight']
-            self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
+            self.weight.data = Parameter(model_dict[dict_idx+'.weight'].data.clone())
         self.register_buffer('weight_integer', torch.zeros_like(self.weight))
         try:
             self.bias = Parameter(conv.bias.data.clone())
@@ -996,7 +996,8 @@ class QuantConv2d(Module):
         w = self.weight
         # calculate quantization range
         if self.per_channel:
-            w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
+            # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
+            w_transform = w.data.contiguous().view(self.out_channels, -1)
 
             if self.weight_percentile == 0:
                 w_min = w_transform.min(dim=1).values
@@ -1013,17 +1014,25 @@ class QuantConv2d(Module):
                 w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
         else:
             if self.weight_percentile == 0:
-                w_min = self.conv.weight.data.min()
-                w_max = self.conv.weight.data.max()
+                w_min = w.data.min()
+                w_max = w.data.max()
+                # w_min = self.conv.weight.data.min()
+                # w_max = self.conv.weight.data.max()
             else:
-                w_min, w_max = get_percentile_min_max(self.conv.weight.view(-1), 100 - self.weight_percentile,
+                w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
                                                       self.weight_percentile, output_tensor=True)
+                # w_min, w_max = get_percentile_min_max(self.conv.weight.view(-1), 100 - self.weight_percentile,
+                #                                       self.weight_percentile, output_tensor=True)
         # perform quantization
         if self.quant_mode == 'symmetric':
             self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
                                                                             self.per_channel)
-            self.weight_integer = self.weight_function(self.conv.weight, self.weight_bit, self.conv_scaling_factor)
+            self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
             bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
+            # self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+            #                                                                 self.per_channel)
+            # self.weight_integer = self.weight_function(self.conv.weight, self.weight_bit, self.conv_scaling_factor)
+            # bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
 
             if self.quantize_bias and self.conv.bias is not None:
                 self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
@@ -1036,8 +1045,16 @@ class QuantConv2d(Module):
         x_int = x / pre_act_scaling_factor
         correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-        return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                         self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+        # return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+        #                  self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+
+        if self.bias is None:
+            return (F.conv2d(x_int, self.weight_integer, torch.zeros_like(bias_scaling_factor.view(-1)),
+                             self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+                    * correct_output_scale, self.conv_scaling_factor)
+        else:
+            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
 
 
 def freeze_model(model):

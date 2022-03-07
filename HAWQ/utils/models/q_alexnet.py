@@ -19,7 +19,6 @@ class Q_AlexNet(nn.Module):
         features = getattr(model, 'features')
 
         self.quant_input = QuantAct()
-        self.quant_act_int32 = QuantAct()
 
         # stage1
         stage = getattr(features, 'stage1')
@@ -92,7 +91,7 @@ class Q_AlexNet(nn.Module):
 
         self.maxpool3 = QuantMaxPool2d(ceil_mode=True)
         self.quant_act5_1 = QuantAct()
-        self.avgpool = QuantAveragePool2d(output=(1,1))
+        self.avgpool = QuantAveragePool2d(output=(1, 1))
         self.quant_act5_2 = QuantAct()
 
         output = getattr(model, 'output')
@@ -156,7 +155,6 @@ class Q_AlexNet(nn.Module):
         x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act5_2(x, act_scaling_factor)
 
-        # x = torch.flatten(x, 1)
         x = x.view(x.size(0), -1)
 
         x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
@@ -169,7 +167,7 @@ class Q_AlexNet(nn.Module):
 
         x, _ = self.fc3(x, act_scaling_factor)
 
-        return (x)
+        return x
 
 
 class Q_AlexNet_Daq(nn.Module):
