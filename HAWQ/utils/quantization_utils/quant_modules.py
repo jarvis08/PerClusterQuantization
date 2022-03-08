@@ -984,6 +984,7 @@ class QuantConv2d(Module):
         self.groups = conv.groups
         self.conv = conv
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
+
         self.weight = Parameter(conv.weight.data.clone())
         if model_dict is not None:
             our_weight = model_dict[dict_idx+'.weight']
