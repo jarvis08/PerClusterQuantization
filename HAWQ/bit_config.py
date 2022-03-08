@@ -31,6 +31,627 @@ bit_config_dict = {
 
 },
 
+
+"bit_config_densenet_uniform4" : {
+    'quant_input': 8,
+
+    'quant_init_block_conv': 8,
+    'quant_init_block_act': 16,
+    'quant_init_block_bn': 16,
+    'quant_act1': 16,
+    'quant_act2': 4,
+    
+    # Dense Block 1
+    'stage1.unit1.quant_bn1': ,
+    'stage1.unit1.quant_act1': ,
+    'stage1.unit1.quant_conv1': ,
+    'stage1.unit1.quant_act2': ,
+
+    'stage1.unit1.quant_bn2': ,
+    'stage1.unit1.quant_act3': ,
+    'stage1.unit1.quant_conv2': ,
+    'stage1.unit1.quant_act_output': ,
+
+    'stage1.unit2.quant_bn1': ,
+    'stage1.unit2.quant_act1': ,
+    'stage1.unit2.quant_conv1': ,
+    'stage1.unit2.quant_act2': ,
+
+    'stage1.unit2.quant_bn2': ,
+    'stage1.unit2.quant_act3': ,
+    'stage1.unit2.quant_conv2': ,
+    'stage1.unit2.quant_act_output': ,
+
+    'stage1.unit3.quant_bn1': ,
+    'stage1.unit3.quant_act1': ,
+    'stage1.unit3.quant_conv1': ,
+    'stage1.unit3.quant_act2': ,
+
+    'stage1.unit3.quant_bn2': ,
+    'stage1.unit3.quant_act3': ,
+    'stage1.unit3.quant_conv2': ,
+    'stage1.unit3.quant_act_output': ,
+
+    'stage1.unit4.quant_bn1': ,
+    'stage1.unit4.quant_act1': ,
+    'stage1.unit4.quant_conv1': ,
+    'stage1.unit4.quant_act2': ,
+
+    'stage1.unit4.quant_bn2': ,
+    'stage1.unit4.quant_act3': ,
+    'stage1.unit4.quant_conv2': ,
+    'stage1.unit4.quant_act_output': ,
+
+    'stage1.unit5.quant_bn1': ,
+    'stage1.unit5.quant_act1': ,
+    'stage1.unit5.quant_conv1': ,
+    'stage1.unit5.quant_act2': ,
+
+    'stage1.unit5.quant_bn2': ,
+    'stage1.unit5.quant_act3': ,
+    'stage1.unit5.quant_conv2': ,
+    'stage1.unit5.quant_act_output': ,
+
+    'stage1.unit6.quant_bn1': ,
+    'stage1.unit6.quant_act1': ,
+    'stage1.unit6.quant_conv1': ,
+    'stage1.unit6.quant_act2': ,
+
+    'stage1.unit6.quant_bn2': ,
+    'stage1.unit6.quant_act3': ,
+    'stage1.unit6.quant_conv2': ,
+    'stage1.unit6.quant_act_output': ,
+
+    # Dense Block 2
+    'stage2.trans2.batch_norm': ,
+    'stage2.trans2.quant_act1': ,
+    'stage2.trans2.conv': ,
+    'stage2.trans2.quant_act2': ,
+    'stage2.trans2.quant_output': ,
+
+    'stage2.unit1.quant_bn1': ,
+    'stage2.unit1.quant_act1': ,
+    'stage2.unit1.quant_conv1': ,
+    'stage2.unit1.quant_act2': ,
+
+    'stage2.unit1.quant_bn2': ,
+    'stage2.unit1.quant_act3': ,
+    'stage2.unit1.quant_conv2': ,
+    'stage2.unit1.quant_act_output': ,
+
+    'stage2.unit2.quant_bn1': ,
+    'stage2.unit2.quant_act1': ,
+    'stage2.unit2.quant_conv1': ,
+    'stage2.unit2.quant_act2': ,
+
+    'stage2.unit2.quant_bn2': ,
+    'stage2.unit2.quant_act3': ,
+    'stage2.unit2.quant_conv2': ,
+    'stage2.unit2.quant_act_output': ,
+
+    'stage2.unit3.quant_bn1': ,
+    'stage2.unit3.quant_act1': ,
+    'stage2.unit3.quant_conv1': ,
+    'stage2.unit3.quant_act2': ,
+
+    'stage2.unit3.quant_bn2': ,
+    'stage2.unit3.quant_act3': ,
+    'stage2.unit3.quant_conv2': ,
+    'stage2.unit3.quant_act_output': ,
+
+    'stage2.unit4.quant_bn1': ,
+    'stage2.unit4.quant_act1': ,
+    'stage2.unit4.quant_conv1': ,
+    'stage2.unit4.quant_act2': ,
+
+    'stage2.unit4.quant_bn2': ,
+    'stage2.unit4.quant_act3': ,
+    'stage2.unit4.quant_conv2': ,
+    'stage2.unit4.quant_act_output': ,
+
+    'stage2.unit5.quant_bn1': ,
+    'stage2.unit5.quant_act1': ,
+    'stage2.unit5.quant_conv1': ,
+    'stage2.unit5.quant_act2': ,
+
+    'stage2.unit5.quant_bn2': ,
+    'stage2.unit5.quant_act3': ,
+    'stage2.unit5.quant_conv2': ,
+    'stage2.unit5.quant_act_output': ,
+
+    'stage2.unit6.quant_bn1': ,
+    'stage2.unit6.quant_act1': ,
+    'stage2.unit6.quant_conv1': ,
+    'stage2.unit6.quant_act2': ,
+
+    'stage2.unit6.quant_bn2': ,
+    'stage2.unit6.quant_act3': ,
+    'stage2.unit6.quant_conv2': ,
+    'stage2.unit6.quant_act_output': ,
+
+    'stage2.unit7.quant_bn1': ,
+    'stage2.unit7.quant_act1': ,
+    'stage2.unit7.quant_conv1': ,
+    'stage2.unit7.quant_act2': ,
+
+    'stage2.unit7.quant_bn2': ,
+    'stage2.unit7.quant_act3': ,
+    'stage2.unit7.quant_conv2': ,
+    'stage2.unit7.quant_act_output': ,
+
+    'stage2.unit8.quant_bn1': ,
+    'stage2.unit8.quant_act1': ,
+    'stage2.unit8.quant_conv1': ,
+    'stage2.unit8.quant_act2': ,
+
+    'stage2.unit8.quant_bn2': ,
+    'stage2.unit8.quant_act3': ,
+    'stage2.unit8.quant_conv2': ,
+    'stage2.unit8.quant_act_output': ,
+
+    'stage2.unit9.quant_bn1': ,
+    'stage2.unit9.quant_act1': ,
+    'stage2.unit9.quant_conv1': ,
+    'stage2.unit9.quant_act2': ,
+
+    'stage2.unit9.quant_bn2': ,
+    'stage2.unit9.quant_act3': ,
+    'stage2.unit9.quant_conv2': ,
+    'stage2.unit9.quant_act_output': ,
+
+    'stage2.unit10.quant_bn1': ,
+    'stage2.unit10.quant_act1': ,
+    'stage2.unit10.quant_conv1': ,
+    'stage2.unit10.quant_act2': ,
+
+    'stage2.unit10.quant_bn2': ,
+    'stage2.unit10.quant_act3': ,
+    'stage2.unit10.quant_conv2': ,
+    'stage2.unit10.quant_act_output': ,
+
+    'stage2.unit11.quant_bn1': ,
+    'stage2.unit11.quant_act1': ,
+    'stage2.unit11.quant_conv1': ,
+    'stage2.unit11.quant_act2': ,
+
+    'stage2.unit11.quant_bn2': ,
+    'stage2.unit11.quant_act3': ,
+    'stage2.unit11.quant_conv2': ,
+    'stage2.unit11.quant_act_output': ,
+
+    'stage2.unit12.quant_bn1': ,
+    'stage2.unit12.quant_act1': ,
+    'stage2.unit12.quant_conv1': ,
+    'stage2.unit12.quant_act2': ,
+
+    'stage2.unit12.quant_bn2': ,
+    'stage2.unit12.quant_act3': ,
+    'stage2.unit12.quant_conv2': ,
+    'stage2.unit12.quant_act_output': ,
+
+    # Dense Block 3
+    'stage3.trans3.batch_norm': ,
+    'stage3.trans3.quant_act1': ,
+    'stage3.trans3.conv': ,
+    'stage3.trans3.quant_act2': ,
+    'stage3.trans3.quant_output': ,
+
+    'stage3.unit1.quant_bn1': ,
+    'stage3.unit1.quant_act1': ,
+    'stage3.unit1.quant_conv1': ,
+    'stage3.unit1.quant_act2': ,
+
+    'stage3.unit1.quant_bn2': ,
+    'stage3.unit1.quant_act3': ,
+    'stage3.unit1.quant_conv2': ,
+    'stage3.unit1.quant_act_output': ,
+
+    'stage3.unit2.quant_bn1': ,
+    'stage3.unit2.quant_act1': ,
+    'stage3.unit2.quant_conv1': ,
+    'stage3.unit2.quant_act2': ,
+
+    'stage3.unit2.quant_bn2': ,
+    'stage3.unit2.quant_act3': ,
+    'stage3.unit2.quant_conv2': ,
+    'stage3.unit2.quant_act_output': ,
+
+    'stage3.unit3.quant_bn1': ,
+    'stage3.unit3.quant_act1': ,
+    'stage3.unit3.quant_conv1': ,
+    'stage3.unit3.quant_act2': ,
+
+    'stage3.unit3.quant_bn2': ,
+    'stage3.unit3.quant_act3': ,
+    'stage3.unit3.quant_conv2': ,
+    'stage3.unit3.quant_act_output': ,
+
+    'stage3.unit4.quant_bn1': ,
+    'stage3.unit4.quant_act1': ,
+    'stage3.unit4.quant_conv1': ,
+    'stage3.unit4.quant_act2': ,
+
+    'stage3.unit4.quant_bn2': ,
+    'stage3.unit4.quant_act3': ,
+    'stage3.unit4.quant_conv2': ,
+    'stage3.unit4.quant_act_output': ,
+
+    'stage3.unit5.quant_bn1': ,
+    'stage3.unit5.quant_act1': ,
+    'stage3.unit5.quant_conv1': ,
+    'stage3.unit5.quant_act2': ,
+
+    'stage3.unit5.quant_bn2': ,
+    'stage3.unit5.quant_act3': ,
+    'stage3.unit5.quant_conv2': ,
+    'stage3.unit5.quant_act_output': ,
+
+    'stage3.unit6.quant_bn1': ,
+    'stage3.unit6.quant_act1': ,
+    'stage3.unit6.quant_conv1': ,
+    'stage3.unit6.quant_act2': ,
+
+    'stage3.unit6.quant_bn2': ,
+    'stage3.unit6.quant_act3': ,
+    'stage3.unit6.quant_conv2': ,
+    'stage3.unit6.quant_act_output': ,
+
+    'stage3.unit7.quant_bn1': ,
+    'stage3.unit7.quant_act1': ,
+    'stage3.unit7.quant_conv1': ,
+    'stage3.unit7.quant_act2': ,
+
+    'stage3.unit7.quant_bn2': ,
+    'stage3.unit7.quant_act3': ,
+    'stage3.unit7.quant_conv2': ,
+    'stage3.unit7.quant_act_output': ,
+
+    'stage3.unit8.quant_bn1': ,
+    'stage3.unit8.quant_act1': ,
+    'stage3.unit8.quant_conv1': ,
+    'stage3.unit8.quant_act2': ,
+
+    'stage3.unit8.quant_bn2': ,
+    'stage3.unit8.quant_act3': ,
+    'stage3.unit8.quant_conv2': ,
+    'stage3.unit8.quant_act_output': ,
+
+    'stage3.unit9.quant_bn1': ,
+    'stage3.unit9.quant_act1': ,
+    'stage3.unit9.quant_conv1': ,
+    'stage3.unit9.quant_act2': ,
+
+    'stage3.unit9.quant_bn2': ,
+    'stage3.unit9.quant_act3': ,
+    'stage3.unit9.quant_conv2': ,
+    'stage3.unit9.quant_act_output': ,
+
+    'stage3.unit10.quant_bn1': ,
+    'stage3.unit10.quant_act1': ,
+    'stage3.unit10.quant_conv1': ,
+    'stage3.unit10.quant_act2': ,
+
+    'stage3.unit10.quant_bn2': ,
+    'stage3.unit10.quant_act3': ,
+    'stage3.unit10.quant_conv2': ,
+    'stage3.unit10.quant_act_output': ,
+
+    'stage3.unit11.quant_bn1': ,
+    'stage3.unit11.quant_act1': ,
+    'stage3.unit11.quant_conv1': ,
+    'stage3.unit11.quant_act2': ,
+
+    'stage3.unit11.quant_bn2': ,
+    'stage3.unit11.quant_act3': ,
+    'stage3.unit11.quant_conv2': ,
+    'stage3.unit11.quant_act_output': ,
+
+    'stage3.unit12.quant_bn1': ,
+    'stage3.unit12.quant_act1': ,
+    'stage3.unit12.quant_conv1': ,
+    'stage3.unit12.quant_act2': ,
+
+    'stage3.unit12.quant_bn2': ,
+    'stage3.unit12.quant_act3': ,
+    'stage3.unit12.quant_conv2': ,
+    'stage3.unit12.quant_act_output': ,
+
+    'stage3.unit13.quant_bn1': ,
+    'stage3.unit13.quant_act1': ,
+    'stage3.unit13.quant_conv1': ,
+    'stage3.unit13.quant_act2': ,
+
+    'stage3.unit13.quant_bn2': ,
+    'stage3.unit13.quant_act3': ,
+    'stage3.unit13.quant_conv2': ,
+    'stage3.unit13.quant_act_output': ,
+
+    'stage3.unit14.quant_bn1': ,
+    'stage3.unit14.quant_act1': ,
+    'stage3.unit14.quant_conv1': ,
+    'stage3.unit14.quant_act2': ,
+
+    'stage3.unit14.quant_bn2': ,
+    'stage3.unit14.quant_act3': ,
+    'stage3.unit14.quant_conv2': ,
+    'stage3.unit14.quant_act_output': ,
+
+    'stage3.unit15.quant_bn1': ,
+    'stage3.unit15.quant_act1': ,
+    'stage3.unit15.quant_conv1': ,
+    'stage3.unit15.quant_act2': ,
+
+    'stage3.unit15.quant_bn2': ,
+    'stage3.unit15.quant_act3': ,
+    'stage3.unit15.quant_conv2': ,
+    'stage3.unit15.quant_act_output': ,
+
+    'stage3.unit16.quant_bn1': ,
+    'stage3.unit16.quant_act1': ,
+    'stage3.unit16.quant_conv1': ,
+    'stage3.unit16.quant_act2': ,
+
+    'stage3.unit16.quant_bn2': ,
+    'stage3.unit16.quant_act3': ,
+    'stage3.unit16.quant_conv2': ,
+    'stage3.unit16.quant_act_output': ,
+
+    'stage3.unit17.quant_bn1': ,
+    'stage3.unit17.quant_act1': ,
+    'stage3.unit17.quant_conv1': ,
+    'stage3.unit17.quant_act2': ,
+
+    'stage3.unit17.quant_bn2': ,
+    'stage3.unit17.quant_act3': ,
+    'stage3.unit17.quant_conv2': ,
+    'stage3.unit17.quant_act_output': ,
+
+    'stage3.unit18.quant_bn1': ,
+    'stage3.unit18.quant_act1': ,
+    'stage3.unit18.quant_conv1': ,
+    'stage3.unit18.quant_act2': ,
+
+    'stage3.unit18.quant_bn2': ,
+    'stage3.unit18.quant_act3': ,
+    'stage3.unit18.quant_conv2': ,
+    'stage3.unit18.quant_act_output': ,
+
+    'stage3.unit19.quant_bn1': ,
+    'stage3.unit19.quant_act1': ,
+    'stage3.unit19.quant_conv1': ,
+    'stage3.unit19.quant_act2': ,
+
+    'stage3.unit19.quant_bn2': ,
+    'stage3.unit19.quant_act3': ,
+    'stage3.unit19.quant_conv2': ,
+    'stage3.unit19.quant_act_output': ,
+
+    'stage3.unit20.quant_bn1': ,
+    'stage3.unit20.quant_act1': ,
+    'stage3.unit20.quant_conv1': ,
+    'stage3.unit20.quant_act2': ,
+
+    'stage3.unit20.quant_bn2': ,
+    'stage3.unit20.quant_act3': ,
+    'stage3.unit20.quant_conv2': ,
+    'stage3.unit20.quant_act_output': ,
+
+    'stage3.unit21.quant_bn1': ,
+    'stage3.unit21.quant_act1': ,
+    'stage3.unit21.quant_conv1': ,
+    'stage3.unit21.quant_act2': ,
+
+    'stage3.unit21.quant_bn2': ,
+    'stage3.unit21.quant_act3': ,
+    'stage3.unit21.quant_conv2': ,
+    'stage3.unit21.quant_act_output': ,
+
+    'stage3.unit22.quant_bn1': ,
+    'stage3.unit22.quant_act1': ,
+    'stage3.unit22.quant_conv1': ,
+    'stage3.unit22.quant_act2': ,
+
+    'stage3.unit22.quant_bn2': ,
+    'stage3.unit22.quant_act3': ,
+    'stage3.unit22.quant_conv2': ,
+    'stage3.unit22.quant_act_output': ,
+
+    'stage3.unit23.quant_bn1': ,
+    'stage3.unit23.quant_act1': ,
+    'stage3.unit23.quant_conv1': ,
+    'stage3.unit23.quant_act2': ,
+
+    'stage3.unit23.quant_bn2': ,
+    'stage3.unit23.quant_act3': ,
+    'stage3.unit23.quant_conv2': ,
+    'stage3.unit23.quant_act_output': ,
+
+    'stage3.unit24.quant_bn1': ,
+    'stage3.unit24.quant_act1': ,
+    'stage3.unit24.quant_conv1': ,
+    'stage3.unit24.quant_act2': ,
+
+    'stage3.unit24.quant_bn2': ,
+    'stage3.unit24.quant_act3': ,
+    'stage3.unit24.quant_conv2': ,
+    'stage3.unit24.quant_act_output': ,
+
+    # Dense Block 4
+    'stage4.trans4.batch_norm': ,
+    'stage4.trans4.quant_act1': ,
+    'stage4.trans4.conv': ,
+    'stage4.trans4.quant_act2': ,
+    'stage4.trans4.quant_output': ,
+
+    'stage4.unit1.quant_bn1': ,
+    'stage4.unit1.quant_act1': ,
+    'stage4.unit1.quant_conv1': ,
+    'stage4.unit1.quant_act2': ,
+
+    'stage4.unit1.quant_bn2': ,
+    'stage4.unit1.quant_act3': ,
+    'stage4.unit1.quant_conv2': ,
+    'stage4.unit1.quant_act_output': ,
+
+    'stage4.unit2.quant_bn1': ,
+    'stage4.unit2.quant_act1': ,
+    'stage4.unit2.quant_conv1': ,
+    'stage4.unit2.quant_act2': ,
+
+    'stage4.unit2.quant_bn2': ,
+    'stage4.unit2.quant_act3': ,
+    'stage4.unit2.quant_conv2': ,
+    'stage4.unit2.quant_act_output': ,
+
+    'stage4.unit3.quant_bn1': ,
+    'stage4.unit3.quant_act1': ,
+    'stage4.unit3.quant_conv1': ,
+    'stage4.unit3.quant_act2': ,
+
+    'stage4.unit3.quant_bn2': ,
+    'stage4.unit3.quant_act3': ,
+    'stage4.unit3.quant_conv2': ,
+    'stage4.unit3.quant_act_output': ,
+
+    'stage4.unit4.quant_bn1': ,
+    'stage4.unit4.quant_act1': ,
+    'stage4.unit4.quant_conv1': ,
+    'stage4.unit4.quant_act2': ,
+
+    'stage4.unit4.quant_bn2': ,
+    'stage4.unit4.quant_act3': ,
+    'stage4.unit4.quant_conv2': ,
+    'stage4.unit4.quant_act_output': ,
+
+    'stage4.unit5.quant_bn1': ,
+    'stage4.unit5.quant_act1': ,
+    'stage4.unit5.quant_conv1': ,
+    'stage4.unit5.quant_act2': ,
+
+    'stage4.unit5.quant_bn2': ,
+    'stage4.unit5.quant_act3': ,
+    'stage4.unit5.quant_conv2': ,
+    'stage4.unit5.quant_act_output': ,
+
+    'stage4.unit6.quant_bn1': ,
+    'stage4.unit6.quant_act1': ,
+    'stage4.unit6.quant_conv1': ,
+    'stage4.unit6.quant_act2': ,
+
+    'stage4.unit6.quant_bn2': ,
+    'stage4.unit6.quant_act3': ,
+    'stage4.unit6.quant_conv2': ,
+    'stage4.unit6.quant_act_output': ,
+
+    'stage4.unit7.quant_bn1': ,
+    'stage4.unit7.quant_act1': ,
+    'stage4.unit7.quant_conv1': ,
+    'stage4.unit7.quant_act2': ,
+
+    'stage4.unit7.quant_bn2': ,
+    'stage4.unit7.quant_act3': ,
+    'stage4.unit7.quant_conv2': ,
+    'stage4.unit7.quant_act_output': ,
+
+    'stage4.unit8.quant_bn1': ,
+    'stage4.unit8.quant_act1': ,
+    'stage4.unit8.quant_conv1': ,
+    'stage4.unit8.quant_act2': ,
+
+    'stage4.unit8.quant_bn2': ,
+    'stage4.unit8.quant_act3': ,
+    'stage4.unit8.quant_conv2': ,
+    'stage4.unit8.quant_act_output': ,
+
+    'stage4.unit9.quant_bn1': ,
+    'stage4.unit9.quant_act1': ,
+    'stage4.unit9.quant_conv1': ,
+    'stage4.unit9.quant_act2': ,
+
+    'stage4.unit9.quant_bn2': ,
+    'stage4.unit9.quant_act3': ,
+    'stage4.unit9.quant_conv2': ,
+    'stage4.unit9.quant_act_output': ,
+
+    'stage4.unit10.quant_bn1': ,
+    'stage4.unit10.quant_act1': ,
+    'stage4.unit10.quant_conv1': ,
+    'stage4.unit10.quant_act2': ,
+
+    'stage4.unit10.quant_bn2': ,
+    'stage4.unit10.quant_act3': ,
+    'stage4.unit10.quant_conv2': ,
+    'stage4.unit10.quant_act_output': ,
+
+    'stage4.unit11.quant_bn1': ,
+    'stage4.unit11.quant_act1': ,
+    'stage4.unit11.quant_conv1': ,
+    'stage4.unit11.quant_act2': ,
+
+    'stage4.unit11.quant_bn2': ,
+    'stage4.unit11.quant_act3': ,
+    'stage4.unit11.quant_conv2': ,
+    'stage4.unit11.quant_act_output': ,
+
+    'stage4.unit12.quant_bn1': ,
+    'stage4.unit12.quant_act1': ,
+    'stage4.unit12.quant_conv1': ,
+    'stage4.unit12.quant_act2': ,
+
+    'stage4.unit12.quant_bn2': ,
+    'stage4.unit12.quant_act3': ,
+    'stage4.unit12.quant_conv2': ,
+    'stage4.unit12.quant_act_output': ,
+
+    'stage4.unit13.quant_bn1': ,
+    'stage4.unit13.quant_act1': ,
+    'stage4.unit13.quant_conv1': ,
+    'stage4.unit13.quant_act2': ,
+
+    'stage4.unit13.quant_bn2': ,
+    'stage4.unit13.quant_act3': ,
+    'stage4.unit13.quant_conv2': ,
+    'stage4.unit13.quant_act_output': ,
+
+    'stage4.unit14.quant_bn1': ,
+    'stage4.unit14.quant_act1': ,
+    'stage4.unit14.quant_conv1': ,
+    'stage4.unit14.quant_act2': ,
+
+    'stage4.unit14.quant_bn2': ,
+    'stage4.unit14.quant_act3': ,
+    'stage4.unit14.quant_conv2': ,
+    'stage4.unit14.quant_act_output': ,
+
+    'stage4.unit15.quant_bn1': ,
+    'stage4.unit15.quant_act1': ,
+    'stage4.unit15.quant_conv1': ,
+    'stage4.unit15.quant_act2': ,
+
+    'stage4.unit15.quant_bn2': ,
+    'stage4.unit15.quant_act3': ,
+    'stage4.unit15.quant_conv2': ,
+    'stage4.unit15.quant_act_output': ,
+
+    'stage4.unit16.quant_bn1': ,
+    'stage4.unit16.quant_act1': ,
+    'stage4.unit16.quant_conv1': ,
+    'stage4.unit16.quant_act2': ,
+
+    'stage4.unit16.quant_bn2': ,
+    'stage4.unit16.quant_act3': ,
+    'stage4.unit16.quant_conv2': ,
+    'stage4.unit16.quant_act_output': ,
+
+    'batch_norm': ,
+    'quant_act3': ,
+    'quant_act_output': 8,
+    'quant_output': 8,
+},
+
+
+
+
 # Change first, last layer bit to 4bit
 "bit_config_resnet20_svhn_uniform4" : {
 'quant_input': 8,
