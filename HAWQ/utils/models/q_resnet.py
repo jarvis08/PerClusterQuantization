@@ -855,7 +855,6 @@ def q_resnet50(model, runtime_helper=None):
         net = Q_ResNet50_Daq(model, runtime_helper)
     return net
 
-
 def q_resnet101(model):
     net = Q_ResNet101(model)
     return net
