@@ -193,6 +193,7 @@ class QuantAct(Module):
         self.register_buffer('act_scaling_factor', torch.zeros(1))
         self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
+        self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
         self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
 
     def __repr__(self):
@@ -225,7 +226,8 @@ class QuantAct(Module):
         self.register_buffer('isDaq', torch.ones(1, dtype=torch.bool))
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
-                identity_scaling_factor=None, identity_weight_scaling_factor=None):
+                identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
+                concat_scaling_factor=None):
         """
         x: the activation that we need to quantize
         pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
@@ -307,13 +309,15 @@ class QuantAct(Module):
                                               pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
                     start_channel_index += channel_num[i]
             else:
-                if identity is None:
-                    if pre_weight_scaling_factor is None:
-                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor)
-                else:
+                if concat is not None :
+                    if concat_weight_scaling_factor is None:
+                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
+                    quant_act_int = fixed_point_fn.apply(x, self.activation_bit, self.quant_mode,
+                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
+                                                         pre_weight_scaling_factor,
+                                                         concat, concat_scaling_factor,
+                                                         concat_weight_scaling_factor)
+                elif identity is not None:
                     if identity_weight_scaling_factor is None:
                         identity_weight_scaling_factor = self.identity_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
@@ -321,6 +325,12 @@ class QuantAct(Module):
                                                         pre_weight_scaling_factor,
                                                         identity, identity_scaling_factor,
                                                         identity_weight_scaling_factor)
+                else :
+                    if pre_weight_scaling_factor is None:
+                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
+                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
+                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
+                                                        pre_weight_scaling_factor)
             correct_output_scale = self.act_scaling_factor.view(-1)
             return (quant_act_int * correct_output_scale, self.act_scaling_factor)
         else:

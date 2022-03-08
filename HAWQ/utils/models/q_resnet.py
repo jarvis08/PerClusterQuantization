@@ -705,7 +705,6 @@ class Q_ResBlockBn_unfold(nn.Module):
         x, act_scaling_factor = self.quant_conv2_act(x, act_scaling_factor, conv_scaling_factor)
         x, bn_scaling_factor = self.quant_bn2(x, act_scaling_factor)
 
-        weight_scaling_factor = conv_scaling_factor * bn_scaling_factor
         x = x + identity
 
         if self.resize_identity:
