@@ -23,7 +23,7 @@ class RuntimeHelper(object):
 
     def __init__(self):
         self.apply_fake_quantization = False
-        self.batch_cluster = None
+        self.qat_batch_cluster = None
         self.qn_prob = 0.0
         self.num_clusters = None
         self.val_batch = None
@@ -287,8 +287,8 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     container.set_next_batch()
     with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
         for i, _ in enumerate(t):
-            input, target, runtime_helper.batch_cluster = container.get_batch()
-            runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster).cuda()
+            input, target, runtime_helper.qat_batch_cluster = container.get_batch()
+            runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -331,12 +331,14 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 # input_gpu = input.cuda(non_blocking=True)
                 # target = target.cuda(non_blocking=True)
                 # input_gpu, target, c = container.get_batch()
-                # runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                # runtime_helper.batch_cluster = runtime_helper.batch_cluster.cuda()
+                # runtime_helper.qat_batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                # runtime_helper.qat_batch_cluster = runtime_helper.qat_batch_cluster.cuda()
                 # output = model(input_gpu)
 
-                input, target, runtime_helper.batch_cluster = container.get_batch()
+                input, target, runtime_helper.qat_batch_cluster = container.get_batch()
                 input, target = input.cuda(), target.cuda()
+                runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int,
+                                                                device='cuda', requires_grad=False)
                 output = model(input)
 
                 container.prepare_validate_per_cluster()
@@ -351,9 +353,9 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
             container.check_leftover()
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
-                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
+                    input, target, runtime_helper.qat_batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
                     input, target = input.cuda(), target.cuda()
-                    runtime_helper.qat_batch_cluster = torch.tensor(c).cuda()
+                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
 
                     output = model(input)
 
@@ -498,8 +500,8 @@ def make_indices_list(clustering_model, train_loader, args, runtime_helper):
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Indices per Cluster")
-                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                for c in runtime_helper.batch_cluster:
+                runtime_helper.qat_batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                for c in runtime_helper.qat_batch_cluster:
                     total_list[c].append(idx)
                     idx += 1
                 t.set_postfix()

@@ -60,11 +60,11 @@ class PCQAlexNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         s, z = calc_qparams_per_cluster(self.in_range, self.bit)
-        return fake_quantize_per_cluster_4d(x, s, z, self.bit, self.runtime_helper.batch_cluster)
+        return fake_quantize_per_cluster_4d(x, s, z, self.bit, self.runtime_helper.qat_batch_cluster)
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
@@ -140,7 +140,7 @@ class PCQAlexNetSmall(nn.Module):
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
@@ -152,7 +152,7 @@ class PCQAlexNetSmall(nn.Module):
             self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
 

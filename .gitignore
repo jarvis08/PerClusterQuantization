@@ -10,3 +10,6 @@ tags
 *__pycache__*
 .vscode
 .*.swp
+.*.swo
+
+checkpoints/*

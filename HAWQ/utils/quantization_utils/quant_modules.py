@@ -1057,7 +1057,9 @@ class QuantConv2d(Module):
 
             if self.quantize_bias and self.conv.bias is not None:
                 self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-            else:
+            elif self.conv.bias is not None:
+                self.bias_integer = self.bias
+            else: 
                 self.bias_integer = None 
         else:
             raise Exception('For weight, we only support symmetric quantization.')
@@ -1066,16 +1068,16 @@ class QuantConv2d(Module):
         x_int = x / pre_act_scaling_factor
         correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-        # return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-        #                  self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+        return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                         self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
 
-        if self.bias is None:
-            return (F.conv2d(x_int, self.weight_integer, torch.zeros_like(bias_scaling_factor.view(-1)),
-                             self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-                    * correct_output_scale, self.conv_scaling_factor)
-        else:
-            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+        #  if self.bias is None:
+        #      return (F.conv2d(x_int, self.weight_integer, torch.zeros_like(bias_scaling_factor.view(-1)),
+        #                       self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+        #              * correct_output_scale, self.conv_scaling_factor)
+        #  else:
+        #      return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+        #                       self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
 
 
 def freeze_model(model):

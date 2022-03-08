@@ -50,7 +50,7 @@ class QuantizedBn2d(nn.Module):
         return clamp_matrix(out, self.a_bit)
 
     def _pcq_subsum(self, x):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         weight = torch.index_select(self.weight, 0, bc)[:, :, None, None]
         bias = torch.index_select(self.bias, 0, bc)[:, :, None, None]
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
@@ -61,7 +61,7 @@ class QuantizedBn2d(nn.Module):
         return q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
 
     def _pcq_totalsum(self, subsum):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
         M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
         shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
@@ -123,7 +123,7 @@ class PCQBnReLU(nn.Module):
         return out
 
     def _forward_impl(self, x):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         exists = torch.unique(bc)
         out = torch.zeros(x.shape, device='cuda')
         for c in exists:
@@ -134,7 +134,7 @@ class PCQBnReLU(nn.Module):
         return out
 
     def _pcq(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         bn = self.norms[cluster]
         out = bn(x)
 
@@ -156,7 +156,7 @@ class PCQBnReLU(nn.Module):
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
         _max = data.max(dim=1).values.mean()
 
@@ -176,7 +176,7 @@ class PCQBnReLU(nn.Module):
                 self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         zero = self.runtime_helper.fzero
         if external_range is not None:
             s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)

@@ -61,7 +61,7 @@ class QuantizedConv2d(nn.Conv2d):
             if self.num_clusters == 1:
                 padded = F.pad(x, to_pad, mode='constant', value=self.z1.item())
             else:  # DAQ
-                bc = self.runtime_helper.batch_cluster
+                bc = self.runtime_helper.qat_batch_cluster
                 if self.is_first or self.w_bit == 8:
                     exists = torch.unique(bc)
                     padded = torch.zeros(
@@ -91,7 +91,7 @@ class QuantizedConv2d(nn.Conv2d):
 
     def _pcq_subsum(self, x, sum_q1q2):
         batch_size = x.size(0)
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
 
         if self.is_bias:
@@ -104,7 +104,7 @@ class QuantizedConv2d(nn.Conv2d):
                 self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
-            if self.sum_a1 is None:     #
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:     #
                 self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
             for o_col in range(output_col):
                 for o_row in range(output_row):
@@ -129,7 +129,7 @@ class QuantizedConv2d(nn.Conv2d):
         return subsum
 
     def _pcq_totalsum(self, subsum):
-        bc = self.runtime_helper.batch_cluster
+        bc = self.runtime_helper.qat_batch_cluster
         z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
         shape = subsum.shape
 
@@ -160,7 +160,7 @@ class QuantizedConv2d(nn.Conv2d):
             filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
-            if self.sum_a1 is None:
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:
                 self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
             for o_col in range(output_col):
                 for o_row in range(output_row):
@@ -274,7 +274,7 @@ class PCQConv2d(nn.Module):
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
         _max = data.max(dim=1).values.mean()
         if self._activation:
@@ -293,7 +293,7 @@ class PCQConv2d(nn.Module):
                 self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x, external_range=None):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         zero = self.runtime_helper.fzero
         if external_range is not None:
             s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)

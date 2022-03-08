@@ -25,8 +25,8 @@ class QuantizedMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.flatten(x, 1)
-        if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_2d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
+        if self.runtime_helper.qat_batch_cluster is not None:
+            x = quantize_matrix_2d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 

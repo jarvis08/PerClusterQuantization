@@ -142,8 +142,8 @@ class QuantizedMobileNet(nn.Module):
         )
 
     def _forward_impl(self, x: Tensor) -> Tensor:
-        if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.q_max)
+        if self.runtime_helper.qat_batch_cluster is not None:
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.q_max)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
 

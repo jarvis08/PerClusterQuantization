@@ -189,7 +189,7 @@ def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
 
 
 def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
-    bc = runtime_helper.batch_cluster
+    bc = runtime_helper.qat_batch_cluster
     shape = (x.size(0), 1) if len(x.shape) == 2 else (x.size(0), 1, 1, 1)
 
     if bc is None:
@@ -211,7 +211,7 @@ def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
 
 
 def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
-    bc = runtime_helper.batch_cluster
+    bc = runtime_helper.qat_batch_cluster
     batch_size = x.size(0)
 
     z1 = torch.index_select(z_from, 0, bc)[:, None]

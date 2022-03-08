@@ -199,8 +199,8 @@ class QuantizedResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
+        if self.runtime_helper.qat_batch_cluster is not None:
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
@@ -272,8 +272,8 @@ class QuantizedResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.runtime_helper.batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.batch_cluster, self.in_bit)
+        if self.runtime_helper.qat_batch_cluster is not None:
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 

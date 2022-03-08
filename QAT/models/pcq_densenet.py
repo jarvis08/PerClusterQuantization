@@ -135,7 +135,7 @@ class PCQDenseBlock(nn.ModuleDict):
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
@@ -229,7 +229,7 @@ class PCQDenseNet(nn.Module):
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
@@ -241,7 +241,7 @@ class PCQDenseNet(nn.Module):
             self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
-        cluster = self.runtime_helper.batch_cluster
+        cluster = self.runtime_helper.qat_batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.bit)
         return fake_quantize(x, s, z, self.bit)
 

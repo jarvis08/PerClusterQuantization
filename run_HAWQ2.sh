@@ -6,22 +6,22 @@ MODEL="resnet20_unfold"
 DATASET="cifar10"
 PRETRAINED_MODEL="resnet20"
 
-CUDA_VISIBLE_DEVICES=1 python main.py \
+CUDA_VISIBLE_DEVICES=0 python main.py \
     --mode fine \
+    --epochs 3 \
     --quant_base hawq \
     --arch $MODEL \
-    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$PRETRAINED_MODEL/checkpoint.pth \
     --dataset $DATASET \
-    --data $DATASET \
-    --wd 1e-4 \
-    --act-range-momentum 0.99 \
     --lr 0.001 \
-    --epochs 100 
-    --batch-size 128
-    --gpu 0 \
+    --act-range-momentum 0.99 \
+    --wd 1e-4 \
     --fix-BN \
-    --quant-scheme uniform4 \
-    --transfer_param \
-    --channel-wise true \
     --pretrained \
-    #--cluster 4
+    --channel-wise true \
+    --quant-scheme uniform4 \
+    --gpu 0 \
+    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$PRETRAINED_MODEL/checkpoint.pth \
+    --data $DATASET \
+    --transfer_param \
+    --batch-size 32 \
+

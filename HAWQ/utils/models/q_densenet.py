@@ -18,6 +18,7 @@ class Q_DenseNet(nn.Module):
 
         self.quant_init_block_conv = QuantConv2d()
         self.quant_init_block_conv.set_param(init_block.conv)
+        self.quant_init_block_act = QuantAct()
         self.quant_init_block_bn = QuantBn()
         self.quant_init_block_bn.set_param(init_block.bn)
 
@@ -82,7 +83,7 @@ class Q_Transition(nn.Module):
         self.quant_act2 = QuantAct()
 
         self.pool = QuantAveragePool2d(kernel_size=2, stride=2)
-        self.quant_act3 = QuantAct()
+        self.quant_output = QuantAct()
 
     def forward(self, x, scaling_factor_int32=None):
         return out
