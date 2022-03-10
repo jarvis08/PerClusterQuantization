@@ -146,6 +146,7 @@ class Q_ResNet20_unfold(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
+        print(x.size())
         x = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)

@@ -519,7 +519,7 @@ class fixedpoint_fn(Function):
                 output1 /= (2.0 ** e1)
                 output1 = torch.round(output1)
 
-                wy_int = torch.round(w[1], pre_act_scaling_factor / pre_weight_scaling_factor)
+                wy_int = torch.round(w[1] / pre_act_scaling_factor / pre_weight_scaling_factor)
 
                 _A = (pre_act_scaling_factor.type(torch.double) * pre_weight_scaling_factor.type(torch.double))
                 _B = (_A.type(torch.float)).type(torch.double)
@@ -538,7 +538,7 @@ class fixedpoint_fn(Function):
                 output2 /= (2.0 ** e2)
                 output2 = torch.round(output2)
 
-                return (torch.concat(output1, output2).type(torch.float)
+                return (torch.cat((output1, output2), 1).type(torch.float))
 
 
 

@@ -227,7 +227,7 @@ class QuantAct(Module):
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
-                concat_scaling_factor=None):
+                concat_scaling_factor=None, concat_weight_scaling_factor=None):
         """
         x: the activation that we need to quantize
         pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
@@ -312,7 +312,7 @@ class QuantAct(Module):
                 if concat is not None :
                     if concat_weight_scaling_factor is None:
                         concat_weight_scaling_factor = self.concat_weight_scaling_factor
-                    quant_act_int = fixed_point_fn.apply(x, self.activation_bit, self.quant_mode,
+                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
                                                          self.act_scaling_factor, 2, pre_act_scaling_factor,
                                                          pre_weight_scaling_factor,
                                                          concat, concat_scaling_factor,

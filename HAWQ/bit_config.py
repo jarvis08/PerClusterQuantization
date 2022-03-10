@@ -32,7 +32,7 @@ bit_config_dict = {
 },
 
 
-"bit_config_densenet_uniform4" : {
+"bit_config_densenet121_uniform4" : {
     'quant_input': 8,
 
     'quant_init_block_conv': 8,
