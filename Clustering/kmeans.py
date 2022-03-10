@@ -8,6 +8,7 @@ import joblib
 from copy import deepcopy
 import json
 import os
+import csv
 
 
 class KMeansClustering(object):
@@ -179,7 +180,7 @@ class KMeansClustering(object):
     @torch.no_grad()
     def nn_aware_clutering(self, dnn_model, train_loader):
         print('\n>>> NN-aware Clustering..')
-        from ..utils.misc import InputContainer
+        from utils.misc import InputContainer
 
         n_sub_clusters = self.args.sub_cluster
         container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch)
@@ -192,13 +193,21 @@ class KMeansClustering(object):
         with tqdm(range(len(train_loader)), desc="Merge Clusters", ncols=90) as t:
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
+                # left over batch에 관해서는 ?
                 n_per_sub[cluster] += self.args.batch
-
+                # batch 돌면서 아웃풋이 0인 idx에 cnt+=1
                 dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
 
                 container.set_next_batch()
                 if container.ready_cluster is None:
                     break
+            container.check_leftover()
+            for c in range(container.num_clusters):
+                if container.leftover_cluster_data[c]:
+                    input, target, cluster = container.leftover_batch[c][0], \
+                                                                      container.leftover_batch[c][1], c
+                    n_per_sub[cluster] += input.size(0)
+                    dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):
@@ -216,7 +225,7 @@ class KMeansClustering(object):
             return -1
 
         n_layers = len(dnn_model.zero_counter)
-        n_candidates_per_layer = 3
+        n_candidates_per_layer = self.args.topk
         merged_clusters = []
 
         to_merge = n_sub_clusters - self.args.cluster
@@ -235,6 +244,7 @@ class KMeansClustering(object):
             # Exclude merged clusters except 1 left
             exclude = set()
             for group in merged_clusters:
+                # set.udpate() - 여러 값 한번에 추가
                 exclude.update(group[0] - {min(group[0])})
 
             cross_similarity = torch.zeros(n_layers, n_sub_clusters, n_sub_clusters, device='cuda')
@@ -246,35 +256,45 @@ class KMeansClustering(object):
                     for _to in range(_from + 1, n_sub_clusters):
                         if _to in exclude:
                             continue
+                        # logical_and -> zeros - 0 / nonzeros - 1 (bit수로 계산하는게 아님)
                         n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
                         similarity = n_commonly_zero / n_features
                         cross_similarity[l][_from][_to] = similarity
+            if n_merged == 0:
+                first_cross_similarity = deepcopy(cross_similarity)
 
             # Get info. about pairs of the most similar clusters
+            # 클러스터별 similarity 높은 순으로 줄 세우기
             sorted_dist, sorted_indices = torch.sort(cross_similarity, dim=2, descending=True)
 
             candidates_per_layer = [[] for _ in range(n_layers)]
             count_duplicated_candidates = dict()
+            # layer 별로 top 3 count_duplicated_candidates dict에 집어넣는다 (중복 counting)
             for l in range(n_layers):
                 l_dist = sorted_dist[l].view(-1)
                 l_idx = sorted_indices[l].view(-1)
 
                 v_of_sorted, i_of_sorted = torch.topk(l_dist, n_candidates_per_layer)
+                # top3 이런식으로 하면, top1 top1 top1 이렇게 나온 조합이랑 top2 top2 top2 이렇게 나온 조합 동일 -> weight가 따로 필요하지 않을까?
                 for c in range(n_candidates_per_layer):
                     if v_of_sorted[c] != 0.0:
+                        # 16 -> 16 //8 -> 2
                         row = i_of_sorted[c] // n_sub_clusters
                         col = l_idx[i_of_sorted[c]]
                         i_of_original = (row.item(), col.item())
 
                         candidates_per_layer[l].append(i_of_original)
+                        # 해당 key값이 존재하면,
                         if count_duplicated_candidates.get(i_of_original):
-                            count_duplicated_candidates[i_of_original] += 1
+                            count_duplicated_candidates[i_of_original][0] += 1
+                            count_duplicated_candidates[i_of_original][1] += n_candidates_per_layer - c
                         else:
-                            count_duplicated_candidates[i_of_original] = 1
+                            count_duplicated_candidates[i_of_original] = [1, n_candidates_per_layer - c]
 
             counted = count_duplicated_candidates.items()
-            similar_cluster_pairs = sorted(counted, key=lambda x: x[1], reverse=True)
-            for pair in range(3):
+            # reverse=True -> descending
+            similar_cluster_pairs = sorted(counted, key=lambda x: (x[1][0], x[1][1]), reverse=True)
+            for pair in range(self.args.topk):
                 print(f"Cluster {similar_cluster_pairs[pair][0][0]}&{similar_cluster_pairs[pair][0][1]}, "
                       f"in {similar_cluster_pairs[pair][1]} layers")
 
@@ -290,6 +310,7 @@ class KMeansClustering(object):
                         group = merged_clusters[g][0]
                         if c1 in group and c2 in group:
                             break
+                        # 같은 거 있으면 같이 묶어버
                         elif c1 in group:
                             merged = True
                             print(f' {c1}&{c2}')
@@ -297,6 +318,11 @@ class KMeansClustering(object):
                             if group_id == -1:
                                 group.add(c2)
                             else:
+                                # c1, c2 둘다 존재하는 set이 있다고 하면, 다 합쳐버려
+                                # merged_clusters [{0,2}, {6,7}]
+                                # c1 c2 0,6
+                                # check other groups에 6를 보낼꺼다 -> {6,7} 찾고
+                                # group -> {0,2} + {6,7}
                                 group.update(merged_clusters[group_id][0])
 
                             merged_clusters[g][1] += n_c2
@@ -328,6 +354,7 @@ class KMeansClustering(object):
                         merged = True
                         print(f' {c1}&{c2}')
                         merged_clusters.append([{c1, c2}, summed])
+                        # 각각 idx에 해당 값에 summed 집어넣음
                         n_per_sub[[c1, c2]] = summed
                         for l in range(n_layers):
                             merged_count = dnn_model.zero_counter[l][c1] + dnn_model.zero_counter[l][c2]
@@ -371,10 +398,24 @@ class KMeansClustering(object):
             args_without_nnac['nnac'] = final_clusters
             json.dump(args_without_nnac, f, indent=4)
 
+        path = os.path.join(self.args.clustering_path, f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv')
+        print("Save similarity output")
+        print("Save filename: ", path)
+        with open(path, 'w') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Model', 'ResNet20', 'topk', self.args.topk, 'sim', self.args.sim_threshold])
+            for layer_idx in range(n_layers):
+                writer.writerow([f'layer{layer_idx}'])
+                writer.writerow([i for i in range(self.args.sub_cluster)])
+                for _from in range(self.args.sub_cluster):
+                    writer.writerow([first_cross_similarity[layer_idx][_from][_to].item() for _to in range(self.args.sub_cluster)])
+            writer.writerow(['cluster data'])
+            for c in range(self.args.cluster):
+                writer.writerow([f'Cluster {c}', n_per_final[c].item()])
+
         self.final_cluster = torch.zeros(self.args.sub_cluster, dtype=torch.int64)
         for sub, final in final_clusters.items():
             self.final_cluster[int(sub)] = final
-        exit()
 
     # @torch.no_grad()
     # def nn_aware_clutering(self, dnn_model, train_loader):

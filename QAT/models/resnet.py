@@ -353,6 +353,7 @@ class ResNet20(nn.Module):
                 m.show_params()
 
     def count_zeros_per_index(self, x, cluster, n_clusters):
+        # cluster -> ready cluster idx, n_cluster -> args.sub_cluster
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -362,14 +363,21 @@ class ResNet20(nn.Module):
             initialized = False
             n_features = x.view(-1).size(0)
             self.zero_counter = []
+            # 리스트에 박은거 (8, 524288)
             self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
+        # 처음 0 block 지날때마다 l_idx 증
         l_idx = 0
+        # 데이터 핀거 shape 524288
         n_features = self.zero_counter[l_idx].size(1)
         for i in range(x.size(0)):
+            # 16384
             flattened = x[i].view(-1)
+            # 5686
             zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            # n_features가 더 큰데 왜 굳이 넣었을까?
             zeros_idx %= n_features
+            # 클러스터별로 zero_idx를
             self.zero_counter[l_idx][cluster, zeros_idx] += 1
 
         blocks = [self.layer1, self.layer2, self.layer3]
