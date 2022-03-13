@@ -260,8 +260,6 @@ class KMeansClustering(object):
                         n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
                         similarity = n_commonly_zero / n_features
                         cross_similarity[l][_from][_to] = similarity
-            if n_merged == 0:
-                first_cross_similarity = deepcopy(cross_similarity)
 
             # Get info. about pairs of the most similar clusters
             # 클러스터별 similarity 높은 순으로 줄 세우기
@@ -288,12 +286,16 @@ class KMeansClustering(object):
                         if count_duplicated_candidates.get(i_of_original):
                             count_duplicated_candidates[i_of_original][0] += 1
                             count_duplicated_candidates[i_of_original][1] += n_candidates_per_layer - c
+                            count_duplicated_candidates[i_of_original][2].append(l)
                         else:
-                            count_duplicated_candidates[i_of_original] = [1, n_candidates_per_layer - c]
+                            count_duplicated_candidates[i_of_original] = [1, n_candidates_per_layer - c, [l]]
 
             counted = count_duplicated_candidates.items()
             # reverse=True -> descending
             similar_cluster_pairs = sorted(counted, key=lambda x: (x[1][0], x[1][1]), reverse=True)
+            if n_merged == 0:
+                first_cross_similarity = cross_similarity
+                sorted_cluster_info = similar_cluster_pairs
             for pair in range(self.args.topk):
                 print(f"Cluster {similar_cluster_pairs[pair][0][0]}&{similar_cluster_pairs[pair][0][1]}, "
                       f"in {similar_cluster_pairs[pair][1]} layers")
@@ -398,25 +400,45 @@ class KMeansClustering(object):
             args_without_nnac['nnac'] = final_clusters
             json.dump(args_without_nnac, f, indent=4)
 
-        path = os.path.join(self.args.clustering_path, f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv')
         print("Save similarity output")
-        print("Save filename: ", path)
-        with open(path, 'w') as csvfile:
+        with open(f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv', 'w') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['Model', 'ResNet20', 'topk', self.args.topk, 'sim', self.args.sim_threshold])
-            for layer_idx in range(n_layers):
-                writer.writerow([f'layer{layer_idx}'])
-                writer.writerow([i for i in range(self.args.sub_cluster)])
-                for _from in range(self.args.sub_cluster):
-                    writer.writerow([first_cross_similarity[layer_idx][_from][_to].item() for _to in range(self.args.sub_cluster)])
-            writer.writerow(['cluster data'])
-            for c in range(self.args.cluster):
-                writer.writerow([f'Cluster {c}', n_per_final[c].item()])
+            writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold])
+            # cluster combination
+            writer.writerow(['cluster', 'count', 'layers'])
+            for item in range(len(sorted_cluster_info)):
+                writer.writerow([tuple(sorted_cluster_info[item][0]), sorted_cluster_info[item][1][0], tuple(sorted_cluster_info[item][1][2])])
+            # similarity
+            writer.writerow(['layer', 'min', 'max', 'std'])
+            total_min = torch.where(first_cross_similarity == 0, torch.tensor(1, dtype=torch.float).cuda(), first_cross_similarity).min().item()
+            for layer_idx in range(first_cross_similarity.size(0)):
+                min_ = torch.where(first_cross_similarity[layer_idx] == 0, torch.tensor(1, dtype=torch.float).cuda(), first_cross_similarity[layer_idx]).min().item()
+                writer.writerow([f'layer {layer_idx}', min_, first_cross_similarity[layer_idx].max().item(), first_cross_similarity[layer_idx].std().item()])
+            writer.writerow(['', 'Total Similarity', ''])
+            writer.writerow(['min', 'max', 'std'])
+            writer.writerow([total_min, first_cross_similarity.max().item(), first_cross_similarity.std().item()])
+
+        # # print cluster info
+        # path = os.path.join(self.args.clustering_path, f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv')
+        # print("Save similarity output")
+        # print("Save filename: ", path)
+        # with open(path, 'w') as csvfile:
+        #     writer = csv.writer(csvfile)
+        #     writer.writerow(['Model', 'ResNet20', 'topk', self.args.topk, 'sim', self.args.sim_threshold])
+        #     for layer_idx in range(n_layers):
+        #         writer.writerow([f'layer{layer_idx}'])
+        #         writer.writerow([i for i in range(self.args.sub_cluster)])
+        #         for _from in range(self.args.sub_cluster):
+        #             writer.writerow([first_cross_similarity[layer_idx][_from][_to].item() for _to in range(self.args.sub_cluster)])
+        #     writer.writerow(['cluster data'])
+        #     for c in range(self.args.cluster):
+        #         writer.writerow([f'Cluster {c}', n_per_final[c].item()])
 
         self.final_cluster = torch.zeros(self.args.sub_cluster, dtype=torch.int64)
         for sub, final in final_clusters.items():
             self.final_cluster[int(sub)] = final
 
+        exit()
     # @torch.no_grad()
     # def nn_aware_clutering(self, dnn_model, train_loader):
     #     print('\n>>> NN-aware Clustering..')
