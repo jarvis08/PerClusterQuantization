@@ -2,9 +2,9 @@
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
-MODEL="resnet20_unfold"
+MODEL="densenet"
 DATASET="cifar10"
-PRETRAINED_MODEL="resnet20"
+PRETRAINED_MODEL="densenet"
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
     --mode fine \
