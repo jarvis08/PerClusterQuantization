@@ -45,7 +45,8 @@ def save_graph(data, identifier, sort=False):
         sorted_list = sorted(list(data), key=lambda x: x[1]-x[0])
         data = np.array(sorted_list)
 
-    fig = plt.figure(figsize=(20, 20))
+    scale = data.shape[0] // 96
+    fig = plt.figure(figsize=(20, 20*scale))
     plt.axis([data.min() - 1, data.max() + 1, 0, 0.1 * (data.shape[0] + 1)])
     plt.axvline(mean_[0], 0, 1, color='red', linestyle='--', linewidth=2)
     plt.axvline(mean_[1], 0, 1, color='red', linestyle='--', linewidth=2)
