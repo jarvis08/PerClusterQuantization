@@ -409,14 +409,16 @@ class KMeansClustering(object):
             for item in range(len(sorted_cluster_info)):
                 writer.writerow([tuple(sorted_cluster_info[item][0]), sorted_cluster_info[item][1][0], tuple(sorted_cluster_info[item][1][2])])
             # similarity
-            writer.writerow(['layer', 'min', 'max', 'std'])
-            total_min = torch.where(first_cross_similarity == 0, torch.tensor(1, dtype=torch.float).cuda(), first_cross_similarity).min().item()
+            writer.writerow(['layer', 'min', 'max', 'mean', 'std'])
+            total_wo_zero = first_cross_similarity.view(-1)
+            total_wo_zero = total_wo_zero[torch.nonzero(total_wo_zero)]
             for layer_idx in range(first_cross_similarity.size(0)):
-                min_ = torch.where(first_cross_similarity[layer_idx] == 0, torch.tensor(1, dtype=torch.float).cuda(), first_cross_similarity[layer_idx]).min().item()
-                writer.writerow([f'layer {layer_idx}', min_, first_cross_similarity[layer_idx].max().item(), first_cross_similarity[layer_idx].std().item()])
+                layer_wo_zero = first_cross_similarity[layer_idx].view(-1)
+                layer_wo_zero = layer_wo_zero[torch.nonzero(layer_wo_zero)]
+                writer.writerow([f'layer {layer_idx}', layer_wo_zero.min().item(), layer_wo_zero.max().item(), layer_wo_zero.mean().item(), layer_wo_zero.std().item()])
             writer.writerow(['', 'Total Similarity', ''])
-            writer.writerow(['min', 'max', 'std'])
-            writer.writerow([total_min, first_cross_similarity.max().item(), first_cross_similarity.std().item()])
+            writer.writerow(['min', 'max', 'mean', 'std'])
+            writer.writerow([total_wo_zero.min().item(), total_wo_zero.max().item(), total_wo_zero.mean().item(), total_wo_zero.std().item()])
 
         # # print cluster info
         # path = os.path.join(self.args.clustering_path, f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv')
