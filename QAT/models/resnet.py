@@ -4,7 +4,6 @@ import torch.nn as nn
 from torch.utils.model_zoo import load_url
 from typing import Type, Any, Callable, Union, List, Optional
 
-
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
     'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
@@ -33,15 +32,16 @@ class BasicBlock(nn.Module):
     expansion: int = 1
 
     def __init__(
-        self,
-        inplanes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: Optional[nn.Module] = None,
-        groups: int = 1,
-        base_width: int = 64,
-        dilation: int = 1,
-        norm_layer: Optional[Callable[..., nn.Module]] = None
+            self,
+            inplanes: int,
+            planes: int,
+            stride: int = 1,
+            downsample: Optional[nn.Module] = None,
+            groups: int = 1,
+            base_width: int = 64,
+            dilation: int = 1,
+            norm_layer: Optional[Callable[..., nn.Module]] = None,
+            smooth: int = 0.999
     ) -> None:
         super(BasicBlock, self).__init__()
         if norm_layer is None:
@@ -58,19 +58,25 @@ class BasicBlock(nn.Module):
         self.bn2 = norm_layer(planes)
         self.downsample = downsample
         self.stride = stride
+        self.smooth = smooth
 
     def forward(self, x: Tensor) -> Tensor:
         identity = x
 
         out = self.conv1(x)
+        self.ema_conv_range(self.conv1, out)
         out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
+        self.ema_conv_range(self.conv2, out)
         out = self.bn2(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x)
+            # identity = self.downsample(x)
+            out = self.downsample[0](x)
+            self.ema_conv_range(self.downsample[0], out)
+            identity = self.downsample[1](out)
 
         out += identity
         out = self.relu(out)
@@ -129,6 +135,19 @@ class BasicBlock(nn.Module):
             zero_counter[l_idx][cluster, zeros_idx] += 1
         return out, l_idx
 
+    def ema_conv_range(self, module, x):
+        data = x.view(x.size(1), -1)
+        _max = data.max(dim=1).values
+        _min = data.min(dim=1).values
+        if module.apply_ema:
+            updated_min = module.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            updated_max = module.act_range[1] * self.smooth + _max * (1 - self.smooth)
+
+            module.act_range[0], module.act_range[1] = updated_min, updated_max
+        else:
+            module.act_range[0], module.act_range[1] = _min, _max
+            module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
 
 class Bottleneck(nn.Module):
     # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
@@ -140,15 +159,15 @@ class Bottleneck(nn.Module):
     expansion: int = 4
 
     def __init__(
-        self,
-        inplanes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: Optional[nn.Module] = None,
-        groups: int = 1,
-        base_width: int = 64,
-        dilation: int = 1,
-        norm_layer: Optional[Callable[..., nn.Module]] = None
+            self,
+            inplanes: int,
+            planes: int,
+            stride: int = 1,
+            downsample: Optional[nn.Module] = None,
+            groups: int = 1,
+            base_width: int = 64,
+            dilation: int = 1,
+            norm_layer: Optional[Callable[..., nn.Module]] = None
     ) -> None:
         super(Bottleneck, self).__init__()
         if norm_layer is None:
@@ -190,15 +209,15 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
     def __init__(
-        self,
-        block: Type[Union[BasicBlock, Bottleneck]],
-        layers: List[int],
-        num_classes: int = 1000,
-        zero_init_residual: bool = False,
-        groups: int = 1,
-        width_per_group: int = 64,
-        replace_stride_with_dilation: Optional[List[bool]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None
+            self,
+            block: Type[Union[BasicBlock, Bottleneck]],
+            layers: List[int],
+            num_classes: int = 1000,
+            zero_init_residual: bool = False,
+            groups: int = 1,
+            width_per_group: int = 64,
+            replace_stride_with_dilation: Optional[List[bool]] = None,
+            norm_layer: Optional[Callable[..., nn.Module]] = None
     ) -> None:
         super(ResNet, self).__init__()
         if norm_layer is None:
@@ -296,11 +315,12 @@ class ResNet(nn.Module):
 
 
 class ResNet20(nn.Module):
-    def __init__(self, block, layers, num_classes=10):
+    def __init__(self, block, layers, num_classes=10, smooth=0.999):
         super(ResNet20, self).__init__()
         self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16
         self.num_blocks = 3
+        self.smooth = smooth
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = self._norm_layer(self.inplanes)
@@ -314,6 +334,8 @@ class ResNet20(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                m.act_range = nn.Parameter(torch.zeros((2, m.out_channels)), requires_grad=False)
+                m.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -326,15 +348,16 @@ class ResNet20(nn.Module):
                 self._norm_layer(planes * block.expansion),
             )
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
+        layers.append(block(self.inplanes, planes, stride, downsample, smooth=self.smooth))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+            layers.append(block(self.inplanes, planes, smooth=self.smooth))
 
         return nn.Sequential(*layers)
 
     def forward(self, x):
         x = self.conv1(x)
+        self.ema_conv_range(self.conv1, x)
         x = self.bn1(x)
         x = self.relu(x)
 
@@ -377,14 +400,27 @@ class ResNet20(nn.Module):
             for b in range(len(block)):
                 x, l_idx = block[b].count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
 
+    def ema_conv_range(self, module, x):
+        data = x.view(x.size(1), -1)
+        _max = data.max(dim=1).values
+        _min = data.min(dim=1).values
+        if module.apply_ema:
+            updated_min = module.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            updated_max = module.act_range[1] * self.smooth + _max * (1 - self.smooth)
+
+            module.act_range[0], module.act_range[1] = updated_min, updated_max
+        else:
+            module.act_range[0], module.act_range[1] = _min, _max
+            module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
 
 def _resnet(
-    arch: str,
-    block: Type[Union[BasicBlock, Bottleneck]],
-    layers: List[int],
-    pretrained: bool,
-    progress: bool,
-    **kwargs: Any
+        arch: str,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        pretrained: bool,
+        progress: bool,
+        **kwargs: Any
 ) -> ResNet:
     model = ResNet(block, layers, **kwargs)
     if pretrained:
@@ -404,8 +440,8 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
     return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
 
 
-def resnet20(num_classes=10) -> ResNet20:
-    return ResNet20(BasicBlock, [3, 3, 3], num_classes=num_classes)
+def resnet20(num_classes=10, smooth: int = 0.999) -> ResNet20:
+    return ResNet20(BasicBlock, [3, 3, 3], num_classes=num_classes, smooth=smooth)
 
 
 def resnet50(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
