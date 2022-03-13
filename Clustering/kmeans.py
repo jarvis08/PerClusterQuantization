@@ -178,7 +178,7 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def nn_aware_clutering(self, dnn_model, train_loader):
+    def nn_aware_clutering(self, dnn_model, train_loader, arch):
         print('\n>>> NN-aware Clustering..')
         from utils.misc import InputContainer
 
@@ -401,7 +401,7 @@ class KMeansClustering(object):
             json.dump(args_without_nnac, f, indent=4)
 
         print("Save similarity output")
-        with open(f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv', 'w') as csvfile:
+        with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv', 'w') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold])
             # cluster combination
