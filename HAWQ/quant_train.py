@@ -363,10 +363,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             model = quantize_arch(model)
         # model = pretrained_model
 
-    if 'unfold' not in args.arch:
-        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
-    else :
-        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.data.lower() + "_" + args.quant_scheme]
+    bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
     name_counter = 0
 

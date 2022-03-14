@@ -67,8 +67,7 @@ bit_config_dict = {
     'quant_init_block_conv': 8,
     'quant_init_block_act': 16,
     'quant_init_block_bn': 16,
-    'quant_act1': 16,
-    'quant_act2': 4,
+    'quant_act1': 4,
     
     # Dense Block 1
     'stage1.unit1.quant_bn1': 16,
@@ -135,7 +134,7 @@ bit_config_dict = {
     'stage2.trans2.batch_norm': 16,
     'stage2.trans2.quant_act1': 4,
     'stage2.trans2.conv': 4,
-    'stage2.trans2.quant_act2': 16,
+    'stage2.trans2.quant_act2': 4,
     'stage2.trans2.quant_output': 16,
 
     'stage2.unit1.quant_bn1': 16,
@@ -262,7 +261,7 @@ bit_config_dict = {
     'stage3.trans3.batch_norm': 16,
     'stage3.trans3.quant_act1': 4,
     'stage3.trans3.conv': 4,
-    'stage3.trans3.quant_act2': 16,
+    'stage3.trans3.quant_act2': 4,
     'stage3.trans3.quant_output': 16,
 
     'stage3.unit1.quant_bn1': 16,
@@ -509,7 +508,7 @@ bit_config_dict = {
     'stage4.trans4.batch_norm': 16,
     'stage4.trans4.quant_act1': 4,
     'stage4.trans4.conv': 4,
-    'stage4.trans4.quant_act2': 16,
+    'stage4.trans4.quant_act2': 4,
     'stage4.trans4.quant_output': 16,
 
     'stage4.unit1.quant_bn1': 16,
@@ -673,7 +672,7 @@ bit_config_dict = {
     'stage4.unit16.quant_act_output': 16,
 
     'batch_norm': 16,
-    'quant_act3': 4,
+    'quant_act2': 4,
     'quant_act_output': 8,
     'quant_output': 8,
 },
@@ -878,7 +877,7 @@ bit_config_dict = {
 'quant_output': 8
 },
 
-"bit_config_resnet20_unfold_cifar10_uniform4" : {
+"bit_config_resnet20_unfold_uniform4" : {
 'quant_input': 8,
 'quant_init_block_conv': 8,
 'quant_init_block_conv_act': 16,
