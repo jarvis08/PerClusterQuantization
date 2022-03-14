@@ -4,12 +4,10 @@ bit_config_dict = {
     'quant_input': 8,
 
     'conv1': 8,
-    'quant_act1': 16,
-    'quant_act1_1': 4,
+    'quant_act1': 4,
 
     'conv2': 4,
-    'quant_act2': 16,
-    'quant_act2_1': 4,
+    'quant_act2': 4,
 
     'conv3': 4,
     'quant_act3': 4,
@@ -18,7 +16,7 @@ bit_config_dict = {
     'quant_act4': 4,
 
     'conv5': 4,
-    'quant_act5': 16,
+    'quant_act5': 4,
     'quant_act5_1': 4,
 
     'fc1': 4,
@@ -30,6 +28,37 @@ bit_config_dict = {
     'fc3': 8
 
 },
+
+#"bit_config_alexnet_uniform4" : {
+#    'quant_input': 8,
+#
+#    'conv1': 8,
+#    'quant_act1': 4,
+#    'quant_act1_1': 4,
+#
+#    'conv2': 4,
+#    'quant_act2': 4,
+#    'quant_act2_1': 4,
+#
+#    'conv3': 4,
+#    'quant_act3': 4,
+#
+#    'conv4': 4,
+#    'quant_act4': 4,
+#
+#    'conv5': 4,
+#    'quant_act5': 4,
+#    'quant_act5_1': 4,
+#
+#    'fc1': 4,
+#    'quant_act6': 4,
+#
+#    'fc2': 4,
+#    'quant_act7': 8,
+#
+#    'fc3': 8
+#
+#},
 
 
 "bit_config_densenet121_uniform4" : {
