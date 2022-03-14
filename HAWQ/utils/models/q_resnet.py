@@ -146,6 +146,7 @@ class Q_ResNet20_unfold(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
+        print(x.size())
         x = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
@@ -705,7 +706,6 @@ class Q_ResBlockBn_unfold(nn.Module):
         x, act_scaling_factor = self.quant_conv2_act(x, act_scaling_factor, conv_scaling_factor)
         x, bn_scaling_factor = self.quant_bn2(x, act_scaling_factor)
 
-        weight_scaling_factor = conv_scaling_factor * bn_scaling_factor
         x = x + identity
 
         if self.resize_identity:

@@ -413,6 +413,14 @@ class fixedpoint_fn(Function):
                 pre_act_scaling_factor = transfer_fc_size(pre_act_scaling_factor)
                 pre_weight_scaling_factor = transfer_fc_size(pre_weight_scaling_factor)
             ctx.z_scaling_factor = z_scaling_factor
+            if case == 2:
+                if len(z.shape) == 4:
+                    concat_scaling_factor = transfer_conv_size(identity_scaling_factor)
+                    concat_weight_scaling_factor = transfer_conv_size(identity_weight_scaling_factor)
+                elif len(z.shape) == 2:
+                    concat_scaling_factor = transfer_fc_size(identity_scaling_factor)
+                    concat_weight_scaling_factor = transfer_fc_size(identity_weight_scaling_factor)
+
             if case == 1:
                 if len(z.shape) == 4:
                     identity_scaling_factor = transfer_conv_size(identity_scaling_factor)
@@ -488,6 +496,50 @@ class fixedpoint_fn(Function):
                 output2 = torch.round(output2)
 
                 return (output1 + output2).type(torch.float)
+
+            elif case == 2:
+                w = torch.split(z, [z.size(dim=1)-32, 32], dim=1)
+                wx_int = torch.round(w[0] / concat_scaling_factor / concat_weight_scaling_factor)
+
+                _A = (concat_scaling_factor.type(torch.double) * concat_weight_scaling_factor.type(torch.double))
+                _B = (_A.type(torch.float)).type(torch.double)
+                _C = (z_scaling_factor.type(torch.float)).type(torch.double)
+                new_scale = _B / _C
+
+                if len(z.shape) == 4:
+                    new_scale = transfer_conv_size(new_scale)
+                elif len(z.shape) == 2:
+                    new_scale = transfer_fc_size(new_scale)
+
+                m1, e1 = batch_frexp(new_scale)
+
+                output1 = wx_int.type(torch.double) * m1.type(torch.double)
+
+                output1 /= (2.0 ** e1)
+                output1 = torch.round(output1)
+
+                wy_int = torch.round(w[1] / pre_act_scaling_factor / pre_weight_scaling_factor)
+
+                _A = (pre_act_scaling_factor.type(torch.double) * pre_weight_scaling_factor.type(torch.double))
+                _B = (_A.type(torch.float)).type(torch.double)
+                _C = (z_scaling_factor.type(torch.float)).type(torch.double)
+                new_scale = _B / _C
+
+                if len(z.shape) == 4:
+                    new_scale = transfer_conv_size(new_scale)
+                elif len(z.shape) == 2:
+                    new_scale = transfer_fc_size(new_scale)
+
+                m2, e2 = batch_frexp(new_scale)
+
+                output2 = wy_int.type(torch.double) * m2.type(torch.double)
+
+                output2 /= (2.0 ** e2)
+                output2 = torch.round(output2)
+
+                return (torch.cat((output1, output2), 1).type(torch.float))
+
+
 
     @staticmethod
     def backward(ctx, grad_output):

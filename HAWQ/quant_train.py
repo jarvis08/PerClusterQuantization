@@ -22,6 +22,7 @@ import torchvision.models as models
 
 #from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_alexnet import q_alexnet
+from HAWQ.utils.models.q_densenet import q_densenet
 from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
 from .bit_config import *
 from .utils import *
@@ -174,6 +175,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet20_svhn': q_resnet20,
                       'resnet20_unfold': q_resnet20_unfold,
                       'alexnet': q_alexnet,
+                      'densenet121': q_densenet,
                       'inceptionv3': q_inceptionv3,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
@@ -247,26 +249,28 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                                 world_size=args.world_size, rank=args.rank)
     
     # Custom model for CIFAR10 & CIFAR100
-    if args.arch == 'resnet20':
+    if args.arch.lower() == 'resnet20':
         if args.data.lower() == 'cifar10':
             args.arch = 'resnet20_cifar10'
         elif args.data.lower() == 'svhn':
             args.arch = 'resnet20_svhn'
         else:
             args.arch = 'resnet20_cifar100'
-    
+    elif args.arch.lower() == 'densenet':
+        args.arch = 'densenet121'
+
     # create model
     if args.pretrained and not args.resume:
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
         # Custom model for CIFAR10 & CIFAR100
         if 'unfold' not in args.arch:
-            if args.arch.lower() == 'resnet20':
-                if args.data.lower() == 'cifar10':
-                    args.arch = 'resnet20_cifar10'
-                elif args.data.lower() == 'svhn':
-                    args.arch = 'resnet20_svhn'
-                else:
-                    args.arch = 'resnet20_cifar100'
+            #if args.arch.lower() == 'resnet20':
+            #    if args.data.lower() == 'cifar10':
+            #        args.arch = 'resnet20_cifar10'
+            #    elif args.data.lower() == 'svhn':
+            #        args.arch = 'resnet20_svhn'
+            #    else:
+            #        args.arch = 'resnet20_cifar100'
             model = ptcv_get_model(args.arch, pretrained=True)
 
         elif 'unfold' in args.arch:
@@ -313,11 +317,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     model_dict[cv[0]] = loaded_dict[our[0]]
 
             else:
-                checkpoint = torch.load(args.dnn_path)
-                loaded_dict = checkpoint['state_dict']
                 model_dict = model.state_dict()
-                for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-                    model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+            #    checkpoint = torch.load(args.dnn_path)
+            #    loaded_dict = checkpoint['state_dict']
+            #    model_dict = model.state_dict()
+            #    for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+            #        model_dict[cur[0]].copy_(loaded_dict[from_[0]])
 
 
     if args.resume and not args.resume_quantize:
