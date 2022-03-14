@@ -2,9 +2,9 @@
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
-MODEL="densenet"
+MODEL="resnet20_unfold"
 DATASET="cifar10"
-PRETRAINED_MODEL="densenet"
+PRETRAINED_MODEL="resnet20"
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
     --mode fine \
@@ -24,4 +24,3 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --data $DATASET \
     --transfer_param \
     --batch-size 32 \
-

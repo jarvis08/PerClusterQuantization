@@ -317,12 +317,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     model_dict[cv[0]] = loaded_dict[our[0]]
 
             else:
+                checkpoint = torch.load(args.dnn_path)
+                loaded_dict = checkpoint['state_dict']
                 model_dict = model.state_dict()
-            #    checkpoint = torch.load(args.dnn_path)
-            #    loaded_dict = checkpoint['state_dict']
-            #    model_dict = model.state_dict()
-            #    for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-            #        model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+                for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+                    model_dict[cur[0]].copy_(loaded_dict[from_[0]])
 
 
     if args.resume and not args.resume_quantize:
@@ -570,10 +569,11 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
-    if args.fix_BN == True:
-        model.eval()
-    else:
-        model.train()
+    #if args.fix_BN == True:
+    #    model.eval()
+    #else:
+    #    model.train()
+    model.train()
 
     end = time.time()
     for i, (images, target) in enumerate(train_loader):

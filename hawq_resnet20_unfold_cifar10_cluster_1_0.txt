@@ -1,1 +1,0 @@
-Bit:uniform4, Acc:88.16, LR:0.001, Batch:32, Weight decay: 0.0001, Cluster:1 Best Epoch:2, Time:3.0m, Data:cifar10
