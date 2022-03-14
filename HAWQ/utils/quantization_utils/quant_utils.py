@@ -236,7 +236,6 @@ def batch_frexp(inputs):
     output_m, output_e = np.frexp(inputs.cpu().numpy())
 
     tmp_m = []
-    # print(inputs)
     for m in output_m:
         int_m_shifted = int(Decimal(m * (2 ** 31)).quantize(Decimal('1'), rounding=decimal.ROUND_HALF_UP))
         tmp_m.append(int_m_shifted)
