@@ -98,8 +98,6 @@ class Q_ResNet20_unfold_Daq(nn.Module):
         features = getattr(model, 'features')
         init_block = getattr(features, 'init_block')
 
-        self.runtime_helper = runtime_helper
-
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.quant_init_block_conv = QuantConv2d()
@@ -296,7 +294,6 @@ class Q_ResNet20_Daq(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
@@ -306,7 +303,7 @@ class Q_ResNet20_Daq(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x = self.final_pool(x, act_scaling_factor)
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)

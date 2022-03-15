@@ -566,11 +566,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
-    #if args.fix_BN == True:
-    #    model.eval()
-    #else:
-    #    model.train()
-    model.train()
+    if args.fix_BN == True:
+        model.eval()
+    else:
+        model.train()
 
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
