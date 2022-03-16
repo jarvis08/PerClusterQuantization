@@ -357,6 +357,7 @@ class QuantAct_Daq(QuantAct):
         self.register_buffer('act_scaling_factor', torch.zeros(1))
         self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
+        self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
         self.register_buffer('isDaq', torch.ones(1, dtype=torch.bool))
 
         self.isClassifier = False
@@ -373,7 +374,8 @@ class QuantAct_Daq(QuantAct):
             len(self.x_min), len(self.x_max), self.x_min, self.x_max)
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
-                identity_scaling_factor=None, identity_weight_scaling_factor=None):
+                identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
+                concat_scaling_factor=None, concat_weight_scaling_factor=None):
         """
         x: the activation that we need to quantize
         pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
@@ -476,16 +478,15 @@ class QuantAct_Daq(QuantAct):
                                               pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
                     start_channel_index += channel_num[i]
             else:
-                if identity is None:
-                    if pre_weight_scaling_factor is None:
-                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
-
-                        # print('self.act_scaling_factor :', self.act_scaling_factor)
-                        # print('pre_act_scaling_factor : ', pre_act_scaling_factor, '\n')
+                if concat is not None :
+                    if concat_weight_scaling_factor is None:
+                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor)
-                else:
+                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
+                                                         pre_weight_scaling_factor,
+                                                         concat, concat_scaling_factor,
+                                                         concat_weight_scaling_factor)
+                elif identity is not None:
                     if identity_weight_scaling_factor is None:
                         identity_weight_scaling_factor = self.identity_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
@@ -493,6 +494,12 @@ class QuantAct_Daq(QuantAct):
                                                         pre_weight_scaling_factor,
                                                         identity, identity_scaling_factor,
                                                         identity_weight_scaling_factor)
+                else :
+                    if pre_weight_scaling_factor is None:
+                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
+                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
+                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
+                                                        pre_weight_scaling_factor)
             correct_output_scale = self.act_scaling_factor.view(-1)
             return (quant_act_int * correct_output_scale, self.act_scaling_factor)
         else:
@@ -699,7 +706,7 @@ class QuantBn(Module):
                  per_channel=False,
                  fix_flag=False,
                  weight_percentile=0,
-                 fix_BN=True,
+                 fix_BN=False,
                  fix_BN_threshold=None):
         super(QuantBn, self).__init__()
         self.weight_bit = weight_bit
@@ -754,16 +761,20 @@ class QuantBn(Module):
         else:
             raise ValueError("unknown quant mode: {}".format(self.quant_mode))
         
-        batch_mean = torch.mean(x, dim=(0, 2, 3))
-        batch_var = torch.var(x, dim=(0, 2, 3))
+        if self.fix_BN is False:
+            batch_mean = torch.mean(x, dim=(0, 2, 3))
+            batch_var = torch.var(x, dim=(0, 2, 3))
 
-        # update mean and variance in running stats
-        self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                    1 - self.bn.momentum) * batch_mean
-        self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
+            # update mean and variance in running stats
+            self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
+                        1 - self.bn.momentum) * batch_mean
+            self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
-        scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
-        scaled_bias = self.bn.bias - self.bn.running_mean * scaled_weight
+            scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
+            scaled_bias = self.bn.bias - self.bn.running_mean * scaled_weight
+        else :
+            scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
+            scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scaled_weight
 
         if self.weight_percentile == 0:
             w_min = scaled_weight.data.min()
