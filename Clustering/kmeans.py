@@ -231,6 +231,14 @@ class KMeansClustering(object):
         to_merge = n_sub_clusters - self.args.cluster
         n_merged = 0
         similarity_threshold = self.args.sim_threshold
+        # counter number of zeros
+        zero_ratio_per_layer = torch.zeros(n_layers, n_sub_clusters+1)
+        total_data = n_per_sub.sum()
+        # for l in range(n_layers):
+        #     for c in range(n_sub_clusters):
+        #         zero_ratio_per_layer[l][c] = dnn_model.zero_counter[l][c].sum() / n_per_sub[c] / dnn_model.zero_counter[l][c].numel()
+        #     zero_ratio_per_layer[l][-1] = dnn_model.zero_counter[l].sum() / total_data / dnn_model.zero_counter[l].numel() * n_sub_clusters
+
         while n_merged < to_merge:
             print(f'\n>>> Number of clusters to be merged: {to_merge - n_merged}')
             # Normalize with n_data of cluster, and make 1 if greater than 80 %
@@ -239,6 +247,25 @@ class KMeansClustering(object):
                 for c in range(n_sub_clusters):
                     zero_ratio[l][c] /= n_per_sub[c]  # Normalize counts by number of data in cluster
                 zero_ratio[l] = torch.where(zero_ratio[l] > similarity_threshold, 1, 0)
+
+            if n_merged == 0:
+                # threhsold zero ratio
+                for l in range(n_layers):
+                    for c in range(n_sub_clusters):
+                        zero_ratio_per_layer[l][c] = zero_ratio[l][c].sum() / n_per_sub[c]
+                    zero_ratio_per_layer[l][-1] = zero_ratio[l].sum() / total_data
+                # import matplotlib.pyplot as plt
+                # L = np.arange(n_layers)
+                # print(zero_ratio_per_layer[:, -1])
+                # hist = plt.hist(zero_ratio_per_layer[:, -1], bins=n_layers, edgecolor='black')
+                #
+                # plt.title(f'zero counts per layer <sim : {self.args.sim_threshold}')
+                # plt.xlabel('Layer', labelpad=10)
+                # plt.ylabel('Zero ratio', labelpad=10)
+                # plt.xticks(L)
+                #
+                # plt.show()
+                # exit()
 
             print('Calc. `And` between clusters.. (`1` means both zero)')
             # Exclude merged clusters except 1 left
@@ -261,6 +288,17 @@ class KMeansClustering(object):
                         similarity = n_commonly_zero / n_features
                         cross_similarity[l][_from][_to] = similarity
 
+            # 낮은 애들 제외
+            without = set()
+            total_wo_zero = cross_similarity.view(-1)
+            total_wo_zero = total_wo_zero[torch.nonzero(total_wo_zero)]
+            for l in range(n_layers):
+                layer_wo_zero = cross_similarity[l].view(-1)
+                layer_wo_zero = layer_wo_zero[torch.nonzero(layer_wo_zero)]
+                if layer_wo_zero.mean().item() < total_wo_zero.mean().item():
+                    without.add(l)
+            print(without)
+
             # Get info. about pairs of the most similar clusters
             # 클러스터별 similarity 높은 순으로 줄 세우기
             sorted_dist, sorted_indices = torch.sort(cross_similarity, dim=2, descending=True)
@@ -269,6 +307,8 @@ class KMeansClustering(object):
             count_duplicated_candidates = dict()
             # layer 별로 top 3 count_duplicated_candidates dict에 집어넣는다 (중복 counting)
             for l in range(n_layers):
+                if l in without:
+                    continue
                 l_dist = sorted_dist[l].view(-1)
                 l_idx = sorted_indices[l].view(-1)
 
@@ -416,9 +456,14 @@ class KMeansClustering(object):
                 layer_wo_zero = first_cross_similarity[layer_idx].view(-1)
                 layer_wo_zero = layer_wo_zero[torch.nonzero(layer_wo_zero)]
                 writer.writerow([f'layer {layer_idx}', layer_wo_zero.min().item(), layer_wo_zero.max().item(), layer_wo_zero.mean().item(), layer_wo_zero.std().item()])
-            writer.writerow(['', 'Total Similarity', ''])
+            writer.writerow(['Total Similarity', '', ''])
             writer.writerow(['min', 'max', 'mean', 'std'])
             writer.writerow([total_wo_zero.min().item(), total_wo_zero.max().item(), total_wo_zero.mean().item(), total_wo_zero.std().item()])
+            # cout zero per layer
+            writer.writerow(['Count zeros per layer'])
+            writer.writerow([''] + [f'{i}' for i in range(n_sub_clusters)] + ['Total'])
+            for layer_idx in range(n_layers):
+                writer.writerow([f'layer {layer_idx}'] + [f'{zero_ratio_per_layer[layer_idx][c].item()}' for c in range(n_sub_clusters + 1)])
 
         # # print cluster info
         # path = os.path.join(self.args.clustering_path, f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv')

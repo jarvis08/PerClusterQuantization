@@ -24,7 +24,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
     train_loader = data_loaders['aug_train']
     val_loader = data_loaders['val']
     test_loader = data_loaders['test']
-    if args.nnac and clustering_model.final_cluster is None:
+    # if args.nnac and clustering_model.final_cluster is None:
+    #     clustering_model.nn_aware_clutering(pretrained_model, train_loader, args.arch)
+    if args.nnac:
+        if clustering_model.final_cluster is not None:
+            clustering_model.final_cluster = None
         clustering_model.nn_aware_clutering(pretrained_model, train_loader, args.arch)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
