@@ -342,6 +342,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                                                                 device='cuda', requires_grad=False)
                 output = model(input)
 
+                del runtime_helper.qat_batch_cluster
                 container.prepare_validate_per_cluster()
 
                 loss = criterion(output, target)
@@ -359,6 +360,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                     runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
 
                     output = model(input)
+                    del runtime_helper.qat_batch_cluster
 
                     loss = criterion(output, target)
                     prec = accuracy(output, target)[0]
