@@ -280,7 +280,12 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
         model.eval()
     else:
         model.train()
-    print(torch.cuda.device_count())
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            print(f"# DEVICE {i}: {torch.cuda.get_device_name(i)}")
+            print("- Memory Usage:")
+            print(f"  Allocated: {round(torch.cuda.memory_allocated(i) / 1024 ** 3, 1)} GB")
+            print(f"  Cached:    {round(torch.cuda.memory_cached(i) / 1024 ** 3, 1)} GB\n")
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
                                clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()
@@ -291,7 +296,12 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
             input, target = input.cuda(), target.cuda()
             output = model(input)
-            print(torch.cuda.device_count())
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    print(f"# DEVICE {i}: {torch.cuda.get_device_name(i)}")
+                    print("- Memory Usage:")
+                    print(f"  Allocated: {round(torch.cuda.memory_allocated(i) / 1024 ** 3, 1)} GB")
+                    print(f"  Cached:    {round(torch.cuda.memory_cached(i) / 1024 ** 3, 1)} GB\n")
             exit()
 
             loss = criterion(output, target)
