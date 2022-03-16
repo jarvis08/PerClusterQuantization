@@ -495,11 +495,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     val_loader = data_loaders['val']
     test_loader = data_loaders['test']
 
-    # if args.cluster > 1:
-    #     runtime_helper = RuntimeHelper()
-    #     runtime_helper.set_pcq_arguments(args)
-    #     model.set_daq_helper(runtime_helper)
-
     if args.evaluate:
         validate(test_loader, model, criterion, args)
         return

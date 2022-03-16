@@ -426,16 +426,7 @@ class QuantAct_Daq(QuantAct):
                     x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
                                                               self.act_percentile, output_tensor=True,
                                                               num_cluster=self.runtime_helper.num_clusters)
-            # if self.isClassifier:
-            #     print('\n##### Classifier ######')
-            #     print(self.x_min)
-            #     print(self.x_max)
-            #     print('##### ########## ######')
 
-            # if not self.init:
-            #     self.x_min[cluster] += x_min
-            #     self.x_max[cluster] += x_max
-            #     self.init = True
             try:
                 if self.x_min[cluster] == self.x_max[cluster]:
                     self.x_min[cluster] += x_min
