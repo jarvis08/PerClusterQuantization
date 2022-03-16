@@ -290,7 +290,9 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             input, target, runtime_helper.batch_cluster = container.get_batch()
             # runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
             input, target = input.cuda(), target.cuda()
+            print("after data", torch.cuda.memory_allocated() / 1024 / 1024/ 1024)
             output = model(input)
+            print("after model", torch.cuda.memory_allocated() / 1024 / 1024/1024 )
             input.cpu()
             target.cpu()
 
