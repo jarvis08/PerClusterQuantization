@@ -280,7 +280,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
         model.eval()
     else:
         model.train()
-
+    print(torch.cuda.device_count())
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
                                clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()
@@ -291,6 +291,8 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
             input, target = input.cuda(), target.cuda()
             output = model(input)
+            print(torch.cuda.device_count())
+            exit()
 
             loss = criterion(output, target)
 
