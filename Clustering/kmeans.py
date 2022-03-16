@@ -89,7 +89,7 @@ class KMeansClustering(object):
         cluster_info = self.model.predict(np.float64(kmeans_input))
         if self.final_cluster is not None:  # make output as merged cluster form
             return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
-        return torch.LongTensor(cluster_info, requires_grad=False)
+        return torch.LongTensor(cluster_info)
 
     def train_clustering_model(self, nonaug_loader, aug_loader):
         print('Train K-means clustering model..')

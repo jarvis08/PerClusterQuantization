@@ -311,6 +311,25 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
 
             if container.ready_cluster is None:
                 break
+
+        container.check_leftover()
+        for c in range(container.num_clusters):
+            if container.leftover_cluster_data[c]:
+                input, target, runtime_helper.qat_batch_cluster = container.leftover_batch[c][0], \
+                                                                  container.leftover_batch[c][1], c
+                input, target = input.cuda(), target.cuda()
+                runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int,
+                                                                device='cuda', requires_grad=False)
+
+                output = model(input)
+                del runtime_helper.qat_batch_cluster
+
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
+
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
         del container
 
 
