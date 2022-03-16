@@ -302,6 +302,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             loss.backward()
             optimizer.step()
 
+            del runtime_helper.qat_batch_cluster
             container.set_next_batch()
 
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
