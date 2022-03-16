@@ -311,6 +311,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
 
             if container.ready_cluster is None:
                 break
+        del container
 
 
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
@@ -368,6 +369,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                     top1.update(prec.item(), input.size(0))
 
                     t.set_postfix(loss=losses.avg, acc=top1.avg)
+            del container
 
     if logger:
         if hvd:
