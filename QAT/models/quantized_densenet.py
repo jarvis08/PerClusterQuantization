@@ -24,9 +24,9 @@ class QuantizedDenseLayer(nn.Module):
         self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.bn1 = QuantizedBn2d(num_input_features, arg_dict)
+        self.bn1 = QuantizedBn2d(num_input_features, arg_dict=arg_dict)
         self.conv1 = QuantizedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
-        self.bn2 = QuantizedBn2d(bn_size * growth_rate, arg_dict)
+        self.bn2 = QuantizedBn2d(bn_size * growth_rate, arg_dict=arg_dict)
         self.conv2 = QuantizedConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False, arg_dict=arg_dict)
         self.memory_efficient = memory_efficient
 
@@ -53,7 +53,7 @@ class QuantizedTransition(nn.Sequential):
         self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
-        self.bn = QuantizedBn2d(num_input_features, arg_dict)
+        self.bn = QuantizedBn2d(num_input_features, arg_dict=arg_dict)
         self.conv = QuantizedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
@@ -115,19 +115,29 @@ class QuantizedDenseNet(nn.Module):
         memory_efficient: bool = False
     ) -> None:
         super(QuantizedDenseNet, self).__init__()
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+
+        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
+        self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.s_target = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', QuantizedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3,
                                            is_first=True, arg_dict=arg_dict)),
-            ('first_norm', QuantizedBn2d(num_init_features, arg_dict)),
+            ('first_norm', QuantizedBn2d(num_init_features, arg_dict=arg_dict)),
             ('maxpool', QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict))
         ]))
 
@@ -149,23 +159,28 @@ class QuantizedDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', QuantizedBn2d(num_features, arg_dict))
+        self.features.add_module('last_norm', QuantizedBn2d(num_features, arg_dict=arg_dict))
         # Linear layer
         self.classifier = QuantizedLinear(num_features, num_classes, arg_dict=arg_dict)
 
     def forward(self, x: Tensor) -> Tensor:
         if self.runtime_helper.qat_batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.q_max)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         out = self.features(x)
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = out.type(torch.cuda.IntTensor)
         out = out.type(torch.cuda.FloatTensor)
         out = torch.flatten(out, 1)
-        out = self.classifier(out)
-        return out
+        if self.a_bit > self.target_bit:
+            out = rescale_matrix(out.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                               self.shift, self.target_bit, self.runtime_helper)
+            out = self.classifier(out.type(torch.cuda.FloatTensor))
+        else:
+            out = self.classifier(out)
+        return out.type(torch.cuda.FloatTensor)
 
 
 def quantized_densenet(arg_dict: dict, **kwargs):
