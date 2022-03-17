@@ -33,17 +33,11 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
         # Pad with a single zero-point
         bc = self.runtime_helper.qat_batch_cluster
         if bc is None:
-            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=self.zero_point.item())
-            return self.maxpool(x)
+            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
+                      value=self.zero_point.item())
+        else:
+            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
+                      value=self.zero_point[bc].item())
 
-        # Zero-point per cluster
-        if self.padded is None:
-            padded_shape = (x.shape[0], x.shape[1], x.shape[2] + self.padding * 2, x.shape[3] + self.padding * 2)
-            self.padded = torch.zeros(padded_shape, device='cuda')
-        exists = torch.unique(bc)
-        for c in exists:
-            indices = (bc == c).nonzero(as_tuple=True)[0]
-            self.padded[indices] = F.pad(x[indices], (self.padding, self.padding, self.padding, self.padding),
-                                         mode='constant', value=self.zero_point[c])
-        return self.maxpool(self.padded[:x.size(0)])
+        return self.maxppol(x)
 

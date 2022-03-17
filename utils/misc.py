@@ -39,7 +39,7 @@ class RuntimeHelper(object):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
 
-        mask = torch.ones(self.val_batch, dtype=torch.int64, device='cuda')
+        mask = torch.ones(1, dtype=torch.int64, device='cuda')
         self.mask_4d = mask.view(-1, 1, 1, 1)
         self.mask_2d = mask.view(-1, 1)
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
@@ -288,7 +288,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
         for i, _ in enumerate(t):
             input, target, runtime_helper.qat_batch_cluster = container.get_batch()
-            runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
+            runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -337,7 +337,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
 
                 input, target, runtime_helper.qat_batch_cluster = container.get_batch()
                 input, target = input.cuda(), target.cuda()
-                runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int,
+                runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int64,
                                                                 device='cuda', requires_grad=False)
                 output = model(input)
 

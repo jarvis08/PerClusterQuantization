@@ -190,7 +190,6 @@ def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
 
 def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
     bc = runtime_helper.qat_batch_cluster
-    shape = (x.size(0), 1) if len(x.shape) == 2 else (x.size(0), 1, 1, 1)
 
     if bc is None:
         z1 = z_from
@@ -198,14 +197,20 @@ def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
         _m0 = m0
         _shift = shift
     else:
-        z1 = torch.index_select(z_from, 0, bc).reshape(shape)
-        z2 = torch.index_select(z_to, 0, bc).reshape(shape)
-        _m0 = torch.index_select(m0, 0, bc).reshape(shape)
-        _shift = torch.index_select(shift, 0, bc).reshape(shape)
+        if len(x.shape) == 2:
+            z1 = torch.index_select(z_from, 0, bc)[:, None]
+            z2 = torch.index_select(z_to, 0, bc)[:, None]
+            _m0 = torch.index_select(m0, 0, bc)[:, None]
+            _shift = torch.index_select(shift, 0, bc)[:, None]
+        else:
+            z1 = torch.index_select(z_from, 0, bc)[:, None, None, None]
+            z2 = torch.index_select(z_to, 0, bc)[:, None, None, None]
+            _m0 = torch.index_select(m0, 0, bc)[:, None, None, None]
+            _shift = torch.index_select(shift, 0, bc)[:, None, None, None]
 
     _x = x - z1
     _x = multiply_M(_x, _m0)
-    _x = shifting_without_cast(_x, _shift, getattr(runtime_helper, 'mask_{}d'.format(len(shape)))[:shape[0]])
+    _x = shifting_without_cast(_x, _shift, getattr(runtime_helper, 'mask_{}d'.format(len(x.shape))))
     _x = _x.add(z2)
     return clamp_matrix(_x, target_bit)
 
