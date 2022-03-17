@@ -24,7 +24,7 @@ class Q_DenseNet(nn.Module):
 
         self.act1 = nn.ReLU(inplace=True)
 
-        self.pool = QuantMaxPool2d(kernel_size=2, stride=2, padding=1)
+        self.pool = QuantMaxPool2d(kernel_size=3, stride=2, padding=1)
         self.quant_act1 = QuantAct()
 
         units = [6, 12, 24, 16] 
@@ -36,7 +36,7 @@ class Q_DenseNet(nn.Module):
                 trans = getattr(stage, "trans{}".format(stage_num + 1)) 
                 quant_trans = Q_Transition()
                 quant_trans.set_param(trans)
-                setattr(self, f'stage{stage_num + 1}.trans{stage_num +1}', quant_trans)
+                setattr(self, f'trans{stage_num +1}', quant_trans)
 
             dense_block = Q_DenseBlock() 
             dense_block.set_param(stage, units[stage_num])
@@ -47,7 +47,6 @@ class Q_DenseNet(nn.Module):
         self.batch_norm.set_param(post_activ.bn)
 
         self.act2 = nn.ReLU(inplace=True)
-
         self.quant_act2 = QuantAct()
 
         self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
@@ -56,6 +55,7 @@ class Q_DenseNet(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, input):
@@ -65,30 +65,26 @@ class Q_DenseNet(nn.Module):
         x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, conv_scaling_factor)
 
         x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-
         x = self.act1(x) 
-
-        x = self.pool(x, act_scaling_factor)
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
 
         for stage_num in range(4):
             if stage_num is not 0:
-                transition = getattr(self, f'stage{stage_num + 1}.trans{stage_num + 1}')
+                transition = getattr(self, f'trans{stage_num + 1}')
                 x, act_scaling_factor = transition(x, act_scaling_factor)
             function = getattr(self, f'stage{stage_num + 1}')
             x, act_scaling_factor = function(x, act_scaling_factor)
 
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
-
         x = self.act2(x)
-
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, bn_scaling_factor)
+
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_Scaling_factor)
 
+        x = x.view(x.size(0), -1)
+        x = self.quant_output(x, act_scaling_factor)
         return x
 
 
@@ -97,6 +93,7 @@ class Q_Transition(nn.Module):
         super(Q_Transition, self).__init__()
 
     def set_param(self, trans):
+        self.quant_input = QuantAct()
         conv_block = getattr(trans, 'conv')
 
         self.batch_norm = QuantBn()
@@ -106,13 +103,16 @@ class Q_Transition(nn.Module):
 
         self.conv = QuantConv2d()
         self.conv.set_param(conv_block.conv)
+
         self.quant_act2 = QuantAct()
 
         self.pool = QuantAveragePool2d(kernel_size=2, stride=2, padding=0)
         self.quant_output = QuantAct()
 
     def forward(self, x, act_scaling_factor=None):
+        x, act_scaling_factor = self.quant_input(x, act_scaling_factor)
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
+
         x = self.act(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
 
@@ -130,12 +130,10 @@ class Q_DenseUnit(nn.Module):
     def __init__(self):
         super(Q_DenseUnit, self).__init__()
 
-    def set_param(self, unit, is_last_layer):
-        self.is_last_layer = is_last_layer
+    def set_param(self, unit):
         self.quant_act_input = QuantAct()
         
         layer1 = getattr(unit, "conv1")
-
         self.quant_bn1 = QuantBn()
         self.quant_bn1.set_param(layer1.bn)
         self.act1 = nn.ReLU(inplace=True)
@@ -156,9 +154,8 @@ class Q_DenseUnit(nn.Module):
         self.quant_act_output = QuantAct()
 
 
-    def forward(self, x, act_scaling_factor=None):
-        concat_tensor = [x]
-        concat_act_scaling_factor = act_scaling_factor.clone()
+    def forward(self, batch, input_scaling_factor=None):
+        x, act_scaling_factor = self.quant_act_input(batch, input_scaling_factor)
 
         x, bn_scaling_factor = self.quant_bn1(x, act_scaling_factor)
         x = self.act1(x)
@@ -173,11 +170,9 @@ class Q_DenseUnit(nn.Module):
 
         x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
 
-        concat_tensor.append(x)
-        concat_tensor = torch.cat(concat_tensor, 1)
-
+        concat_tensor = torch.cat((batch, x), 1)
         x, act_scaling_factor = self.quant_act_output(concat_tensor, act_scaling_factor, conv_scaling_factor, 
-                                                concat=x, concat_scaling_factor=concat_act_scaling_factor)
+                                                concat=True, concat_scaling_factor=input_scaling_factor)
         return x, act_scaling_factor
 
 
@@ -190,7 +185,7 @@ class Q_DenseBlock(nn.Module):
         for unit_num in range(self.layers):
             unit = getattr(stage, 'unit{}'.format(unit_num + 1))
             quant_unit = Q_DenseUnit()
-            quant_unit.set_param(unit, unit_num is (self.layers - 1))
+            quant_unit.set_param(unit)
             setattr(self, f'unit{unit_num + 1}', quant_unit)
 
     def forward(self, x, act_scaling_factor=None):
@@ -217,7 +212,7 @@ class Q_DenseNet_Daq(nn.Module):
 
         self.act1 = nn.ReLU(inplace=True)
 
-        self.pool = QuantMaxPool2d(kernel_size=2, stride=2, padding=1)
+        self.pool = QuantMaxPool2d(kernel_size=3, stride=2, padding=1)
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         units = [6, 12, 24, 16] 
@@ -229,7 +224,7 @@ class Q_DenseNet_Daq(nn.Module):
                 trans = getattr(stage, "trans{}".format(stage_num + 1)) 
                 quant_trans = Q_Transition_Daq()
                 quant_trans.set_param(trans, runtime_helper)
-                setattr(self, f'stage{stage_num + 1}.trans{stage_num +1}', quant_trans)
+                setattr(self, f'trans{stage_num +1}', quant_trans)
 
             dense_block = Q_DenseBlock_Daq() 
             dense_block.set_param(stage, units[stage_num], runtime_helper)
@@ -240,8 +235,7 @@ class Q_DenseNet_Daq(nn.Module):
         self.batch_norm.set_param(post_activ.bn)
 
         self.act2 = nn.ReLU(inplace=True)
-
-        self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper) # not confident
+        self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
      
@@ -249,6 +243,7 @@ class Q_DenseNet_Daq(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, input):
@@ -258,38 +253,35 @@ class Q_DenseNet_Daq(nn.Module):
         x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, conv_scaling_factor)
 
         x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-
         x = self.act1(x) 
-
-        x = self.pool(x, act_scaling_factor)
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
 
         for stage_num in range(4):
             if stage_num is not 0:
-                transition = getattr(self, f'stage{stage_num + 1}.trans{stage_num + 1}')
+                transition = getattr(self, f'trans{stage_num + 1}')
                 x, act_scaling_factor = transition(x, act_scaling_factor)
             function = getattr(self, f'stage{stage_num + 1}')
             x, act_scaling_factor = function(x, act_scaling_factor)
 
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
-
         x = self.act2(x)
-
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, bn_scaling_factor)
+
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_Scaling_factor)
 
+        x = x.view(x.size(0), -1)
+        x = self.quant_output(x, act_scaling_factor)
         return x
 
 
 class Q_Transition_Daq(nn.Module):
     def __init__(self):
-        super(Q_Transition_Daq, self).__init__()
+        super(Q_Transition, self).__init__()
 
     def set_param(self, trans, runtime_helper=None):
+        self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
         conv_block = getattr(trans, 'conv')
 
         self.batch_norm = QuantBn()
@@ -299,13 +291,16 @@ class Q_Transition_Daq(nn.Module):
 
         self.conv = QuantConv2d()
         self.conv.set_param(conv_block.conv)
+
         self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.pool = QuantAveragePool2d(kernel_size=2, stride=2, padding=0)
         self.quant_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
     def forward(self, x, act_scaling_factor=None):
+        x, act_scaling_factor = self.quant_input(x, act_scaling_factor)
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
+
         x = self.act(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
 
@@ -323,12 +318,10 @@ class Q_DenseUnit_Daq(nn.Module):
     def __init__(self):
         super(Q_DenseUnit, self).__init__()
 
-    def set_param(self, unit, is_last_layer, runtime_helper=None):
-        self.is_last_layer = is_last_layer
+    def set_param(self, unit, runtime_helper=None):
         self.quant_act_input = QuantAct_Daq(runtime_helper=runtime_helper)
         
         layer1 = getattr(unit, "conv1")
-
         self.quant_bn1 = QuantBn()
         self.quant_bn1.set_param(layer1.bn)
         self.act1 = nn.ReLU(inplace=True)
@@ -349,9 +342,8 @@ class Q_DenseUnit_Daq(nn.Module):
         self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
 
-    def forward(self, x, act_scaling_factor=None):
-        concat_tensor = [x]
-        concat_act_scaling_factor = act_scaling_factor.clone()
+    def forward(self, batch, input_scaling_factor=None):
+        x, act_scaling_factor = self.quant_act_input(batch, input_scaling_factor)
 
         x, bn_scaling_factor = self.quant_bn1(x, act_scaling_factor)
         x = self.act1(x)
@@ -366,11 +358,9 @@ class Q_DenseUnit_Daq(nn.Module):
 
         x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
 
-        concat_tensor.append(x)
-        concat_tensor = torch.cat(concat_tensor, 1)
-
+        concat_tensor = torch.cat((batch, x), 1)
         x, act_scaling_factor = self.quant_act_output(concat_tensor, act_scaling_factor, conv_scaling_factor, 
-                                                concat=x, concat_scaling_factor=concat_act_scaling_factor)
+                                                concat=True, concat_scaling_factor=input_scaling_factor)
         return x, act_scaling_factor
 
 
@@ -383,15 +373,14 @@ class Q_DenseBlock_Daq(nn.Module):
         for unit_num in range(self.layers):
             unit = getattr(stage, 'unit{}'.format(unit_num + 1))
             quant_unit = Q_DenseUnit_Daq()
-            quant_unit.set_param(unit, unit_num is (self.layers - 1))
-            setattr(self, f'unit{unit_num + 1}', quant_unit, runtime_helper)
+            quant_unit.set_param(unit, runtime_helper)
+            setattr(self, f'unit{unit_num + 1}', quant_unit)
 
     def forward(self, x, act_scaling_factor=None):
         for unit_num in range(self.layers):
             function = getattr(self, f'unit{unit_num + 1}')
             x, act_scaling_factor = function(x, act_scaling_factor)
         return x, act_scaling_factor
-
 
 
 def q_densenet(model, model_dict=None, runtime_helper=None):
