@@ -252,8 +252,8 @@ class KMeansClustering(object):
                 # threhsold zero ratio
                 for l in range(n_layers):
                     for c in range(n_sub_clusters):
-                        zero_ratio_per_layer[l][c] = zero_ratio[l][c].sum() / n_per_sub[c]
-                    zero_ratio_per_layer[l][-1] = zero_ratio[l].sum() / total_data
+                        zero_ratio_per_layer[l][c] = zero_ratio[l][c].sum() / zero_ratio[l][c].size(0)
+                    zero_ratio_per_layer[l][-1] = zero_ratio[l].sum() / zero_ratio[l].numel()
                 # import matplotlib.pyplot as plt
                 # L = np.arange(n_layers)
                 # print(zero_ratio_per_layer[:, -1])
