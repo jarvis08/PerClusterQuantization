@@ -63,13 +63,7 @@ class QuantizedConv2d(nn.Conv2d):
             else:  # DAQ
                 bc = self.runtime_helper.qat_batch_cluster
                 if self.is_first or self.w_bit == 8:
-                    exists = torch.unique(bc)
-                    padded = torch.zeros(
-                        (x.shape[0], x.shape[1], x.shape[2] + self.padding[0] * 2, x.shape[3] + self.padding[1] * 2),
-                        device='cuda')
-                    for c in exists:
-                        indices = (bc == c).nonzero(as_tuple=True)[0]
-                        padded[indices] = F.pad(x[indices], to_pad, mode='constant', value=self.z1[c])
+                    padded = F.pad(x, to_pad, mode='constant', value=self.z1[bc].item())
                 else:
                     padded = F.pad(x, to_pad, mode='constant', value=0) #
 

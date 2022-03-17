@@ -39,7 +39,8 @@ class RuntimeHelper(object):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
 
-        mask = torch.ones(self.val_batch, dtype=torch.int64, device='cuda')
+        # mask = torch.ones(self.val_batch, dtype=torch.int64, device='cuda')
+        mask = torch.ones(1, dtype=torch.int64, device='cuda')
         self.mask_4d = mask.view(-1, 1, 1, 1)
         self.mask_2d = mask.view(-1, 1)
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
