@@ -124,11 +124,8 @@ class PCQBnReLU(nn.Module):
 
     def _forward_impl(self, x):
         bc = self.runtime_helper.qat_batch_cluster
-        exists = torch.unique(bc)
-        out = torch.zeros(x.shape, device='cuda')
-        for c in exists:
-            indices = (bc == c).nonzero(as_tuple=True)[0]
-            out[indices] = self.norms[c](x[indices])
+        out = self.norms[bc](x)
+
         if self.activation:
             out = self.activation(out)
         return out
