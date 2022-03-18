@@ -6,7 +6,7 @@ MODEL="resnet20_unfold"
 DATASET="cifar100"
 PRETRAINED_MODEL="resnet20"
 
-BATCH=32
+BATCH=64
 
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --mode fine \

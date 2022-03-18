@@ -3,12 +3,12 @@
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
 MODEL="resnet20_unfold"
-DATASET="cifar100"
+DATASET="cifar10"
 PRETRAINED_MODEL="resnet20"
 
-BATCH=32
+BATCH=64
 
-CUDA_VISIBLE_DEVICES=1 python main.py \
+CUDA_VISIBLE_DEVICES=0 python main.py \
     --mode fine \
     --epochs 100 \
     --batch $BATCH \
