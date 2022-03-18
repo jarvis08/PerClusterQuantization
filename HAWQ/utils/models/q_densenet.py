@@ -93,7 +93,6 @@ class Q_Transition(nn.Module):
         super(Q_Transition, self).__init__()
 
     def set_param(self, trans):
-        self.quant_input = QuantAct()
         conv_block = getattr(trans, 'conv')
 
         self.batch_norm = QuantBn()
@@ -110,7 +109,6 @@ class Q_Transition(nn.Module):
         self.quant_output = QuantAct()
 
     def forward(self, x, act_scaling_factor=None):
-        x, act_scaling_factor = self.quant_input(x, act_scaling_factor)
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
 
         x = self.act(x)
@@ -131,8 +129,6 @@ class Q_DenseUnit(nn.Module):
         super(Q_DenseUnit, self).__init__()
 
     def set_param(self, unit):
-        self.quant_act_input = QuantAct()
-        
         layer1 = getattr(unit, "conv1")
         self.quant_bn1 = QuantBn()
         self.quant_bn1.set_param(layer1.bn)
@@ -155,11 +151,9 @@ class Q_DenseUnit(nn.Module):
 
 
     def forward(self, batch, input_scaling_factor=None):
-        x, act_scaling_factor = self.quant_act_input(batch, input_scaling_factor)
-
-        x, bn_scaling_factor = self.quant_bn1(x, act_scaling_factor)
+        x, bn_scaling_factor = self.quant_bn1(batch, input_scaling_factor)
         x = self.act1(x)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act1(x, input_scaling_factor, bn_scaling_factor)
 
         x, conv_scaling_factor = self.quant_conv1(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
@@ -281,7 +275,6 @@ class Q_Transition_Daq(nn.Module):
         super(Q_Transition, self).__init__()
 
     def set_param(self, trans, runtime_helper=None):
-        self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
         conv_block = getattr(trans, 'conv')
 
         self.batch_norm = QuantBn()
@@ -298,7 +291,6 @@ class Q_Transition_Daq(nn.Module):
         self.quant_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
     def forward(self, x, act_scaling_factor=None):
-        x, act_scaling_factor = self.quant_input(x, act_scaling_factor)
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
 
         x = self.act(x)
@@ -319,8 +311,6 @@ class Q_DenseUnit_Daq(nn.Module):
         super(Q_DenseUnit, self).__init__()
 
     def set_param(self, unit, runtime_helper=None):
-        self.quant_act_input = QuantAct_Daq(runtime_helper=runtime_helper)
-        
         layer1 = getattr(unit, "conv1")
         self.quant_bn1 = QuantBn()
         self.quant_bn1.set_param(layer1.bn)
@@ -343,11 +333,9 @@ class Q_DenseUnit_Daq(nn.Module):
 
 
     def forward(self, batch, input_scaling_factor=None):
-        x, act_scaling_factor = self.quant_act_input(batch, input_scaling_factor)
-
-        x, bn_scaling_factor = self.quant_bn1(x, act_scaling_factor)
+        x, bn_scaling_factor = self.quant_bn1(batch, input_scaling_factor)
         x = self.act1(x)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act1(x, input_scaling_factor, bn_scaling_factor)
 
         x, conv_scaling_factor = self.quant_conv1(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
