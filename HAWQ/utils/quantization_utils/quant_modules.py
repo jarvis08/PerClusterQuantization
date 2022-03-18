@@ -410,7 +410,7 @@ class QuantAct_Daq(QuantAct):
                     x_max = x.data.max()
             else:
                 if self.act_percentile == 0:
-                    data = x.view(x.size(0), -1)
+                    data = x.view(x.size(0), -1).clone().detach()
                     _max = data.max(dim=1).values.mean()
                     _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
                     x_max = _max
