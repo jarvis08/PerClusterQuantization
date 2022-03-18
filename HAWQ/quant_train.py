@@ -264,13 +264,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
         # Custom model for CIFAR10 & CIFAR100
         if 'unfold' not in args.arch:
-            #if args.arch.lower() == 'resnet20':
-            #    if args.data.lower() == 'cifar10':
-            #        args.arch = 'resnet20_cifar10'
-            #    elif args.data.lower() == 'svhn':
-            #        args.arch = 'resnet20_svhn'
-            #    else:
-            #        args.arch = 'resnet20_cifar100'
             model = ptcv_get_model(args.arch, pretrained=True)
 
         elif 'unfold' in args.arch:
@@ -304,6 +297,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if args.arch.lower() == 'resnet50':
             import torchvision.models as vision_models
             vision = vision_models.resnet50(pretrained=True)
+            vision_dict = vision.state_dict()
+            model_dict = model.state_dict()
+            for cv, our in zip(model_dict.items(), vision_dict.items()):
+                model_dict[cv[0]].copy_(vision_dict[our[0]])
+        elif args.arch.lower() == 'densenet121':
+            import torchvision.models as vision_models
+            vision = vision_models.densenet121(pretrained=True)
             vision_dict = vision.state_dict()
             model_dict = model.state_dict()
             for cv, our in zip(model_dict.items(), vision_dict.items()):

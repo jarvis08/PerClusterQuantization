@@ -128,6 +128,7 @@ class Q_ResNet20_unfold_Daq(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -150,7 +151,7 @@ class Q_ResNet20_unfold_Daq(nn.Module):
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
-        x, _ = self.quant_output(x, act_scaling_factor)
+        x = self.quant_output(x, act_scaling_factor)
 
         return x
 
@@ -208,6 +209,7 @@ class Q_ResNet20_unfold(nn.Module):
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
     def forward(self, x):
@@ -230,24 +232,9 @@ class Q_ResNet20_unfold(nn.Module):
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
-        x, _ = self.quant_output(x, act_scaling_factor)
+        x = self.quant_output(x, act_scaling_factor)
 
         return x
-
-    def set_daq_helper(self, runtime_helper):
-        self.runtime_helper = runtime_helper
-        self.quant_input.runtime_helper = runtime_helper
-        self.quant_init_block_convbn.runtime_helper = runtime_helper
-        self.quant_act_int32.runtime_helper = runtime_helper
-
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                tmp_func.runtime_helper = runtime_helper
-
-        self.final_pool.runtime_helper = runtime_helper
-        self.quant_act_output.runtime_helper = runtime_helper
-        self.quant_output.runtime_helper = runtime_helper
 
 
 class Q_ResNet20_Daq(nn.Module):
@@ -451,11 +438,9 @@ class Q_ResNet50(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
-
-        x = self.pool(x)
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
-
         x = self.act(x)
+        x = self.pool(x)
 
         for stage_num in range(0, 4):
             for unit_num in range(0, self.channel[stage_num]):

@@ -139,7 +139,6 @@ class Q_AlexNet(nn.Module):
         
         x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
         x = self.act5(x)
-
         x = self.maxpool3(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor)
 
