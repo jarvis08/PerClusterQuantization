@@ -500,6 +500,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     #     runtime_helper.set_pcq_arguments(args)
     #     model.set_daq_helper(runtime_helper)
 
+    if args.nnac and clustering_model.final_cluster is None:
+        model.toggle_full_precision()
+        clustering_model.nn_aware_clutering(model, train_loader)
+        model.toggle_full_precision()
+
     if args.evaluate:
         validate(test_loader, model, criterion, args)
         return

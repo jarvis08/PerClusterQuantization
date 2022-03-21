@@ -437,8 +437,9 @@ class QuantAct_Daq(QuantAct):
                     self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
                     self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
             except:
-                print('fixed_point_fn / self.x_min :', self.x_min)
-                print('fixed_point_fn / self.x_max :', self.x_max)
+                pass
+                # print('fixed_point_fn / self.x_min :', self.x_min)
+                # print('fixed_point_fn / self.x_max :', self.x_max)
 
         # perform the quantization
         if not self.full_precision_flag:
@@ -675,12 +676,15 @@ class QuantBnConv2d(Module):
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
-            pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-            x_int = x / pre_act_scaling_factor
-            correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
+            if not self.full_precision_flag:
+                pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
+                x_int = x / pre_act_scaling_factor
+                correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                              self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
+            else:
+                return (F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups))
 
 
 class QuantBn(Module):

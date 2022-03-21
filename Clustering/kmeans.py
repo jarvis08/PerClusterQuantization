@@ -192,6 +192,7 @@ class KMeansClustering(object):
         with tqdm(range(len(train_loader)), desc="Merge Clusters", ncols=90) as t:
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
+
                 n_per_sub[cluster] += self.args.batch
 
                 dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
@@ -374,7 +375,7 @@ class KMeansClustering(object):
         self.final_cluster = torch.zeros(self.args.sub_cluster, dtype=torch.int64)
         for sub, final in final_clusters.items():
             self.final_cluster[int(sub)] = final
-        exit()
+        
 
     # @torch.no_grad()
     # def nn_aware_clutering(self, dnn_model, train_loader):
