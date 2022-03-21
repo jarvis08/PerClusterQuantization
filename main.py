@@ -13,6 +13,7 @@ parser.add_argument('--val_batch', default=0, type=int, help='Validation batch s
 parser.add_argument('--quant_base', default='qat', type=str,
                     help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
 parser.add_argument('--nnac', action='store_true', help="Use Neural Network Aware Clustering")
+parser.add_argument('--exclude', action='store_true', help="exclude less important layers during nnac")
 parser.add_argument('--mixrate', default=3, type=int,
                     help='Number of epochs to mix augmented dataset to non-augmented dataset in training of clustering')
 parser.add_argument('--sim_threshold', default=0.7, type=float,
