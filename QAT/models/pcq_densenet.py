@@ -167,18 +167,21 @@ class PCQDenseNet(nn.Module):
     ) -> None:
         super(PCQDenseNet, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.a_bit, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster',
+                         'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
+
         self.in_range = nn.Parameter(torch.zeros(self.num_clusters, 2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', PCQConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
-                                     w_bit=bit_first, a_bit=self.a_bit, arg_dict=arg_dict)),
-            ('first_norm', PCQBnReLU(num_init_features, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=arg_dict)),
+                                     w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)),
+            ('first_norm', PCQBnReLU(num_init_features, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
 
@@ -200,7 +203,7 @@ class PCQDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', PCQBnReLU(num_features, activation=nn.ReLU, arg_dict=arg_dict))
+        self.features.add_module('last_norm', PCQBnReLU(num_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict))
         # Linear layer
         self.classifier = PCQLinear(num_features, num_classes, is_classifier=True,
                                     w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
