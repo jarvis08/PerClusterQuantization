@@ -73,21 +73,6 @@ class Q_ResNet18(nn.Module):
 
         return x
 
-    def set_daq_helper(self, runtime_helper):
-        self.runtime_helper = runtime_helper
-        self.quant_input.runtime_helper = runtime_helper
-        self.quant_init_block_convbn.runtime_helper = runtime_helper
-        self.quant_act_int32.runtime_helper = runtime_helper
-
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                tmp_func.runtime_helper = runtime_helper
-
-        self.final_pool.runtime_helper = runtime_helper
-        self.quant_act_output.runtime_helper = runtime_helper
-        self.quant_output.runtime_helper = runtime_helper
-
 
 class Q_ResNet20_unfold_Daq(nn.Module):
     """
@@ -155,20 +140,6 @@ class Q_ResNet20_unfold_Daq(nn.Module):
 
         return x
 
-    def set_daq_helper(self, runtime_helper):
-        self.runtime_helper = runtime_helper
-        self.quant_input.runtime_helper = runtime_helper
-        self.quant_init_block_convbn.runtime_helper = runtime_helper
-        self.quant_act_int32.runtime_helper = runtime_helper
-
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                tmp_func.runtime_helper = runtime_helper
-
-        self.final_pool.runtime_helper = runtime_helper
-        self.quant_act_output.runtime_helper = runtime_helper
-        self.quant_output.runtime_helper = runtime_helper
 
 class Q_ResNet20_unfold(nn.Module):
     """
@@ -318,7 +289,6 @@ class Q_ResNet20_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[l_idx][cluster, zeros_idx] += 1
 
-        blocks = ['stage1', 'stage2', 'stage3']
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
@@ -334,23 +304,6 @@ class Q_ResNet20_Daq(nn.Module):
                 else:
                     precision = True
                 setattr(module, 'full_precision_flag', precision)
-
-    def set_daq_helper(self, runtime_helper):
-        self.runtime_helper = runtime_helper
-        self.quant_input.runtime_helper = runtime_helper
-        self.quant_init_block_convbn.runtime_helper = runtime_helper
-        self.quant_act_int32.runtime_helper = runtime_helper
-
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                tmp_func.runtime_helper = runtime_helper
-                if isinstance(tmp_func, QuantAct):
-                    tmp_func.set_daq_ema_params(runtime_helper)
-
-        self.final_pool.runtime_helper = runtime_helper
-        self.quant_act_output.runtime_helper = runtime_helper
-        self.quant_output.runtime_helper = runtime_helper
 
 
 class Q_ResNet20(nn.Module):
@@ -410,27 +363,6 @@ class Q_ResNet20(nn.Module):
         x = self.quant_output(x, act_scaling_factor)
 
         return x
-
-    def set_daq_helper(self, runtime_helper):
-        self.runtime_helper = runtime_helper
-        self.quant_input.runtime_helper = runtime_helper
-        self.quant_init_block_convbn.runtime_helper = runtime_helper
-        self.quant_act_int32.runtime_helper = runtime_helper
-
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                tmp_func.runtime_helper = runtime_helper
-                if isinstance(tmp_func, QuantAct):
-                    tmp_func.set_daq_ema_params(runtime_helper)
-
-        self.final_pool.runtime_helper = runtime_helper
-        self.quant_act_output.runtime_helper = runtime_helper
-        self.quant_output.runtime_helper = runtime_helper
-
-        self.quant_input.set_daq_ema_params(runtime_helper)
-        self.quant_act_int32.set_daq_ema_params(runtime_helper)
-        self.quant_act_output.set_daq_ema_params(runtime_helper)
 
 
 class Q_ResNet50(nn.Module):
@@ -955,8 +887,8 @@ class Q_ResBlockBn_Daq(nn.Module):
 
     def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
         # make empty list space
-        _x = x[0].unsqueeze(0)
         if not initialized:
+            _x = x[0].unsqueeze(0)
             if self.resize_identity:
                 _x = self.quant_act(_x)
                 identity = self.quant_identity_convbn(_x)
@@ -975,10 +907,10 @@ class Q_ResBlockBn_Daq(nn.Module):
 
             _x = _x + identity
 
-            if self.resize_identity:
-                _x = self.quant_act_int32(_x)
-            else:
-                _x = self.quant_act_int32(_x)
+            # if self.resize_identity:
+            #     _x = self.quant_act_int32(_x)
+            # else:
+            #     _x = self.quant_act_int32(_x)
             _x = nn.ReLU()(_x)
             n_features = _x.view(-1).size(0)
             zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
@@ -1007,10 +939,10 @@ class Q_ResBlockBn_Daq(nn.Module):
 
         x = x + identity
 
-        if self.resize_identity:
-            x = self.quant_act_int32(x)
-        else:
-            x = self.quant_act_int32(x)
+        # if self.resize_identity:
+        #     x = self.quant_act_int32(x)
+        # else:
+        #     x = self.quant_act_int32(x)
 
         x = nn.ReLU()(x)
         ###

@@ -375,7 +375,7 @@ class KMeansClustering(object):
         self.final_cluster = torch.zeros(self.args.sub_cluster, dtype=torch.int64)
         for sub, final in final_clusters.items():
             self.final_cluster[int(sub)] = final
-        
+
 
     # @torch.no_grad()
     # def nn_aware_clutering(self, dnn_model, train_loader):

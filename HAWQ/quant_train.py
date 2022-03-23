@@ -502,8 +502,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
+        # idx = 0
+        # for module in model.modules():
+        #     #if isinstance(module, (QuantAct_Daq, QuantBnConv2d)):
+        #     if hasattr(module, 'full_precision_flag'):
+        #         print(idx, module.__class__.__name__ , module.full_precision_flag)
+        #     else:
+        #         print(idx, module.__class__.__name__ )
+        #     idx += 1
+        # exit()
         clustering_model.nn_aware_clutering(model, train_loader)
         model.toggle_full_precision()
+        print('Zero counter shape :', len(model.zero_counter), len(model.zero_counter[0]))
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)

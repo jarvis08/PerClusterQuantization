@@ -106,6 +106,7 @@ class QuantLinear(Module):
 
         w = self.weight
         w_transform = w.data.detach()
+
         # calculate the quantization range of weights and bias
         if self.per_channel:
             w_min, _ = torch.min(w_transform, dim=1, out=None)
@@ -403,43 +404,44 @@ class QuantAct_Daq(QuantAct):
 
         cluster = self.runtime_helper.batch_cluster
         # calculate the quantization range of the activations
-        if self.running_stat:
-            if self.isClassifier:
-                if self.act_percentile == 0:
-                    x_min = x.data.min()
-                    x_max = x.data.max()
-            else:
-                if self.act_percentile == 0:
-                    data = x.view(x.size(0), -1).clone().detach()
-                    _max = data.max(dim=1).values.mean()
-                    _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
-                    x_max = _max
-                    x_min = _min
-                elif self.quant_mode == 'symmetric':
-                    x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
+        if not self.full_precision_flag:
+            if self.running_stat:
+                if self.isClassifier:
+                    if self.act_percentile == 0:
+                        x_min = x.data.min()
+                        x_max = x.data.max()
+                else:
+                    if self.act_percentile == 0:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        _max = data.max(dim=1).values.mean()
+                        _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
+                        x_max = _max
+                        x_min = _min
+                    elif self.quant_mode == 'symmetric':
+                        x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
                                                           self.act_percentile, output_tensor=True, num_cluster=self.runtime_helper.num_clusters)
-                # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
-                # that is to say our asymmetric quantization should always be after ReLU, which makes
-                # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
-                # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
-                elif self.quant_mode == 'asymmetric':
-                    x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
+                    # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
+                    # that is to say our asymmetric quantization should always be after ReLU, which makes
+                    # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
+                    # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
+                    elif self.quant_mode == 'asymmetric':
+                        x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
                                                               self.act_percentile, output_tensor=True,
                                                               num_cluster=self.runtime_helper.num_clusters)
-            try:
-                if self.x_min[cluster] == self.x_max[cluster]:
-                    self.x_min[cluster] += x_min
-                    self.x_max[cluster] += x_max
-                elif self.act_range_momentum == -1:
-                    self.x_min[cluster] = min(self.x_min[cluster], x_min)
-                    self.x_max[cluster] = max(self.x_max[cluster], x_max)
-                else:
-                    self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
-                    self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
-            except:
-                pass
-                # print('fixed_point_fn / self.x_min :', self.x_min)
-                # print('fixed_point_fn / self.x_max :', self.x_max)
+                try:
+                    if self.x_min[cluster] == self.x_max[cluster]:
+                        self.x_min[cluster] += x_min
+                        self.x_max[cluster] += x_max
+                    elif self.act_range_momentum == -1:
+                        self.x_min[cluster] = min(self.x_min[cluster], x_min)
+                        self.x_max[cluster] = max(self.x_max[cluster], x_max)
+                    else:
+                        self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
+                        self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
+                except:
+                    pass
+                    # print('fixed_point_fn / self.x_min :', self.x_min)
+                    # print('fixed_point_fn / self.x_max :', self.x_max)
 
         # perform the quantization
         if not self.full_precision_flag:
@@ -676,7 +678,6 @@ class QuantBnConv2d(Module):
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
-            if not self.full_precision_flag:
                 pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
                 x_int = x / pre_act_scaling_factor
                 correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
@@ -684,7 +685,7 @@ class QuantBnConv2d(Module):
                 return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                              self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
             else:
-                return (F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups))
+                return F.conv2d(x, scaled_weight, scaled_bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
 
 
 class QuantBn(Module):
