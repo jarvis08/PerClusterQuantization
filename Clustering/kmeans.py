@@ -308,8 +308,12 @@ class KMeansClustering(object):
                         if _to in exclude:
                             continue
                         # logical_and -> zeros - 0 / nonzeros - 1 (bit수로 계산하는게 아님)
-                        n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
-                        similarity = n_commonly_zero / n_features
+                        ## logical and
+                        # n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
+                        # similarity = n_commonly_zero / n_features
+
+                        # jaccard similarity
+                        similarity = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum() / torch.logical_or(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
                         cross_similarity[l][_from][_to] = similarity
 
             ########################## Experiment 3: similarity between clusters <= 0.1 #########################
