@@ -195,7 +195,7 @@ logging.getLogger().addHandler(logging.StreamHandler())
 logging.info(args_hawq)
 
 
-def ㅋmain(args_daq, data_loaders, clustering_model):
+def main(args_daq, data_loaders, clustering_model):
     args = argparse.Namespace(**vars(args_hawq), **vars(args_daq))
     print(vars(args))
     if args.seed is not None:
