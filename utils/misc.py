@@ -378,32 +378,40 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
 
 def load_dnn_model(arg_dict, tools, path=None):
     model = None
-    if arg_dict['quantized']:
-        if arg_dict['dataset'] == 'cifar100':
-            model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+    if arg_dict['quant_base'] == 'qat':
+        if arg_dict['quantized']:
+            if arg_dict['dataset'] == 'cifar100':
+                model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+            else:
+                model = tools.quantized_model_initializer(arg_dict)
+        elif arg_dict['fused']:
+            if arg_dict['dataset'] == 'cifar100':
+                model = tools.fused_model_initializer(arg_dict, num_classes=100)
+            else:
+                model = tools.fused_model_initializer(arg_dict)
         else:
-            model = tools.quantized_model_initializer(arg_dict)
-    elif arg_dict['fused']:
-        if arg_dict['dataset'] == 'cifar100':
-            model = tools.fused_model_initializer(arg_dict, num_classes=100)
-        else:
-            model = tools.fused_model_initializer(arg_dict)
+            if arg_dict['dataset'] == 'imagenet':
+                if arg_dict['arch'] == 'MobileNetV3':
+                    return vision_models.mobilenet_v3_small(pretrained=True)
+                elif arg_dict['arch'] == 'ResNet18':
+                    return vision_models.resnet18(pretrained=True)
+                elif arg_dict['arch'] == 'AlexNet':
+                    return vision_models.alexnet(pretrained=True)
+                elif arg_dict['arch'] == 'ResNet50':
+                    return vision_models.resnet50(pretrained=True)
+                elif arg_dict['arch'] == 'DenseNet121':
+                    return vision_models.densenet121(pretrained=True)
+            elif arg_dict['dataset'] == 'cifar100':
+                model = tools.pretrained_model_initializer(num_classes=100)
+            else:
+                model = tools.pretrained_model_initializer()
+    # For HAWQ NNAC
     else:
-        if arg_dict['dataset'] == 'imagenet':
-            if arg_dict['arch'] == 'MobileNetV3':
-                return vision_models.mobilenet_v3_small(pretrained=True)
-            elif arg_dict['arch'] == 'ResNet18':
-                return vision_models.resnet18(pretrained=True)
-            elif arg_dict['arch'] == 'AlexNet':
-                return vision_models.alexnet(pretrained=True)
-            elif arg_dict['arch'] == 'ResNet50':
-                return vision_models.resnet50(pretrained=True)
-            elif arg_dict['arch'] == 'DenseNet121':
-                return vision_models.densenet121(pretrained=True)
-        elif arg_dict['dataset'] == 'cifar100':
+        if arg_dict['dataset'] == 'cifar100':
             model = tools.pretrained_model_initializer(num_classes=100)
         else:
             model = tools.pretrained_model_initializer()
+
     if path is not None:
         checkpoint = torch.load(path)
     else:

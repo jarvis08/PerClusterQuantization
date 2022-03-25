@@ -439,9 +439,8 @@ class QuantAct_Daq(QuantAct):
                         self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
                         self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
                 except:
-                    pass
-                    # print('fixed_point_fn / self.x_min :', self.x_min)
-                    # print('fixed_point_fn / self.x_max :', self.x_max)
+                    print('fixed_point_fn / self.x_min :', self.x_min)
+                    print('fixed_point_fn / self.x_max :', self.x_max)
 
         # perform the quantization
         if not self.full_precision_flag:
@@ -487,7 +486,7 @@ class QuantAct_Daq(QuantAct):
                                                         pre_weight_scaling_factor,
                                                         identity, identity_scaling_factor,
                                                         identity_weight_scaling_factor)
-                else :
+                else:
                     if pre_weight_scaling_factor is None:
                         pre_weight_scaling_factor = self.pre_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
