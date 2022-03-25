@@ -232,6 +232,17 @@ class Q_ResNet20_Daq(nn.Module):
 
         return x
 
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct_Daq, QuantLinear, QuantBnConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
     def set_daq_helper(self, runtime_helper):
         self.runtime_helper = runtime_helper
         self.quant_input.runtime_helper = runtime_helper
