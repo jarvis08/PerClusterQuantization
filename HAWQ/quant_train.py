@@ -22,7 +22,7 @@ import torchvision.models as models
 
 #from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_alexnet import q_alexnet
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
@@ -498,6 +498,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     #     runtime_helper = RuntimeHelper()
     #     runtime_helper.set_pcq_arguments(args)
     #     model.set_daq_helper(runtime_helper)
+
+    if args.nnac and clustering_model.final_cluster is None:
+        from copy import deepcopy
+        args_dict = deepcopy(vars(args))
+        args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
+        pretrained_model = load_dnn_model(args_dict, tools)
+        pretrained_model.cuda()
+        clustering_model.nn_aware_clutering(pretrained_model, train_loader)
+        del args_dict
+        del pretrained_model
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)
