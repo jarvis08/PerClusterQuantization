@@ -227,6 +227,33 @@ def main(args_daq, data_loaders, clustering_model):
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
 
+def specify_target_arch(arch, dataset, cluster):
+    arch = 'MLP' if arch == 'mlp' else arch
+    if arch == 'alexnet':
+        if dataset == 'imagenet':
+            arch = 'AlexNet'
+        else:
+            arch = 'AlexNetSmall'
+    elif arch == 'resnet':
+        if dataset == 'imagenet':
+            arch = 'ResNet50'
+        else:
+            arch = 'ResNet20'
+    elif arch == 'mobilenet':
+        arch = 'MobileNetV3'
+    elif arch == 'bert':
+        arch = 'Bert'
+    elif arch == 'densenet':
+        arch = 'DenseNet121'
+
+    # HAWQ
+    if arch == 'resnet20_cifar10':
+        arch = 'ResNet20'
+
+    from QAT.qat import set_func_for_target_arch
+    model_initializers = set_func_for_target_arch(arch, False)
+    return arch, model_initializers
+
 
 def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     global best_acc1
