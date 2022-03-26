@@ -59,7 +59,7 @@ class KMeansClustering(object):
         # Load k-means model's hparams, and check dependencies
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             loaded_args = json.load(f)
-        
+
         assert self.args.dataset == loaded_args['dataset'], \
             f"Dataset of model doesn't match (args: {self.args.dataset}, loaded: {loaded_args['dataset']})"
         assert self.args.clustering_method == loaded_args['clustering_method'], \
@@ -84,7 +84,7 @@ class KMeansClustering(object):
                     self.final_cluster[int(sub)] = int(final)
 
         self.model = joblib.load(os.path.join(self.args.clustering_path, 'checkpoint.pkl'))
-    
+
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(np.float64(kmeans_input))
@@ -113,7 +113,8 @@ class KMeansClustering(object):
             best_model_inertia = 9999999999999999
             print("Train K-means model 10 times, and choose the best model")
             for trial in range(1, 11):
-                model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch, tol=self.args.kmeans_tol, random_state=0)
+                model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch,
+                                        tol=self.args.kmeans_tol, random_state=0)
                 early_stopped = False
                 t_epoch = tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
                 for e in range(self.args.kmeans_epoch):
@@ -178,7 +179,7 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def nn_aware_clutering(self, dnn_model, train_loader, arch):
+    def nn_aware_clustering(self, dnn_model, train_loader, arch):
         print('\n>>> NN-aware Clustering..')
         from utils.misc import InputContainer
 
@@ -205,7 +206,7 @@ class KMeansClustering(object):
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
                     input, target, cluster = container.leftover_batch[c][0], \
-                                                                      container.leftover_batch[c][1], c
+                                             container.leftover_batch[c][1], c
                     n_per_sub[cluster] += input.size(0)
                     dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
 
@@ -252,9 +253,6 @@ class KMeansClustering(object):
                     zero_ratio[l][c] /= n_per_sub[c]  # Normalize counts by number of data in cluster
                 zero_ratio[l] = torch.where(zero_ratio[l] > similarity_threshold, 1, 0)
 
-            if n_merged == 0:
-                first_zero_ratio = deepcopy(zero_ratio)
-
             print('Calc. `And` between clusters.. (`1` means both zero)')
             # Exclude merged clusters except 1 left
             exclude = set()
@@ -267,8 +265,6 @@ class KMeansClustering(object):
             ################################ threhsold zero ratio test ##############################################
             if self.args.exclude:
                 for l in range(n_layers):
-                    if l == 1:
-                        print("AAAAA")
                     for c in range(n_sub_clusters):
                         if c in exclude:
                             continue
@@ -279,22 +275,22 @@ class KMeansClustering(object):
                 # exclude
                 indices = (zero_ratio_per_layer > 0.25).nonzero(as_tuple=True)[0]
 
-                threshold_zero_ratio = torch.zeros((n_layers, n_sub_clusters + 1), device='cuda')
-                for l in range(n_layers):
-                    for c in range(n_sub_clusters):
-                        threshold_zero_ratio[l][c] = zero_ratio[l][c].sum() / zero_ratio[l].size(1)
-                    #### 바꿔야되고
-                    threshold_zero_ratio[l][-1] = zero_ratio[l].sum() / zero_ratio[l].size(1) / n_sub_clusters
-    
-                print("Save similarity output")
-                with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}_thresh_ratio_step_{merge_step_cnt}.csv', 'w') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold])
-                    # cluster combination
-                    writer.writerow([''] + [f'ctr {i}' for i in range(n_sub_clusters)] + ['total'])
-                    for l in range(n_layers):
-                        writer.writerow([threshold_zero_ratio[l][c].item() for c in range(n_sub_clusters + 1)])
-                    writer.writerow([n_per_sub[c].item() for c in range(n_sub_clusters)])
+                # threshold_zero_ratio = torch.zeros((n_layers, n_sub_clusters + 1), device='cuda')
+                # for l in range(n_layers):
+                #     for c in range(n_sub_clusters):
+                #         threshold_zero_ratio[l][c] = zero_ratio[l][c].sum() / zero_ratio[l].size(1)
+                #     #### 바꿔야되고
+                #     threshold_zero_ratio[l][-1] = zero_ratio[l].sum() / zero_ratio[l].size(1) / n_sub_clusters
+
+                # print("Save similarity output")
+                # with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}_thresh_ratio_step_{merge_step_cnt}.csv', 'w') as csvfile:
+                #     writer = csv.writer(csvfile)
+                #     writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold])
+                #     # cluster combination
+                #     writer.writerow([''] + [f'ctr {i}' for i in range(n_sub_clusters)] + ['total'])
+                #     for l in range(n_layers):
+                #         writer.writerow([threshold_zero_ratio[l][c].item() for c in range(n_sub_clusters + 1)])
+                #     writer.writerow([n_per_sub[c].item() for c in range(n_sub_clusters)])
 
             cross_similarity = torch.zeros(n_layers, n_sub_clusters, n_sub_clusters, device='cuda')
             for l in range(n_layers):
@@ -309,11 +305,11 @@ class KMeansClustering(object):
                             continue
                         # logical_and -> zeros - 0 / nonzeros - 1 (bit수로 계산하는게 아님)
                         ## logical and
-                        # n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
-                        # similarity = n_commonly_zero / n_features
+                        n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
+                        similarity = n_commonly_zero / n_features
 
-                        # jaccard similarity
-                        similarity = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum() / torch.logical_or(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
+                        # # jaccard similarity
+                        # similarity = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum() / torch.logical_or(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
                         cross_similarity[l][_from][_to] = similarity
 
             ########################## Experiment 3: similarity between clusters <= 0.1 #########################
@@ -434,40 +430,40 @@ class KMeansClustering(object):
             for group in merged_clusters:
                 n_merged += len(group[0]) - 1
 
-            if merged:
-                merge_step_cnt += 1
-                print(f"Save similarity output STEP {merge_step_cnt}")
-                with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}_step_{merge_step_cnt}.csv', 'w') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold, 'step', merge_step_cnt])
-                    writer.writerow(['cur merged', f'{c1}, {c2}'] + [comb[0] for comb in prev_merged_clusters])
-                    # cluster combination
-                    writer.writerow(['cluster', 'count', 'layers'])
-                    for item in range(len(cur_cluster_info)):
-                        writer.writerow([tuple(cur_cluster_info[item][0]), cur_cluster_info[item][1][0],
-                                         tuple(cur_cluster_info[item][1][2])])
-                    # similarity
-                    writer.writerow(['layer', 'min', 'max', 'mean', 'std'])
-                    total_wo_zero = cur_cross_similarity[indices].view(-1)
-                    total_wo_zero = total_wo_zero[torch.nonzero(total_wo_zero)]
-                    for layer_idx in range(cur_cross_similarity.size(0)):
-                        if layer_idx not in indices:
-                            writer.writerow([f'layer {layer_idx}', '-', '-', '-', '-'])
-                            continue
-                        layer_wo_zero = cur_cross_similarity[layer_idx].view(-1)
-                        layer_wo_zero = layer_wo_zero[torch.nonzero(layer_wo_zero)]
-                        writer.writerow([f'layer {layer_idx}', layer_wo_zero.min().item(), layer_wo_zero.max().item(),
-                                         layer_wo_zero.mean().item(), layer_wo_zero.std().item()])
-                    writer.writerow(['Total Similarity', '', ''])
-                    writer.writerow(['min', 'max', 'mean', 'std'])
-                    writer.writerow([total_wo_zero.min().item(), total_wo_zero.max().item(), total_wo_zero.mean().item(),
-                                     total_wo_zero.std().item()])
-                    # # cout zero per layer
-                    # writer.writerow(['Count zeros per layer'])
-                    # writer.writerow([''] + [f'{i}' for i in range(n_sub_clusters)] + ['Total'])
-                    # for layer_idx in range(n_layers):
-                    #     writer.writerow([f'layer {layer_idx}'] + [f'{zero_ratio_per_layer[layer_idx][c].item()}' for c in
-                    #                                               range(n_sub_clusters + 1)])
+            # if merged:
+            #     merge_step_cnt += 1
+            #     print(f"Save similarity output STEP {merge_step_cnt}")
+            #     with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}_step_{merge_step_cnt}.csv', 'w') as csvfile:
+            #         writer = csv.writer(csvfile)
+            #         writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold, 'step', merge_step_cnt])
+            #         writer.writerow(['cur merged', f'{c1}, {c2}'] + [comb[0] for comb in prev_merged_clusters])
+            #         # cluster combination
+            #         writer.writerow(['cluster', 'count', 'layers'])
+            #         for item in range(len(cur_cluster_info)):
+            #             writer.writerow([tuple(cur_cluster_info[item][0]), cur_cluster_info[item][1][0],
+            #                              tuple(cur_cluster_info[item][1][2])])
+            #         # similarity
+            #         writer.writerow(['layer', 'min', 'max', 'mean', 'std'])
+            #         total_wo_zero = cur_cross_similarity[indices].view(-1)
+            #         total_wo_zero = total_wo_zero[torch.nonzero(total_wo_zero)]
+            #         for layer_idx in range(cur_cross_similarity.size(0)):
+            #             if layer_idx not in indices:
+            #                 writer.writerow([f'layer {layer_idx}', '-', '-', '-', '-'])
+            #                 continue
+            #             layer_wo_zero = cur_cross_similarity[layer_idx].view(-1)
+            #             layer_wo_zero = layer_wo_zero[torch.nonzero(layer_wo_zero)]
+            #             writer.writerow([f'layer {layer_idx}', layer_wo_zero.min().item(), layer_wo_zero.max().item(),
+            #                              layer_wo_zero.mean().item(), layer_wo_zero.std().item()])
+            #         writer.writerow(['Total Similarity', '', ''])
+            #         writer.writerow(['min', 'max', 'mean', 'std'])
+            #         writer.writerow([total_wo_zero.min().item(), total_wo_zero.max().item(), total_wo_zero.mean().item(),
+            #                          total_wo_zero.std().item()])
+            #         # # cout zero per layer
+            #         # writer.writerow(['Count zeros per layer'])
+            #         # writer.writerow([''] + [f'{i}' for i in range(n_sub_clusters)] + ['Total'])
+            #         # for layer_idx in range(n_layers):
+            #         #     writer.writerow([f'layer {layer_idx}'] + [f'{zero_ratio_per_layer[layer_idx][c].item()}' for c in
+            #         #                                               range(n_sub_clusters + 1)])
 
         final_clusters = dict()
         n_per_final = [0 for _ in range(self.args.cluster)]
@@ -493,6 +489,19 @@ class KMeansClustering(object):
         print(f"\n>>> [Final] Number of data per cluster (Max.limit: {max_data_num_per_merged_cluster})")
         for c in range(self.args.cluster):
             print(f"C{c}: {n_per_final[c]}")
+
+        ## save nnac results into new folder
+        # with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
+        #     args_without_nnac = json.load(f)
+        # nnac_path = os.path.join(self.args.clustering_path, f'_{self.args.topk}_{self.args.sim_threshold}' + (
+        #     '_exclude' if self.args.exclude else ''))
+        # import shutil
+        # shutil.copyfile(os.path.join(self.args.clustering_path, 'checkpoint.pkl'),
+        #                 os.path.join(nnac_path, 'checkpoint.pkl'))
+        # with open(os.path.join(nnac_path, "params.json"), 'w') as f:
+        #     args_without_nnac['sub_k'] = self.args.sub_cluster
+        #     args_without_nnac['nnac'] = final_clusters
+        #     json.dump(args_without_nnac, f, indent=4)
 
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             args_without_nnac = json.load(f)
@@ -537,7 +546,6 @@ class KMeansClustering(object):
         #     #### 바꿔야되고
         #     threshold_zero_ratio[l][-1] = first_zero_ratio[l].sum() / first_zero_ratio[l].size(1) / n_sub_clusters
 
-
         # print("Save similarity output")
         # with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv', 'w') as csvfile:
         #     writer = csv.writer(csvfile)
@@ -547,7 +555,6 @@ class KMeansClustering(object):
         #     for l in range(n_layers):
         #         writer.writerow([threshold_zero_ratio[l][c].item() for c in range(n_sub_clusters + 1)])
         #     writer.writerow([n_per_sub[c].item() for c in range(n_sub_clusters)])
-        exit()
 
         # # print cluster info
         # path = os.path.join(self.args.clustering_path, f'topk_{self.args.topk}_thres_{self.args.sim_threshold}.csv')
@@ -569,6 +576,7 @@ class KMeansClustering(object):
         self.final_cluster = torch.zeros(self.args.sub_cluster, dtype=torch.int64)
         for sub, final in final_clusters.items():
             self.final_cluster[int(sub)] = final
+        exit()
 
     # @torch.no_grad()
     # def nn_aware_clutering(self, dnn_model, train_loader):
@@ -924,7 +932,7 @@ def check_cluster_distribution(kmeans, train_loader):
         for c in batch_cluster:
             n_data_per_cluster[c.item()] += 1
 
-    assert sum(n_data_per_cluster.values()) == n_data,\
+    assert sum(n_data_per_cluster.values()) == n_data, \
         "Total # of data doesn't match (n_data: {}, calc: {})".format(n_data, sum(n_data_per_cluster.values()))
 
     ratio = np.zeros((kmeans.args.cluster))

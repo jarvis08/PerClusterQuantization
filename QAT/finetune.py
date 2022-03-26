@@ -29,7 +29,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.nnac:
         if clustering_model.final_cluster is not None:
             clustering_model.final_cluster = None
-        clustering_model.nn_aware_clutering(pretrained_model, train_loader, args.arch)
+        clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
     if pretrained_model:
