@@ -537,9 +537,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     #     del pretrained_model
 
     if args.nnac and clustering_model.final_cluster is None:
-        model.toggle_full_precision()
-        clustering_model.nn_aware_clutering(model, train_loader, args.arch)
-        model.toggle_full_precision()
+        with torch.no_grad():
+            model.toggle_full_precision()
+            clustering_model.nn_aware_clutering(model, train_loader, args.arch)
+            model.toggle_full_precision()
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)

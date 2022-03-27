@@ -362,8 +362,23 @@ class QuantAct_Daq(QuantAct):
             self.x_max,
             len(self.x_min), len(self.x_max), self.x_min, self.x_max)
 
+    def fix(self):
+        """
+        fix the activation range by setting running stat to False
+        """
+        self.running_stat = False
+        self.fix_flag = True
+
+    def unfix(self):
+        """
+        unfix the activation range by setting running stat to True
+        """
+        self.running_stat = True
+        self.fix_flag = False
+
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
-                identity_scaling_factor=None, identity_weight_scaling_factor=None):
+                identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
+                concat_scaling_factor=None, concat_weight_scaling_factor=None):
         """
         x: the activation that we need to quantize
         pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
@@ -391,58 +406,53 @@ class QuantAct_Daq(QuantAct):
 
         cluster = self.runtime_helper.batch_cluster
         # calculate the quantization range of the activations
-        if self.running_stat:
-            if self.isClassifier:
-                if self.act_percentile == 0:
-                    x_min = x.data.min()
-                    x_max = x.data.max()
-            else:
-                if self.act_percentile == 0:
-                    data = x.view(x.size(0), -1).detach()
-                    _max = data.max(dim=1).values.mean()
-                    _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
-                    x_max = _max
-                    x_min = _min
-                elif self.quant_mode == 'symmetric':
-                    x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
-                                                          self.act_percentile, output_tensor=True, num_cluster=self.runtime_helper.num_clusters)
-                # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
-                # that is to say our asymmetric quantization should always be after ReLU, which makes
-                # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
-                # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
-                elif self.quant_mode == 'asymmetric':
-                    x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
-                                                              self.act_percentile, output_tensor=True,
-                                                              num_cluster=self.runtime_helper.num_clusters)
-            # if self.isClassifier:
-            #     print('\n##### Classifier ######')
-            #     print(self.x_min)
-            #     print(self.x_max)
-            #     print('##### ########## ######')
-
-            # if not self.init:
-            #     self.x_min[cluster] += x_min
-            #     self.x_max[cluster] += x_max
-            #     self.init = True
-            try:
-                if self.x_min[cluster] == self.x_max[cluster]:
-                    self.x_min[cluster] += x_min
-                    self.x_max[cluster] += x_max
-                elif self.act_range_momentum == -1:
-                    self.x_min[cluster] = min(self.x_min[cluster], x_min)
-                    self.x_max[cluster] = max(self.x_max[cluster], x_max)
+        if not self.full_precision_flag:
+            if self.running_stat:
+                if self.isClassifier:
+                    if self.act_percentile == 0:
+                        x_min = x.data.min()
+                        x_max = x.data.max()
                 else:
-                    self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
-                    self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
-            except:
-                print('fixed_point_fn / self.x_min :', self.x_min)
-                print('fixed_point_fn / self.x_max :', self.x_max)
+                    if self.act_percentile == 0:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        _max = data.max(dim=1).values.mean()
+                        _min = data.min(dim=1).values.mean()  # for not 4 bit quantization
+                        x_max = _max
+                        x_min = _min
+                    elif self.quant_mode == 'symmetric':
+                        x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
+                                                                  self.act_percentile, output_tensor=True,
+                                                                  num_cluster=self.runtime_helper.num_clusters)
+                    # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
+                    # that is to say our asymmetric quantization should always be after ReLU, which makes
+                    # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
+                    # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
+                    elif self.quant_mode == 'asymmetric':
+                        x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
+                                                                  self.act_percentile, output_tensor=True,
+                                                                  num_cluster=self.runtime_helper.num_clusters)
+                try:
+                    if self.x_min[cluster] == self.x_max[cluster]:
+                        self.x_min[cluster] += x_min
+                        self.x_max[cluster] += x_max
+                    elif self.act_range_momentum == -1:
+                        self.x_min[cluster] = min(self.x_min[cluster], x_min)
+                        self.x_max[cluster] = max(self.x_max[cluster], x_max)
+                    else:
+                        self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (
+                                    1 - self.act_range_momentum)
+                        self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (
+                                    1 - self.act_range_momentum)
+                except:
+                    print('fixed_point_fn / self.x_min :', self.x_min)
+                    print('fixed_point_fn / self.x_max :', self.x_max)
 
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
-                                                                               self.x_min[cluster], self.x_max[cluster], False)
+                                                                               self.x_min[cluster], self.x_max[cluster],
+                                                                               False)
             # Note that our asymmetric quantization is implemented using scaled unsigned integers
             # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
             # and the self.act_zero_point should be 0.
@@ -466,16 +476,15 @@ class QuantAct_Daq(QuantAct):
                                               pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
                     start_channel_index += channel_num[i]
             else:
-                if identity is None:
-                    if pre_weight_scaling_factor is None:
-                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
-
-                        # print('self.act_scaling_factor :', self.act_scaling_factor)
-                        # print('pre_act_scaling_factor : ', pre_act_scaling_factor, '\n')
+                if concat is not None:
+                    if concat_weight_scaling_factor is None:
+                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor)
-                else:
+                                                        self.act_scaling_factor, 2, pre_act_scaling_factor,
+                                                        pre_weight_scaling_factor,
+                                                        concat, concat_scaling_factor,
+                                                        concat_weight_scaling_factor)
+                elif identity is not None:
                     if identity_weight_scaling_factor is None:
                         identity_weight_scaling_factor = self.identity_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
@@ -483,6 +492,12 @@ class QuantAct_Daq(QuantAct):
                                                         pre_weight_scaling_factor,
                                                         identity, identity_scaling_factor,
                                                         identity_weight_scaling_factor)
+                else:
+                    if pre_weight_scaling_factor is None:
+                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
+                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
+                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
+                                                        pre_weight_scaling_factor)
             correct_output_scale = self.act_scaling_factor.view(-1)
             return (quant_act_int * correct_output_scale, self.act_scaling_factor)
         else:
@@ -601,7 +616,7 @@ class QuantBnConv2d(Module):
             w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
             w_min = w_transform.min(dim=1).values
             w_max = w_transform.max(dim=1).values
-            
+
             conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
             weight_integer = self.weight_function(self.conv.weight, self.weight_bit, conv_scaling_factor)
             conv_output = F.conv2d(x, weight_integer, self.conv.bias, self.conv.stride, self.conv.padding,
@@ -612,7 +627,7 @@ class QuantBnConv2d(Module):
 
             # update mean and variance in running stats
             self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                        1 - self.bn.momentum) * batch_mean
+                    1 - self.bn.momentum) * batch_mean
             self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
             output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
@@ -662,18 +677,23 @@ class QuantBnConv2d(Module):
                     self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
                                                                self.convbn_scaling_factor)
                     if self.quantize_bias:
-                        bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
+                        bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
+                                                                                                                   -1)
                         self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
                     self.convbn_scaled_bias = scaled_bias
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
-            pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-            x_int = x / pre_act_scaling_factor
-            correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
+                pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
+                x_int = x / pre_act_scaling_factor
+                correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
+                return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                                 self.conv.dilation, self.conv.groups) * correct_output_scale,
+                        self.convbn_scaling_factor)
+            else:
+                return F.conv2d(x, scaled_weight, scaled_bias, self.conv.stride, self.conv.padding, self.conv.dilation,
+                                self.conv.groups)
 
 
 class QuantBn(Module):
@@ -1084,6 +1104,8 @@ def freeze_model(model):
     freeze the activation range
     """
     if type(model) == QuantAct:
+        model.fix()
+    elif type(model) == QuantAct_Daq:
         model.fix()
     elif type(model) == QuantConv2d:
         model.fix()
