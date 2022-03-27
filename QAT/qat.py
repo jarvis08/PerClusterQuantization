@@ -46,6 +46,8 @@ parser.add_argument('--qn_prob', default=0.2, type=float, help='quant noise prob
 parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant noise qn_prob increment gap')
 parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply conv each channel')
 
+parser.add_argument('--skt', action='store_true', help='For SKT')
+
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
@@ -117,6 +119,7 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
     elif arch == 'DenseNet121':
+        setattr(tools, 'pretrained_model_initializer', densenet121)
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)
