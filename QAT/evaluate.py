@@ -187,7 +187,6 @@ def visualize(args, model):
         save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted_std.csv')
 
 
-
 def save_range_out_dict(args, model):
     path = os.path.join('', 'range')
     if not os.path.exists(path):
@@ -221,7 +220,6 @@ def _evaluate(args, tools):
     finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
 
     # model.cuda()
-    del pretrained_model
     finetuned_model.cuda()
 
     # if not args.quantized:
@@ -249,8 +247,9 @@ def _evaluate(args, tools):
             validate(finetuned_model, test_loader, criterion)
             # save_range_out(args, model)
             # visualize(args, finetuned_model)
-            import pdb
-            pdb.set_trace()
+            # for m in finetuned_model.modules():
+            #     if isinstance(m, FusedConv2d):
+
             finetuned_model.set_quantization_params()
             arg_dict['bit'] = 4
             if args.dataset == 'cifar100':

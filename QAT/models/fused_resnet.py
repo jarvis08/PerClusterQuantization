@@ -109,8 +109,8 @@ class FusedBottleneck(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper, self.inference_bit \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper', 'inference_bit')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
@@ -148,20 +148,28 @@ class FusedBottleneck(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if not self.training:
-            return out
+        # if not self.training:
+        #     return out
+        #
+        # if self.apply_ema:
+        #     self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+        #     if self.runtime_helper.apply_fake_quantization:
+        #         s, z = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
+        #         out = fake_quantize(out, s, z, self.target_bit, use_ste=self.use_ste)
+        # else:
+        #     self.act_range[0], self.act_range[1] = get_range(out)
+        #     self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
-                out = fake_quantize(out, s, z, self.target_bit, use_ste=self.use_ste)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return out
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
+        self.a_bit = self.inference_bit
+        self.target_bit = self.inference_bit
         self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
         self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
         self.M0, self.shift = quantize_M(self.s1 / self.s_target)
@@ -187,8 +195,8 @@ class FusedResNet(nn.Module):
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FusedResNet, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper, self.inference_bit \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper', 'inference_bit')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -246,15 +254,21 @@ class FusedResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
-        if self.training:
-            if self.apply_ema:
-                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-                    x = fake_quantize(x, s, z, self.in_bit)
-            else:
-                self.in_range[0], self.in_range[1] = get_range(x)
-                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+        # if self.training:
+        #     if self.apply_ema:
+        #         self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
+        #         if self.runtime_helper.apply_fake_quantization:
+        #             s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        #             x = fake_quantize(x, s, z, self.in_bit)
+        #     else:
+        #         self.in_range[0], self.in_range[1] = get_range(x)
+        #         self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+        if self.apply_ema:
+            self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
+        else:
+            self.in_range[0], self.in_range[1] = get_range(x)
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         x = self.first_conv(x)
         x = self.bn1(x)
@@ -270,7 +284,10 @@ class FusedResNet(nn.Module):
         x = self.fc(x)
         return x
 
-    def set_quantization_params(self):
+    def set_quantization_params(self, inference_bit=None):
+        if inference_bit is not None:
+            self.in_bit = inference_bit
+            self.target_bit = inference_bit
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 

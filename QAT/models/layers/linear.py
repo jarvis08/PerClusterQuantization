@@ -244,8 +244,8 @@ class FusedLinear(nn.Module):
         self.layer_type = 'FusedLinear'
 
         self.arg_dict = arg_dict
-        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.inference_bit \
+            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'inference_bit')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
@@ -259,34 +259,46 @@ class FusedLinear(nn.Module):
         self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x):
-        if not self.training:
-            x = self.fc(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
+        # if not self.training:
+        #     x = self.fc(x)
+        #     if self._activation:
+        #         x = self._activation(x)
+        #     return x
 
-        w = self.fc.weight.detach()
-        s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
-        if not self.quant_noise:
-            w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
-        else:
-            w = apply_qn(self.fc.weight, s, z, self.w_bit, qn_prob=self.qn_prob)
-
-        out = F.linear(x, w, self.fc.bias)
+        x = self.fc(x)
         if self._activation:
-            out = self._activation(out)
+            x = self._activation(x)
+
+        # w = self.fc.weight.detach()
+        # s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
+        # if not self.quant_noise:
+        #     w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
+        # else:
+        #     w = apply_qn(self.fc.weight, s, z, self.w_bit, qn_prob=self.qn_prob)
+        #
+        # out = F.linear(x, w, self.fc.bias)
+        # if self._activation:
+        #     out = self._activation(out)
+        #
+        # if self.apply_ema:
+        #     self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+        #     if self.runtime_helper.apply_fake_quantization:
+        #         s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+        #         out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+        # else:
+        #     self.act_range[0], self.act_range[1] = get_range(out)
+        #     self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
         else:
-            self.act_range[0], self.act_range[1] = get_range(out)
+            self.act_range[0], self.act_range[1] = get_range(x)
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-        return out
+        return x
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        self.w_bit = self.inference_bit
+        self.a_bit = self.inference_bit
         self.s1, self.z1 = s1, z1
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
                                         symmetric=self.symmetric)

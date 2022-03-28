@@ -213,8 +213,8 @@ class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
-            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
+        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters, self.inference_bit = \
+            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster', 'inference_bit')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -229,15 +229,18 @@ class FusedBnReLU(nn.Module):
         self.activation = activation(inplace=True) if activation else None
 
     def forward(self, x, external_range=None):
-        if not self.training:
-            return self._forward_impl(x)
+        # if not self.training:
+        #     return self._forward_impl(x)
 
-        out = self._fake_quantized_bn(x)
-        if external_range is None:
-            self._update_activation_range(out)
-        if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out, external_range)
-        return out
+        x = self._forward_impl(x)
+        self._update_activation_range(x)
+
+        # out = self._fake_quantized_bn(x)
+        # if external_range is None:
+        #     self._update_activation_range(out)
+        # if self.runtime_helper.apply_fake_quantization:
+        #     out = self._fake_quantize_activation(out, external_range)
+        return x
 
     def _forward_impl(self, x):
         x = self.bn(x)
@@ -279,6 +282,7 @@ class FusedBnReLU(nn.Module):
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        self.a_bit = self.inference_bit
         self.s1, self.z1 = s1, z1
 
         weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))
