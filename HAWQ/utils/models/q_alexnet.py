@@ -280,6 +280,7 @@ class Q_AlexNet_Daq(nn.Module):
         fc.in_features = 4096
         fc.out_features = 10
         self.fc3 = QuantLinear()
+        self.fc3.is_classifier = True
         self.fc3.set_param(fc, model_dict, 'output.fc3')
 
     def toggle_full_precision(self):
