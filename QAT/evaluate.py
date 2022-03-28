@@ -207,7 +207,7 @@ def _evaluate(args, tools):
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
     arg_dict = deepcopy(vars(args))
-    arg_dict['inference_bit'] = torch.tensor(arg_dict['inference_bit'], dtype=torch.int8)
+    arg_dict['inference_bit'] = torch.tensor(arg_dict['inference_bit'], dtype=torch.int8, device='cuda')
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
 
