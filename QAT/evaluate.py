@@ -211,12 +211,19 @@ def _evaluate(args, tools):
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
 
-    if args.skt:
-        model = tools.pretrained_model_initializer(pretrained=True, smooth=args.smooth)
-    else:
-        model = load_dnn_model(arg_dict, tools)
+    # if args.skt:
+    #     model = tools.pretrained_model_initializer(pretrained=True, smooth=args.smooth)
+    # else:
+    #     model = load_dnn_model(arg_dict, tools)
 
-    model.cuda()
+    arg_dict['bit'] = 32
+    pretrained_model = load_dnn_model(arg_dict, tools)
+    finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
+
+    # model.cuda()
+    del pretrained_model
+    finetuned_model.cuda()
+
     # if not args.quantized:
     #    if args.dataset == 'imagenet':
     #        summary(model, (3, 224, 224))
@@ -228,7 +235,7 @@ def _evaluate(args, tools):
 
     if args.darknet:
         darknet_loader = load_preprocessed_cifar10_from_darknet()
-        validate_darknet_dataset(model, darknet_loader, criterion)
+        # validate_darknet_dataset(model, darknet_loader, criterion)
 
     else:
         normalizer = get_normalizer(args.dataset)
@@ -237,8 +244,21 @@ def _evaluate(args, tools):
         if args.cluster > 1:
             clustering_model = tools.clustering_method(args)
             clustering_model.load_clustering_model()
-            pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
+            # pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
         else:
-            validate(model, test_loader, criterion)
+            validate(finetuned_model, test_loader, criterion)
             # save_range_out(args, model)
-            visualize(args, model)
+            # visualize(args, finetuned_model)
+            import pdb
+            pdb.set_trace()
+            finetuned_model.set_quantization_params()
+            arg_dict['bit'] = 4
+            if args.dataset == 'cifar100':
+                quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+            else:
+                quantized_model = tools.quantized_model_initializer(arg_dict)
+            quantized_model = tools.quantizer(finetuned_model, quantized_model)
+            del finetuned_model
+            quantized_model.cuda()
+            validate(quantized_model, test_loader, criterion)
+
