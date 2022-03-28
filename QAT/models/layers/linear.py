@@ -297,8 +297,8 @@ class FusedLinear(nn.Module):
         return x
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.w_bit = self.inference_bit
-        self.a_bit = self.inference_bit
+        self.w_bit.data = self.inference_bit
+        self.a_bit.data = self.inference_bit
         self.s1, self.z1 = s1, z1
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
                                         symmetric=self.symmetric)

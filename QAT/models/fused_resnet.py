@@ -168,8 +168,8 @@ class FusedBottleneck(nn.Module):
         return out
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
-        self.a_bit = self.inference_bit
-        self.target_bit = self.inference_bit
+        self.a_bit.data = self.inference_bit
+        self.target_bit.data = self.inference_bit
         self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
         self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
         self.M0, self.shift = quantize_M(self.s1 / self.s_target)
@@ -284,10 +284,9 @@ class FusedResNet(nn.Module):
         x = self.fc(x)
         return x
 
-    def set_quantization_params(self, inference_bit=None):
-        if inference_bit is not None:
-            self.in_bit = inference_bit
-            self.target_bit = inference_bit
+    def set_quantization_params(self):
+        self.in_bit.data = self.inference_bit
+        self.target_bit.data = self.inference_bit
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 

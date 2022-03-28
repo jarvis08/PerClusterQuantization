@@ -207,6 +207,7 @@ def _evaluate(args, tools):
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
     arg_dict = deepcopy(vars(args))
+    arg_dict['inference_bit'] = torch.tensor(arg_dict['inference_bit'], dtype=torch.int8)
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
 
@@ -215,7 +216,6 @@ def _evaluate(args, tools):
     # else:
     #     model = load_dnn_model(arg_dict, tools)
 
-    arg_dict['bit'] = 32
     pretrained_model = load_dnn_model(arg_dict, tools)
     finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
 
@@ -251,7 +251,6 @@ def _evaluate(args, tools):
             #     if isinstance(m, FusedConv2d):
 
             finetuned_model.set_quantization_params()
-            arg_dict['bit'] = 4
             if args.dataset == 'cifar100':
                 quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
             else:

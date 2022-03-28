@@ -513,7 +513,7 @@ class FusedConv2d(nn.Module):
         self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.w_bit = self.inference_bit
+        self.w_bit.data = self.inference_bit
         self.s1, self.z1 = s1, z1
 
         zero = self.runtime_helper.fzero
