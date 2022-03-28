@@ -281,6 +281,45 @@ class Q_AlexNet_Daq(nn.Module):
         self.fc3.is_classifier = True
         self.fc3.set_param(fc, model_dict, 'output.fc3')
 
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct_Daq, QuantLinear, QuantBnConv2d, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
+    def initialize_counter(self, x, n_clusters):
+        self.zero_counter = []
+        convs = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        acts = [self.act1, self.act2, self.act3, self.act4, self.act5]
+
+        for i in range(len(convs)):
+            x = convs[i](x)
+            x = acts[i](x)
+            n_features = x.view(-1).size(0)
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        if not hasattr(self, 'zero_counter'):
+            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+        convs = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        acts = [self.act1, self.act2, self.act3, self.act4, self.act5]
+        for i in range(len(convs)):
+            x = convs[i](x)
+            x = acts[i](x)
+
+            n_features = self.zero_counter[i].size(1)
+            for idx in range(x.size(0)):
+                flattened = x[idx].view(-1)
+                zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+                zeros_idx %= n_features
+                self.zero_counter[i][cluster, zeros_idx] += 1
+
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)
 
