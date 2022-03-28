@@ -175,8 +175,8 @@ class Q_AlexNet_Daq(nn.Module):
         super().__init__()
         features = getattr(model, 'features')
 
-        self.quant_input = QuantAct()
-        self.quant_act_int32 = QuantAct()
+        self.quant_input = QuantAct_Daq()
+        self.quant_act_int32 = QuantAct_Daq()
 
         # stage1
         stage = getattr(features, 'stage1')
@@ -190,11 +190,11 @@ class Q_AlexNet_Daq(nn.Module):
 
         self.conv1 = QuantConv2d()
         self.conv1.set_param(conv_block.conv, model_dict, 'features.stage1.unit1.conv')
-        self.quant_act1 = QuantAct()
+        self.quant_act1 = QuantAct_Daq()
         self.act1 = nn.ReLU()
 
         self.maxpool1 = QuantMaxPool2d(ceil_mode=True)
-        self.quant_act1_1 = QuantAct()
+        self.quant_act1_1 = QuantAct_Daq()
 
         # stage2
         stage = getattr(features, 'stage2')
@@ -206,11 +206,11 @@ class Q_AlexNet_Daq(nn.Module):
         conv_block.conv.padding = (2, 2)
         self.conv2 = QuantConv2d()
         self.conv2.set_param(conv_block.conv, model_dict, 'features.stage2.unit1.conv')
-        self.quant_act2 = QuantAct()
+        self.quant_act2 = QuantAct_Daq()
         self.act2 = nn.ReLU()
 
         self.maxpool2 = QuantMaxPool2d(ceil_mode=True)
-        self.quant_act2_1 = QuantAct()
+        self.quant_act2_1 = QuantAct_Daq()
 
         # stage3
         stage = getattr(features, 'stage3')
@@ -222,7 +222,7 @@ class Q_AlexNet_Daq(nn.Module):
         conv_block.conv.padding = (1, 1)
         self.conv3 = QuantConv2d()
         self.conv3.set_param(conv_block.conv, model_dict, 'features.stage3.unit1.conv')
-        self.quant_act3 = QuantAct()
+        self.quant_act3 = QuantAct_Daq()
         self.act3 = nn.ReLU()
 
         conv_block = getattr(stage, 'unit2')
@@ -233,7 +233,7 @@ class Q_AlexNet_Daq(nn.Module):
         conv_block.conv.padding = (1, 1)
         self.conv4 = QuantConv2d()
         self.conv4.set_param(conv_block.conv, model_dict, 'features.stage3.unit2.conv')
-        self.quant_act4 = QuantAct()
+        self.quant_act4 = QuantAct_Daq()
         self.act4 = nn.ReLU()
 
         conv_block = getattr(stage, 'unit3')
@@ -244,13 +244,13 @@ class Q_AlexNet_Daq(nn.Module):
         conv_block.conv.padding = (1, 1)
         self.conv5 = QuantConv2d()
         self.conv5.set_param(conv_block.conv, model_dict, 'features.stage3.unit3.conv')
-        self.quant_act5 = QuantAct()
+        self.quant_act5 = QuantAct_Daq()
         self.act5 = nn.ReLU()
 
         self.maxpool3 = QuantMaxPool2d(ceil_mode=True)
-        self.quant_act5_1 = QuantAct()
+        self.quant_act5_1 = QuantAct_Daq()
         self.avgpool = QuantAveragePool2d(output=(1, 1))
-        self.quant_act5_2 = QuantAct()
+        self.quant_act5_2 = QuantAct_Daq()
 
         output = getattr(model, 'output')
         # fc_block = getattr(features, 'fc')
@@ -261,7 +261,8 @@ class Q_AlexNet_Daq(nn.Module):
         fc_block.fc.out_features = 4096
         self.fc1 = QuantLinear()
         self.fc1.set_param(fc_block.fc, model_dict, 'output.fc1.fc')
-        self.quant_act6 = QuantAct()
+        self.quant_act6 = QuantAct_Daq()
+        self.quant_act6.isClassifier = True
         self.act6 = nn.ReLU()
 
         # fc2
@@ -270,7 +271,8 @@ class Q_AlexNet_Daq(nn.Module):
         fc_block.fc.out_features = 4096
         self.fc2 = QuantLinear()
         self.fc2.set_param(fc_block.fc, model_dict, 'output.fc2.fc')
-        self.quant_act7 = QuantAct()
+        self.quant_act7 = QuantAct_Daq()
+        self.quant_act7.isClassifier = True
         self.act7 = nn.ReLU()
 
         # fc3
@@ -278,7 +280,6 @@ class Q_AlexNet_Daq(nn.Module):
         fc.in_features = 4096
         fc.out_features = 10
         self.fc3 = QuantLinear()
-        self.fc3.is_classifier = True
         self.fc3.set_param(fc, model_dict, 'output.fc3')
 
     def toggle_full_precision(self):
