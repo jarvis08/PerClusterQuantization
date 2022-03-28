@@ -329,22 +329,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    quantize_arch = quantize_arch_dict[args.arch]
-    # pretrained_model = model
-
     if args.cluster > 1:
         runtime_helper = RuntimeHelper()
         runtime_helper.set_pcq_arguments(args)
-        if args.arch.lower() == 'alexnet':
-            model = quantize_arch(model, model_dict, runtime_helper)
-        else:
-            model = quantize_arch(model, runtime_helper)
+
+    quantize_arch = quantize_arch_dict[args.arch]
+
+    if args.arch.lower() == 'alexnet':
+        model = quantize_arch(model, model_dict, runtime_helper)
     else:
-        if args.arch.lower() == 'alexnet':
-            model = quantize_arch(model, model_dict)
-        else:
-            model = quantize_arch(model)
-        # model = pretrained_model
+        model = quantize_arch(model, runtime_helper)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
