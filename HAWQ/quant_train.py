@@ -20,7 +20,6 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-#from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
 from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string
@@ -231,6 +230,62 @@ def main(args_daq, data_loaders, clustering_model):
 
 
 def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
+    def set_args_arch(args):
+        arch = args.arch.lower()
+        if arch == 'resnet20':
+            return arch + "_" + args.data.lower()
+        elif arch == 'densenet':
+            return "densenet121"
+        else :
+            return arch
+
+    def create_model(args):
+        pretrained = args.pretrained and not args.resume
+        logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
+        if 'unfold' in args.arch:
+            if args.data.lower() == 'cifar10':
+                model = ptcv_get_model('resnet20_cifar10', pretrained=pretrained)
+            elif args.data.lower() == 'cifar100':
+                model = ptcv_get_model('resnet20_cifar100', pretrained=pretrained)
+            elif args.data.lower() == 'svhn':
+                model = ptcv_get_model('resnet20_svhn', pretrained=pretrained)
+        else:
+            model = ptcv_get_model(args.arch, pretrained=pretrained)
+        if args.distill_method != 'None':
+            logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
+            teacher = ptcv_get_model(args.teacher_arch, pretrained=pretrained)
+            return model, teacher
+        return model, None
+
+    def transfer_param(args, model):
+        if args.arch.lower() == 'resnet50':
+            import torchvision.models as vision_models
+            vision = vision_models.resnet50(pretrained=True)
+            vision_dict = vision.state_dict()
+            model_dict = model.state_dict()
+            for cv, our in zip(model_dict.items(), vision_dict.items()):
+                model_dict[cv[0]].copy_(vision_dict[our[0]])
+        elif args.arch.lower() == 'densenet121':
+            import torchvision.models as vision_models
+            vision = vision_models.densenet121(pretrained=True)
+            vision_dict = vision.state_dict()
+            model_dict = model.state_dict()
+            for cv, our in zip(model_dict.items(), vision_dict.items()):
+                model_dict[cv[0]].copy_(vision_dict[our[0]])
+        elif args.arch.lower() == 'alexnet':
+            checkpoint = torch.load(args.dnn_path)
+            loaded_dict = checkpoint['state_dict']
+            model_dict = model.state_dict()
+            for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+                model_dict[cur[0]] = loaded_dict[from_[0]]
+        else:
+            checkpoint = torch.load(args.dnn_path)
+            loaded_dict = checkpoint['state_dict']
+            model_dict = model.state_dict()
+            for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+                model_dict[cur[0]].copy_(loaded_dict[from_[0]])
+        return model_dict
+
     global best_acc1
     args.gpu = gpu
     runtime_helper = None
@@ -247,82 +302,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
-    
-    # Custom model for CIFAR10 & CIFAR100
-    if args.arch.lower() == 'resnet20':
-        if args.data.lower() == 'cifar10':
-            args.arch = 'resnet20_cifar10'
-        elif args.data.lower() == 'svhn':
-            args.arch = 'resnet20_svhn'
-        else:
-            args.arch = 'resnet20_cifar100'
-    elif args.arch.lower() == 'densenet':
-        args.arch = 'densenet121'
 
-    # create model
-    if args.pretrained and not args.resume:
-        logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
-        # Custom model for CIFAR10 & CIFAR100
-        if 'unfold' not in args.arch:
-            model = ptcv_get_model(args.arch, pretrained=True)
-
-        elif 'unfold' in args.arch:
-            if args.data.lower() == 'cifar10':
-                model = ptcv_get_model('resnet20_cifar10', pretrained=True)
-            elif args.data.lower() == 'cifar100':
-                model = ptcv_get_model('resnet20_cifar100', pretrained=True)
-            elif args.data.lower() == 'svhn':
-                model = ptcv_get_model('resnet20_svhn', pretrained=True)
-
-        if args.distill_method != 'None':
-            logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
-            teacher = ptcv_get_model(args.teacher_arch, pretrained=True)
-    else:
-        logging.info("=> creating PyTorchCV model '{}'".format(args.arch))
-        
-        if 'unfold' in args.arch:
-            if args.data.lower() == 'cifar10':
-                model = ptcv_get_model('resnet20_cifar10', pretrained=True)
-            elif args.data.lower() == 'cifar100':
-                model = ptcv_get_model('resnet20_cifar100', pretrained=True)
-            elif args.data.lower() == 'svhn':
-                model = ptcv_get_model('resnet20_svhn', pretrained=True)
-        else :
-           model = ptcv_get_model(args.arch, pretrained=False)
-        if args.distill_method != 'None':
-            logging.info("=> creating PyTorchCV teacher '{}'".format(args.teacher_arch))
-            teacher = ptcv_get_model(args.teacher_arch, pretrained=False)
-
-    if args.transfer_param:
-        if args.arch.lower() == 'resnet50':
-            import torchvision.models as vision_models
-            vision = vision_models.resnet50(pretrained=True)
-            vision_dict = vision.state_dict()
-            model_dict = model.state_dict()
-            for cv, our in zip(model_dict.items(), vision_dict.items()):
-                model_dict[cv[0]].copy_(vision_dict[our[0]])
-        elif args.arch.lower() == 'densenet121':
-            import torchvision.models as vision_models
-            vision = vision_models.densenet121(pretrained=True)
-            vision_dict = vision.state_dict()
-            model_dict = model.state_dict()
-            for cv, our in zip(model_dict.items(), vision_dict.items()):
-                model_dict[cv[0]].copy_(vision_dict[our[0]])
-        else:
-            if args.arch.lower() == 'alexnet':
-                checkpoint = torch.load(args.dnn_path)
-                loaded_dict = checkpoint['state_dict']
-                model_dict = model.state_dict()
-                for cv, our in zip(model_dict.items(), loaded_dict.items()):
-                    model_dict[cv[0]] = loaded_dict[our[0]]
-
-            else:
-                checkpoint = torch.load(args.dnn_path)
-                loaded_dict = checkpoint['state_dict']
-                model_dict = model.state_dict()
-                for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-                    model_dict[cur[0]].copy_(loaded_dict[from_[0]])
-
+    args.arch = set_args_arch(args)
+    model, teacher = create_model(args)  # Create Model
+    model_dict = transfer_param(args, model) if args.transfer_param else None
 
     if args.resume and not args.resume_quantize:
         if os.path.isfile(args.resume):
@@ -346,22 +329,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    quantize_arch = quantize_arch_dict[args.arch]
-    # pretrained_model = model
-
     if args.cluster > 1:
         runtime_helper = RuntimeHelper()
         runtime_helper.set_pcq_arguments(args)
-        if args.arch.lower() == 'alexnet':
-            model = quantize_arch(model, model_dict, runtime_helper)
-        else:
-            model =quantize_arch(model, runtime_helper)
+
+    quantize_arch = quantize_arch_dict[args.arch]
+
+    if args.arch.lower() == 'alexnet':
+        model = quantize_arch(model, model_dict, runtime_helper)
     else:
-        if args.arch.lower() == 'alexnet':
-            model = quantize_arch(model, model_dict)
-        else:
-            model = quantize_arch(model)
-        # model = pretrained_model
+        model = quantize_arch(model, runtime_helper)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
