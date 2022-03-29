@@ -232,6 +232,42 @@ class Q_ResNet20_Daq(nn.Module):
 
         return x
 
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        x = self.quant_input(x)
+        x = self.quant_init_block_convbn(x)
+        x = self.quant_act_int32(x)
+
+        initialized = True
+        if not hasattr(self, 'zero_counter'):
+            initialized = False
+            n_features = x.view(-1).size(0)
+            self.zero_counter = []
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        l_idx = 0
+        n_features = self.zero_counter[l_idx].size(1)
+        for i in range(x.size(0)):
+            flattened = x[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        for stage_num in range(0, 3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, l_idx = tmp_func.count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
+
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct_Daq, QuantLinear, QuantBnConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
     def set_daq_helper(self, runtime_helper):
         self.runtime_helper = runtime_helper
         self.quant_input.runtime_helper = runtime_helper
@@ -775,6 +811,77 @@ class Q_ResBlockBn_Daq(nn.Module):
         x = nn.ReLU()(x)
 
         return x, act_scaling_factor
+
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
+        # make empty list space
+        if not initialized:
+            _x = x[0].unsqueeze(0)
+            if self.resize_identity:
+                _x = self.quant_act(_x)
+                identity = self.quant_identity_convbn(_x)
+            else:
+                identity = _x
+                _x = self.quant_act(_x)
+
+            _x = self.quant_convbn1(_x)
+            _x = nn.ReLU()(_x)
+            _x = self.quant_act1(_x)
+            ###
+            n_features = _x.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+            ###
+            _x = self.quant_convbn2(_x)
+
+            _x = _x + identity
+
+            # if self.resize_identity:
+            #     _x = self.quant_act_int32(_x)
+            # else:
+            #     _x = self.quant_act_int32(_x)
+            _x = nn.ReLU()(_x)
+            n_features = _x.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        if self.resize_identity:
+            x = self.quant_act(x)
+            identity = self.quant_identity_convbn(x)
+        else:
+            identity = x
+            x = self.quant_act(x)
+
+        x = self.quant_convbn1(x)
+        x = nn.ReLU()(x)
+        x = self.quant_act1(x)
+        ###
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(x.size(0)):
+            flatten = x[i].view(-1)
+            zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+        ###
+
+        x = self.quant_convbn2(x)
+
+        x = x + identity
+
+        # if self.resize_identity:
+        #     x = self.quant_act_int32(x)
+        # else:
+        #     x = self.quant_act_int32(x)
+
+        x = nn.ReLU()(x)
+        ###
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(x.size(0)):
+            flatten = x[i].view(-1)
+            zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+        ###
+        return x, l_idx
 
 
 class Q_ResBlockBn(nn.Module):
