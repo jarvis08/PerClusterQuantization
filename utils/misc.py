@@ -160,8 +160,8 @@ class InputContainer(object):
         for c in range(self.num_clusters):
             if self.container[c][0].size(0) > 0:
                 self.leftover_cluster_data[c] = True
-                self.leftover_batch[c][0] = self.container[c][0][:-1]
-                self.leftover_batch[c][1] = self.container[c][1][:-1]
+                self.leftover_batch[c][0] = self.container[c][0]
+                self.leftover_batch[c][1] = self.container[c][1]
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -356,7 +356,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 if container.leftover_cluster_data[c]:
                     input, target, runtime_helper.qat_batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
                     input, target = input.cuda(), target.cuda()
-                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int, device='cuda', requires_grad=False)
+                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
 
                     output = model(input)
 
