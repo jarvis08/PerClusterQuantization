@@ -1051,8 +1051,8 @@ class QuantConv2d(Module):
                     lower_index = math.ceil(input_length * lower_percentile * 0.01)
                     upper_index = math.ceil(input_length * upper_percentile * 0.01)
 
-                w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
-                w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
+                    w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
+                    w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
         else:
             if self.weight_percentile == 0:
                 w_min = w.data.min()
