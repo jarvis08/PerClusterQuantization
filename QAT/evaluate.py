@@ -138,11 +138,11 @@ def visualize(args, model):
             weight_range_sorted = sorted(list(weight_data_), key=lambda x: x[1]-x[0], reverse=True)
             weight_range.append((weight_range_sorted[0][1] - weight_range_sorted[0][0]) / (weight_range_sorted[-1][1] - weight_range_sorted[-1][0]))
 
-            conv_output.append(output_range_sorted)
-            conv_weight.append(weight_range_sorted)
+            conv_output.append(act_data_)
+            conv_weight.append(weight_data_)
 
-            output_std.append(np.array([output_range_sorted[i][1] - output_range_sorted[i][0] for i in range(act_data_.shape[0])]).std())
-            weight_std.append(np.array([weight_range_sorted[i][1] - weight_range_sorted[i][0] for i in range(act_data_.shape[0])]).std())
+            output_std.append(np.array([act_data_[i][1] - act_data_[i][0] for i in range(act_data_.shape[0])]).std())
+            weight_std.append(np.array([weight_data_[i][1] - weight_data_[i][0] for i in range(act_data_.shape[0])]).std())
 
     # output_indices = np.argsort(np.array(output_range))[-3:]
     # weight_indices = np.argsort(np.array(weight_range))[-3:]
@@ -176,15 +176,23 @@ def visualize(args, model):
     #     if idx in overlap:
     #         continue
     #     save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted.csv', output_range[idx], weight_range[idx])
+
+    # for idx in output_indices:
+    #     if idx in overlap:
+    #         save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv', overlapped=True)
+    #     else:
+    #         save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv')
+    # for idx in weight_indices:
+    #     if idx in overlap:
+    #         continue
+    #     save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted_std.csv')
+
     for idx in output_indices:
-        if idx in overlap:
-            save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv', overlapped=True)
-        else:
-            save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv')
+        sorted_list = sorted(range(conv_output[idx].shape[0]), key=lambda x: conv_output[idx][x][1] - conv_output[idx][x][0], reverse=True)
+        save_std_results_to_csv(conv_output[idx][sorted_list], conv_weight[idx][sorted_list], path + f'/conv{idx}_output_sorted_std.csv')
     for idx in weight_indices:
-        if idx in overlap:
-            continue
-        save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted_std.csv')
+        sorted_list = sorted(range(conv_weight[idx].shape[0]), key=lambda x: conv_weight[idx][x][1] - conv_weight[idx][x][0], reverse=True)
+        save_std_results_to_csv(conv_output[idx][sorted_list], conv_weight[idx][sorted_list], path + f'/conv{idx}_weight_sorted_std.csv')
 
 
 
@@ -211,18 +219,17 @@ def _evaluate(args, tools):
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
 
-    # if args.skt:
-    #     model = tools.pretrained_model_initializer(pretrained=True, smooth=args.smooth)
-    # else:
-    #     model = load_dnn_model(arg_dict, tools)
+    if args.skt:
+        model = tools.pretrained_model_initializer(pretrained=True, smooth=args.smooth)
+    else:
+        model = load_dnn_model(arg_dict, tools)
 
-    arg_dict['bit'] = 32
-    pretrained_model = load_dnn_model(arg_dict, tools)
-    finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
+    # model = load_dnn_model(arg_dict, tools)
+    # finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
 
-    # model.cuda()
-    del pretrained_model
-    finetuned_model.cuda()
+    model.cuda()
+    # del pretrained_model
+    # finetuned_model.cuda()
 
     # if not args.quantized:
     #    if args.dataset == 'imagenet':
@@ -246,19 +253,16 @@ def _evaluate(args, tools):
             clustering_model.load_clustering_model()
             # pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
         else:
-            validate(finetuned_model, test_loader, criterion)
+            validate(model, test_loader, criterion)
             # save_range_out(args, model)
-            # visualize(args, finetuned_model)
-            import pdb
-            pdb.set_trace()
-            finetuned_model.set_quantization_params()
-            arg_dict['bit'] = 4
-            if args.dataset == 'cifar100':
-                quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
-            else:
-                quantized_model = tools.quantized_model_initializer(arg_dict)
-            quantized_model = tools.quantizer(finetuned_model, quantized_model)
-            del finetuned_model
-            quantized_model.cuda()
-            validate(quantized_model, test_loader, criterion)
+            visualize(args, model)
+            # finetuned_model.set_quantization_params()
+            # if args.dataset == 'cifar100':
+            #     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+            # else:
+            #     quantized_model = tools.quantized_model_initializer(arg_dict)
+            # quantized_model = tools.quantizer(finetuned_model, quantized_model)
+            # del finetuned_model
+            # quantized_model.cuda()
+            # validate(quantized_model, test_loader, criterion)
 
