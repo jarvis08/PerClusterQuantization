@@ -39,7 +39,6 @@ class RuntimeHelper(object):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
 
-        # mask = torch.ones(self.val_batch, dtype=torch.int64, device='cuda')
         mask = torch.ones(1, dtype=torch.int64, device='cuda')
         self.mask_4d = mask.view(-1, 1, 1, 1)
         self.mask_2d = mask.view(-1, 1)
@@ -354,9 +353,9 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
             container.check_leftover()
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
-                    input, target, runtime_helper.qat_batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
+                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
                     input, target = input.cuda(), target.cuda()
-                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.qat_batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
+                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
 
                     output = model(input)
 
@@ -378,32 +377,40 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
 
 def load_dnn_model(arg_dict, tools, path=None):
     model = None
-    if arg_dict['quantized']:
-        if arg_dict['dataset'] == 'cifar100':
-            model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+    if arg_dict['quant_base'] == 'qat':
+        if arg_dict['quantized']:
+            if arg_dict['dataset'] == 'cifar100':
+                model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+            else:
+                model = tools.quantized_model_initializer(arg_dict)
+        elif arg_dict['fused']:
+            if arg_dict['dataset'] == 'cifar100':
+                model = tools.fused_model_initializer(arg_dict, num_classes=100)
+            else:
+                model = tools.fused_model_initializer(arg_dict)
         else:
-            model = tools.quantized_model_initializer(arg_dict)
-    elif arg_dict['fused']:
-        if arg_dict['dataset'] == 'cifar100':
-            model = tools.fused_model_initializer(arg_dict, num_classes=100)
-        else:
-            model = tools.fused_model_initializer(arg_dict)
+            if arg_dict['dataset'] == 'imagenet':
+                if arg_dict['arch'] == 'MobileNetV3':
+                    return vision_models.mobilenet_v3_small(pretrained=True)
+                elif arg_dict['arch'] == 'ResNet18':
+                    return vision_models.resnet18(pretrained=True)
+                elif arg_dict['arch'] == 'AlexNet':
+                    return vision_models.alexnet(pretrained=True)
+                elif arg_dict['arch'] == 'ResNet50':
+                    return vision_models.resnet50(pretrained=True)
+                elif arg_dict['arch'] == 'DenseNet121':
+                    return vision_models.densenet121(pretrained=True)
+            elif arg_dict['dataset'] == 'cifar100':
+                model = tools.pretrained_model_initializer(num_classes=100)
+            else:
+                model = tools.pretrained_model_initializer()
+    # For HAWQ NNAC
     else:
-        if arg_dict['dataset'] == 'imagenet':
-            if arg_dict['arch'] == 'MobileNetV3':
-                return vision_models.mobilenet_v3_small(pretrained=True)
-            elif arg_dict['arch'] == 'ResNet18':
-                return vision_models.resnet18(pretrained=True)
-            elif arg_dict['arch'] == 'AlexNet':
-                return vision_models.alexnet(pretrained=True)
-            elif arg_dict['arch'] == 'ResNet50':
-                return vision_models.resnet50(pretrained=True)
-            elif arg_dict['arch'] == 'DenseNet121':
-                return vision_models.densenet121(pretrained=True)
-        elif arg_dict['dataset'] == 'cifar100':
+        if arg_dict['dataset'] == 'cifar100':
             model = tools.pretrained_model_initializer(num_classes=100)
         else:
             model = tools.pretrained_model_initializer()
+
     if path is not None:
         checkpoint = torch.load(path)
     else:
@@ -454,7 +461,11 @@ def set_clustering_dir(args):
     path = add_path(path, args.dataset)
 
     if args.sub_cluster:
-        name = f'k{args.cluster}.sub{args.sub_cluster}.part{args.partition}.{args.repr_method}'
+        if args.nnac:
+            name = f'nnac.k{args.cluster}.sub{args.sub_cluster}.part{args.partition}.{args.repr_method}.topk_{args.topk}.sim_{args.sim_threshold}'
+        else:
+            name = f'k{args.cluster}.sub{args.sub_cluster}.part{args.partition}.{args.repr_method}'
+
     else:
         name = f'k{args.cluster}.part{args.partition}.{args.repr_method}'
     path = add_path(path, name, allow_existence=False)
@@ -501,8 +512,8 @@ def make_indices_list(clustering_model, train_loader, args, runtime_helper):
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Indices per Cluster")
-                runtime_helper.qat_batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                for c in runtime_helper.qat_batch_cluster:
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                for c in runtime_helper.batch_cluster:
                     total_list[c].append(idx)
                     idx += 1
                 t.set_postfix()

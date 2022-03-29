@@ -1025,8 +1025,6 @@ class Q_ResBlockBn_Daq(nn.Module):
         return x, l_idx
 
 
-
-
 class Q_ResBlockBn(nn.Module):
     """
         Quantized ResNet block with residual path.

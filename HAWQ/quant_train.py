@@ -228,6 +228,33 @@ def main(args_daq, data_loaders, clustering_model):
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
 
+def specify_target_arch(arch, dataset, cluster):
+    arch = 'MLP' if arch == 'mlp' else arch
+    if arch == 'alexnet':
+        if dataset == 'imagenet':
+            arch = 'AlexNet'
+        else:
+            arch = 'AlexNetSmall'
+    elif arch == 'resnet':
+        if dataset == 'imagenet':
+            arch = 'ResNet50'
+        else:
+            arch = 'ResNet20'
+    elif arch == 'mobilenet':
+        arch = 'MobileNetV3'
+    elif arch == 'bert':
+        arch = 'Bert'
+    elif arch == 'densenet':
+        arch = 'DenseNet121'
+
+    # HAWQ
+    if arch == 'resnet20_cifar10':
+        arch = 'ResNet20'
+
+    from QAT.qat import set_func_for_target_arch
+    model_initializers = set_func_for_target_arch(arch, False)
+    return arch, model_initializers
+
 
 def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     def set_args_arch(args):
@@ -481,6 +508,15 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         model.toggle_full_precision()
         clustering_model.nn_aware_clutering(model, train_loader)
         model.toggle_full_precision()
+    # if args.nnac and clustering_model.final_cluster is None:
+    #     from copy import deepcopy
+    #     args_dict = deepcopy(vars(args))
+    #     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
+    #     pretrained_model = load_dnn_model(args_dict, tools)
+    #     pretrained_model.cuda()
+    #     clustering_model.nn_aware_clutering(pretrained_model, train_loader, args.arch)
+    #     del args_dict
+    #     del pretrained_model
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)

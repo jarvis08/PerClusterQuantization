@@ -125,7 +125,6 @@ class PCQBnReLU(nn.Module):
     def _forward_impl(self, x):
         bc = self.runtime_helper.qat_batch_cluster
         out = self.norms[bc](x)
-
         if self.activation:
             out = self.activation(out)
         return out

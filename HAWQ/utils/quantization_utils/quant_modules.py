@@ -373,6 +373,20 @@ class QuantAct_Daq(QuantAct):
             self.x_max,
             len(self.x_min), len(self.x_max), self.x_min, self.x_max)
 
+    def fix(self):
+        """
+        fix the activation range by setting running stat to False
+        """
+        self.running_stat = False
+        self.fix_flag = True
+
+    def unfix(self):
+        """
+        unfix the activation range by setting running stat to True
+        """
+        self.running_stat = True
+        self.fix_flag = False
+
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
                 concat_scaling_factor=None, concat_weight_scaling_factor=None):
@@ -445,7 +459,8 @@ class QuantAct_Daq(QuantAct):
         if not self.full_precision_flag:
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
-                                                                               self.x_min[cluster], self.x_max[cluster], False)
+                                                                               self.x_min[cluster], self.x_max[cluster],
+                                                                               False)
             # Note that our asymmetric quantization is implemented using scaled unsigned integers
             # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
             # and the self.act_zero_point should be 0.
@@ -609,7 +624,7 @@ class QuantBnConv2d(Module):
             w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
             w_min = w_transform.min(dim=1).values
             w_max = w_transform.max(dim=1).values
-            
+
             conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
             weight_integer = self.weight_function(self.conv.weight, self.weight_bit, conv_scaling_factor)
             conv_output = F.conv2d(x, weight_integer, self.conv.bias, self.conv.stride, self.conv.padding,
@@ -620,7 +635,7 @@ class QuantBnConv2d(Module):
 
             # update mean and variance in running stats
             self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                        1 - self.bn.momentum) * batch_mean
+                    1 - self.bn.momentum) * batch_mean
             self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
             output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
@@ -670,7 +685,8 @@ class QuantBnConv2d(Module):
                     self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
                                                                self.convbn_scaling_factor)
                     if self.quantize_bias:
-                        bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
+                        bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
+                                                                                                                   -1)
                         self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
                     self.convbn_scaled_bias = scaled_bias
                 else:
@@ -1018,21 +1034,22 @@ class QuantConv2d(Module):
             raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
         w = self.weight
-        # calculate quantization range
-        if self.per_channel:
-            # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
-            w_transform = w.data.contiguous().view(self.out_channels, -1)
+        if not self.full_precision_flag:
+            # calculate quantization range
+            if self.per_channel:
+                # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
+                w_transform = w.data.contiguous().view(self.out_channels, -1)
 
-            if self.weight_percentile == 0:
-                w_min = w_transform.min(dim=1).values
-                w_max = w_transform.max(dim=1).values
-            else:
-                lower_percentile = 100 - self.weight_percentile
-                upper_percentile = self.weight_percentile
-                input_length = w_transform.shape[1]
+                if self.weight_percentile == 0:
+                    w_min = w_transform.min(dim=1).values
+                    w_max = w_transform.max(dim=1).values
+                else:
+                    lower_percentile = 100 - self.weight_percentile
+                    upper_percentile = self.weight_percentile
+                    input_length = w_transform.shape[1]
 
-                lower_index = math.ceil(input_length * lower_percentile * 0.01)
-                upper_index = math.ceil(input_length * upper_percentile * 0.01)
+                    lower_index = math.ceil(input_length * lower_percentile * 0.01)
+                    upper_index = math.ceil(input_length * upper_percentile * 0.01)
 
                 w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
                 w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
@@ -1059,12 +1076,13 @@ class QuantConv2d(Module):
         else:
             raise Exception('For weight, we only support symmetric quantization.')
         
-        pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-        x_int = x / pre_act_scaling_factor
-        correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
+            pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
+            x_int = x / pre_act_scaling_factor
+            correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-        return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                         self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+        return F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
 
 
 def freeze_model(model):
@@ -1072,6 +1090,8 @@ def freeze_model(model):
     freeze the activation range
     """
     if type(model) == QuantAct:
+        model.fix()
+    elif type(model) == QuantAct_Daq:
         model.fix()
     elif type(model) == QuantConv2d:
         model.fix()
