@@ -13,11 +13,13 @@ parser.add_argument('--val_batch', default=0, type=int, help='Validation batch s
 parser.add_argument('--quant_base', default='qat', type=str,
                     help='Among qat/qn/hawq, choose fine-tuning method to apply DAQ')
 parser.add_argument('--nnac', action='store_true', help="Use Neural Network Aware Clustering")
+parser.add_argument('--exclude', action='store_true', help="exclude less important layers during nnac")
+parser.add_argument('--mixrate', default=3, type=int,
+                    help='Number of epochs to mix augmented dataset to non-augmented dataset in training of clustering')
 parser.add_argument('--sim_threshold', default=0.7, type=float,
                     help='Similarity threshold of ratio for considering similar clusters in nnac')
 parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means or BIRCH)")
-parser.add_argument('--mixrate', default=2, type=int,
-                    help='Number of epochs to mix augmented dataset to non-augmented dataset in training of clustering')
+parser.add_argument('--topk', default=3, type=int, help='Number of cluster combination candidates to choose in nnac')
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')
 parser.add_argument('--sub_cluster', default=0, type=int, help='Number of sub-clusters in NN-aware Clustering')
 parser.add_argument('--partition', default=2, type=int,
@@ -57,7 +59,7 @@ if __name__ == '__main__':
             args_daq.clustering_path = set_clustering_dir(args_daq)
             clustering_model = get_clustering_model(args_daq, data_loaders)
         else:
-            clustering_model = get_clustering_model(args_daq)
+            clustering_model =  (args_daq)
 
     if args_daq.quant_base == 'qat':
         from QAT.qat import main

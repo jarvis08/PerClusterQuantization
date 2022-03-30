@@ -38,5 +38,5 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
             x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
                       value=self.zero_point[bc].item())
 
-        return self.maxppol(x)
+        return self.maxpool(x)
 

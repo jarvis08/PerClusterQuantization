@@ -187,6 +187,75 @@ class Bottleneck(nn.Module):
 
         return out
 
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
+        if not initialized:
+            _x = x[0].unsqueeze(0)
+            identity = _x
+
+            out = self.conv1(_x)
+            out = self.bn1(out)
+            out = self.relu(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+            out = self.conv2(_x)
+            out = self.bn2(out)
+            out = self.relu(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+            out = self.conv3(out)
+            out = self.bn3(out)
+
+            if self.downsample is not None:
+                identity = self.downsample(_x)
+
+            out += identity
+            out = self.relu(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        out = self.conv2(x)
+        out = self.bn2(out)
+        out = self.relu(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+        return out, l_idx
+
 
 class ResNet(nn.Module):
     def __init__(
@@ -294,6 +363,31 @@ class ResNet(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
 
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        initialized = True
+        if not hasattr(self, 'zero_counter'):
+            initialized = False
+            n_features = x.view(-1).size(0)
+            self.zero_counter = []
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        l_idx = 0
+        n_features = self.zero_counter[l_idx].size(1)
+        for i in range(x.size(0)):
+            flattened = x[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
+        for block in blocks:
+            for b in range(len(block)):
+                x, l_idx = block[b].count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
+
 
 class ResNet20(nn.Module):
     def __init__(self, block, layers, num_classes=10):
@@ -353,6 +447,7 @@ class ResNet20(nn.Module):
                 m.show_params()
 
     def count_zeros_per_index(self, x, cluster, n_clusters):
+        # cluster -> ready cluster idx, n_cluster -> args.sub_cluster
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -362,14 +457,21 @@ class ResNet20(nn.Module):
             initialized = False
             n_features = x.view(-1).size(0)
             self.zero_counter = []
+            # 리스트에 박은거 (8, 524288)
             self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
+        # 처음 0 block 지날때마다 l_idx 증
         l_idx = 0
+        # 데이터 핀거 shape 524288
         n_features = self.zero_counter[l_idx].size(1)
         for i in range(x.size(0)):
+            # 16384
             flattened = x[i].view(-1)
+            # 5686
             zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            # n_features가 더 큰데 왜 굳이 넣었을까?
             zeros_idx %= n_features
+            # 클러스터별로 zero_idx를
             self.zero_counter[l_idx][cluster, zeros_idx] += 1
 
         blocks = [self.layer1, self.layer2, self.layer3]

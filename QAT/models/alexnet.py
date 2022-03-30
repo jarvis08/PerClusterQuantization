@@ -105,20 +105,29 @@ class AlexNetSmall(nn.Module):
         if not hasattr(self, 'zero_counter'):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
-        indices = [2, 5, 8, 10, 12]
-        for l in range(len(indices)):
-            _from = 0 if l == 0 else indices[l - 1]
-            _to = indices[l]
-            x = self.features[_from:_to](x)
+        # indices = [2, 5, 8, 10, 12]
+        # for l in range(len(indices)):
+        #     _from = 0 if l == 0 else indices[l - 1]
+        #     _to = indices[l]
+        #     x = self.features[_from:_to](x)
 
-            n_features = self.zero_counter[l].size(1)
-            for idx in range(x.size(0)):
-                flattened = x[idx].view(-1)
-                zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-                zeros_idx %= n_features
-                self.zero_counter[l][cluster, zeros_idx] += 1
+        conv_cnt = 0
+        for layer_idx, layer in enumerate(self.features):
+            if isinstance(layer, nn.Conv2d):
+                x = self.features[layer_idx](x)
+                x = self.features[layer_idx + 1](x)
+                layer_idx += 2
+                n_features = self.zero_counter[conv_cnt].size(1)
+                for idx in range(x.size(0)):
+                    flattened = x[idx].view(-1)
+                    zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+                    zeros_idx %= n_features
+                    self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+                conv_cnt += 1
+            else:
+                x = self.features[layer_idx](x)
 
-        # Classifier make 0 ratio
+    # Classifier make 0 ratio
         # x = self.features[_to:](x)  # left feature extractions
         # x = self.avgpool(x)
         # x = torch.flatten(x, 1)

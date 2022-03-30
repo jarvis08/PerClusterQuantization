@@ -106,6 +106,11 @@ def get_data_loaders(args):
     aug_train_dataset = get_augmented_train_dataset(args, normalizer)
     if args.dataset == 'imagenet':
         val_loader = test_loader
+        non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+        non_aug_train_dataset, val_dataset = split_dataset_into_train_and_val(non_aug_train_dataset, args.dataset)
+        if args.cluster > 1 and not args.clustering_path:
+            clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=256, shuffle=True,
+                                                      workers=args.worker)
     else:
         aug_train_dataset, _ = split_dataset_into_train_and_val(aug_train_dataset, args.dataset)
         non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer)
