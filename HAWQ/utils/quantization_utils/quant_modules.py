@@ -143,7 +143,10 @@ class QuantLinear(Module):
             return ste_round.apply(
                 F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
         else:
-            return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
+            if self.weight_bit is 4:
+                return (F.linear(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16)).to(torch.float32) * correct_output_scale, self.fc_scaling_factor)
+            else:
+                return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
 
 
 class QuantAct(Module):
@@ -700,7 +703,11 @@ class QuantBnConv2d(Module):
                 x_int = x / pre_act_scaling_factor
                 correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-                return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                if self.weight_bit is 4:
+                    return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16), self.conv.stride, self.conv.padding,
+                             self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.convbn_scaling_factor)
+                else :
+                    return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                              self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
             else:
                 return F.conv2d(x, scaled_weight, scaled_bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
@@ -1083,8 +1090,12 @@ class QuantConv2d(Module):
             x_int = x / pre_act_scaling_factor
             correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
+            if self.weight_bit is 4:
+                return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16), self.conv.stride, self.conv.padding,
+                                self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.conv_scaling_factor)
+            else :
+                return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                                self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
         return F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
 
 
