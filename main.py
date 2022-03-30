@@ -59,7 +59,7 @@ if __name__ == '__main__':
             args_daq.clustering_path = set_clustering_dir(args_daq)
             clustering_model = get_clustering_model(args_daq, data_loaders)
         else:
-            clustering_model =  (args_daq)
+            clustering_model = get_clustering_model(args_daq)
 
     if args_daq.quant_base == 'qat':
         from QAT.qat import main
