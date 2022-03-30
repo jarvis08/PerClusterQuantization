@@ -145,6 +145,7 @@ class QuantLinear(Module):
         else:
             return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
 
+
 class QuantAct(Module):
     """
     Class to quantize given activations
@@ -337,6 +338,7 @@ class QuantAct(Module):
         else:
             return x
 
+
 class QuantAct_Daq(QuantAct):
 
     def __init__(self,
@@ -511,6 +513,7 @@ class QuantAct_Daq(QuantAct):
             return (quant_act_int * correct_output_scale, self.act_scaling_factor)
         else:
             return x
+
 
 class QuantBnConv2d(Module):
     """
@@ -812,8 +815,6 @@ class QuantBn(Module):
         output = self.weight_integer.view(1, -1, 1, 1) * x_int + self.bias_integer.view(1, -1, 1, 1)
 
         return (output * correct_output_scale, self.bn_scaling_factor)
-        
-
 
 
 class QuantMaxPool2d(Module):
