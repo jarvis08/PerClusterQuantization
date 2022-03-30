@@ -38,8 +38,9 @@ parser.add_argument('--horovod', default=False, type=bool, help="Use distributed
 args_daq, tmp = parser.parse_known_args()
 
 arch_for_nnac = None
-if '--arch' in tmp:
-    arch_for_nnac = tmp[tmp.index('--arch') + 1]
+if args_daq.quant_base == 'hawq':
+    if '--arch' in tmp:
+        arch_for_nnac = tmp[tmp.index('--arch') + 1]
 
 if args_daq.imagenet:
     args_daq.dataset = 'imagenet'
