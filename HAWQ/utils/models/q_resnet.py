@@ -444,7 +444,7 @@ class Q_ResNet50_Daq(nn.Module):
         self.quant_init_convbn = QuantBnConv2d()
         self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
 
-        self.quant_act_int32 = QuantAct(runtime_helper=runtime_helper)
+        self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.act = nn.ReLU()
@@ -460,7 +460,8 @@ class Q_ResNet50_Daq(nn.Module):
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
         self.quant_pool_input = QuantAct_Daq()
-        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
+        # self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
+        self.final_pool = QuantAveragePool2d(output=(1, 1))
 
         self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
         self.quant_act_output.isClassifier = True
