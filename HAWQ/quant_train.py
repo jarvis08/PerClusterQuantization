@@ -474,7 +474,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
-        clustering_model.nn_aware_clutering(model, train_loader)
+        clustering_model.nn_aware_clustering(model, train_loader)
         model.toggle_full_precision()
 
 
