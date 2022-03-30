@@ -1060,21 +1060,23 @@ class QuantConv2d(Module):
             else:
                 w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
                                                       self.weight_percentile, output_tensor=True)
-        # perform quantization
-        if self.quant_mode == 'symmetric':
-            self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-                                                                            self.per_channel)
-            self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
-            bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
 
-            if self.quantize_bias and self.conv.bias is not None:
-                self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-            elif self.conv.bias is not None:
-                self.bias_integer = self.bias
-            else: 
-                self.bias_integer = None 
-        else:
-            raise Exception('For weight, we only support symmetric quantization.')
+        if not self.full_precision_flag:
+            # perform quantization
+            if self.quant_mode == 'symmetric':
+                self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+                                                                                self.per_channel)
+                self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
+                bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
+
+                if self.quantize_bias and self.conv.bias is not None:
+                    self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
+                elif self.conv.bias is not None:
+                    self.bias_integer = self.bias
+                else: 
+                    self.bias_integer = None 
+            else:
+                raise Exception('For weight, we only support symmetric quantization.')
         
             pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
             x_int = x / pre_act_scaling_factor
