@@ -64,8 +64,12 @@ class KMeansClustering(object):
             f"Dataset of model doesn't match (args: {self.args.dataset}, loaded: {loaded_args['dataset']})"
         assert self.args.clustering_method == loaded_args['clustering_method'], \
             f"# of clusters doesn't match (args: {self.args.clustering_method}, loaded: {loaded_args['clustering_method']})"
-        assert self.args.cluster == loaded_args['k'], \
-            f"# of clusters doesn't match (args: {self.args.cluster}, loaded: {loaded_args['k']})"
+        if self.args.nnac and loaded_args.get('nnac') is None:
+            assert self.args.sub_cluster == loaded_args['k'], \
+                f"# of sub_clusters doesn't match (args: {self.args.sub_cluster}, loaded: {loaded_args['k']})"
+        else:
+            assert self.args.cluster == loaded_args['k'], \
+                f"# of clusters doesn't match (args: {self.args.cluster}, loaded: {loaded_args['k']})"
         assert self.args.partition == loaded_args['num_partitions'], \
             f"# of partitions doesn't match (args: {self.args.partition}, loaded: {loaded_args['num_partitions']})"
         assert self.args.repr_method == loaded_args['repr_method'], \
@@ -179,7 +183,7 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def nn_aware_clustering(self, dnn_model, train_loader):
+    def nn_aware_clustering(self, dnn_model, train_loader, arch):
         print('\n>>> NN-aware Clustering..')
         from utils.misc import InputContainer
 
@@ -389,6 +393,16 @@ class KMeansClustering(object):
 
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             args_without_nnac = json.load(f)
+            if args_without_nnac['k'] != self.args.cluster:
+                path = self.args.clustering_path + f'.nnac_{arch}_k{self.args.cluster}_sub{self.args.sub_cluster}_topk_{self.args.topk}_sim_{self.args.sim_threshold}'
+                print(f"Copy json and pkl file from {self.args.clustering_path} to {path}")
+                if not os.path.exists(path):
+                    os.makedirs(path)
+                import shutil
+                shutil.copyfile(os.path.join(self.args.clustering_path, 'checkpoint.pkl'), os.path.join(path, 'checkpoint.pkl'))
+                self.args.clustering_path = path
+                args_without_nnac['k'] = self.args.cluster
+
         with open(os.path.join(self.args.clustering_path, "params.json"), 'w') as f:
             args_without_nnac['sub_k'] = self.args.sub_cluster
             args_without_nnac['nnac'] = final_clusters
