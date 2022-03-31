@@ -6,7 +6,7 @@ MODEL="alexnet"
 DATASET="cifar10"
 PRETRAINED_MODEL="alexnet"
 
-BATCH=128
+BATCH=32
 
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --mode fine \

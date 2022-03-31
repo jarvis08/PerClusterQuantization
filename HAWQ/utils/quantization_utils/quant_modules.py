@@ -145,7 +145,7 @@ class QuantLinear(Module):
         correct_output_scale = bias_scaling_factor[0].view(1, -1)
 
         if not self.is_classifier:
-            if self.weight_bit != 4:
+            if self.weight_bit != 4 or self.bias_integer is not None:
                 return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
             else:
                 return (F.linear(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16)).to(torch.float32) * correct_output_scale, self.fc_scaling_factor)
@@ -755,7 +755,7 @@ class QuantBnConv2d(Module):
             x_int = x / pre_act_scaling_factor
             correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-            if self.weight_bit != 4:
+            if self.weight_bit != 4 or self.bias_integer is not None:
                 return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                          self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
             else :
@@ -1163,7 +1163,7 @@ class QuantConv2d(Module):
         x_int = x / pre_act_scaling_factor
         correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-        if self.weight_bit != 4:
+        if self.weight_bit != 4 or self.bias_integer is not None:
             return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
         else :
