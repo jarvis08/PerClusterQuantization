@@ -7,6 +7,8 @@ import time
 import logging
 import warnings
 
+from tqdm import tqdm
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -499,7 +501,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
 
         else:
-            train(train_loader, model, criterion, optimizer, epoch, args)
+            train(train_loader, model, criterion, optimizer, epoch, logging, args)
             tuning_fin_time = time.time()
             acc1 = validate(val_loader, model, criterion, args)
 
@@ -533,7 +535,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data))
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, epoch, logger, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -551,35 +553,40 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         model.train()
 
     end = time.time()
-    for i, (images, target) in enumerate(train_loader):
-        # measure data loading time
-        data_time.update(time.time() - end)
+    with tqdm(train_loader, desc="Epoch {}".format(epoch), ncols=120) as t:
+        for i, (images, target) in enumerate(t):
+            # measure data loading time
+            data_time.update(time.time() - end)
 
-        if args.gpu is not None:
-            images = images.cuda(args.gpu, non_blocking=True)
-        target = target.cuda(args.gpu, non_blocking=True)
+            if args.gpu is not None:
+                images = images.cuda(args.gpu, non_blocking=True)
+            target = target.cuda(args.gpu, non_blocking=True)
 
-        # compute output
-        output = model(images)
-        loss = criterion(output, target)
+            # compute output
+            output = model(images)
+            loss = criterion(output, target)
 
-        # measure accuracy and record loss
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        losses.update(loss.item(), images.size(0))
-        top1.update(acc1[0], images.size(0))
-        top5.update(acc5[0], images.size(0))
+            # measure accuracy and record loss
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), images.size(0))
+            top1.update(acc1[0].item(), images.size(0))
+            top5.update(acc5[0].item(), images.size(0))
 
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # compute gradient and do SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-        if i % args.print_freq == 0:
-            progress.display(i)
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} ({:.5f}) [Acc@1] {:.3f} ({:.3f}) [Acc@5] {:3f} ({:.3f})"
+                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, acc1.item(), top1.avg, acc5.item(), top5.avg))
+            t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
+
+            #if i % args.print_freq == 0:
+            #    progress.display(i)
 
 
 def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_loader, args, ngpus_per_node,
