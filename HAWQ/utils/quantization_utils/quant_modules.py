@@ -148,7 +148,7 @@ class QuantLinear(Module):
             if self.weight_bit != 4 or self.bias_integer is not None:
                 return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
             else:
-                return (F.linear(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16)).to(torch.float32) * correct_output_scale, self.fc_scaling_factor)
+                return (F.linear(x_int.to(torch.float16), self.weight_integer.to(torch.float16), None).to(torch.float32) * correct_output_scale, self.fc_scaling_factor)
         else:
             return ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
 
@@ -759,7 +759,7 @@ class QuantBnConv2d(Module):
                 return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                          self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
             else :
-                return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16), self.conv.stride, self.conv.padding,
+                return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), None, self.conv.stride, self.conv.padding,
                          self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.convbn_scaling_factor)
 
 
@@ -1167,7 +1167,7 @@ class QuantConv2d(Module):
             return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
         else :
-            return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16), self.conv.stride, self.conv.padding,
+            return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), None, self.conv.stride, self.conv.padding,
                             self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.conv_scaling_factor)
 
 
