@@ -179,6 +179,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
 args_hawq, _ = parser.parse_known_args()
+args_hawq.save_path = os.path.join("checkpoints/{}/{}/".format(args_hawq.arch, args_hawq.data))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
@@ -187,7 +188,7 @@ hook_keys = []
 hook_keys_counter = 0
 
 logging.basicConfig(format='%(asctime)s - %(message)s',
-                    datefmt='%d-%b-%y %H:%M:%S', filename=args_hawq.save_path + 'log.log')
+                    datefmt='%d-%b-%y %H:%M:%S', filename=args_hawq.save_path + 'log{}.log'.format(os.getpid()))
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
 
