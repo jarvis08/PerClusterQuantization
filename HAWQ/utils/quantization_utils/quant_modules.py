@@ -790,6 +790,14 @@ class QuantBn(Module):
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
 
+        if self.quant_mode == "symmetric":
+            self.weight_function = SymmetricQuantFunction.apply
+        elif self.quant_mode == "asymmetric":
+            self.weight_function = AsymmetricQuantFunction.apply
+        else:
+            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+        
+
     def set_param(self, bn):
         self.bn = bn
         self.bn.momentum = 0.99
@@ -823,13 +831,6 @@ class QuantBn(Module):
         if type(x) is tuple:
             x_scaling_factor = x[1]
             x = x[0]
-        
-        if self.quant_mode == "symmetric":
-            self.weight_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            self.weight_function = AsymmetricQuantFunction.apply
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
         
         if self.fix_BN is False:
             batch_mean = torch.mean(x, dim=(0, 2, 3))
@@ -1092,25 +1093,24 @@ class QuantConv2d(Module):
             x = x[0]
 
         w = self.weight
-        if not self.full_precision_flag:
-            # calculate quantization range
-            if self.per_channel:
-                # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
-                w_transform = w.data.contiguous().view(self.out_channels, -1)
 
-                if self.weight_percentile == 0:
-                    w_min = w_transform.min(dim=1).values
-                    w_max = w_transform.max(dim=1).values
-                else:
-                    lower_percentile = 100 - self.weight_percentile
-                    upper_percentile = self.weight_percentile
-                    input_length = w_transform.shape[1]
+        if self.per_channel:
+            # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
+            w_transform = w.data.contiguous().view(self.out_channels, -1)
 
-                    lower_index = math.ceil(input_length * lower_percentile * 0.01)
-                    upper_index = math.ceil(input_length * upper_percentile * 0.01)
+            if self.weight_percentile == 0:
+                w_min = w_transform.min(dim=1).values
+                w_max = w_transform.max(dim=1).values
+            else:
+                lower_percentile = 100 - self.weight_percentile
+                upper_percentile = self.weight_percentile
+                input_length = w_transform.shape[1]
 
-                    w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
-                    w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
+                lower_index = math.ceil(input_length * lower_percentile * 0.01)
+                upper_index = math.ceil(input_length * upper_percentile * 0.01)
+
+                w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
+                w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
         else:
             if self.weight_percentile == 0:
                 w_min = w.data.min()
@@ -1118,6 +1118,8 @@ class QuantConv2d(Module):
             else:
                 w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
                                                       self.weight_percentile, output_tensor=True)
+
+
 
         #if not self.full_precision_flag:
         #    # perform quantization
