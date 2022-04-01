@@ -59,7 +59,6 @@ class QuantLinear(Module):
         else:
             raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
-
         self.is_classifier = False
 
     def __repr__(self):
@@ -120,35 +119,25 @@ class QuantLinear(Module):
             w_max = w_transform.max().expand(1)
 
         # perform the quantization
-        #if not self.full_precision_flag:
-        #    if self.quant_mode == 'symmetric':
-        #        self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-        #                                                                      self.per_channel)
-        #        self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.fc_scaling_factor)
-        #        bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
-        #        self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-        #    else:
-        #        raise Exception('For weight, we only support symmetric quantization.')
-        #else:
-        #    w = self.weight
-        #    b = self.bias
-
-        self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-                                                                      self.per_channel)
-        self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.fc_scaling_factor)
-        bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
-        self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-
+        if not self.full_precision_flag:
+           if self.quant_mode == 'symmetric':
+               self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+                                                                             self.per_channel)
+               self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.fc_scaling_factor)
+               bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
+               self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
+           else:
+               raise Exception('For weight, we only support symmetric quantization.')
+        else:
+           w = self.weight
+           b = self.bias
 
         prev_act_scaling_factor = prev_act_scaling_factor.view(1, -1)
         x_int = x / prev_act_scaling_factor
         correct_output_scale = bias_scaling_factor[0].view(1, -1)
 
         if not self.is_classifier:
-            if self.weight_bit != 4 or self.bias_integer is not None:
-                return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
-            else:
-                return (F.linear(x_int.to(torch.float16), self.weight_integer.to(torch.float16), None).to(torch.float32) * correct_output_scale, self.fc_scaling_factor)
+            return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
         else:
             return ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
 
@@ -666,101 +655,52 @@ class QuantBnConv2d(Module):
                 scaled_bias = torch.zeros_like(self.bn.running_mean)
             scaled_bias = (scaled_bias - self.bn.running_mean.detach()) * scale_factor + self.bn.bias
 
-            #if not self.full_precision_flag:
-            #    if self.per_channel:
-            #        w_transform = scaled_weight.data.contiguous().view(self.conv.out_channels, -1)
+            if not self.full_precision_flag:
+                if self.per_channel:
+                    w_transform = scaled_weight.data.contiguous().view(self.conv.out_channels, -1)
 
-            #        if self.weight_percentile == 0:
-            #            w_min = w_transform.min(dim=1).values
-            #            w_max = w_transform.max(dim=1).values
-            #        else:
-            #            lower_percentile = 100 - self.weight_percentile
-            #            upper_percentile = self.weight_percentile
-            #            input_length = w_transform.shape[1]
+                    if self.weight_percentile == 0:
+                        w_min = w_transform.min(dim=1).values
+                        w_max = w_transform.max(dim=1).values
+                    else:
+                        lower_percentile = 100 - self.weight_percentile
+                        upper_percentile = self.weight_percentile
+                        input_length = w_transform.shape[1]
 
-            #            lower_index = math.ceil(input_length * lower_percentile * 0.01)
-            #            upper_index = math.ceil(input_length * upper_percentile * 0.01)
+                        lower_index = math.ceil(input_length * lower_percentile * 0.01)
+                        upper_index = math.ceil(input_length * upper_percentile * 0.01)
 
-            #            w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
-            #            w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
-            #    else:
-            #        if self.weight_percentile == 0:
-            #            w_min = scaled_weight.data.min()
-            #            w_max = scaled_weight.data.max()
-            #        else:
-            #            w_min, w_max = get_percentile_min_max(scaled_weight.view(-1), 100 - self.weight_percentile,
-            #                                                  self.weight_percentile, output_tensor=True)
-
-            #    if self.quant_mode == 'symmetric':
-            #        self.convbn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit,
-            #                                                                          w_min, w_max, self.per_channel)
-            #        self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
-            #                                                   self.convbn_scaling_factor)
-            #        if self.quantize_bias:
-            #            bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
-            #                                                                                                       -1)
-            #            self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
-            #        self.convbn_scaled_bias = scaled_bias
-            #    else:
-            #        raise Exception('For weight, we only support symmetric quantization.')
-
-            #    pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-            #    x_int = x / pre_act_scaling_factor
-            #    correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
-
-            #    if self.weight_bit == 4:
-            #        return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16), self.conv.stride, self.conv.padding,
-            #                 self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.convbn_scaling_factor)
-            #    else :
-            #        return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-            #                 self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
-            #else:
-            #    return F.conv2d(x, scaled_weight, scaled_bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-
-            if self.per_channel:
-                w_transform = scaled_weight.data.contiguous().view(self.conv.out_channels, -1)
-
-                if self.weight_percentile == 0:
-                    w_min = w_transform.min(dim=1).values
-                    w_max = w_transform.max(dim=1).values
+                        w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
+                        w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
                 else:
-                    lower_percentile = 100 - self.weight_percentile
-                    upper_percentile = self.weight_percentile
-                    input_length = w_transform.shape[1]
+                    if self.weight_percentile == 0:
+                        w_min = scaled_weight.data.min()
+                        w_max = scaled_weight.data.max()
+                    else:
+                        w_min, w_max = get_percentile_min_max(scaled_weight.view(-1), 100 - self.weight_percentile,
+                                                                self.weight_percentile, output_tensor=True)
 
-                    lower_index = math.ceil(input_length * lower_percentile * 0.01)
-                    upper_index = math.ceil(input_length * upper_percentile * 0.01)
-
-                    w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
-                    w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
-            else:
-                if self.weight_percentile == 0:
-                    w_min = scaled_weight.data.min()
-                    w_max = scaled_weight.data.max()
+                if self.quant_mode == 'symmetric':
+                    self.convbn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit,
+                                                                                        w_min, w_max, self.per_channel)
+                    self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
+                                                                self.convbn_scaling_factor)
+                    if self.quantize_bias:
+                        bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
+                                                                                                                    -1)
+                        self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
+                    self.convbn_scaled_bias = scaled_bias
                 else:
-                    w_min, w_max = get_percentile_min_max(scaled_weight.view(-1), 100 - self.weight_percentile,
-                                                          self.weight_percentile, output_tensor=True)
+                    raise Exception('For weight, we only support symmetric quantization.')
 
-            self.convbn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit,
-                                                                              w_min, w_max, self.per_channel)
-            self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
-                                                       self.convbn_scaling_factor)
-            if self.quantize_bias:
-                bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
-                                                                                                           -1)
-                self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
-            self.convbn_scaled_bias = scaled_bias
+                pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
+                x_int = x / pre_act_scaling_factor
+                correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-            pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-            x_int = x / pre_act_scaling_factor
-            correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
-
-            if self.weight_bit != 4 or self.bias_integer is not None:
                 return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                         self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
-            else :
-                return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), None, self.conv.stride, self.conv.padding,
-                         self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.convbn_scaling_factor)
+                        self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
+            else:
+               return F.conv2d(x, scaled_weight, scaled_bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
 
 
 class QuantBn(Module):
@@ -1119,56 +1059,27 @@ class QuantConv2d(Module):
                 w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
                                                       self.weight_percentile, output_tensor=True)
 
+        if not self.full_precision_flag:
+            # perform quantization
+            self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+                                                                            self.per_channel)
+            self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
+            bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
 
+            if self.quantize_bias and self.conv.bias is not None:
+                self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
+            elif self.conv.bias is not None:
+                self.bias_integer = self.bias
+            else: 
+                self.bias_integer = None 
+            
+            pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
+            x_int = x / pre_act_scaling_factor
+            correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-        #if not self.full_precision_flag:
-        #    # perform quantization
-        #    self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-        #                                                                    self.per_channel)
-        #    self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
-        #    bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
-
-        #    if self.quantize_bias and self.conv.bias is not None:
-        #        self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-        #    elif self.conv.bias is not None:
-        #        self.bias_integer = self.bias
-        #    else: 
-        #        self.bias_integer = None 
-        #
-        #    pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-        #    x_int = x / pre_act_scaling_factor
-        #    correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
-
-        #    if self.weight_bit == 4:
-        #        return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), self.bias_integer.to(torch.float16), self.conv.stride, self.conv.padding,
-        #                        self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.conv_scaling_factor)
-        #    else :
-        #        return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-        #                        self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
-        #return F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-
-        self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-                                                                        self.per_channel)
-        self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
-        bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
-
-        if self.quantize_bias and self.conv.bias is not None:
-            self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-        elif self.conv.bias is not None:
-            self.bias_integer = self.bias
-        else: 
-            self.bias_integer = None 
-        
-        pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-        x_int = x / pre_act_scaling_factor
-        correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
-
-        if self.weight_bit != 4 or self.bias_integer is not None:
             return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
-        else :
-            return (F.conv2d(x_int.to(torch.float16), self.weight_integer.to(torch.float16), None, self.conv.stride, self.conv.padding,
-                            self.conv.dilation, self.conv.groups).to(torch.float32) * correct_output_scale, self.conv_scaling_factor)
+        return F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
 
 
 def freeze_model(model):
