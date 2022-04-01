@@ -1924,7 +1924,7 @@ bit_config_dict = {
 'stage4.unit3.quant_convbn3': 4,
 'stage4.unit3.quant_act_int32': 16,
 
-'quant_pool_input':4,
+# 'quant_pool_input':4,
 
 'quant_act_output': 8,
 'quant_output': 8

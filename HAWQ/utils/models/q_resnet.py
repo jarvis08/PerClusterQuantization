@@ -394,7 +394,7 @@ class Q_ResNet50(nn.Module):
                 quant_unit.set_param(unit)
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        self.quant_pool_input = QuantAct()
+        # self.quant_pool_input = QuantAct()
         # self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
         self.final_pool = QuantAveragePool2d(output=(1, 1))
 
@@ -419,8 +419,8 @@ class Q_ResNet50(nn.Module):
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
         # x, act_scaling_factor = self.quant_pool_input(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_pool_input(x)
-        x = self.final_pool(x, act_scaling_factor)
+        # x, act_scaling_factor = self.quant_pool_input(x)
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
@@ -459,7 +459,7 @@ class Q_ResNet50_Daq(nn.Module):
                 quant_unit.set_param(unit, runtime_helper)
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        self.quant_pool_input = QuantAct_Daq()
+        # self.quant_pool_input = QuantAct_Daq()
         # self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
         self.final_pool = QuantAveragePool2d(output=(1, 1))
 
@@ -486,8 +486,8 @@ class Q_ResNet50_Daq(nn.Module):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_pool_input(x, act_scaling_factor)
-        x = self.final_pool(x, act_scaling_factor)
+        # x, act_scaling_factor = self.quant_pool_input(x, act_scaling_factor)
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
