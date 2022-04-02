@@ -305,7 +305,7 @@ class QuantAct(Module):
                                               pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
                     start_channel_index += channel_num[i]
             else:
-                if identity and concat is None:
+                if identity is None and concat is None:
                     if pre_weight_scaling_factor is None:
                         pre_weight_scaling_factor = self.pre_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
