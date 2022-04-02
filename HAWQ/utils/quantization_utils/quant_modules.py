@@ -796,7 +796,6 @@ class QuantBn(Module):
             bias_scaling_factor = self.bn_scaling_factor.view(1, -1, 1, 1) * pre_act_scaling_factor.view(1, -1, 1, 1)
             if self.quantize_bias and scaled_bias is not None:
                 self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
-
         else:
             raise Exception('For weight, we only support symmetric quantization.')
 

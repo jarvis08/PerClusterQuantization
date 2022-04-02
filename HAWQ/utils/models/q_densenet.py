@@ -113,7 +113,6 @@ class Q_Transition(nn.Module):
         self.quant_act2 = QuantAct()
 
         self.pool = QuantAveragePool2d(kernel_size=2, stride=2, padding=0)
-        self.quant_output = QuantAct()
 
     def forward(self, x, act_scaling_factor=None):
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
@@ -125,8 +124,6 @@ class Q_Transition(nn.Module):
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
 
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_output(x, act_scaling_factor)
-
         return x, act_scaling_factor
 
 
@@ -142,15 +139,12 @@ class Q_DenseUnit(nn.Module):
         self.act1 = nn.ReLU(inplace=True)
         self.quant_act1 = QuantAct()
 
-        self.quant_conv1 = QuantConv2d()
-        self.quant_conv1.set_param(layer1.conv)
-        self.quant_act2 = QuantAct()
-
         layer2 = getattr(unit, "conv2")
-        self.quant_bn2 = QuantBn()
-        self.quant_bn2.set_param(layer2.bn)
+        self.quant_convbn = QuantBnConv2d()
+        self.quant_convbn.set_param(layer1.conv, layer2.bn)
+
         self.act2 = nn.ReLU(inplace=True)
-        self.quant_act3 = QuantAct()
+        self.quant_act2 = QuantAct()
 
         self.quant_conv2 = QuantConv2d()
         self.quant_conv2.set_param(layer2.conv)
@@ -162,12 +156,9 @@ class Q_DenseUnit(nn.Module):
         x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, input_scaling_factor, bn_scaling_factor)
 
-        x, conv_scaling_factor = self.quant_conv1(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
-
-        x, bn_scaling_factor = self.quant_bn2(x, act_scaling_factor)
+        x, weight_scaling_factor = self.quant_convbn(x, act_scaling_factor)
         x = self.act2(x)
-        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor)
 
         x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
 
