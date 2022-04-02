@@ -607,7 +607,6 @@ class QuantBnConv2d(Module):
         else:
             raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
-
         # determine whether to fold BN or not
         if self.fix_flag == False:
             self.counter += 1
@@ -726,14 +725,6 @@ class QuantBn(Module):
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
 
-        if self.quant_mode == "symmetric":
-            self.weight_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            self.weight_function = AsymmetricQuantFunction.apply
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-        
-
     def set_param(self, bn):
         self.bn = bn
         self.bn.momentum = 0.99
@@ -767,6 +758,13 @@ class QuantBn(Module):
         if type(x) is tuple:
             x_scaling_factor = x[1]
             x = x[0]
+
+        if self.quant_mode == "symmetric":
+            self.weight_function = SymmetricQuantFunction.apply
+        elif self.quant_mode == "asymmetric":
+            self.weight_function = AsymmetricQuantFunction.apply
+        else:
+            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
         
         if self.fix_BN is False:
             batch_mean = torch.mean(x, dim=(0, 2, 3))
@@ -965,26 +963,12 @@ class QuantConv2d(Module):
         self.bias_bit = bias_bit
         self.quantize_bias = (False if bias_bit is None else True)
 
-        if self.quant_mode == "symmetric":
-            self.weight_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            raise Exception('For weight, we only support symmetric quantization.')
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-
     def __repr__(self):
         s = super(QuantConv2d, self).__repr__()
         s = "({0}, weight_bit={1}, bias_bit={2}, groups={3}, wt-channel-wise={4}, wt-percentile={5}, quant_mode={6})".format(
             s, self.weight_bit, self.bias_bit, self.conv.groups, self.per_channel, self.weight_percentile,
             self.quant_mode)
         return s
-
-
-    def set_param(self, conv):
-        self.conv = conv
-        self.register_buffer('conv_scaling_factor', torch.zeros(self.conv.out_channels))
-        self.register_buffer('weight_integer', torch.zeros_like(conv.weight.data))
-
 
     def set_param(self, conv, model_dict=None, dict_idx=None):
         self.in_channels = conv.in_channels
@@ -997,10 +981,6 @@ class QuantConv2d(Module):
         self.conv = conv
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
 
-        self.weight = Parameter(conv.weight.data.clone())
-        if model_dict is not None:
-            our_weight = model_dict[dict_idx+'.weight']
-            self.weight.data = Parameter(model_dict[dict_idx+'.weight'].data.clone())
         if model_dict is not None :
             self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
         else :
@@ -1029,7 +1009,14 @@ class QuantConv2d(Module):
             pre_act_scaling_factor = x[1]
             x = x[0]
 
-        w = self.weight.detach()
+        if self.quant_mode == "symmetric":
+            self.weight_function = SymmetricQuantFunction.apply
+        elif self.quant_mode == "asymmetric":
+            self.weight_function = AsymmetricQuantFunction.apply
+        else:
+            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+
+        w = self.weight
 
         if self.per_channel:
             # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
@@ -1062,13 +1049,10 @@ class QuantConv2d(Module):
                                                                             self.per_channel)
             self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor)
             bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
-
-            if self.quantize_bias and self.conv.bias is not None:
+            if self.quantize_bias and (self.bias is not None):
                 self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-            elif self.conv.bias is not None:
-                self.bias_integer = self.bias
-            else: 
-                self.bias_integer = None 
+            else:
+                self.bias_integer = None
             
             pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
             x_int = x / pre_act_scaling_factor
