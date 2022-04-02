@@ -16,11 +16,14 @@ class Q_DenseNet(nn.Module):
 
         self.quant_input = QuantAct()
 
-        self.quant_init_block_conv = QuantConv2d()
-        self.quant_init_block_conv.set_param(init_block.conv)
-        self.quant_init_block_act = QuantAct()
-        self.quant_init_block_bn = QuantBn()
-        self.quant_init_block_bn.set_param(init_block.bn)
+        # self.quant_init_block_conv = QuantConv2d()
+        # self.quant_init_block_conv.set_param(init_block.conv)
+        # self.quant_init_block_act = QuantAct()
+        # self.quant_init_block_bn = QuantBn()
+        # self.quant_init_block_bn.set_param(init_block.bn)
+
+        self.quant_init_convbn = QuantBnConv2d()
+        self.quant_init_convbn.set_param(init_block.conv, init_block.bn)
 
         self.act1 = nn.ReLU(inplace=True)
 
@@ -61,13 +64,17 @@ class Q_DenseNet(nn.Module):
     def forward(self, input):
         x, act_scaling_factor = self.quant_input(input)
 
-        x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, conv_scaling_factor)
+        # x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
+        # x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, conv_scaling_factor)
 
-        x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-        x = self.act1(x) 
+        # x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
+
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
+
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
+
+        x = self.act1(x) 
 
         for stage_num in range(4):
             if stage_num is not 0:

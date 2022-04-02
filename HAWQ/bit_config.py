@@ -64,9 +64,10 @@ bit_config_dict = {
 "bit_config_densenet121_uniform4" : {
     'quant_input': 8,
 
-    'quant_init_block_conv': 8,
-    'quant_init_block_act': 16,
-    'quant_init_block_bn': 16,
+    # 'quant_init_block_conv': 8,
+    # 'quant_init_block_act': 16,
+    # 'quant_init_block_bn': 16,
+    'quant_init_convbn': 8,
     'quant_act1': 16,
     
     # Dense Block 1

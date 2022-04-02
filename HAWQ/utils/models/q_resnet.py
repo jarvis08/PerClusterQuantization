@@ -409,9 +409,11 @@ class Q_ResNet50(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
-        x = self.act(x)
+        
         x = self.pool(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
+        
+        x = self.act(x)
 
         for stage_num in range(0, 4):
             for unit_num in range(0, self.channel[stage_num]):
