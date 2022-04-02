@@ -319,7 +319,7 @@ class QuantAct(Module):
                                                         pre_weight_scaling_factor,
                                                         identity, identity_scaling_factor,
                                                         identity_weight_scaling_factor)
-                elif concat is not None:
+                else:
                     if concat_weight_scaling_factor is None:
                         concat_weight_scaling_factor = self.concat_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
