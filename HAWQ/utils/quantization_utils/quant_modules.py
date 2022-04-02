@@ -52,13 +52,6 @@ class QuantLinear(Module):
         self.quantize_bias = (False if bias_bit is None else True)
         self.counter = 0
 
-        if self.quant_mode == "symmetric":
-            self.weight_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            raise Exception('For weight, we only support symmetric quantization.')
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-
         self.is_classifier = False
 
     def __repr__(self):
@@ -71,13 +64,13 @@ class QuantLinear(Module):
         #self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.register_buffer('fc_scaling_factor', torch.zeros(self.out_features))
-        self.register_buffer('bias_integer', torch.zeros_like(linear.bias))
         if model_dict is not None :
             self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
         else :
             self.weight = Parameter(linear.weight.data.clone())
         self.register_buffer('weight_integer', torch.zeros_like(self.weight))
 
+        self.register_buffer('bias_integer', torch.zeros_like(linear.bias))
         if model_dict is not None :
             try : 
                 self.bias = Parameter(model_dict[dict_idx + '.bias'].data.clone())
@@ -103,9 +96,16 @@ class QuantLinear(Module):
             prev_act_scaling_factor = x[1]
             x = x[0]
 
+        if self.quant_mode == "symmetric":
+            self.weight_function = SymmetricQuantFunction.apply
+        elif self.quant_mode == "asymmetric":
+            self.weight_function = AsymmetricQuantFunction.apply
+        else:
+            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+
+
         w = self.weight
         w_transform = w.data.detach()
-
         # calculate the quantization range of weights and bias
         if self.per_channel:
             w_min, _ = torch.min(w_transform, dim=1, out=None)
@@ -126,6 +126,7 @@ class QuantLinear(Module):
                 self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
                                                                                 self.per_channel)
                 self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.fc_scaling_factor)
+
                 bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
                 self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
             else:
@@ -139,7 +140,7 @@ class QuantLinear(Module):
         correct_output_scale = bias_scaling_factor[0].view(1, -1)
 
         if not self.is_classifier:
-            return (ste_round.apply(F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale), self.fc_scaling_factor)
+            return ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale, self.fc_scaling_factor)
             # return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
         else:
             return ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
@@ -192,17 +193,11 @@ class QuantAct(Module):
         self.register_buffer('x_min', torch.zeros(1))
         self.register_buffer('x_max', torch.zeros(1))
         self.register_buffer('act_scaling_factor', torch.zeros(1))
+
         self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
         self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
-
-        if self.quant_mode == "symmetric":
-            self.act_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            self.act_function = AsymmetricQuantFunction.apply
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+        # self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
 
     def __repr__(self):
         return "{0}(activation_bit={1}, " \
@@ -225,14 +220,6 @@ class QuantAct(Module):
         self.running_stat = True
         self.fix_flag = False
 
-    def set_daq_ema_params(self, runtime_helper=None):
-        # self.x_min = nn.Parameter(torch.zeros(runtime_helper.num_clusters), requires_grad=False)
-        # self.x_max = nn.Parameter(torch.zeros(runtime_helper.num_clusters), requires_grad=False)
-        # self.isDaq = nn.Parameter(torch.ones(1, dtype=torch.bool), requires_grad=False)
-        self.register_buffer('x_min', torch.zeros(self.runtime_helper.num_clusters))
-        self.register_buffer('x_max', torch.zeros(self.runtime_helper.num_clusters))
-        self.register_buffer('isDaq', torch.ones(1, dtype=torch.bool))
-
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
                 concat_scaling_factor=None, concat_weight_scaling_factor=None):
@@ -253,6 +240,14 @@ class QuantAct(Module):
                 channel_num = x[2]
             pre_act_scaling_factor = x[1]
             x = x[0]
+
+        if self.quant_mode == "symmetric":
+            self.act_function = SymmetricQuantFunction.apply
+        elif self.quant_mode == "asymmetric":
+            self.act_function = AsymmetricQuantFunction.apply
+        else:
+            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+
 
         # calculate the quantization range of the activations
         if self.running_stat:
@@ -310,14 +305,12 @@ class QuantAct(Module):
                                               pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
                     start_channel_index += channel_num[i]
             else:
-                if concat is not None :
-                    if concat_weight_scaling_factor is None:
-                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
+                if identity and concat is None:
+                    if pre_weight_scaling_factor is None:
+                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
-                                                         pre_weight_scaling_factor,
-                                                         concat, concat_scaling_factor,
-                                                         concat_weight_scaling_factor)
+                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
+                                                        pre_weight_scaling_factor)
                 elif identity is not None:
                     if identity_weight_scaling_factor is None:
                         identity_weight_scaling_factor = self.identity_weight_scaling_factor
@@ -326,12 +319,14 @@ class QuantAct(Module):
                                                         pre_weight_scaling_factor,
                                                         identity, identity_scaling_factor,
                                                         identity_weight_scaling_factor)
-                else :
-                    if pre_weight_scaling_factor is None:
-                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
+                elif concat is not None:
+                    if concat_weight_scaling_factor is None:
+                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor)
+                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
+                                                         pre_weight_scaling_factor,
+                                                         concat, concat_scaling_factor,
+                                                         concat_weight_scaling_factor)
             correct_output_scale = self.act_scaling_factor.view(-1)
             return (quant_act_int * correct_output_scale, self.act_scaling_factor)
         else:
@@ -564,14 +559,6 @@ class QuantBnConv2d(Module):
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
 
-        if self.quant_mode == "symmetric":
-            self.weight_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            raise Exception('For weight, we only support symmetric quantization.')
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-
-
     def set_param(self, conv, bn):
         self.out_channels = conv.out_channels
         self.register_buffer('convbn_scaling_factor', torch.zeros(self.out_channels))
@@ -612,6 +599,14 @@ class QuantBnConv2d(Module):
         if type(x) is tuple:
             pre_act_scaling_factor = x[1]
             x = x[0]
+
+        if self.quant_mode == "symmetric":
+            self.weight_function = SymmetricQuantFunction.apply
+        elif self.quant_mode == "asymmetric":
+            self.weight_function = AsymmetricQuantFunction.apply
+        else:
+            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+
 
         # determine whether to fold BN or not
         if self.fix_flag == False:
@@ -842,6 +837,7 @@ class QuantMaxPool2d(Module):
         self.padding = padding
         self.ceil_mode = ceil_mode
         self.pool = nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=padding, ceil_mode=self.ceil_mode)
+
     def forward(self, x, x_scaling_factor=None):
         if type(x) is tuple:
             x_scaling_factor = x[1]
