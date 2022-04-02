@@ -106,28 +106,30 @@ class QuantLinear(Module):
         w = self.weight
         w_transform = w.data.detach()
 
-        if self.quantize_bias:
-            b_min = self.bias.data.min()
-            b_max = self.bias.data.max()
-
         # calculate the quantization range of weights and bias
         if self.per_channel:
             w_min, _ = torch.min(w_transform, dim=1, out=None)
             w_max, _ = torch.max(w_transform, dim=1, out=None)
+            if self.quantize_bias:
+                b_min = self.bias.data
+                b_max = self.bias.data
         else:
             w_min = w_transform.min().expand(1)
             w_max = w_transform.max().expand(1)
+            if self.quantize_bias:
+                b_min = self.bias.data.min()
+                b_max = self.bias.data.max()
 
         # perform the quantization
         if not self.full_precision_flag:
-           if self.quant_mode == 'symmetric':
-               self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-                                                                             self.per_channel)
-               self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.fc_scaling_factor)
-               bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
-               self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
-           else:
-               raise Exception('For weight, we only support symmetric quantization.')
+            if self.quant_mode == 'symmetric':
+                self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+                                                                                self.per_channel)
+                self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.fc_scaling_factor)
+                bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
+                self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
+            else:
+                raise Exception('For weight, we only support symmetric quantization.')
         else:
            w = self.weight
            b = self.bias
@@ -137,7 +139,8 @@ class QuantLinear(Module):
         correct_output_scale = bias_scaling_factor[0].view(1, -1)
 
         if not self.is_classifier:
-            return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
+            return (ste_round.apply(F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale), self.fc_scaling_factor)
+            # return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
         else:
             return ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
 
@@ -678,29 +681,27 @@ class QuantBnConv2d(Module):
                         w_max = scaled_weight.data.max()
                     else:
                         w_min, w_max = get_percentile_min_max(scaled_weight.view(-1), 100 - self.weight_percentile,
-                                                                self.weight_percentile, output_tensor=True)
+                                                              self.weight_percentile, output_tensor=True)
 
                 if self.quant_mode == 'symmetric':
                     self.convbn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit,
-                                                                                        w_min, w_max, self.per_channel)
+                                                                                      w_min, w_max, self.per_channel)
                     self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
-                                                                self.convbn_scaling_factor)
+                                                               self.convbn_scaling_factor)
                     if self.quantize_bias:
                         bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
-                                                                                                                    -1)
+                                                                                                                   -1)
                         self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
                     self.convbn_scaled_bias = scaled_bias
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
-                pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
-                x_int = x / pre_act_scaling_factor
-                correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
+            pre_act_scaling_factor = pre_act_scaling_factor.view(1, -1, 1, 1)
+            x_int = x / pre_act_scaling_factor
+            correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-                return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                        self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
-            else:
-               return F.conv2d(x, scaled_weight, scaled_bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+            return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                             self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
 
 
 class QuantBn(Module):
@@ -1032,7 +1033,7 @@ class QuantConv2d(Module):
             pre_act_scaling_factor = x[1]
             x = x[0]
 
-        w = self.weight
+        w = self.weight.detach()
 
         if self.per_channel:
             # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
