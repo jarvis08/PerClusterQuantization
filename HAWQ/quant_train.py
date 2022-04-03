@@ -553,7 +553,7 @@ def train(train_loader, model, criterion, optimizer, epoch, logger, args):
         model.train()
 
     end = time.time()
-    with tqdm(train_loader, desc="Epoch {}".format(epoch), ncols=120) as t:
+    with tqdm(train_loader, desc="Epoch {}".format(epoch), ncols=105) as t:
         for i, (images, target) in enumerate(t):
             # measure data loading time
             data_time.update(time.time() - end)
