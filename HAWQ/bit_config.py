@@ -17,7 +17,6 @@ bit_config_dict = {
 
     'conv5': 4,
     'quant_act5': 4,
-    'quant_act5_1': 4,
 
     'fc1': 4,
     'quant_act6': 4,
