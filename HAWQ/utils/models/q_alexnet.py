@@ -125,11 +125,13 @@ class Q_AlexNet(nn.Module):
         x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
         x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor)
+
         x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
 
         x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
         x = self.act2(x)
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
+
         x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
 
         x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
@@ -280,33 +282,76 @@ class Q_AlexNet_Daq(nn.Module):
                     precision = True
                 setattr(module, 'full_precision_flag', precision)
 
+    # def initialize_counter(self, x, n_clusters):
+    #     self.zero_counter = []
+
+    #     convs = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+    #     acts = [self.act1, self.act2, self.act3, self.act4, self.act5]
+
+    #     for i in range(len(convs)):
+    #         x = convs[i](x)
+    #         x = acts[i](x)
+    #         n_features = x.view(-1).size(0)
+    #         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    # def count_zeros_per_index(self, x, cluster, n_clusters):
+    #     if not hasattr(self, 'zero_counter'):
+    #         self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+    #     convs = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+    #     acts = [self.act1, self.act2, self.act3, self.act4, self.act5]
+    #     for i in range(len(convs)):
+    #         x = convs[i](x)
+    #         x = acts[i](x)
+
+    #         n_features = self.zero_counter[i].size(1)
+    #         for idx in range(x.size(0)):
+    #             flattened = x[idx].view(-1)
+    #             zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #             zeros_idx %= n_features
+    #             self.zero_counter[i][cluster, zeros_idx] += 1
+
+
+
     def initialize_counter(self, x, n_clusters):
         self.zero_counter = []
-        convs = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
-        acts = [self.act1, self.act2, self.act3, self.act4, self.act5]
 
-        for i in range(len(convs)):
-            x = convs[i](x)
-            x = acts[i](x)
+        self.features = nn.Sequential(self.conv1, self.act1, self.maxpool1,
+                                      self.conv2, self.act2, self.maxpool2,
+                                      self.conv3, self.act3,
+                                      self.conv4, self.act4,
+                                      self.conv5, self.act5)
+
+        indices = [2, 5, 8, 10, 12]
+        _to = None
+        for i in range(len(indices)):
+            _from = 0 if i == 0 else indices[i - 1]
+            _to = indices[i]
+            x = self.features[_from:_to](x)
             n_features = x.view(-1).size(0)
             self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
-
+        
     def count_zeros_per_index(self, x, cluster, n_clusters):
         if not hasattr(self, 'zero_counter'):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
-        convs = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
-        acts = [self.act1, self.act2, self.act3, self.act4, self.act5]
-        for i in range(len(convs)):
-            x = convs[i](x)
-            x = acts[i](x)
+        indices = [0, 3, 6, 8, 10]
+        conv_cnt=0
+        for layer_idx, layer in enumerate(self.features):
+            if layer_idx is in indices:
+                x = self.features[layer_idx](x)
+                x = self.features[layer_idx + 1](x)
+                layer_idx += 2
+                n_features = self.zero_counter[conv_cnt].size(1)
+                for idx in range(x.size(0)):
+                    flattened = x[idx].view(-1)
+                    zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+                    zeros_idx %= n_features
+                    self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+                conv_cnt += 1
+            else:
+                x = self.features[layer_idx](x)
 
-            n_features = self.zero_counter[i].size(1)
-            for idx in range(x.size(0)):
-                flattened = x[idx].view(-1)
-                zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-                zeros_idx %= n_features
-                self.zero_counter[i][cluster, zeros_idx] += 1
 
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)

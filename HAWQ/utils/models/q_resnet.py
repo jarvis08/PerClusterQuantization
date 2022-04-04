@@ -74,138 +74,138 @@ class Q_ResNet18(nn.Module):
         return x
 
 
-class Q_ResNet20_unfold_Daq(nn.Module):
-    """
-        Quantized ResNet20 model for dataset CIFAR100, CIFAR10
-    """
-    def __init__(self, model, runtime_helper):
-        super().__init__()
-        features = getattr(model, 'features')
-        init_block = getattr(features, 'init_block')
+# class Q_ResNet20_unfold_Daq(nn.Module):
+#     """
+#         Quantized ResNet20 model for dataset CIFAR100, CIFAR10
+#     """
+#     def __init__(self, model, runtime_helper):
+#         super().__init__()
+#         features = getattr(model, 'features')
+#         init_block = getattr(features, 'init_block')
 
-        self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
+#         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_block_conv = QuantConv2d()
-        self.quant_init_block_conv.set_param(init_block.conv)
+#         self.quant_init_block_conv = QuantConv2d()
+#         self.quant_init_block_conv.set_param(init_block.conv)
        
-        self.quant_init_block_conv_act = QuantAct_Daq(runtime_helper=runtime_helper)
+#         self.quant_init_block_conv_act = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_block_bn = QuantBn()
-        self.quant_init_block_bn.set_param(init_block.bn)
+#         self.quant_init_block_bn = QuantBn()
+#         self.quant_init_block_bn.set_param(init_block.bn)
 
-        self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
+#         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.act = nn.ReLU()
+#         self.act = nn.ReLU()
 
-        self.channel = [3, 3, 3]
+#         self.channel = [3, 3, 3]
 
-        for stage_num in range(0, 3):
-            stage = getattr(features, "stage{}".format(stage_num + 1))
-            for unit_num in range(0, self.channel[stage_num]):
-                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
-                quant_unit = Q_ResBlockBn_unfold_Daq()
-                quant_unit.set_param(unit, runtime_helper)
-                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
+#         for stage_num in range(0, 3):
+#             stage = getattr(features, "stage{}".format(stage_num + 1))
+#             for unit_num in range(0, self.channel[stage_num]):
+#                 unit = getattr(stage, 'unit{}'.format(unit_num + 1))
+#                 quant_unit = Q_ResBlockBn_unfold_Daq()
+#                 quant_unit.set_param(unit, runtime_helper)
+#                 setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
 
-        self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
+#         self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
 
-        self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
+#         self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        output = getattr(model, 'output')
-        self.quant_output = QuantLinear()
-        self.quant_output.is_classifier = True
-        self.quant_output.set_param(output)
+#         output = getattr(model, 'output')
+#         self.quant_output = QuantLinear()
+#         self.quant_output.is_classifier = True
+#         self.quant_output.set_param(output)
 
-    def forward(self, x):
-        x, act_scaling_factor = self.quant_input(x)
+#     def forward(self, x):
+#         x, act_scaling_factor = self.quant_input(x)
 
-        x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_init_block_conv_act(x, act_scaling_factor, conv_scaling_factor)
+#         x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_init_block_conv_act(x, act_scaling_factor, conv_scaling_factor)
 
-        x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor)
+#         x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor)
 
-        x = self.act(x)
+#         x = self.act(x)
 
-        for stage_num in range(0,3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+#         for stage_num in range(0,3):
+#             for unit_num in range(0, self.channel[stage_num]):
+#                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+#                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x = self.final_pool(x, act_scaling_factor)
+#         x = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+#         x = x.view(x.size(0), -1)
+#         x = self.quant_output(x, act_scaling_factor)
 
-        return x
+#         return x
 
 
-class Q_ResNet20_unfold(nn.Module):
-    """
-        Quantized ResNet20 model for dataset CIFAR100, CIFAR10
-    """
-    def __init__(self, model):
-        super().__init__()
-        features = getattr(model, 'features')
-        init_block = getattr(features, 'init_block')
+# class Q_ResNet20_unfold(nn.Module):
+#     """
+#         Quantized ResNet20 model for dataset CIFAR100, CIFAR10
+#     """
+#     def __init__(self, model):
+#         super().__init__()
+#         features = getattr(model, 'features')
+#         init_block = getattr(features, 'init_block')
 
-        self.quant_input = QuantAct()
+#         self.quant_input = QuantAct()
 
-        self.quant_init_block_conv = QuantConv2d()
-        self.quant_init_block_conv.set_param(init_block.conv)
+#         self.quant_init_block_conv = QuantConv2d()
+#         self.quant_init_block_conv.set_param(init_block.conv)
        
-        self.quant_init_block_conv_act = QuantAct()
+#         self.quant_init_block_conv_act = QuantAct()
 
-        self.quant_init_block_bn = QuantBn()
-        self.quant_init_block_bn.set_param(init_block.bn)
+#         self.quant_init_block_bn = QuantBn()
+#         self.quant_init_block_bn.set_param(init_block.bn)
 
-        self.quant_act_int32 = QuantAct()
+#         self.quant_act_int32 = QuantAct()
 
-        self.act = nn.ReLU()
+#         self.act = nn.ReLU()
 
-        self.channel = [3, 3, 3]
+#         self.channel = [3, 3, 3]
 
-        for stage_num in range(0, 3):
-            stage = getattr(features, "stage{}".format(stage_num + 1))
-            for unit_num in range(0, self.channel[stage_num]):
-                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
-                quant_unit = Q_ResBlockBn_unfold()
-                quant_unit.set_param(unit)
-                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
+#         for stage_num in range(0, 3):
+#             stage = getattr(features, "stage{}".format(stage_num + 1))
+#             for unit_num in range(0, self.channel[stage_num]):
+#                 unit = getattr(stage, 'unit{}'.format(unit_num + 1))
+#                 quant_unit = Q_ResBlockBn_unfold()
+#                 quant_unit.set_param(unit)
+#                 setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
 
-        self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
+#         self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
 
-        self.quant_act_output = QuantAct()
+#         self.quant_act_output = QuantAct()
 
-        output = getattr(model, 'output')
-        self.quant_output = QuantLinear()
-        self.quant_output.is_classifier = True
-        self.quant_output.set_param(output)
+#         output = getattr(model, 'output')
+#         self.quant_output = QuantLinear()
+#         self.quant_output.is_classifier = True
+#         self.quant_output.set_param(output)
 
-    def forward(self, x):
-        x, act_scaling_factor = self.quant_input(x)
+#     def forward(self, x):
+#         x, act_scaling_factor = self.quant_input(x)
 
-        x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_init_block_conv_act(x, act_scaling_factor, conv_scaling_factor)
+#         x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_init_block_conv_act(x, act_scaling_factor, conv_scaling_factor)
 
-        x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor)
+#         x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, bn_scaling_factor)
 
-        x = self.act(x)
+#         x = self.act(x)
 
-        for stage_num in range(0,3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+#         for stage_num in range(0,3):
+#             for unit_num in range(0, self.channel[stage_num]):
+#                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+#                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x = self.final_pool(x, act_scaling_factor)
+#         x = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+#         x = x.view(x.size(0), -1)
+#         x = self.quant_output(x, act_scaling_factor)
 
-        return x
+#         return x
 
 
 class Q_ResNet20_Daq(nn.Module):
@@ -241,7 +241,6 @@ class Q_ResNet20_Daq(nn.Module):
         self.final_pool = QuantAveragePool2d(kernel_size=8 , stride=1)
 
         self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_act_output.isClassifier = True
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
@@ -269,30 +268,45 @@ class Q_ResNet20_Daq(nn.Module):
 
         return x
 
-    def count_zeros_per_index(self, x, cluster, n_clusters):
-        x = self.quant_input(x)
-        x = self.quant_init_block_convbn(x)
-        x = self.quant_act_int32(x)
+    def initialize_counter(self, x, n_clusters):
+        self.zero_counter = []
 
-        initialized = True
-        if not hasattr(self, 'zero_counter'):
-            initialized = False
-            n_features = x.view(-1).size(0)
-            self.zero_counter = []
-            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
-
-        l_idx = 0
-        n_features = self.zero_counter[l_idx].size(1)
-        for i in range(x.size(0)):
-            flattened = x[i].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[l_idx][cluster, zeros_idx] += 1
+        self.features = nn.Sequential(self.quant_init_block_convbn, self.act)
+        
+        x = self.features(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, l_idx = tmp_func.count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
+                x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
+
+
+    # def count_zeros_per_index(self, x, cluster, n_clusters):
+    #     x = self.quant_input(x)
+    #     x = self.quant_init_block_convbn(x)
+    #     x = self.quant_act_int32(x)
+
+    #     initialized = True
+    #     if not hasattr(self, 'zero_counter'):
+    #         initialized = False
+    #         n_features = x.view(-1).size(0)
+    #         self.zero_counter = []
+    #         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    #     l_idx = 0
+    #     n_features = self.zero_counter[l_idx].size(1)
+    #     for i in range(x.size(0)):
+    #         flattened = x[i].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[l_idx][cluster, zeros_idx] += 1
+
+    #     for stage_num in range(0,3):
+    #         for unit_num in range(0, self.channel[stage_num]):
+    #             tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+    #             x, l_idx = tmp_func.count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
 
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
@@ -356,7 +370,7 @@ class Q_ResNet20(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x = self.final_pool(x, act_scaling_factor)
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
@@ -371,11 +385,11 @@ class Q_ResNet50(nn.Module):
     """
     def __init__(self, model):
         super().__init__()
-
         features = getattr(model, 'features')
-
         init_block = getattr(features, 'init_block')
+
         self.quant_input = QuantAct()
+
         self.quant_init_convbn = QuantBnConv2d()
         self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
 
@@ -439,6 +453,7 @@ class Q_ResNet50_Daq(nn.Module):
         self.runtime_helper = runtime_helper
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
+
         self.quant_init_convbn = QuantBnConv2d()
         self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
 
@@ -457,12 +472,9 @@ class Q_ResNet50_Daq(nn.Module):
                 quant_unit.set_param(unit, runtime_helper)
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        # self.quant_pool_input = QuantAct_Daq()
-        # self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
         self.final_pool = QuantAveragePool2d(output=(1, 1))
 
         self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_act_output.isClassifier = True
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
@@ -484,7 +496,6 @@ class Q_ResNet50_Daq(nn.Module):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        # x, act_scaling_factor = self.quant_pool_input(x, act_scaling_factor)
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
@@ -494,65 +505,65 @@ class Q_ResNet50_Daq(nn.Module):
         return x
 
 
-class Q_ResNet101(nn.Module):
-    """
-       Quantized ResNet101 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
-    """
-    def __init__(self, model):
-        super().__init__()
+# class Q_ResNet101(nn.Module):
+#     """
+#        Quantized ResNet101 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
+#     """
+#     def __init__(self, model):
+#         super().__init__()
 
-        features = getattr(model, 'features')
+#         features = getattr(model, 'features')
 
-        init_block = getattr(features, 'init_block')
-        self.quant_input = QuantAct()
-        self.quant_init_convbn = QuantBnConv2d()
-        self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
+#         init_block = getattr(features, 'init_block')
+#         self.quant_input = QuantAct()
+#         self.quant_init_convbn = QuantBnConv2d()
+#         self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
 
-        self.quant_act_int32 = QuantAct()
+#         self.quant_act_int32 = QuantAct()
 
-        self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.act = nn.ReLU()
+#         self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+#         self.act = nn.ReLU()
 
-        self.channel = [3, 4, 23, 3]
+#         self.channel = [3, 4, 23, 3]
 
-        for stage_num in range(0, 4):
-            stage = getattr(features, "stage{}".format(stage_num + 1))
-            for unit_num in range(0, self.channel[stage_num]):
-                unit = getattr(stage, "unit{}".format(unit_num + 1))
-                quant_unit = Q_ResUnitBn()
-                quant_unit.set_param(unit)
-                setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
+#         for stage_num in range(0, 4):
+#             stage = getattr(features, "stage{}".format(stage_num + 1))
+#             for unit_num in range(0, self.channel[stage_num]):
+#                 unit = getattr(stage, "unit{}".format(unit_num + 1))
+#                 quant_unit = Q_ResUnitBn()
+#                 quant_unit.set_param(unit)
+#                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
+#         self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
 
-        self.quant_act_output = QuantAct()
+#         self.quant_act_output = QuantAct()
 
-        output = getattr(model, 'output')
-        self.quant_output = QuantLinear()
-        self.quant_output.set_param(output)
+#         output = getattr(model, 'output')
+#         self.quant_output = QuantLinear()
+#         self.quant_output.set_param(output)
 
-    def forward(self, x):
-        x, act_scaling_factor = self.quant_input(x)
+#     def forward(self, x):
+#         x, act_scaling_factor = self.quant_input(x)
 
-        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
+#         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
 
-        x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None)
+#         x = self.pool(x)
+#         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None)
 
-        x = self.act(x)
+#         x = self.act(x)
 
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+#         for stage_num in range(0, 4):
+#             for unit_num in range(0, self.channel[stage_num]):
+#                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+#                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x = self.final_pool(x, act_scaling_factor)
+#         x = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
+#         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+#         x = x.view(x.size(0), -1)
+#         x = self.quant_output(x, act_scaling_factor)
 
-        return x
+#         return x
 
 
 class Q_ResUnitBn_Daq(nn.Module):
@@ -844,6 +855,8 @@ class Q_ResBlockBn_Daq(nn.Module):
         self.quant_convbn1 = QuantBnConv2d()
         self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
 
+        self.act1 = nn.ReLU()
+
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn2 = unit.body.conv2
@@ -853,6 +866,8 @@ class Q_ResBlockBn_Daq(nn.Module):
         if self.resize_identity:
             self.quant_identity_convbn = QuantBnConv2d()
             self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
+
+        self.act2 = nn.ReLU()
 
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
 
@@ -867,7 +882,7 @@ class Q_ResBlockBn_Daq(nn.Module):
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-        x = nn.ReLU()(x)
+        x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
 
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
@@ -881,80 +896,136 @@ class Q_ResBlockBn_Daq(nn.Module):
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity,
                                                          scaling_factor_int32, None)
 
-        x = nn.ReLU()(x)
+        x = self.act2(x)
 
         return x, act_scaling_factor
 
-    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
-        # make empty list space
-        if not initialized:
-            _x = x[0].unsqueeze(0)
-            if self.resize_identity:
-                _x = self.quant_act(_x)
-                identity = self.quant_identity_convbn(_x)
-            else:
-                identity = _x
-                _x = self.quant_act(_x)
-
-            _x = self.quant_convbn1(_x)
-            _x = nn.ReLU()(_x)
-            _x = self.quant_act1(_x)
-            ###
-            n_features = _x.view(-1).size(0)
-            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
-            ###
-            _x = self.quant_convbn2(_x)
-
-            _x = _x + identity
-
-            # if self.resize_identity:
-            #     _x = self.quant_act_int32(_x)
-            # else:
-            #     _x = self.quant_act_int32(_x)
-            _x = nn.ReLU()(_x)
-            n_features = _x.view(-1).size(0)
-            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    def initialize_counter(self, x, n_clusters, zero_counter):
+        self.zero_counter = zero_counter
 
         if self.resize_identity:
-            x = self.quant_act(x)
-            identity = self.quant_identity_convbn(x)
+            self.features = nn.Sequential(self.quant_identity_convbn,
+                                          self.quant_convbn1, self.act1,
+                                          self.quant_convbn2, self.act2)
+
+            identity = self.features[0]
+            x = self.features[1]
+            x = self.features[2]
+
+            n_features = x.view(-1).size(0)
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+            x = 
+
+
+
         else:
+            self.features = nn.Sequential(self.quant_convbn1, self.act1, 
+                                          self.quant_convbn2, self.act2)
+
+
+
+        for i in range(len(se)):
+            _from = 0 if i == 0 else indices[i - 1]
+            _to = indices[i]
+            x = self.features[_from:_to](x)
+            n_features = x.view(-1).size(0)
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+        return x
+
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        if not hasattr(self, 'zero_counter'):  
+            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+        if self.resize_identity:
+            indices = [1, 3]
+            for layer_idx, layer in enumerate(self.features):
+                if layer_idx is in indices:
+        else:
+            indices = [0, 2]
             identity = x
-            x = self.quant_act(x)
 
-        x = self.quant_convbn1(x)
-        x = nn.ReLU()(x)
-        x = self.quant_act1(x)
-        ###
-        l_idx += 1
-        n_features = zero_counter[l_idx].size(1)
-        for i in range(x.size(0)):
-            flatten = x[i].view(-1)
-            zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            zero_counter[l_idx][cluster, zeros_idx] += 1
-        ###
+            x = self.features[0](x)
+            x = self.features[1](x)
 
-        x = self.quant_convbn2(x)
+            n_features = self.zero_counter[conv_cnt].size(1)
+            for idx in range(x.size(0)):
+                flattened = x[idx].view(-1)
+                zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+                zeros_idx %= n_features
+                self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+        
 
-        x = x + identity
+    # def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
+    #     # make empty list space
+    #     if not initialized:
+    #         _x = x[0].unsqueeze(0)
+    #         if self.resize_identity:
+    #             _x = self.quant_act(_x)
+    #             identity = self.quant_identity_convbn(_x)
+    #         else:
+    #             identity = _x
+    #             _x = self.quant_act(_x)
 
-        # if self.resize_identity:
-        #     x = self.quant_act_int32(x)
-        # else:
-        #     x = self.quant_act_int32(x)
+    #         _x = self.quant_convbn1(_x)
+    #         _x = nn.ReLU()(_x)
+    #         _x = self.quant_act1(_x)
+    #         ###
+    #         n_features = _x.view(-1).size(0)
+    #         zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #         ###
+    #         _x = self.quant_convbn2(_x)
 
-        x = nn.ReLU()(x)
-        ###
-        l_idx += 1
-        n_features = zero_counter[l_idx].size(1)
-        for i in range(x.size(0)):
-            flatten = x[i].view(-1)
-            zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            zero_counter[l_idx][cluster, zeros_idx] += 1
-        ###
-        return x, l_idx
+    #         _x = _x + identity
+
+    #         # if self.resize_identity:
+    #         #     _x = self.quant_act_int32(_x)
+    #         # else:
+    #         #     _x = self.quant_act_int32(_x)
+    #         _x = nn.ReLU()(_x)
+    #         n_features = _x.view(-1).size(0)
+    #         zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    #     if self.resize_identity:
+    #         x = self.quant_act(x)
+    #         identity = self.quant_identity_convbn(x)
+    #     else:
+    #         identity = x
+    #         x = self.quant_act(x)
+
+    #     x = self.quant_convbn1(x)
+    #     x = nn.ReLU()(x)
+    #     x = self.quant_act1(x)
+    #     ###
+    #     l_idx += 1
+    #     n_features = zero_counter[l_idx].size(1)
+    #     for i in range(x.size(0)):
+    #         flatten = x[i].view(-1)
+    #         zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         zero_counter[l_idx][cluster, zeros_idx] += 1
+    #     ###
+
+    #     x = self.quant_convbn2(x)
+
+    #     x = x + identity
+
+    #     # if self.resize_identity:
+    #     #     x = self.quant_act_int32(x)
+    #     # else:
+    #     #     x = self.quant_act_int32(x)
+
+    #     x = nn.ReLU()(x)
+    #     ###
+    #     l_idx += 1
+    #     n_features = zero_counter[l_idx].size(1)
+    #     for i in range(x.size(0)):
+    #         flatten = x[i].view(-1)
+    #         zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         zero_counter[l_idx][cluster, zeros_idx] += 1
+    #     ###
+    #     return x, l_idx
 
 
 class Q_ResBlockBn(nn.Module):
