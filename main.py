@@ -25,7 +25,7 @@ parser.add_argument('--sub_cluster', default=0, type=int, help='Number of sub-cl
 parser.add_argument('--partition', default=2, type=int,
                     help="Number of partitions to divide per channel for clustering's input")
 parser.add_argument('--partition_method', default='square', type=str, help="How to divide image into partitions")
-parser.add_argument('--repr_method', default='minmax', type=str, help="How to get representation per partition")
+parser.add_argument('--repr_method', default='mean', type=str, help="How to get representation per partition")
 parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
 
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')

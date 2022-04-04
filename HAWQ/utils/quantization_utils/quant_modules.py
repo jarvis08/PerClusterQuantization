@@ -693,7 +693,7 @@ class QuantBnConv2d(Module):
                 return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
                                 self.conv.dilation, self.conv.groups) * correct_output_scale, self.convbn_scaling_factor)
         else:
-            conv_output = F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, 
+            conv_output = F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, 
                                    self.conv.groups)
             if self.fix_BN == False:
                 batch_mean = torch.mean(conv_output, dim=(0, 2, 3))

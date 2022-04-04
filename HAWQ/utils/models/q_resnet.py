@@ -273,7 +273,9 @@ class Q_ResNet20_Daq(nn.Module):
 
         self.features = nn.Sequential(self.quant_init_block_convbn, self.act)
         
-        x = self.features(x)
+        x, _ = self.features[0](x)
+        x = self.features[1](x)
+
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
@@ -281,12 +283,14 @@ class Q_ResNet20_Daq(nn.Module):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
+                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', tmp_func)
 
     def count_zeros_per_index(self, x, cluster, n_clusters):
         if not hasattr(self, 'zero_counter'):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
-        x = self.features(x)
+        x, _ = self.features[0](x)
+        x = self.features[1](x)
 
         layer_idx = 0
         n_features = self.zero_counter[layer_idx].size(1)
@@ -299,7 +303,7 @@ class Q_ResNet20_Daq(nn.Module):
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, n_clusters, self.zero_counter)
+                x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
     # def count_zeros_per_index(self, x, cluster, n_clusters):
     #     x = self.quant_input(x)
@@ -540,7 +544,10 @@ class Q_ResNet50_Daq(nn.Module):
 
         self.features = nn.Sequential(self.quant_init_block_convbn, self.pool, self.act)
         
-        x = self.features(x)
+        x, _ = self.features[0](x)
+        x, _ = self.features[1](x)
+        x = self.features[2](x)
+
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
@@ -548,12 +555,15 @@ class Q_ResNet50_Daq(nn.Module):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
+                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', tmp_func)
 
     def count_zeros_per_index(self, x, cluster, n_clusters):
         if not hasattr(self, 'zero_counter'):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
-        x = self.features(x)
+        x, _ = self.features[0](x)
+        x, _ = self.features[1](x)
+        x = self.features[2](x)
 
         layer_idx = 0
         n_features = self.zero_counter[layer_idx].size(1)
@@ -566,7 +576,7 @@ class Q_ResNet50_Daq(nn.Module):
         for stage_num in range(0,4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, n_clusters, self.zero_counter)
+                x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
 
 # class Q_ResNet101(nn.Module):
@@ -707,42 +717,42 @@ class Q_ResUnitBn_Daq(nn.Module):
                                           self.quant_convbn3, self.act3,
                                           self.quant_identity_convbn)
 
-            identity = self.features[6](x)
+            identity, _ = self.features[6](x)
         else :
             self.features = nn.Sequential(self.quant_convbn1, self.act1, 
                                           self.quant_convbn2, self.act2,
                                           self.quant_convbn3, self.act3)
             identity = x
-        x = self.features[0](x)
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = self.features[3](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[4](x)
+        x, _ = self.features[4](x)
         x = x + identity
         x = self.features[5](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        return x    
+        return x
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
         if self.resize_identity:
-            identity = self.features[4](x)
+            identity, _ = self.features[4](x)
         else:
             identity = x
         
         identity = x
 
-        x = self.features[0](x)
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         layer_idx += 1
@@ -753,7 +763,7 @@ class Q_ResUnitBn_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = self.features[3](x)
         
         layer_idx += 1
@@ -764,7 +774,7 @@ class Q_ResUnitBn_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
         
-        x = self.features[4](x)
+        x, _ = self.features[4](x)
         x = x + identity
         x = self.features[5](x)
 
@@ -1060,35 +1070,33 @@ class Q_ResBlockBn_Daq(nn.Module):
                                           self.quant_convbn2, self.act2,
                                           self.quant_identity_convbn)
 
-            identity = self.features[4](x)
+            identity, _ = self.features[4](x)
         else :
             self.features = nn.Sequential(self.quant_convbn1, self.act1, 
                                           self.quant_convbn2, self.act2)
             identity = x
-        x = self.features[0](x)
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = x + identity
         x = self.features[3](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        return x    
+        return x
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
         if self.resize_identity:
-            identity = self.features[4](x)
+            identity, _ = self.features[4](x)
         else:
             identity = x
-        
-        identity = x
 
-        x = self.features[0](x)
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         layer_idx += 1
@@ -1099,7 +1107,7 @@ class Q_ResBlockBn_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = x + identity
         x = self.features[3](x)
         
