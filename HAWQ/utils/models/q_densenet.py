@@ -16,12 +16,6 @@ class Q_DenseNet(nn.Module):
 
         self.quant_input = QuantAct()
 
-        # self.quant_init_block_conv = QuantConv2d()
-        # self.quant_init_block_conv.set_param(init_block.conv)
-        # self.quant_init_block_act = QuantAct()
-        # self.quant_init_block_bn = QuantBn()
-        # self.quant_init_block_bn.set_param(init_block.bn)
-
         self.quant_init_convbn = QuantBnConv2d()
         self.quant_init_convbn.set_param(init_block.conv, init_block.bn)
 
@@ -64,20 +58,14 @@ class Q_DenseNet(nn.Module):
     def forward(self, input):
         x, act_scaling_factor = self.quant_input(input)
 
-        # x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        # x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, conv_scaling_factor)
-
-        # x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
 
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
+        x = self.act1(x) 
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
 
-        x = self.act1(x) 
-
         for stage_num in range(4):
-            if stage_num is not 0:
+            if stage_num != 0:
                 transition = getattr(self, f'trans{stage_num + 1}')
                 x, act_scaling_factor = transition(x, act_scaling_factor)
             function = getattr(self, f'stage{stage_num + 1}')
@@ -196,16 +184,12 @@ class Q_DenseNet_Daq(nn.Module):
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_block_conv = QuantConv2d()
-        self.quant_init_block_conv.set_param(init_block.conv)
-        self.quant_init_block_act = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_init_block_bn = QuantBn()
-        self.quant_init_block_bn.set_param(init_block.bn)
-
+        self.quant_init_convbn = QuantBnConv2d()
+        self.quant_init_convbn.set_param(init_block.conv, init_block.bn)
+        self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
         self.act1 = nn.ReLU(inplace=True)
 
         self.pool = QuantMaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         units = [6, 12, 24, 16] 
 
@@ -241,13 +225,11 @@ class Q_DenseNet_Daq(nn.Module):
     def forward(self, input):
         x, act_scaling_factor = self.quant_input(input)
 
-        x, conv_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, conv_scaling_factor)
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
 
-        x, bn_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-        x = self.act1(x) 
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor)
+        x = self.act1(x) 
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
 
         for stage_num in range(4):
             if stage_num != 0:
@@ -266,6 +248,72 @@ class Q_DenseNet_Daq(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
         return x
+
+    #### NNAC Helper ####
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct_Daq, QuantLinear, QuantBnConv2d, QuantBn, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+    
+    def initialize_counter(self, x, n_clusters):
+        self.zero_counter = []
+
+        self.features = nn.Sequential(self.quant_init_convbn, self.act1, self.pool)
+        
+        x = self.features(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        for stage_num in range(0,4):
+            if stage_num != 0:
+                transition = getattr(self, f'trans{stage_num + 1}')
+                x = transition.initialize_counter(x, n_clusters, self.zero_counter)
+            tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+            x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
+        
+        self.classifiers = nn.Sequential(self.batch_norm, self.act2)
+
+        x = self.classifiers
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        if not hasattr(self, 'zero_counter'):
+            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+        x = self.features(x)
+
+        layer_idx = 0
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    
+        for stage_num in range(0,4):
+            if stage_num != 0:
+                transition = getattr(self, f'trans{stage_num + 1}')
+                x, layer_idx = transition.count_zeros_per_index(x, layer_idx, n_clusters, self.zero_counter)
+            tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+            x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, n_clusters, self.zero_counter)
+        
+        x = self.classifiers(x)
+
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+
 
 
 class Q_Transition_Daq(nn.Module):
@@ -286,7 +334,6 @@ class Q_Transition_Daq(nn.Module):
         self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.pool = QuantAveragePool2d(kernel_size=2, stride=2, padding=0)
-        self.quant_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
     def forward(self, x, act_scaling_factor=None):
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
@@ -298,10 +345,39 @@ class Q_Transition_Daq(nn.Module):
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
 
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_output(x, act_scaling_factor)
-
         return x, act_scaling_factor
 
+    def initialize_counter(self, x, n_clusters, zero_counter):
+        self.zero_counter = zero_counter
+        
+        self.features = nn.Sequential(self.batch_norm, self.act, 
+                                      self.conv, self.pool)
+
+        x = self.features[0](x)
+        x = self.features[1](x)
+
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        x = self.features[2](x)
+        x = self.features[3](x)
+        return x
+
+    def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
+        x = self.features[0](x)
+        x = self.features[1](x)
+
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+
+        x = self.features[2](x)
+        x = self.features[3](x)
+        return x, layer_idx
 
 
 class Q_DenseUnit_Daq(nn.Module):
@@ -315,13 +391,10 @@ class Q_DenseUnit_Daq(nn.Module):
         self.act1 = nn.ReLU(inplace=True)
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_conv1 = QuantConv2d()
-        self.quant_conv1.set_param(layer1.conv)
-        self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
-
         layer2 = getattr(unit, "conv2")
-        self.quant_bn2 = QuantBn()
-        self.quant_bn2.set_param(layer2.bn)
+        self.quant_convbn = QuantBnConv2d()
+        self.quant_convbn.set_param(layer1.conv, layer2.bn)
+
         self.act2 = nn.ReLU(inplace=True)
         self.quant_act3 = QuantAct_Daq(runtime_helper=runtime_helper)
 
@@ -335,12 +408,9 @@ class Q_DenseUnit_Daq(nn.Module):
         x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, input_scaling_factor, bn_scaling_factor)
 
-        x, conv_scaling_factor = self.quant_conv1(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
-
-        x, bn_scaling_factor = self.quant_bn2(x, act_scaling_factor)
+        x, weight_scaling_factor = self.quant_convbn(x, act_scaling_factor)
         x = self.act2(x)
-        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor)
 
         x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
 
@@ -348,6 +418,71 @@ class Q_DenseUnit_Daq(nn.Module):
         x, act_scaling_factor = self.quant_act_output(concat_tensor, act_scaling_factor, conv_scaling_factor, 
                                                 concat=True, concat_scaling_factor=input_scaling_factor)
         return x, act_scaling_factor
+
+    def initialize_counter(self, x, n_clusters, zero_counter):
+        self.zero_counter = zero_counter
+        
+        self.features = nn.Sequential(self.quant_bn1, self.act1,
+                                      self.quant_convbn, self.act2,
+                                      self.quant_conv2)
+
+        batch = x
+
+        x = self.features[0](x)
+        x = self.features[1](x)
+
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        x = self.features[2](x)
+        x = self.features[3](x)
+        
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        x = self.features[4](x)
+        x = torch.cat((batch, x), 1)
+        
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        return x
+
+    def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
+        x = self.features[0](x)
+        x = self.features[1](x)
+
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+
+        x = self.features[2](x)
+        x = self.features[3](x)
+        
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+
+        x = self.features[4](x)
+        x = torch.cat((batch, x), 1)
+
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+
+        return x, layer_idx
 
 
 class Q_DenseBlock_Daq(nn.Module):
@@ -367,6 +502,20 @@ class Q_DenseBlock_Daq(nn.Module):
             function = getattr(self, f'unit{unit_num + 1}')
             x, act_scaling_factor = function(x, act_scaling_factor)
         return x, act_scaling_factor
+
+    def initialize_counter(self, x, n_clusters, zero_counter):
+        self.zero_counter = zero_counter
+        for unit_num in range(self.layers):
+            function = getattr(self, f'unit{unit_num + 1}')
+            x = function.initialize_counter(x, n_clusters, self.zero_counter)
+        return x
+        
+    def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
+        for unit_num in range(self.layers):
+            function = getattr(self, f'unit{unit_num + 1}')
+            x, layer_idx = function.count_zeros_per_index(x, layer_idx, n_clusters, self.zero_counter)
+        return x, layer_idx
+
 
 
 def q_densenet(model, model_dict=None, runtime_helper=None):

@@ -735,9 +735,6 @@ class Q_ResUnitBn_Daq(nn.Module):
         return x    
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
-        if not hasattr(self, 'zero_counter'):  
-            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
-
         if self.resize_identity:
             identity = self.features[4](x)
         else:
@@ -1084,9 +1081,6 @@ class Q_ResBlockBn_Daq(nn.Module):
         return x    
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
-        if not hasattr(self, 'zero_counter'):  
-            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
-
         if self.resize_identity:
             identity = self.features[4](x)
         else:
