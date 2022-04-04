@@ -717,6 +717,7 @@ class QuantBn(Module):
     def __init__(self,
                  weight_bit=16,
                  bias_bit=None,
+                 full_precision_flag=False,
                  quant_mode="symmetric",
                  per_channel=False,
                  fix_flag=False,
@@ -726,6 +727,7 @@ class QuantBn(Module):
         super(QuantBn, self).__init__()
         self.weight_bit = weight_bit
         self.quant_mode = quant_mode
+        self.full_precision_flag = full_precision_flag
         self.fix_flag = fix_flag
         self.weight_percentile = weight_percentile
         self.bias_bit = bias_bit
