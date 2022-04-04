@@ -38,27 +38,6 @@ def traverse(target, total_dict, name_stack=None):
             traverse(m, total_dict, 'ResBlock ' + name + ' ')
     return total_dict
 
-
-def save_graph(data, identifier, sort=False):
-    mean_ = data.transpose(1, 0).mean(axis=1)
-
-    scale = data.shape[0] // 96
-    fig = plt.figure(figsize=(20, 20*scale))
-    plt.axis([data.min() - 1, data.max() + 1, 0, 0.1 * (data.shape[0] + 1)])
-    plt.axhline(mean_[0], 0, 1, color='red', linestyle='--', linewidth=2)
-    plt.axhline(mean_[1], 0, 1, color='red', linestyle='--', linewidth=2)
-
-    cnt = 0
-    for i in range(data.shape[0]):
-        cnt += 0.1
-        plt.vlines(cnt, data[i][0], data[i][1])
-        plt.text(data[i][0] - 0.2, cnt, '{:.4f}'.format(data[i][0]), ha='right', va='center')
-        plt.text(data[i][1] + 0.2, cnt, '{:.4f}'.format(data[i][1]), ha='left', va='center')
-    #plt.show()
-    plt.xlabel('range')
-    plt.savefig(identifier)
-
-
 def save_results_to_csv(output, weight, path, output_range_ratio, weight_range_ratio, overlapped=False):
     output_mean = output.transpose(1, 0).mean(axis=1)
     weight_mean = weight.transpose(1, 0).mean(axis=1)
@@ -78,6 +57,7 @@ def save_results_to_csv(output, weight, path, output_range_ratio, weight_range_r
         for i in range(weight.shape[0]):
             writer.writerow([i, weight[i][0], weight[i][1]])
         writer.writerow(['mean', weight_mean[0], weight_mean[1]])
+
 
 def save_std_results_to_csv(output, weight, path, overlapped=False):
     output_mean = output.transpose(1, 0).mean(axis=1)
@@ -99,92 +79,228 @@ def save_std_results_to_csv(output, weight, path, overlapped=False):
             writer.writerow([i, weight[i][0], weight[i][1]])
         writer.writerow(['mean', weight_mean[0], weight_mean[1]])
 
+def save_graph(data, identifier, figure_title):
+    mean_ = data.transpose(1, 0).mean(axis=1)
+    y_elements = data.shape[0]
+    if y_elements <= 20:
+        scale = 1
+        portion = 20
+    else:
+        scale = 0.1
+        portion = 0.1 * (y_elements + 1)
+
+    fig = plt.figure(figsize=(20, portion))
+    plt.title(figure_title)
+    plt.xlabel('weight range')
+    if 'Groups' in figure_title:
+        plt.ylabel('filter groups')
+    else:
+        plt.ylabel('output channels')
+
+    plt.xlim([data.min() - 1, data.max() + 1])
+    plt.ylim([0, portion])
+
+    plt.axvline(mean_[0], 0, 1, color='red', linestyle='--', linewidth=2)
+    plt.axvline(mean_[1], 0, 1, color='red', linestyle='--', linewidth=2)
+
+    cnt = 0
+    for i in range(y_elements):
+        cnt += scale
+        plt.hlines(cnt, data[i][0], data[i][1])
+        plt.text(data[i][0] - 0.1, cnt, '{:.4f}'.format(data[i][0]), ha='right', va='center', fontsize='xx-small')
+        plt.text(data[i][1] + 0.1, cnt, '{:.4f}'.format(data[i][1]), ha='left', va='center', fontsize='xx-small')
+    # plt.show()
+    plt.savefig(identifier)
+    plt.close(fig)
+
+
+def draw_violin_graph(data, channels, identifier, max_, arch):
+    plt.style.use('default')
+    max_ = 0
+    if '20' in arch:
+        if 'svhn' in arch:
+            max_ = 2.5
+        else :
+            max_ = 6
+        plt.rcParams['figure.figsize'] = (24, 12)
+    elif '50' in arch:
+        max_ = 2.0
+        plt.rcParams['figure.figsize'] = (60, 12)
+    elif '121' in arch:
+        max_ = 2.0
+        plt.rcParams['figure.figsize'] = (80, 12)
+    else:
+        if 'svhn' in arch:
+            max_ = 1.0
+        else:
+            max_ = 2.5
+        plt.rcParams['figure.figsize'] = (6, 6)
+    plt.rcParams['font.size'] = 12
+    pos = [i for i in range(len(data))]
+
+    fig, ax = plt.subplots()
+
+    violin = ax.violinplot(data, positions=pos, showmedians=True, quantiles=[[0.25] for _ in range(len(data))])
+
+    violin['cquantiles'].set_edgecolor('#ff2222')
+    violin['cmedians'].set_edgecolor('black')
+    violin['cquantiles'].set_linewidth(2)
+    violin['cmedians'].set_linewidth(2)
+
+    ax.set_xlabel('Convolution Layers', size=12, alpha=0.8)
+    ax.set_ylabel('Weight Range', size=12, alpha=0.8)
+    ax.set_xlim(-1, len(data))
+    ax.set_ylim(0, max_)
+    ax.set_xticks(pos)
+    ax.set_xticklabels([i for i in pos], fontsize=8)
+    # ax.set_title(f'{arch} Weight Range for Filter Group')
+
+    # plt.show()
+    plt.savefig(identifier)
+    plt.close(fig)
+
+
 def visualize(args, model):
     path = os.path.join('', 'skt_range')
     if not os.path.exists(path):
         os.makedirs(path)
-    path = os.path.join(path, args.arch + args.dataset + '_smooth_' + str(args.smooth))
-    if not os.path.exists(path):
-        os.makedirs(path)
+    # path = os.path.join(path, args.arch + args.dataset)
+    # if not os.path.exists(path):
+    #     os.makedirs(path)
+    violin_path  = os.path.join(path, 'violin')
+    if not os.path.exists(violin_path):
+        os.makedirs(violin_path)
+    naming = args.arch + '_' + args.dataset
 
     print("Save range output")
-    print("Save dir: ", path)
-
-    conv_idx = 0
-    #for m in model.features:
-    conv_output = []
-    conv_weight = []
-    output_range = []
-    weight_range = []
-    output_std = []
-    weight_std = []
-    model.cpu()
+    print("Save dir: ", violin_path)
 
     conv_cnt = 0
+    model.cpu()
+    range_per_group = []
+    filter_groups_per_layer = []
+    max_ = 0
+
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
             conv_cnt += 1
-            act_data = m.act_range.data.numpy()
-            weight_ = m.weight.view(m.weight.size(0), -1).detach().numpy()
-            weight_data = np.zeros((2, m.out_channels))
-            weight_data[0] = weight_.min(axis=1)
-            weight_data[1] = weight_.max(axis=1)
-            act_data_ = act_data.transpose(1, 0)
-            weight_data_ = weight_data.transpose(1, 0)
+            # conv_path = os.path.join(path, f'conv_{conv_cnt}_channels_{m.out_channels}')
+            # if not os.path.exists(conv_path):
+            #     os.makedirs(conv_path)
 
-            output_range_sorted = sorted(list(act_data_), key=lambda x: x[1] - x[0], reverse=True)
-            output_range.append((output_range_sorted[0][1] - output_range_sorted[0][0]) / (output_range_sorted[-1][1] - output_range_sorted[-1][0]))
+            in_channel = m.in_channels
+            out_channel = m.out_channels
+            # [16. 3. 4.4] -> [3, 16, 4, 4]
+            weight_per_filter_group = m.weight.detach().transpose(1,0).numpy()
 
-            weight_range_sorted = sorted(list(weight_data_), key=lambda x: x[1]-x[0], reverse=True)
-            weight_range.append((weight_range_sorted[0][1] - weight_range_sorted[0][0]) / (weight_range_sorted[-1][1] - weight_range_sorted[-1][0]))
+            weight_group = weight_per_filter_group.reshape(in_channel, -1)
+            min_max_per_group = np.zeros((2, in_channel))
+            min_max_per_group[0], min_max_per_group[1] = weight_group.min(axis=1), weight_group.max(axis=1)
+            range_cur_layer = min_max_per_group[1] - min_max_per_group[0]
+            range_per_group.append(range_cur_layer)
+            if range_cur_layer.max() > max_:
+                max_ = range_cur_layer.max()
 
-            conv_output.append(output_range_sorted)
-            conv_weight.append(weight_range_sorted)
+            filter_groups_per_layer.append(m.in_channels)
 
-            output_std.append(np.array([output_range_sorted[i][1] - output_range_sorted[i][0] for i in range(act_data_.shape[0])]).std())
-            weight_std.append(np.array([weight_range_sorted[i][1] - weight_range_sorted[i][0] for i in range(act_data_.shape[0])]).std())
+            min_max_per_group = min_max_per_group.transpose(1,0)
 
-    # output_indices = np.argsort(np.array(output_range))[-3:]
-    # weight_indices = np.argsort(np.array(weight_range))[-3:]
+            # weight_out_channels = weight_per_filter_group.reshape(in_channel, out_channel, -1)
+            # min_max_per_channel = np.zeros((2, in_channel, out_channel))
+            # min_max_per_channel[0], min_max_per_channel[1] = weight_out_channels.min(axis=2), weight_out_channels.max(axis=2)
+            # min_max_per_channel = min_max_per_channel.transpose(1, 2, 0)
 
-    output_indices = np.argsort(np.array(output_std))[-3:]
-    weight_indices = np.argsort(np.array(weight_std))[-3:]
 
-    overlap = set(output_indices) & set(weight_indices)
 
-    with open(path + '/master.csv', 'w') as csvfile:
-        writer = csv.writer(csvfile)
-        np_output_range = np.array(output_range)
-        np_weight_range = np.array(weight_range)
-        np_output_std = np.array(output_std)
-        np_weight_std = np.array(weight_std)
-        writer.writerow(['num layers', conv_cnt])
-        writer.writerow(['', 'min', 'max', 'mean', 'std'])
-        writer.writerow(['output_ratio', np_output_range.min(), np_output_range.max(), np_output_range.mean(), np_output_range.std()])
-        writer.writerow(['weight_ratio', np_weight_range.min(), np_weight_range.max(), np_weight_range.mean(), np_weight_range.std()])
-        writer.writerow(['output_std', np_output_std.min(), np_output_std.max(), np_output_std.mean(),
-                         np_output_std.std()])
-        writer.writerow(['weight_std', np_weight_std.min(), np_weight_std.max(), np_weight_std.mean(),
-                         np_weight_std.std()])
+            # ######################################### min, max #######################################################3
+            # min_max_per_group_sorted = sorted(list(min_max_per_group), key=lambda x: x[1] - x[0])
+            # # min_max_per_channel_sorted = []
+            # # for filter_idx in range(in_channel):
+            # #     min_max_per_channel_sorted.append(sorted(list(min_max_per_channel[filter_idx]), key=lambda x: x[1] - x[0]))
+            #
+            # save_graph(np.array(min_max_per_group_sorted), path + f'/Conv_{conv_cnt}_channels_{m.out_channels}_groups.png', f'Conv {conv_cnt} Filter Groups')
+            # # for filter_idx in range(in_channel):
+            # #     save_graph(np.array(min_max_per_channel_sorted[filter_idx]), conv_path + f'/filter_group_{filter_idx}.png', f'Conv {conv_cnt} Filter Group {filter_idx}')
+    # violin
+    # range_per_group_sorted = sorted(list(range_per_group))
+    draw_violin_graph(range_per_group, filter_groups_per_layer, violin_path + f'/{naming}.png', max_, naming)
 
+    # ####################### print weight, output range per layer ###########################################
+    # conv_idx = 0
+    # #for m in model.features:
+    # conv_output = []
+    # conv_weight = []
+    # output_range = []
+    # weight_range = []
+    # output_std = []
+    # weight_std = []
+    # model.cpu()
+    #
+    # conv_cnt = 0
+    # for m in model.modules():
+    #     if isinstance(m, nn.Conv2d):
+    #         conv_cnt += 1
+    #         act_data = m.act_range.data.numpy()
+    #         weight_ = m.weight.view(m.weight.size(0), -1).detach().numpy()
+    #         weight_data = np.zeros((2, m.out_channels))
+    #         weight_data[0] = weight_.min(axis=1)
+    #         weight_data[1] = weight_.max(axis=1)
+    #         act_data_ = act_data.transpose(1, 0)
+    #         weight_data_ = weight_data.transpose(1, 0)
+    #
+    #         output_range_sorted = sorted(list(act_data_), key=lambda x: x[1] - x[0], reverse=True)
+    #         output_range.append((output_range_sorted[0][1] - output_range_sorted[0][0]) / (output_range_sorted[-1][1] - output_range_sorted[-1][0]))
+    #
+    #         weight_range_sorted = sorted(list(weight_data_), key=lambda x: x[1]-x[0], reverse=True)
+    #         weight_range.append((weight_range_sorted[0][1] - weight_range_sorted[0][0]) / (weight_range_sorted[-1][1] - weight_range_sorted[-1][0]))
+    #
+    #         conv_output.append(output_range_sorted)
+    #         conv_weight.append(weight_range_sorted)
+    #
+    #         output_std.append(np.array([output_range_sorted[i][1] - output_range_sorted[i][0] for i in range(act_data_.shape[0])]).std())
+    #         weight_std.append(np.array([weight_range_sorted[i][1] - weight_range_sorted[i][0] for i in range(act_data_.shape[0])]).std())
+    #
+    # # output_indices = np.argsort(np.array(output_range))[-3:]
+    # # weight_indices = np.argsort(np.array(weight_range))[-3:]
+    #
+    # output_indices = np.argsort(np.array(output_std))[-3:]
+    # weight_indices = np.argsort(np.array(weight_std))[-3:]
+    #
+    # overlap = set(output_indices) & set(weight_indices)
+    #
+    # with open(path + '/master.csv', 'w') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     np_output_range = np.array(output_range)
+    #     np_weight_range = np.array(weight_range)
+    #     np_output_std = np.array(output_std)
+    #     np_weight_std = np.array(weight_std)
+    #     writer.writerow(['num layers', conv_cnt])
+    #     writer.writerow(['', 'min', 'max', 'mean', 'std'])
+    #     writer.writerow(['output_ratio', np_output_range.min(), np_output_range.max(), np_output_range.mean(), np_output_range.std()])
+    #     writer.writerow(['weight_ratio', np_weight_range.min(), np_weight_range.max(), np_weight_range.mean(), np_weight_range.std()])
+    #     writer.writerow(['output_std', np_output_std.min(), np_output_std.max(), np_output_std.mean(),
+    #                      np_output_std.std()])
+    #     writer.writerow(['weight_std', np_weight_std.min(), np_weight_std.max(), np_weight_std.mean(),
+    #                      np_weight_std.std()])
+    #
+    # # for idx in output_indices:
+    # #     if idx in overlap:
+    # #         save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted.csv', output_range[idx], weight_range[idx], overlapped=True)
+    # #     else:
+    # #         save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted.csv', output_range[idx], weight_range[idx])
+    # # for idx in weight_indices:
+    # #     if idx in overlap:
+    # #         continue
+    # #     save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted.csv', output_range[idx], weight_range[idx])
     # for idx in output_indices:
     #     if idx in overlap:
-    #         save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted.csv', output_range[idx], weight_range[idx], overlapped=True)
+    #         save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv', overlapped=True)
     #     else:
-    #         save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted.csv', output_range[idx], weight_range[idx])
+    #         save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv')
     # for idx in weight_indices:
     #     if idx in overlap:
     #         continue
-    #     save_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted.csv', output_range[idx], weight_range[idx])
-    for idx in output_indices:
-        if idx in overlap:
-            save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv', overlapped=True)
-        else:
-            save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_output_sorted_std.csv')
-    for idx in weight_indices:
-        if idx in overlap:
-            continue
-        save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted_std.csv')
+    #     save_std_results_to_csv(np.array(conv_output[idx]), np.array(conv_weight[idx]), path + f'/conv{idx}_weight_sorted_std.csv')
 
 
 def save_range_out_dict(args, model):
@@ -216,11 +332,11 @@ def _evaluate(args, tools):
     # else:
     #     model = load_dnn_model(arg_dict, tools)
 
-    pretrained_model = load_dnn_model(arg_dict, tools)
-    finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
+    model = load_dnn_model(arg_dict, tools)
+    # finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
 
-    # model.cuda()
-    finetuned_model.cuda()
+    model.cuda()
+    # finetuned_model.cuda()
 
     # if not args.quantized:
     #    if args.dataset == 'imagenet':
@@ -244,19 +360,19 @@ def _evaluate(args, tools):
             clustering_model.load_clustering_model()
             # pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
         else:
-            validate(finetuned_model, test_loader, criterion)
+            validate(model, test_loader, criterion)
             # save_range_out(args, model)
-            # visualize(args, finetuned_model)
-            # for m in finetuned_model.modules():
-            #     if isinstance(m, FusedConv2d):
-
-            finetuned_model.set_quantization_params()
-            if args.dataset == 'cifar100':
-                quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
-            else:
-                quantized_model = tools.quantized_model_initializer(arg_dict)
-            quantized_model = tools.quantizer(finetuned_model, quantized_model)
-            del finetuned_model
-            quantized_model.cuda()
-            validate(quantized_model, test_loader, criterion)
+            visualize(args, model)
+            # # for m in finetuned_model.modules():
+            # #     if isinstance(m, FusedConv2d):
+            #
+            # finetuned_model.set_quantization_params()
+            # if args.dataset == 'cifar100':
+            #     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+            # else:
+            #     quantized_model = tools.quantized_model_initializer(arg_dict)
+            # quantized_model = tools.quantizer(finetuned_model, quantized_model)
+            # del finetuned_model
+            # quantized_model.cuda()
+            # validate(quantized_model, test_loader, criterion)
 
