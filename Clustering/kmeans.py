@@ -182,6 +182,12 @@ class KMeansClustering(object):
             json.dump(args_to_save, f, indent=4)
         self.model = best_model
 
+
+    # def draw_heatmap_zero_count(self, count_matrix):
+
+
+
+
     @torch.no_grad()
     def nn_aware_clustering(self, dnn_model, train_loader, arch):
         print('\n>>> NN-aware Clustering..')
@@ -200,7 +206,8 @@ class KMeansClustering(object):
                 input, _, cluster = container.get_batch()
 
                 n_per_sub[cluster] += self.args.batch
-                dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
+                # dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters, self.args.zero_threshold)
+                dnn_model.get_conv_output_per_index(input.cuda(), cluster, n_sub_clusters)
 
                 container.set_next_batch()
                 if container.ready_cluster is None:
@@ -211,7 +218,7 @@ class KMeansClustering(object):
                     input, target, cluster = container.leftover_batch[c][0], \
                                              container.leftover_batch[c][1], c
                     n_per_sub[cluster] += input.size(0)
-                    dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
+                    dnn_model.get_conv_output_per_index(input.cuda(), cluster, n_sub_clusters)
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):

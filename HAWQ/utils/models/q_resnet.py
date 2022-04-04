@@ -269,7 +269,25 @@ class Q_ResNet20_Daq(nn.Module):
 
         return x
 
-    def count_zeros_per_index(self, x, cluster, n_clusters):
+    def get_conv_output_per_index(self, x, cluster, n_clusters):
+        x = self.quant_input(x)
+        x = self.quant_init_block_convbn(x)
+        x = self.quant_act_int32(x)
+        initialized = True
+        if not hasattr(self, 'conv_output'):
+            initialized = False
+            self.conv_output = []
+            self.conv_output.append([[] for _ in range(n_clusters)])
+
+        l_idx = 0
+        self.conv_output[l_idx][cluster].append(x.view(-1))
+
+        for stage_num in range(0,3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, l_idx = tmp_func.get_conv_output_per_index(x, cluster, n_clusters, self.conv_output, l_idx, initialized)
+
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_threshold):
         x = self.quant_input(x)
         x = self.quant_init_block_convbn(x)
         x = self.quant_act_int32(x)
@@ -285,14 +303,14 @@ class Q_ResNet20_Daq(nn.Module):
         n_features = self.zero_counter[l_idx].size(1)
         for i in range(x.size(0)):
             flattened = x[i].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx = (flattened <= zero_threshold).nonzero(as_tuple=True)[0]
             zeros_idx %= n_features
             self.zero_counter[l_idx][cluster, zeros_idx] += 1
 
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, l_idx = tmp_func.count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
+                x, l_idx = tmp_func.count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized, zero_threshold)
 
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
@@ -885,7 +903,42 @@ class Q_ResBlockBn_Daq(nn.Module):
 
         return x, act_scaling_factor
 
-    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
+    def get_conv_output_per_index(self, x, cluster, n_clusters, conv_output, l_idx, initialized):
+        if not initialized:
+            conv_output.append([[] for _ in range(n_clusters)])
+            conv_output.append([[] for _ in range(n_clusters)])
+
+        if self.resize_identity:
+            x = self.quant_act(x)
+            identity = self.quant_identity_convbn(x)
+        else:
+            identity = x
+            x = self.quant_act(x)
+
+        x = self.quant_convbn1(x)
+        x = nn.ReLU()(x)
+        x = self.quant_act1(x)
+
+        l_idx += 1
+        conv_output[l_idx][cluster].append(x.view(-1))
+
+        x = self.quant_convbn2(x)
+
+        x = x + identity
+
+        # if self.resize_identity:
+        #     x = self.quant_act_int32(x)
+        # else:
+        #     x = self.quant_act_int32(x)
+
+        x = nn.ReLU()(x)
+        ###
+        l_idx += 1
+        conv_output[l_idx][cluster].append(x.view(-1))
+
+        return x, l_idx
+
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized, zero_threshold):
         # make empty list space
         if not initialized:
             _x = x[0].unsqueeze(0)
@@ -930,7 +983,7 @@ class Q_ResBlockBn_Daq(nn.Module):
         n_features = zero_counter[l_idx].size(1)
         for i in range(x.size(0)):
             flatten = x[i].view(-1)
-            zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx = (flatten <= zero_threshold).nonzero(as_tuple=True)[0]
             zeros_idx %= n_features
             zero_counter[l_idx][cluster, zeros_idx] += 1
         ###
@@ -950,7 +1003,7 @@ class Q_ResBlockBn_Daq(nn.Module):
         n_features = zero_counter[l_idx].size(1)
         for i in range(x.size(0)):
             flatten = x[i].view(-1)
-            zeros_idx = (flatten == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx = (flatten <= zero_threshold).nonzero(as_tuple=True)[0]
             zeros_idx %= n_features
             zero_counter[l_idx][cluster, zeros_idx] += 1
         ###
