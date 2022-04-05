@@ -328,7 +328,7 @@ class Q_DenseNet_Daq(nn.Module):
 
 class Q_Transition_Daq(nn.Module):
     def __init__(self):
-        super(Q_Transition, self).__init__()
+        super(Q_Transition_Daq, self).__init__()
 
     def set_param(self, trans, runtime_helper=None):
         conv_block = getattr(trans, 'conv')
@@ -392,7 +392,7 @@ class Q_Transition_Daq(nn.Module):
 
 class Q_DenseUnit_Daq(nn.Module):
     def __init__(self):
-        super(Q_DenseUnit, self).__init__()
+        super(Q_DenseUnit_Daq, self).__init__()
 
     def set_param(self, unit, runtime_helper=None):
         layer1 = getattr(unit, "conv1")
@@ -497,7 +497,7 @@ class Q_DenseUnit_Daq(nn.Module):
 
 class Q_DenseBlock_Daq(nn.Module):
     def __init__(self):
-        super(Q_DenseBlock, self).__init__()
+        super(Q_DenseBlock_Daq, self).__init__()
 
     def set_param(self, stage, layers, runtime_helper=None):
         self.layers = layers
