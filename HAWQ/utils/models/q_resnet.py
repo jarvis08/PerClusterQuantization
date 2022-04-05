@@ -749,8 +749,6 @@ class Q_ResUnitBn_Daq(nn.Module):
             identity, _ = self.features[4](x)
         else:
             identity = x
-        
-        identity = x
 
         x, _ = self.features[0](x)
         x = self.features[1](x)
