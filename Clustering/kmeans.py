@@ -10,6 +10,8 @@ import json
 import os
 import csv
 
+import matplotlib.pyplot as plt
+
 
 class KMeansClustering(object):
     def __init__(self, args):
@@ -182,12 +184,6 @@ class KMeansClustering(object):
             json.dump(args_to_save, f, indent=4)
         self.model = best_model
 
-
-    # def draw_heatmap_zero_count(self, count_matrix):
-
-
-
-
     @torch.no_grad()
     def nn_aware_clustering(self, dnn_model, train_loader, arch):
         print('\n>>> NN-aware Clustering..')
@@ -198,9 +194,91 @@ class KMeansClustering(object):
         container.initialize_generator()
         container.set_next_batch()
 
+        # conv_max = -1
+        # if 'resnet20' in arch:
+        #     if self.args.dataset == 'cifar10':
+        #         conv_max = 40.5
+        #     elif self.args.dataset == 'svhn':
+        #         conv_max = 22
+        #     else:
+        #         conv_max = 73.5
+
+        x_axis_range = np.linspace(0, 0.5, 51)
+        path = 'nnac_conv'
+        if not os.path.exists(path):
+            os.mkdir(path)
+        path  = os.path.join(path, 'layer')
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        def count_convolution_outputs(conv_output_matrix, cluster, count_matrix, x_axis_range):
+            np_count = []
+            for i in range(len(conv_output_matrix)):
+                # np_count.append(count_matrix[i][cluster].cpu().numpy())
+                np_count.append(conv_output_matrix[i].cpu().numpy())
+
+            for l_idx in range(len(np_count)):
+                out_of_range = conv_output_matrix[l_idx].view(-1).shape[0]
+                counts, _, _ = plt.hist(np_count[l_idx], range=(0, 0.5), bins=len(x_axis_range))
+                count_matrix[l_idx][cluster] += counts
+                count_matrix[l_idx][cluster][-1] += (out_of_range - int(counts.sum()))
+
+            return count_matrix
+
+        def save_into_csv(count_matrix, x_axis_range, path):
+            import csv
+            count_matrix = count_matrix.astype(np.int)
+            per_layer = count_matrix.sum(axis=1).astype(np.int)
+            clusters = count_matrix[0].shape[0]
+
+            with open(path + f'layer.csv', 'w') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['range'] + [i for i in range(per_layer.shape[0])])
+                for r in range(x_axis_range.size):
+                    writer.writerow([x_axis_range[r]] + list(per_layer[:, r]))
+
+            with open(path + f'cluster.csv', 'w') as csvfile:
+                writer = csv.writer(csvfile)
+                for l_idx in range(per_layer.shape[0]):
+                    writer.writerow([f'layer_{l_idx}'])
+                    writer.writerow(['range'] + [f'ctr {i}' for i in range(clusters)])
+                    for r in range(x_axis_range.size):
+                        writer.writerow([x_axis_range[r]] + list(count_matrix[l_idx][:, r]))
+
+        # def draw_histogram_of_convolution_output(count_matrix, clusters, x_axis_range, path):
+        #     for l_idx in range(len(count_matrix)):
+        #         plt.figure(figsize=(30, 50))
+        #         plt.xticks(x_axis_range)
+        #         plt.xlabel('conv output range')
+        #         plt.ylabel('count')
+        #         plt.title(f'layer {l_idx} ')
+        #
+        #         per_layer = count_matrix.sum(axis=1)
+        #         plt.bar(x_axis_range, per_layer[l_idx])
+        #         # plt.show()
+        #         plt.savefig(path + f'/layer{l_idx}.png')
+        #         # for c in range(clusters):
+        #         #     plt.bar()
+        #
+        #     for l_idx in range(len(count_matrix)):
+        #         for c in range(clusters):
+        #             plt.figure(figsize=(40, 50))
+        #             plt.xticks(x_axis_range)
+        #             plt.xlabel('conv output range')
+        #             plt.ylabel('count')
+        #             plt.title(f'layer {l_idx} cluster {c}')
+        #
+        #             plt.bar(x_axis_range, count_matrix[l_idx][c])
+        #             # plt.show()
+        #             plt.savefig(path + f'/layer{l_idx}_cluster_{c}.png')
+        #             # for c in range(clusters):
+        #             #     plt.bar()
+
+
         print('Count zero indices per cluster about dataset..')
         n_per_sub = [0 for _ in range(n_sub_clusters)]
         dnn_model.eval()
+        # min_max = torch.tensor([1000, -1000], dtype=torch.float, device='cuda', requires_grad=False)
         with tqdm(range(len(train_loader)), desc="Merge Clusters", ncols=90) as t:
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
@@ -209,16 +287,32 @@ class KMeansClustering(object):
                 # dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters, self.args.zero_threshold)
                 dnn_model.get_conv_output_per_index(input.cuda(), cluster, n_sub_clusters)
 
+                if i == 0:
+                    num_layers = len(dnn_model.conv_output)
+                    count_matrix = np.zeros((num_layers, n_sub_clusters, 51))
+                # dnn_model.get_conv_output_per_index(input.cuda(), cluster, n_sub_clusters, min_max=min_max)
+
                 container.set_next_batch()
                 if container.ready_cluster is None:
                     break
+
+                count_matrix = count_convolution_outputs(dnn_model.conv_output, cluster, count_matrix, x_axis_range)
+
             container.check_leftover()
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
                     input, target, cluster = container.leftover_batch[c][0], \
                                              container.leftover_batch[c][1], c
                     n_per_sub[cluster] += input.size(0)
+                    # dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters, self.args.zero_threshold)
                     dnn_model.get_conv_output_per_index(input.cuda(), cluster, n_sub_clusters)
+                    # dnn_model.get_conv_output_per_index(input.cuda(), cluster, n_sub_clusters, min_max)
+
+                    count_matrix = count_convolution_outputs(dnn_model.conv_output, c, count_matrix, x_axis_range)
+
+        # draw_histogram_of_convolution_output(count_matrix, n_sub_clusters, x_axis_range, path)
+        save_into_csv(count_matrix, x_axis_range, path)
+        exit()
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):

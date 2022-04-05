@@ -273,14 +273,19 @@ class Q_ResNet20_Daq(nn.Module):
         x = self.quant_input(x)
         x = self.quant_init_block_convbn(x)
         x = self.quant_act_int32(x)
+        x = self.act(x)
+
         initialized = True
         if not hasattr(self, 'conv_output'):
             initialized = False
+            n_features = x.view(-1).size(0)
             self.conv_output = []
-            self.conv_output.append([[] for _ in range(n_clusters)])
+            # self.conv_output.append(torch.zeros((n_clusters, n_features), device='cuda'))
+            self.conv_output.append(torch.zeros(n_features, device='cuda'))
 
         l_idx = 0
-        self.conv_output[l_idx][cluster].append(x.view(-1))
+        # self.conv_output[l_idx][cluster] = x.view(-1)
+        self.conv_output[l_idx] = x.view(-1)
 
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
@@ -291,6 +296,7 @@ class Q_ResNet20_Daq(nn.Module):
         x = self.quant_input(x)
         x = self.quant_init_block_convbn(x)
         x = self.quant_act_int32(x)
+        x = self.act(x)
 
         initialized = True
         if not hasattr(self, 'zero_counter'):
@@ -904,9 +910,44 @@ class Q_ResBlockBn_Daq(nn.Module):
         return x, act_scaling_factor
 
     def get_conv_output_per_index(self, x, cluster, n_clusters, conv_output, l_idx, initialized):
+        # make empty list space
         if not initialized:
-            conv_output.append([[] for _ in range(n_clusters)])
-            conv_output.append([[] for _ in range(n_clusters)])
+            if self.resize_identity:
+                x = self.quant_act(x)
+                identity = self.quant_identity_convbn(x)
+            else:
+                identity = x
+                x = self.quant_act(x)
+
+            x = self.quant_convbn1(x)
+            x = nn.ReLU()(x)
+            x = self.quant_act1(x)
+            ###
+            n_features = x.view(-1).size(0)
+            # conv_output.append(torch.zeros((n_clusters, n_features), device='cuda'))
+            conv_output.append(torch.zeros(n_features, device='cuda'))
+
+            l_idx += 1
+            # conv_output[-1][cluster] = x.view(-1)
+            conv_output[l_idx]= x.view(-1)
+            ###
+            x = self.quant_convbn2(x)
+
+            x = x + identity
+
+            # if self.resize_identity:
+            #     _x = self.quant_act_int32(_x)
+            # else:
+            #     _x = self.quant_act_int32(_x)
+            _x = nn.ReLU()(x)
+            n_features = _x.view(-1).size(0)
+            # conv_output.append(torch.zeros((n_clusters, n_features), device='cuda'))
+            conv_output.append(torch.zeros(n_clusters, n_features, device='cuda'))
+
+            l_idx += 1
+            # conv_output[-1][cluster] = x.view(-1)
+            conv_output[l_idx] = x.view(-1)
+            return x, l_idx
 
         if self.resize_identity:
             x = self.quant_act(x)
@@ -920,7 +961,8 @@ class Q_ResBlockBn_Daq(nn.Module):
         x = self.quant_act1(x)
 
         l_idx += 1
-        conv_output[l_idx][cluster].append(x.view(-1))
+        # conv_output[l_idx][cluster] = x.view(-1)
+        conv_output[l_idx] = x.view(-1)
 
         x = self.quant_convbn2(x)
 
@@ -934,8 +976,8 @@ class Q_ResBlockBn_Daq(nn.Module):
         x = nn.ReLU()(x)
         ###
         l_idx += 1
-        conv_output[l_idx][cluster].append(x.view(-1))
-
+        # conv_output[l_idx][cluster] = x.view(-1)
+        conv_output[l_idx] = x.view(-1)
         return x, l_idx
 
     def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized, zero_threshold):
