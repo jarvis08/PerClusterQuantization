@@ -120,27 +120,27 @@ class KMeansClustering(object):
                 model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch,
                                         tol=self.args.kmeans_tol, random_state=0)
                 early_stopped = False
-                t_epoch = tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
-                for e in range(self.args.kmeans_epoch):
-                    for image, _ in nonaug_loader:
-                        train_data = self.get_partitioned_batch(image)
-                        model = model.partial_fit(train_data)
+                #t_epoch = tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
+                
+                for epoch in range(self.args.kmeans_epoch):
+                    with tqdm(nonaug_loader, desc="Trial-{} Epoch {}".format(trial, epoch), position=0, ncols=90) as t:
+                        for image, _ in t:
+                            train_data = self.get_partitioned_batch(image)
+                            model = model.partial_fit(train_data)
 
-                        if prev_centers is not None:
-                            is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
-                            if is_converged:
-                                break
-                        prev_centers = deepcopy(model.cluster_centers_)
-                    t_epoch.update(1)
-                    if is_converged:
-                        early_stopped = True
-                        if model.inertia_ < best_model_inertia:
-                            best_model = model
-                            best_model_inertia = model.inertia_
-                        break
-                t_epoch.close()
-                if early_stopped:
-                    print("Early stop training trial-{} kmeans model".format(trial))
+                            if prev_centers is not None:
+                                is_converged = check_convergence(prev_centers, model.cluster_centers_, model.tol)
+                                if is_converged:
+                                    break
+                            prev_centers = deepcopy(model.cluster_centers_)
+                        if is_converged:
+                            early_stopped = True
+                            if model.inertia_ < best_model_inertia:
+                                best_model = model
+                                best_model_inertia = model.inertia_
+                            break
+                    if early_stopped:
+                        print("Early stop training trial-{} kmeans model".format(trial))
         else:
             x = None
             print(">> Load Non-augmented dataset & get representations for clustering..")
