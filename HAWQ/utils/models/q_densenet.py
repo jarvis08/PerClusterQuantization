@@ -528,7 +528,7 @@ class Q_DenseBlock_Daq(nn.Module):
 
 
 
-def q_densenet(model, model_dict=None, runtime_helper=None):
+def q_densenet(model, runtime_helper=None):
     if runtime_helper is None:
         net = Q_DenseNet(model)
     else:

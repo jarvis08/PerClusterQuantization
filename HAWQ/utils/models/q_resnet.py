@@ -542,7 +542,7 @@ class Q_ResNet50_Daq(nn.Module):
     def initialize_counter(self, x, n_clusters):
         self.zero_counter = []
 
-        self.features = nn.Sequential(self.quant_init_block_convbn, self.pool, self.act)
+        self.features = nn.Sequential(self.quant_init_convbn, self.pool, self.act)
         
         x, _ = self.features[0](x)
         x, _ = self.features[1](x)

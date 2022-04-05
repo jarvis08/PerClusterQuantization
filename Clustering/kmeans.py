@@ -120,12 +120,10 @@ class KMeansClustering(object):
                 model = MiniBatchKMeans(n_clusters=self.args.cluster, batch_size=self.args.batch,
                                         tol=self.args.kmeans_tol, random_state=0)
                 early_stopped = False
-                #t_epoch = tqdm(total=self.args.kmeans_epoch, desc="Trial-{}, Epoch".format(trial), position=0, ncols=90)
-                
                 for epoch in range(self.args.kmeans_epoch):
                     with tqdm(nonaug_loader, desc="Trial-{} Epoch {}".format(trial, epoch), position=0, ncols=90) as t:
                         for image, _ in t:
-                            train_data = self.get_partitioned_batch(image)
+                            train_data = torch.tensor(self.get_partitioned_batch(image))
                             model = model.partial_fit(train_data)
 
                             if prev_centers is not None:
