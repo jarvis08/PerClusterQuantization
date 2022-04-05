@@ -306,6 +306,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
 
+    prev_arch = args.arch
     args.arch = set_args_arch(args)
     model, teacher = create_model(args)  # Create Model
     model_dict = transfer_param(args, model) if args.transfer_param else None
@@ -477,7 +478,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
-        clustering_model.nn_aware_clustering(model, train_loader)
+        clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
         model.toggle_full_precision()
 
 
