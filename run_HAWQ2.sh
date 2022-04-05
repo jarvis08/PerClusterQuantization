@@ -8,7 +8,7 @@ PRETRAINED_MODEL="resnet50"
 
 BATCH=128
 
-CUDA_VISIBLE_DEVICES=2 python main.py \
+CUDA_VISIBLE_DEVICES=1 python main.py \
     --mode fine \
     --epochs 70 \
     --batch $BATCH \
@@ -24,8 +24,8 @@ CUDA_VISIBLE_DEVICES=2 python main.py \
     --quant-scheme uniform4 \
     --gpu 0 \
     --data $DATASET \
-    --transfer_param \
     --batch-size $BATCH \
     --imagenet /workspace/dataset/
+#    --transfer_param \
+    # --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$PRETRAINED_MODEL/checkpoint.pth \
 #    --cluster 4 \
-#    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$PRETRAINED_MODEL/checkpoint.pth \
