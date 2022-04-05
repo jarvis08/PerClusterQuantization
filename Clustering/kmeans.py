@@ -410,6 +410,11 @@ class KMeansClustering(object):
                 self.args.clustering_path = path
                 args_without_nnac['k'] = self.args.cluster
 
+        with open(os.path.join(self.args.clustering_path, "params.json"), 'w') as f:
+            args_without_nnac['sub_k'] = self.args.sub_cluster
+            args_without_nnac['nnac'] = final_clusters
+            json.dump(args_without_nnac, f, indent=4)
+
         self.final_cluster = torch.zeros(self.args.sub_cluster, dtype=torch.int64)
         for sub, final in final_clusters.items():
             self.final_cluster[int(sub)] = final
