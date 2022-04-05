@@ -746,7 +746,7 @@ class Q_ResUnitBn_Daq(nn.Module):
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
         if self.resize_identity:
-            identity, _ = self.features[4](x)
+            identity, _ = self.features[6](x)
         else:
             identity = x
 
