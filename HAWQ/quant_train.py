@@ -24,7 +24,7 @@ import torchvision.models as models
 
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
@@ -489,6 +489,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     register_acc = 0
     tuning_start_time = time.time()
     tuning_fin_time = None
+    one_epoch_time = None
     for epoch in range(args.start_epoch, args.epochs):
         # if args.distributed:
         #     train_sampler.set_epoch(epoch)
@@ -498,11 +499,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
                       fix_BN=args.fix_BN)
             tuning_fin_time = time.time()
+            one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
 
         else:
             train(train_loader, model, criterion, optimizer, epoch, logging, args)
             tuning_fin_time = time.time()
+            one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(val_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
@@ -517,22 +520,24 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                                                     and args.rank % ngpus_per_node == 0):
-            if not os.path.exists(args.save_path):
-                os.makedirs(args.save_path)
 
-            # print(model)
+            finetune_path = set_save_dir(args)
+            if not os.path.exists(finetune_path):
+                os.mkdir(finetune_path)
+
+
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
-            }, is_best, args.save_path)
+            }, is_best, finetune_path)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
-        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}\n'.format(
-            args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data))
+        f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+            args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, logger, args):
