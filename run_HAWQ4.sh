@@ -2,20 +2,20 @@
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
-MODEL="resnet20_unfold"
-DATASET="cifar100"
-PRETRAINED_MODEL="resnet20"
+MODEL="densenet121"
+DATASET="imagenet"
+PRETRAINED_MODEL="densenet121"
 
-BATCH=64
+BATCH=128
 
-CUDA_VISIBLE_DEVICES=1 python main.py \
+CUDA_VISIBLE_DEVICES=3 python main.py \
     --mode fine \
-    --epochs 100 \
+    --epochs 70 \
     --batch $BATCH \
     --quant_base hawq \
     --arch $MODEL \
     --dataset $DATASET \
-    --lr 0.001 \
+    --lr 0.000001 \
     --act-range-momentum 0.99 \
     --wd 1e-4 \
     --fix-BN \
@@ -24,8 +24,8 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --quant-scheme uniform4 \
     --gpu 0 \
     --data $DATASET \
-    --transfer_param \
     --batch-size $BATCH \
-    --cluster 4 \
-    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$PRETRAINED_MODEL/checkpoint.pth \
-#    --imagenet /workspace/dataset/
+    --imagenet /workspace/dataset/
+#    --transfer_param \
+#    --cluster 4 \
+#    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$PRETRAINED_MODEL/checkpoint.pth \

@@ -181,7 +181,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
 args_hawq, _ = parser.parse_known_args()
-args_hawq.save_path = os.path.join("checkpoints/{}/{}/".format(args_hawq.arch, args_hawq.data))
+args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}/".format(args_hawq.arch, args_hawq.data, os.getpid()))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
