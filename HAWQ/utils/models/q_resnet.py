@@ -545,7 +545,7 @@ class Q_ResNet50_Daq(nn.Module):
         self.features = nn.Sequential(self.quant_init_convbn, self.pool, self.act)
         
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
+        x = self.features[1](x)
         x = self.features[2](x)
 
         n_features = x.view(-1).size(0)
@@ -562,7 +562,7 @@ class Q_ResNet50_Daq(nn.Module):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
+        x = self.features[1](x)
         x = self.features[2](x)
 
         layer_idx = 0
