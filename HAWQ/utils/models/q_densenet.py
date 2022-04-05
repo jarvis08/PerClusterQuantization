@@ -278,7 +278,7 @@ class Q_DenseNet_Daq(nn.Module):
                 transition = getattr(self, f'trans{stage_num + 1}')
                 x, self.zero_counter = transition.initialize_counter(x, n_clusters, self.zero_counter)
                 setattr(self, f'trans{stage_num +1}', transition)
-            tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+            tmp_func = getattr(self, f'stage{stage_num + 1}')
             x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
             setattr(self, f'stage{stage_num + 1}', tmp_func)
         
@@ -310,7 +310,7 @@ class Q_DenseNet_Daq(nn.Module):
             if stage_num != 0:
                 transition = getattr(self, f'trans{stage_num + 1}')
                 x, layer_idx = transition.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
-            tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+            tmp_func = getattr(self, f'stage{stage_num + 1}')
             x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
         
         x, _ = self.classifiers[0](x)
