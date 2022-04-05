@@ -231,20 +231,13 @@ def batch_frexp(inputs):
     shape_of_input = inputs.size()
 
     # transform the input to be a 1-d tensor
-    inputs = inputs.view(-1)
+    inputs = inputs.detach().view(-1)
 
-    output_m, output_e = np.frexp(inputs.cpu().numpy())
+    output_m, output_e = torch.frexp(inputs)
 
-    tmp_m = []
-    for m in output_m:
-        int_m_shifted = int(Decimal(m * (2 ** 31)).quantize(Decimal('1'), rounding=decimal.ROUND_HALF_UP))
-        tmp_m.append(int_m_shifted)
-    output_m = np.array(tmp_m)
-
+    output_m = torch.sign(output_m) * torch.floor(torch.abs(output_m) * (2**31) + 0.5)
     output_e = 31. - output_e
-
-    return torch.from_numpy(output_m).cuda().view(shape_of_input), \
-           torch.from_numpy(output_e).cuda().view(shape_of_input)
+    return output_m.view(shape_of_input), output_e.view(shape_of_input)
 
 
 class ste_round(Function):
