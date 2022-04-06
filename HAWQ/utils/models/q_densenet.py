@@ -276,7 +276,7 @@ class Q_DenseNet_Daq(nn.Module):
         for stage_num in range(0,4):
             if stage_num != 0:
                 transition = getattr(self, f'trans{stage_num + 1}')
-                x, self.zero_counter = transition.initialize_counter(x, n_clusters, self.zero_counter)
+                x = transition.initialize_counter(x, n_clusters, self.zero_counter)
                 setattr(self, f'trans{stage_num +1}', transition)
             tmp_func = getattr(self, f'stage{stage_num + 1}')
             x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
@@ -309,9 +309,9 @@ class Q_DenseNet_Daq(nn.Module):
         for stage_num in range(0,4):
             if stage_num != 0:
                 transition = getattr(self, f'trans{stage_num + 1}')
-                x, layer_idx = transition.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
+                x, layer_idx = transition.count_zeros_per_index(x, layer_idx, cluster)
             tmp_func = getattr(self, f'stage{stage_num + 1}')
-            x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
+            x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster)
         
         x, _ = self.classifiers[0](x)
         x = self.classifiers[1](x)
@@ -363,18 +363,18 @@ class Q_Transition_Daq(nn.Module):
         self.features = nn.Sequential(self.batch_norm, self.act, 
                                       self.conv, self.pool)
 
-        x = self.features[0](x)
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = self.features[3](x)
         return x
 
-    def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
-        x = self.features[0](x)
+    def count_zeros_per_index(self, x, layer_idx, cluster):
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         layer_idx += 1
@@ -385,7 +385,7 @@ class Q_Transition_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = self.features[3](x)
         return x, layer_idx
 
@@ -438,19 +438,19 @@ class Q_DenseUnit_Daq(nn.Module):
 
         batch = x
 
-        x = self.features[0](x)
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = self.features[3](x)
         
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[4](x)
+        x, _ = self.features[4](x)
         x = torch.cat((batch, x), 1)
         
         n_features = x.view(-1).size(0)
@@ -458,8 +458,10 @@ class Q_DenseUnit_Daq(nn.Module):
 
         return x
 
-    def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
-        x = self.features[0](x)
+    def count_zeros_per_index(self, x, layer_idx, cluster):
+        batch = x
+
+        x, _ = self.features[0](x)
         x = self.features[1](x)
 
         layer_idx += 1
@@ -470,7 +472,7 @@ class Q_DenseUnit_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x = self.features[2](x)
+        x, _ = self.features[2](x)
         x = self.features[3](x)
         
         layer_idx += 1
@@ -481,7 +483,7 @@ class Q_DenseUnit_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x = self.features[4](x)
+        x, _ = self.features[4](x)
         x = torch.cat((batch, x), 1)
 
         layer_idx += 1
@@ -518,12 +520,12 @@ class Q_DenseBlock_Daq(nn.Module):
         for unit_num in range(self.layers):
             function = getattr(self, f'unit{unit_num + 1}')
             x = function.initialize_counter(x, n_clusters, self.zero_counter)
-        return x, self.zero_counter
+        return x
         
-    def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
+    def count_zeros_per_index(self, x, layer_idx, cluster):
         for unit_num in range(self.layers):
             function = getattr(self, f'unit{unit_num + 1}')
-            x, layer_idx = function.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
+            x, layer_idx = function.count_zeros_per_index(x, layer_idx, cluster)
         return x, layer_idx
 
 
