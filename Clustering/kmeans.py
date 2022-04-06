@@ -273,8 +273,12 @@ class KMeansClustering(object):
                     for _to in range(_from + 1, n_sub_clusters):
                         if _to in exclude:
                             continue
-                        n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
-                        similarity = n_commonly_zero / n_features
+                        if self.args.similarity_method == 'and':
+                            n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
+                            similarity = n_commonly_zero / n_features
+                        else : 
+                            similarity = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum() / \
+                                    torch.logical_or(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
                         cross_similarity[l][_from][_to] = similarity
 
             sorted_dist, sorted_indices = torch.sort(cross_similarity, dim=2, descending=True)
