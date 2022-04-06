@@ -199,11 +199,9 @@ class QuantAct(Module):
         # self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
 
     def __repr__(self):
-        return "{0}(activation_bit={1}, " \
-               "full_precision_flag={2}, quant_mode={3}, Act_min: {4:.2f}, " \
-               "Act_max: {5:.2f})".format(self.__class__.__name__, self.activation_bit,
-                                          self.full_precision_flag, self.quant_mode, self.x_min.item(),
-                                          self.x_max.item())
+        return "{0}(activation_bit={1}, full_precision_flag={2}, " \
+               "quant_mode={3}".format(self.__class__.__name__, self.activation_bit,
+                                       self.full_precision_flag, self.quant_mode)
 
     def fix(self):
         """
@@ -361,12 +359,9 @@ class QuantAct_Daq(QuantAct):
 
     def __repr__(self):
         return "{0}(activation_bit={1}, " \
-               "full_precision_flag={2}, quant_mode={3}, Act_min: {4}, " \
-               "Act_max: {5}), x_min size={6}, x_max size={7}, x_min={8}, x_max={9}".format(
-            self.__class__.__name__, self.activation_bit,
-            self.full_precision_flag, self.quant_mode, self.x_min,
-            self.x_max,
-            len(self.x_min), len(self.x_max), self.x_min, self.x_max)
+               "full_precision_flag={2}, quant_mode={3}".format(
+                    self.__class__.__name__, self.activation_bit,
+                    self.full_precision_flag, self.quant_mode)
 
     def fix(self):
         """
