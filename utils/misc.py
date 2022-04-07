@@ -458,13 +458,11 @@ def add_path(prev_path, to_add, allow_existence=True):
 def set_clustering_dir(args, arch_for_nnac=None):
     path = add_path('', 'result')
     path = add_path(path, args.clustering_method)
+    path = add_path(path, args.arch)
     path = add_path(path, args.dataset)
-
-    if args.sub_cluster:
-        assert arch_for_nnac is not None, \
-            "Model arch info should be provided to run nn_aware_training without clustering path"
-        if arch_for_nnac is not None:
-            name = f'nnac_{arch_for_nnac}.k{args.cluster}.sub{args.sub_cluster}.part{args.partition}.{args.repr_method}.topk_{args.topk}.sim_{args.sim_threshold}'
+    
+    if args.nnac:
+        name = f'k{args.cluster}.part{args.partition}.{args.repr_method}.sub{args.sub_cluster}.topk_{args.topk}.sim_{args.sim_threshold}'
     else:
         name = f'k{args.cluster}.part{args.partition}.{args.repr_method}'
     path = add_path(path, name, allow_existence=False)
