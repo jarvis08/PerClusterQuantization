@@ -38,9 +38,9 @@ parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with d
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 args_daq, tmp = parser.parse_known_args()
 
-arch_for_nnac = None
+arch = None
 if '--arch' in tmp:
-    arch_for_nnac = tmp[tmp.index('--arch') + 1]
+    arch = tmp[tmp.index('--arch') + 1]
 
 if args_daq.imagenet:
     args_daq.dataset = 'imagenet'
@@ -61,10 +61,7 @@ if __name__ == '__main__':
         from Clustering import get_clustering_model
         if not args_daq.clustering_path:
             from utils.misc import set_clustering_dir
-            if args_daq.nnac:
-                args_daq.clustering_path = set_clustering_dir(args_daq, arch_for_nnac)
-            else:
-                args_daq.clustering_path = set_clustering_dir(args_daq)
+            args_daq.clustering_path = set_clustering_dir(args_daq, arch)
             clustering_model = get_clustering_model(args_daq, data_loaders)
         else:
             clustering_model = get_clustering_model(args_daq)
