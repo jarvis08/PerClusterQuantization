@@ -123,7 +123,6 @@ class KMeansClustering(object):
                 n_clusters = self.args.cluster if not self.args.nnac else self.args.sub_cluster
                 model = MiniBatchKMeans(n_clusters=n_clusters, batch_size=self.args.batch,
                                         tol=self.args.kmeans_tol, random_state=0)
-                early_stopped = False
                 for epoch in range(self.args.kmeans_epoch):
                     with tqdm(nonaug_loader, desc="Trial-{} Epoch {}".format(trial, epoch), position=0, ncols=90) as t:
                         for image, _ in t:
@@ -136,13 +135,10 @@ class KMeansClustering(object):
                                     break
                             prev_centers = deepcopy(model.cluster_centers_)
                         if is_converged:
-                            early_stopped = True
-                            if model.inertia_ < best_model_inertia:
-                                best_model = model
-                                best_model_inertia = model.inertia_
                             break
-                    if early_stopped:
-                        print("Early stop training trial-{} kmeans model".format(trial))
+                if model.inertia_ < best_model_inertia:
+                    best_model = model
+                    best_model_inertia = model.inertia_
         else:
             x = None
             print(">> Load Non-augmented dataset & get representations for clustering..")
