@@ -370,6 +370,10 @@ class Q_Transition_Daq(nn.Module):
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
         x, _ = self.features[2](x)
+
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
         x = self.features[3](x)
         return x
 
@@ -386,6 +390,15 @@ class Q_Transition_Daq(nn.Module):
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
         x, _ = self.features[2](x)
+
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+            
         x = self.features[3](x)
         return x, layer_idx
 

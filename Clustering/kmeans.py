@@ -206,7 +206,7 @@ class KMeansClustering(object):
             container.check_leftover()
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
-                    input, target, cluster = container.leftover_batch[c][0], \
+                    input, _, cluster = container.leftover_batch[c][0], \
                                              container.leftover_batch[c][1], c
                     n_per_sub[cluster] += input.size(0)
                     dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
