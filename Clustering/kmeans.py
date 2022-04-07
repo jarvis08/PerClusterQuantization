@@ -31,7 +31,8 @@ class KMeansClustering(object):
             data = data.reshape(batch, channel, n_part * n_part, -1)
 
             if self.args.repr_method == 'max':
-                rst, _ = data.max(-1, keepdim=True)
+                rst, _ = data.topk(k=3, dim=-1)
+                rst = rst.mean(-1, keepdim=True)
             elif self.args.repr_method == 'mean':
                 rst = data.mean(-1, keepdim=True)
             else:
