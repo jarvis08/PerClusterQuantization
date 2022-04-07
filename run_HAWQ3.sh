@@ -1,18 +1,17 @@
 #! /bin/bash
 
-export TORCH_WARN_ONCE
-
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
-CLUSTERING_MODEL_PATH="result/kmeans/cifar100/nnac_resnet20.k4.sub8.part2.mean.topk_3.sim_0.7/"
 
-MODEL="alexnet"                # alexnet / resnet20 / resnet50 / densenet121
-DATASET="cifar10"              # svhn / cifar10 / cifar100 / imagenet
+MODEL=""                # alexnet / resnet20 / resnet50 / densenet121
+DATASET=""              # svhn / cifar10 / cifar100 / imagenet
 PRETRAINED_MODEL=$MODEL
+
+CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/"
 
 BATCH=128
 LEARNING_RATE=0.001
 
-CUDA_VISIBLE_DEVICES=0 python main.py \
+CUDA_VISIBLE_DEVICES=1 python main.py \
     --mode fine \
     --epochs 100 \
     --batch $BATCH \
