@@ -458,7 +458,7 @@ def add_path(prev_path, to_add, allow_existence=True):
 def set_clustering_dir(args, arch_for_nnac=None):
     path = add_path('', 'result')
     path = add_path(path, args.clustering_method)
-    path = add_path(path, args.arch)
+    path = add_path(path, arch_for_nnac)
     path = add_path(path, args.dataset)
     
     if args.nnac:
