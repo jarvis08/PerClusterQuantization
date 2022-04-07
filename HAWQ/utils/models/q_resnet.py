@@ -430,7 +430,7 @@ class Q_ResNet50(nn.Module):
                 quant_unit.set_param(unit)
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        self.final_pool = QuantAveragePool2d(output=(1, 1))
+        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1, padding=0)
 
         self.quant_act_output = QuantAct()
 
@@ -494,7 +494,7 @@ class Q_ResNet50_Daq(nn.Module):
                 quant_unit.set_param(unit, runtime_helper)
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        self.final_pool = QuantAveragePool2d(output=(1, 1))
+        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1, padding=0)
 
         self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
