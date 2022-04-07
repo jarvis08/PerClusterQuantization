@@ -24,6 +24,9 @@ import torchvision.models as models
 
 torch.set_num_threads(8)
 
+import warnings
+warnings.filterwarnings("ignore")
+
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
 from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
