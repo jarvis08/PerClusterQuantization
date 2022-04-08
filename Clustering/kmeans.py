@@ -215,7 +215,8 @@ class KMeansClustering(object):
         for c in range(n_sub_clusters):
             print(f"C{c}: {n_per_sub[c]}")
         n_per_sub = torch.tensor(n_per_sub)
-        max_data_num_per_merged_cluster = sum(n_per_sub) / 2
+        # max_data_num_per_merged_cluster = sum(n_per_sub) / 2
+        max_data_num_per_merged_cluster = sum(n_per_sub)
 
         def check_other_groups(groups, cluster_id, cur_idx):
             for idx in range(len(groups)):
