@@ -1,7 +1,5 @@
 #! /bin/bash
 
-export TORCH_WARN_ONCE
-
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
 GPU_NUM=0
