@@ -419,7 +419,7 @@ class Q_DenseUnit_Daq(nn.Module):
         self.quant_convbn.set_param(layer1.conv, layer2.bn)
 
         self.act2 = nn.ReLU(inplace=True)
-        self.quant_act3 = QuantAct_Daq(runtime_helper=runtime_helper)
+        self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.quant_conv2 = QuantConv2d()
         self.quant_conv2.set_param(layer2.conv)
