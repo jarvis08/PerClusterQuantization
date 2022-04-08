@@ -364,7 +364,7 @@ class KMeansClustering(object):
                 if merged:
                     break
                 else :
-                    max_data_num_per_merged_cluster = max_data_num_per_merged_cluster * 1.05
+                    max_data_num_per_merged_cluster = int(max_data_num_per_merged_cluster * 1.05)
 
             n_merged = 0
             for group in merged_clusters:
