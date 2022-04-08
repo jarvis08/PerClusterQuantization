@@ -362,6 +362,7 @@ class KMeansClustering(object):
                             merged_count = dnn_model.zero_counter[l][c1] + dnn_model.zero_counter[l][c2]
                             dnn_model.zero_counter[l][[c1, c2]] = merged_count
                 if merged:
+                    max_data_num_per_merged_cluster = sum(n_per_sub) / (self.args.cluster - 1)
                     break
                 else :
                     max_data_num_per_merged_cluster = int(max_data_num_per_merged_cluster * 1.05)
