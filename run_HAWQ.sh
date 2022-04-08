@@ -14,8 +14,8 @@ MODEL=""
  # svhn / cifar10 / cifar100 / imagenet           
 DATASET=""
 
-CLUSTER=                # 32 / 16 / 8 / 4
-SUB_CLUSTER=            # 16 / 8 / 4 / 2
+CLUSTER=                # 16 / 8 / 4 / 2
+SUB_CLUSTER=            # 32 / 16 / 8 / 4
 SIM_METHOD=""           # and / jaccard
 REPR_METHOD="max"       # FIXED TO MAX
 
