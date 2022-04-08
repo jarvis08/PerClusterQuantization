@@ -2,6 +2,11 @@
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
+
+
+
+###################################################
+
 GPU_NUM=0
 
 # alexnet / resnet20 / resnet50 / densenet121
@@ -19,7 +24,10 @@ FIRST_RUN=true          # true / false
 BATCH=128               # 128 / 64 / 32
 LEARNING_RATE=0.001     # 0.001 / 0.0001      
 
-if [ -z ${CLUSTER} ] then
+#####################################################
+
+
+if [ -z ${CLUSTER} ]; then
     CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
         --mode fine \
         --epochs 100 \
@@ -40,8 +48,8 @@ if [ -z ${CLUSTER} ] then
         --transfer_param \
         --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
 else
-    if [ -z ${SUB_CLUSTER} ] then
-        if [ "$FIRST_RUN" = true] then
+    if [ -z ${SUB_CLUSTER} ]; then
+        if [ "$FIRST_RUN" = true ]; then
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -89,7 +97,7 @@ else
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         fi
     else
-        if [ "$FIRST_RUN" = true] then            
+        if [ "$FIRST_RUN" = true ]; then            
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
