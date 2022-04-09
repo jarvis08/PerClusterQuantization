@@ -150,7 +150,7 @@ class InputContainer(object):
     def prepare_validate_per_cluster(self):
         self.set_next_batch()
         while True:
-            if self.ready_cluster is not None:
+            if self.ready_cluster is not None or self.epoch_done is True:
                 break
 
     def check_leftover(self):
