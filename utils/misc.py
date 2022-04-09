@@ -322,7 +322,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                                clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()
     # container.set_next_batch()
-    container.prepare_validate_per_cluster()
+    # container.prepare_validate_per_cluster()
+    container.set_next_batch()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             # for i, (input, target) in enumerate(t):
@@ -341,7 +342,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                                                                 device='cuda', requires_grad=False)
                 output = model(input)
 
-                container.prepare_validate_per_cluster()
+                # container.prepare_validate_per_cluster()
+                container.set_next_batch()
 
                 loss = criterion(output, target)
                 prec = accuracy(output, target)[0]
@@ -349,6 +351,9 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+                if container.ready_cluster is None:
+                    break
 
             container.check_leftover()
             for c in range(container.num_clusters):
