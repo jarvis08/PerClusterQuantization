@@ -215,7 +215,8 @@ class KMeansClustering(object):
         for c in range(n_sub_clusters):
             print(f"C{c}: {n_per_sub[c]}")
         n_per_sub = torch.tensor(n_per_sub)
-        max_data_num_per_merged_cluster = sum(n_per_sub) / (self.args.cluster - 1)
+        # max_data_num_per_merged_cluster = sum(n_per_sub) / (self.args.cluster - 1)
+        max_data_num_per_merged_cluster = sum(n_per_sub) / 2
         threshold_per_merged_cluster = max_data_num_per_merged_cluster
 
         def check_other_groups(groups, cluster_id, cur_idx):
@@ -363,10 +364,10 @@ class KMeansClustering(object):
                             merged_count = dnn_model.zero_counter[l][c1] + dnn_model.zero_counter[l][c2]
                             dnn_model.zero_counter[l][[c1, c2]] = merged_count
                 if merged:
-                    threshold_per_merged_cluster = max_data_num_per_merged_cluster
+                    # threshold_per_merged_cluster = max_data_num_per_merged_cluster
                     break
-                else :
-                    threshold_per_merged_cluster = int(threshold_per_merged_cluster * 1.05)
+                # else :
+                #     threshold_per_merged_cluster = int(threshold_per_merged_cluster * 1.05)
 
             n_merged = 0
             for group in merged_clusters:
