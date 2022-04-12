@@ -399,6 +399,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 if 'num_batches_tracked' in key: continue
                 if 'weight_integer' in key: continue
                 if 'bias_integer' in key: continue
+                if 'act_scaling_factor' in key: continue
 
                 modified_key = key.replace("module.", "")
                 modified_dict[modified_key] = value
@@ -466,9 +467,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 checkpoint = torch.load(args.resume, map_location=loc)
             args.start_epoch = checkpoint['epoch']
             best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
+            # if args.gpu is not None:
+            #     # best_acc1 may be from a checkpoint from a different GPU
+            #     best_acc1 = best_acc1.to(args.gpu)
             optimizer.load_state_dict(checkpoint['optimizer'])
             logging.info("=> loaded optimizer and meta information from checkpoint '{}' (epoch {})".
                          format(args.resume, checkpoint['epoch']))
@@ -496,6 +497,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
+
+    finetune_path = set_save_dir(args)
+    if not os.path.exists(finetune_path):
+        os.mkdir(finetune_path)
+
     for epoch in range(args.start_epoch, args.epochs):
         # if args.distributed:
         #     train_sampler.set_epoch(epoch)
@@ -520,25 +526,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
         logging.info(f'Best acc at epoch {epoch}: {best_acc1}')
         if is_best:
-            # record the best epoch
             best_epoch = epoch
             register_acc = best_acc1
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                                                    and args.rank % ngpus_per_node == 0):
+        # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
 
-            finetune_path = set_save_dir(args)
-            if not os.path.exists(finetune_path):
-                os.mkdir(finetune_path)
-
-
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
-                'optimizer': optimizer.state_dict(),
-            }, is_best, finetune_path)
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'arch': args.arch,
+            'state_dict': model.state_dict(),
+            'best_acc1': best_acc1,
+            'optimizer': optimizer.state_dict(),
+        }, is_best, finetune_path)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
@@ -744,10 +743,15 @@ def validate(val_loader, model, criterion, args):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, filename=None):
-    torch.save(state, filename + 'checkpoint.pth.tar')
+def save_checkpoint(state, is_best, path=None):
+    torch.save(state, os.path.join(path, 'checkpoint.pth.tar'))
     if is_best:
-        shutil.copyfile(filename + 'checkpoint.pth.tar', filename + 'model_best.pth.tar')
+        shutil.copyfile(os.path.join(path, 'checkpoint.pth.tar'), os.path.join(path, 'model_best.pth.tar'))
+
+# def save_checkpoint(state, is_best, filename=None):
+#     torch.save(state, filename + 'checkpoint.pth.tar')
+#     if is_best:
+#         shutil.copyfile(filename + 'checkpoint.pth.tar', filename + 'model_best.pth.tar')
 
 
 class AverageMeter(object):

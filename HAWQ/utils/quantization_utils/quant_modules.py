@@ -61,7 +61,7 @@ class QuantLinear(Module):
         return s
 
     def set_param(self, linear, model_dict=None, dict_idx=None):
-        #self.in_features = linear.in_features
+        # self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.register_buffer('fc_scaling_factor', torch.zeros(self.out_features))
         if model_dict is not None :
@@ -347,7 +347,7 @@ class QuantAct_Daq(QuantAct):
 
         self.register_buffer('x_min', torch.zeros(self.runtime_helper.num_clusters))
         self.register_buffer('x_max', torch.zeros(self.runtime_helper.num_clusters))
-        self.register_buffer('act_scaling_factor', torch.zeros(1))
+        self.register_buffer('act_scaling_factor', torch.tensor(0))
         self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
         self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
