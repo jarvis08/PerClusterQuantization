@@ -158,7 +158,13 @@ class KMeansClustering(object):
                         x = torch.cat((x, batch))
 
             n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
-            best_model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
+            best_model_inertia = 9999999999999999
+            print("Train K-means model 10 times, and choose the best model")
+            for trial in range(10):
+                model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
+                if model.inertia_ < best_model_inertia:
+                    best_model = model
+                    best_model_inertia = model.inertia_
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
