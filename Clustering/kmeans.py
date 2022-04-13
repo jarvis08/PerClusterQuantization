@@ -165,6 +165,7 @@ class KMeansClustering(object):
                 if model.inertia_ < best_model_inertia:
                     best_model = model
                     best_model_inertia = model.inertia_
+                print("Trial-{} done".format(trial))
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
