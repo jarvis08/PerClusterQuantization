@@ -213,8 +213,8 @@ class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters, self.inference_bit = \
-            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster', 'inference_bit')(arg_dict)
+        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
+            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -282,7 +282,6 @@ class FusedBnReLU(nn.Module):
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.a_bit.data = self.inference_bit
         self.s1, self.z1 = s1, z1
 
         weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))

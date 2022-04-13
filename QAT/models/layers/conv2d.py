@@ -14,11 +14,19 @@ class QuantizedConv2d(nn.Conv2d):
         self.layer_type = 'QuantizedConv2d'
         bit, self.per_channel, self.symmetric, self.num_clusters, self.runtime_helper, self.default_batch = \
             itemgetter('bit', 'per_channel', 'symmetric', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
-        self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        if self.per_channel:
+            self.w_bit = torch.nn.Parameter(torch.zeros(in_channels, dtype=torch.int8), requires_grad=False)
+            self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, in_channels), dtype=torch.int32),
+                                               requires_grad=False)
+        else:
+            self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+            self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32),
+                                               requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.is_first = is_first
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
+        ### checking
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
         self.sum_a1 = None  # for faster inference      ###
 
@@ -33,10 +41,16 @@ class QuantizedConv2d(nn.Conv2d):
 
         self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         if self.per_channel:
-            self.s2 = nn.Parameter(torch.zeros(out_channels, dtype=torch.float32), requires_grad=False)
-            self.z2 = nn.Parameter(torch.zeros(out_channels, dtype=torch.int32), requires_grad=False)
-            self.M0 = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
-            self.shift = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
+            # self.s2 = nn.Parameter(torch.zeros(out_channels, dtype=torch.float32), requires_grad=False)
+            # self.z2 = nn.Parameter(torch.zeros(out_channels, dtype=torch.int32), requires_grad=False)
+            # self.M0 = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
+            # self.shift = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
+            self.s2 = nn.Parameter(torch.zeros(in_channels, dtype=torch.float32), requires_grad=False)
+            self.z2 = nn.Parameter(torch.zeros(in_channels, dtype=torch.int32), requires_grad=False)
+            self.M0 = nn.Parameter(torch.zeros((1, in_channels), dtype=torch.int32),
+                                   requires_grad=False)
+            self.shift = nn.Parameter(torch.zeros((1, in_channels), dtype=torch.int32),
+                                      requires_grad=False)
         else:
             self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
             self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
@@ -161,16 +175,39 @@ class QuantizedConv2d(nn.Conv2d):
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
             if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:
-                self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
-            for o_col in range(output_col):
-                for o_row in range(output_row):
-                    col_st, col_end = o_col * stride, o_col * stride + filter_col
-                    row_st, row_end = o_row * stride, o_row * stride + filter_row
-                    self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
-            sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+                if self.per_channel:
+                    self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32,
+                                              device='cuda')
+                else:
+                    self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
 
+            if self.per_channel:
+                for o_col in range(output_col):
+                    for o_row in range(output_row):
+                        col_st, col_end = o_col * stride, o_col * stride + filter_col
+                        row_st, row_end = o_row * stride, o_row * stride + filter_row
+                        self.sum_a1[:x.size(0), 0, o_col, o_row] = \
+                            torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+            else:
+                for o_col in range(output_col):
+                    for o_row in range(output_row):
+                        col_st, col_end = o_col * stride, o_col * stride + filter_col
+                        row_st, row_end = o_row * stride, o_row * stride + filter_row
+                        self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+
+            if self.per_channel:
+                # sum_a1 = torch.unsqueeze(self.sum_a1[:x.size(0)], dim=1) * self.s2[None, :, None, None]
+
+                # sum_a1 [256, 1, 32, 32]
+                # [256, 3, 32, 32]
+                sum_a1 = self.sum_a1[:x.size(0)] * self.s2[None, :, None, None]
+            else:
+                sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+
+            # sum_a2 [1. 16, 1, 1]
             sum_a2 = self.sum_a2.mul(self.z1)
             nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
+            # sum_q1q2 shape [256, 16, 32, 32]
             subsum = sum_q1q2.add(nz1z2)
             subsum = torch.sub(subsum, sum_a1[:, None, :, :])
             subsum = torch.sub(subsum, sum_a2)
@@ -343,15 +380,21 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.per_channel, self.symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel, self.inference_bit\
-            = itemgetter('per_channel', 'symmetric', 'smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel', 'inference_bit')(arg_dict)
+        self.per_channel, self.symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel \
+            = itemgetter('per_channel', 'symmetric', 'smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
         
-        w_bit = w_bit if w_bit is not None else arg_dict['bit']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
-        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+
+        if self.per_channel:
+            self.w_bit = torch.nn.Parameter(torch.zeros(in_channels, dtype=torch.int8), requires_grad=False)
+        else:
+            w_bit = w_bit if w_bit is not None else arg_dict['bit']
+            self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
+        # self.act_range = nn.Parameter(torch.zeros((2, out_channels)), requires_grad=False)
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.act_violin_range = nn.Parameter(torch.zeros((2, out_channels)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
@@ -364,100 +407,65 @@ class FusedConv2d(nn.Module):
     def forward(self, x, external_range=None):
 
         # int_quantization.float2gemmlowp(x, 1.0, 1.0, 1, False, False, x)
-        # if not self.training:
-        #     x = self.conv(x)
-        #     if self._norm_layer:
-        #         x = self._norm_layer(x)
-        #     if self._activation:
-        #         x = self._activation(x)
-        #     return x
-
-        x = self.conv(x)
-        if self._norm_layer:
-            x = self._norm_layer(x)
-        if self._activation:
-            x = self._activation(x)
-        # return x
+        if not self.training:
+            x = self.conv(x)
+            if self._norm_layer:
+                x = self._norm_layer(x)
+            if self._activation:
+                x = self._activation(x)
+            return x
 
         if self.fold_convbn:
             return self._norm_folded(x, external_range)
         else:
             return self._general(x, external_range)
 
-    # def _general(self, x, external_range=None):
-    #     zero = self.runtime_helper.fzero
-    #     if self.per_channel:
-    #         w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
-    #                                              symmetric=self.symmetric, use_ste=self.use_ste)
-    #     else:
-    #         w = self.conv.weight.detach()
-    #         s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
-    #         w = fake_quantize(self.conv.weight, s, z, self.w_bit,
-    #                           symmetric=self.symmetric, use_ste=self.use_ste)
-    #
-    #     # s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit,
-    #     #                     symmetric=self.symmetric)
-    #     # if not self.quant_noise:
-    #     #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
-    #     # else:
-    #     #     w = apply_qn(self.conv.weight, s, z, self.w_bit, qn_prob=self.qn_prob,
-    #     #                  kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
-    #     #                  in_feature=self.in_channels, out_feature=self.out_channels)
-    #
-    #     out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-    #     if self._activation:
-    #         out = self._activation(out)
-    #
-    #     if external_range is not None:
-    #         if self.runtime_helper.apply_fake_quantization:
-    #             s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-    #             out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-    #     else:
-    #         if self.apply_ema:
-    #             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-    #             if self.runtime_helper.apply_fake_quantization:
-    #                 s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-    #                 out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-    #         else:
-    #             self.act_range[0], self.act_range[1] = get_range(out)
-    #             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-    #     return out
-
     def _general(self, x, external_range=None):
-        # zero = self.runtime_helper.fzero
-        # if self.per_channel:
-        #     w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
-        #                                          symmetric=self.symmetric, use_ste=self.use_ste)
-        # else:
-        #     w = self.conv.weight.detach()
-        #     s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
-        #     w = fake_quantize(self.conv.weight, s, z, self.w_bit,
-        #                       symmetric=self.symmetric, use_ste=self.use_ste)
-        #
-        # out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-        # if self._activation:
-        #     out = self._activation(out)
-
-        # if external_range is not None:
-        #     if self.runtime_helper.apply_fake_quantization:
-        #         s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-        #         out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-        # else:
-        #     if self.apply_ema:
-        #         self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-        #         if self.runtime_helper.apply_fake_quantization:
-        #             s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        #             out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-        #     else:
-        #         self.act_range[0], self.act_range[1] = get_range(out)
-        #         self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+        zero = self.runtime_helper.fzero
+        if self.per_channel:
+            # w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
+            #                                      symmetric=self.symmetric, use_ste=self.use_ste)
+            w = fake_quantize_per_input_channel(self.conv.weight, self.low_group, self.high_group, zero,
+                                                 symmetric=self.symmetric, use_ste=self.use_ste)
         else:
-            self.act_range[0], self.act_range[1] = get_range(x)
-            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-        return x
+            w = self.conv.weight.detach()
+            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
+            w = fake_quantize(self.conv.weight, s, z, self.w_bit,
+                              symmetric=self.symmetric, use_ste=self.use_ste)
+
+        # s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit,
+        #                     symmetric=self.symmetric)
+        # if not self.quant_noise:
+        #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
+        # else:
+        #     w = apply_qn(self.conv.weight, s, z, self.w_bit, qn_prob=self.qn_prob,
+        #                  kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
+        #                  in_feature=self.in_channels, out_feature=self.out_channels)
+
+        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+        if self._activation:
+            out = self._activation(out)
+
+        if external_range is not None:
+            if self.runtime_helper.apply_fake_quantization:
+                s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+        else:
+            if self.apply_ema:
+                self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+                self.act_violin_range[0], self.act_violin_range[1] = ema_per_output_channel(out, self.act_violin_range, self.smooth)
+                # self.act_range[0], self.act_range[1] = ema_per_output_channel(out, self.act_range, self.smooth)
+                if self.runtime_helper.apply_fake_quantization:
+                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+                    out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+                    # s, z = calc_qparams_per_output_channel(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
+                    # out = fake_quantize_per_output_channel(out, self.a_bit, zero, symmetric=self.symmetric, use_ste=self.use_ste)
+            else:
+                self.act_range[0], self.act_range[1] = get_range(out)
+                self.act_violin_range[0], self.act_violin_range[1] = get_range_per_output_channel(out)
+                # self.act_range[0], self.act_range[1] = get_range_per_output_channel(out)
+                # self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+        return out
 
     def _norm_folded(self, x, external_range=None):
         general_out = self.conv(x)
@@ -513,12 +521,13 @@ class FusedConv2d(nn.Module):
         self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.w_bit.data = self.inference_bit
         self.s1, self.z1 = s1, z1
 
         zero = self.runtime_helper.fzero
         if self.per_channel:
-            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit,
+            # self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit,
+            #                                                    symmetric=self.symmetric, zero=zero)
+            self.s2, self.z2 = calc_qparams_per_input_channel(self.conv.weight, self.low_group, self.high_group,
                                                                symmetric=self.symmetric, zero=zero)
         else:
             self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
@@ -530,10 +539,14 @@ class FusedConv2d(nn.Module):
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
 
         if self.per_channel:
-            self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
-            self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
+            # self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
+            # self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
+            self.M0 = torch.zeros((1, self.in_channels), dtype=torch.int32)
+            self.shift = torch.zeros((1, self.in_channels), dtype=torch.int32)
             m_per_channel = self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double)
-            for channel in range(self.out_channels):
+            # for channel in range(self.out_channels):
+            #     self.M0[0][channel], self.shift[0][channel] = quantize_M(m_per_channel[channel])
+            for channel in range(self.in_channels):
                 self.M0[0][channel], self.shift[0][channel] = quantize_M(m_per_channel[channel])
         else:
             self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))

@@ -33,7 +33,6 @@ parser.add_argument('--ste', default=True, type=bool, help="Use Straight-through
 parser.add_argument('--fq', default=1, type=int,
                     help='Epoch to wait for fake-quantize activations. PCQ requires at least one epoch.')
 parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
-parser.add_argument('--inference_bit', default=8, type=int, help='Target bit-width to be quantized (value 32 means pretraining)')
 parser.add_argument('--bit_conv_act', default=16, type=int,
                     help="CONV's activation bit size when not using Conv&BN folding")
 parser.add_argument('--bit_bn_w', default=16, type=int, help="BN's weight bit size when not using CONV & BN folding")
@@ -47,7 +46,8 @@ parser.add_argument('--qn_prob', default=0.2, type=float, help='quant noise prob
 parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant noise qn_prob increment gap')
 parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply conv each channel')
 
-parser.add_argument('--skt', action='store_true', help='For SKT')
+parser.add_argument('--mixed_precision', action='store_true', help='For SKT')
+parser.add_argument('--percentile', default=1.0, type=float, help="threshold to split weight groups into two")
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()

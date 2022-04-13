@@ -323,21 +323,12 @@ def _evaluate(args, tools):
     runtime_helper = RuntimeHelper()
     runtime_helper.set_pcq_arguments(args)
     arg_dict = deepcopy(vars(args))
-    arg_dict['inference_bit'] = torch.tensor(arg_dict['inference_bit'], dtype=torch.int8, device='cuda')
     if runtime_helper:
         arg_dict['runtime_helper'] = runtime_helper
 
-    # if args.skt:
-    #     model = tools.pretrained_model_initializer(pretrained=True, smooth=args.smooth)
-    # else:
-    #     model = load_dnn_model(arg_dict, tools)
-
     model = load_dnn_model(arg_dict, tools)
-    # finetuned_model = get_finetuning_model(arg_dict, tools, pretrained_model)
-
     model.cuda()
-    # finetuned_model.cuda()
-
+    #
     # if not args.quantized:
     #    if args.dataset == 'imagenet':
     #        summary(model, (3, 224, 224))
@@ -358,21 +349,10 @@ def _evaluate(args, tools):
         if args.cluster > 1:
             clustering_model = tools.clustering_method(args)
             clustering_model.load_clustering_model()
-            # pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
+            pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper)
         else:
             validate(model, test_loader, criterion)
             # save_range_out(args, model)
-            visualize(args, model)
-            # # for m in finetuned_model.modules():
-            # #     if isinstance(m, FusedConv2d):
-            #
-            # finetuned_model.set_quantization_params()
-            # if args.dataset == 'cifar100':
-            #     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
-            # else:
-            #     quantized_model = tools.quantized_model_initializer(arg_dict)
-            # quantized_model = tools.quantizer(finetuned_model, quantized_model)
-            # del finetuned_model
-            # quantized_model.cuda()
-            # validate(quantized_model, test_loader, criterion)
+            # visualize(args, model)
+
 

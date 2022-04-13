@@ -244,8 +244,8 @@ class FusedLinear(nn.Module):
         self.layer_type = 'FusedLinear'
 
         self.arg_dict = arg_dict
-        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.inference_bit \
-            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'inference_bit')(arg_dict)
+        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
@@ -297,8 +297,6 @@ class FusedLinear(nn.Module):
         return x
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
-        self.w_bit.data = self.inference_bit
-        self.a_bit.data = self.inference_bit
         self.s1, self.z1 = s1, z1
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
                                         symmetric=self.symmetric)
