@@ -29,11 +29,13 @@ warnings.filterwarnings("ignore")
 
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir, upper_model_make, pcq_validate_per_cluster
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
 
+from datetime import datetime
+import sys
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data', metavar='DIR',
@@ -172,6 +174,9 @@ parser.add_argument('--fixed-point-quantization',
 
 parser.add_argument('--transfer_param', action='store_true', help='copy params of torchcv pretrained models')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
+parser.add_argument('--upper_model_training', default=False, type=bool, help='NNAC upper cluster model training')
+parser.add_argument('--validate_per_cluster', default=False, type=bool, help='Register per cluster Accuracy')
+parser.add_argument('--register_ema_per_cluster', default=False, type=bool, help='Register per cluster EMA value when validate_per_cluster')
 
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
@@ -457,20 +462,83 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     val_loader = data_loaders['val']
     test_loader = data_loaders['test']
 
+
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
-        clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
+        clustering_model.nn_aware_clustering(model, train_loader, prev_arch, runtime_helper)
         model.toggle_full_precision()
 
     if args.evaluate:
+        if args.cluster > 1:
+            runtime_helper.check_before_merge = False
+            pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
+            return
         validate(test_loader, model, criterion, args)
         return
 
+    upper_model = None
+    if args.upper_model_training:
+        cp_train_loader = data_loaders['aug_train']
+        cp_val_loader = data_loaders['val']
+        cp_test_loader = data_loaders['test']
+        
+        cp_best_epoch = 0
+        cp_register_acc = 0
+        cp_criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+        runtime_helper.check_before_merge = True
+
+        upper_model, cp_optimizer = upper_model_make(args, runtime_helper, quantize_arch, bit_config, set_args_arch, create_model, transfer_param)
+        for epoch in range(args.start_epoch, args.epochs):
+            adjust_learning_rate(cp_optimizer, epoch, args)
+            pcq_epoch(upper_model, clustering_model, train_loader, cp_criterion, cp_optimizer, runtime_helper, epoch, logging, fix_BN=args.fix_BN)
+            acc1 = pcq_validate_per_cluster(args, upper_model, clustering_model, cp_val_loader, cp_criterion, runtime_helper, logging)
+
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
+
+            logging.info(f'[Upper Model] Best acc at epoch {epoch}: {best_acc1}')
+            if is_best:
+                best_epoch = epoch
+                register_acc = best_acc1
+
+            logging.info(f'[Upper model training] Best acc at epoch {best_epoch}: {best_acc1}')
+
+            finetune_path = set_save_dir(args)
+            if not os.path.exists(finetune_path):
+                os.mkdir(finetune_path)
+
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': upper_model.state_dict(),
+                'best_acc1': best_acc1,
+                'optimizer': cp_optimizer.state_dict(),
+            }, is_best, finetune_path)
+
+        runtime_helper.make_register_file = True
+        runtime_helper.check_before_merge = True
+        # Sub Cluster validate
+        pcq_validate_per_cluster(args, upper_model, clustering_model, cp_val_loader, criterion, runtime_helper, logging)
+        runtime_helper.check_before_merge = False
+        # Merged Cluster validate
+        pcq_validate_per_cluster(args, upper_model, clustering_model, cp_val_loader, criterion, runtime_helper, logging)
+
+        runtime_helper.make_register_file = False
+        runtime_helper.num_clusters = args.cluster
+        args.upper_model_training = False
+
+
+
+    # Origin Training Epoch part
     best_epoch = 0
     register_acc = 0
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
+
+    args.upper_model_training = False
+    best_acc1 = 0
+    is_best = False
 
     finetune_path = set_save_dir(args)
     if not os.path.exists(finetune_path):
@@ -510,6 +578,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict(),
         }, is_best, finetune_path)
+
+
+    if args.validate_per_cluster:
+        runtime_helper.check_before_merge = False
+        runtime_helper.make_register_file = True
+        acc1 = pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, logging)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:

@@ -16,6 +16,7 @@ class KMeansClustering(object):
         self.args = args
         self.model = None
         self.final_cluster = None  # Used in NN-aware Clustering only
+        self.runtime_helper = None
 
     @torch.no_grad()
     def get_partitioned_batch(self, data):
@@ -92,11 +93,12 @@ class KMeansClustering(object):
 
         self.model = joblib.load(os.path.join(self.args.clustering_path, 'checkpoint.pkl'))
 
-    def predict_cluster_of_batch(self, input):
+    def predict_cluster_of_batch(self, input, runtime_helper=None):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(np.float64(kmeans_input))
-        if self.final_cluster is not None:  # make output as merged cluster form
-            return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
+        if not runtime_helper.check_before_merge:
+            if self.final_cluster is not None:  # make output as merged cluster form
+                return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
         return torch.LongTensor(cluster_info)
 
     def train_clustering_model(self, nonaug_loader, aug_loader):
@@ -188,12 +190,12 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def nn_aware_clustering(self, dnn_model, train_loader, arch):
+    def nn_aware_clustering(self, dnn_model, train_loader, arch, runtime_helper):
         print('\n>>> NN-aware Clustering..')
         from utils.misc import InputContainer
 
         n_sub_clusters = self.args.sub_cluster
-        container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch)
+        container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch, runtime_helper)
         container.initialize_generator()
         container.set_next_batch()
 
