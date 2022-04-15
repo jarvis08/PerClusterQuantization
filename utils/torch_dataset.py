@@ -117,7 +117,19 @@ def get_data_loaders(args):
         if args.cluster > 1 and not args.clustering_path:
             clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=256, shuffle=True,
                                                       workers=args.worker)
+
+        if args.training_per_batch:
+            data_queue = []
+            n_data_loader = {'128':3, '64':2, '32':1}
+            batch_size = [32, 64, 128]
+            for idx in range(3):
+                val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+                train_loader = get_data_loader(aug_train_dataset, batch_size=batch_size[idx], shuffle=True, workers=args.worker)
+
+                data_queue.append({'aug_train': train_loader, 'val': val_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader})
+            return data_queue
+
         val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
     train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
 
-    return {'aug_train': train_loader, 'val': val_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}
+    return [{'aug_train': train_loader, 'val': val_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}]

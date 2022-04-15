@@ -29,7 +29,8 @@ warnings.filterwarnings("ignore")
 
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir, upper_model_make, pcq_validate_per_cluster
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir, \
+    upper_model_make, pcq_validate_per_cluster, add_path
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
@@ -177,6 +178,7 @@ parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's
 parser.add_argument('--upper_model_training', default=False, type=bool, help='NNAC upper cluster model training')
 parser.add_argument('--validate_per_cluster', default=False, type=bool, help='Register per cluster Accuracy')
 parser.add_argument('--register_ema_per_cluster', default=False, type=bool, help='Register per cluster EMA value when validate_per_cluster')
+
 
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
@@ -458,13 +460,26 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     cudnn.benchmark = True
 
-    train_loader = data_loaders['aug_train']
-    val_loader = data_loaders['val']
-    test_loader = data_loaders['test']
+    if args.training_per_batch:
+        train_loader_queue = [None for _ in range(len(data_loaders))]
+        val_loader_queue = [None for _ in range(len(data_loaders))]
+        test_loader_queue = [None for _ in range(len(data_loaders))]
+
+        for i in range(len(data_loaders)):
+            train_loader_queue[i] = data_loaders[i]['aug_train']
+            val_loader_queue[i] = data_loaders[i]['val']
+            test_loader_queue[i] = data_loaders[i]['test']
+
+    else:
+        train_loader = data_loaders[0]['aug_train']
+        val_loader = data_loaders[0]['val']
+        test_loader = data_loaders[0]['test']
 
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
+        if args.training_per_batch:
+            train_loader = train_loader_queue[0]
         clustering_model.nn_aware_clustering(model, train_loader, prev_arch, runtime_helper)
         model.toggle_full_precision()
 
@@ -528,7 +543,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         args.upper_model_training = False
 
 
-
     # Origin Training Epoch part
     best_epoch = 0
     register_acc = 0
@@ -544,46 +558,80 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if not os.path.exists(finetune_path):
         os.mkdir(finetune_path)
 
-    for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch, args)
+    # model copy for batch nums
+    if args.training_per_batch:
+        model_queue = [None for _ in range(len(data_loaders))]
+        criterion_queue = [None for _ in range(len(data_loaders))]
+        optimizer_queue = [None for _ in range(len(data_loaders))]
+        for idx in range(len(data_loaders)):
+            model, optimizer = upper_model_make(args, runtime_helper, quantize_arch, bit_config, set_args_arch,
+                                                create_model, transfer_param)
+            model = model.cpu()
+            model_queue[idx] = model
+            optimizer_queue[idx] = optimizer
+            criterion_queue[idx] = nn.CrossEntropyLoss().cpu()
 
-        if args.cluster > 1:
-            pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
-                      fix_BN=args.fix_BN)
-            tuning_fin_time = time.time()
-            one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
+    model_idx = 0
+    for model_idx in range(len(data_loaders)):
+        if args.training_per_batch:
+            model = model_queue[model_idx]
+            train_loader = train_loader_queue[model_idx]
+            optimizer = optimizer_queue[model_idx]
+            val_loader = val_loader_queue[model_idx]
+            criterion = criterion_queue[model_idx]
 
-        else:
-            train(train_loader, model, criterion, optimizer, epoch, logging, args)
-            tuning_fin_time = time.time()
-            one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = validate(val_loader, model, criterion, args)
+            model = model.cuda(args.gpu)
+            criterion = criterion.cuda(args.gpu)
 
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+            finetune_path = add_path(finetune_path, str(train_loader.batch_size))
+            if not os.path.exists(finetune_path):
+                os.mkdir(finetune_path)
 
-        logging.info(f'Best acc at epoch {epoch}: {best_acc1}')
-        if is_best:
-            best_epoch = epoch
-            register_acc = best_acc1
+        for epoch in range(args.start_epoch, args.epochs):
+            adjust_learning_rate(optimizer, epoch, args)
 
-        # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+            if args.cluster > 1:
+                pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
+                          fix_BN=args.fix_BN)
+                tuning_fin_time = time.time()
+                one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+                acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
 
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': args.arch,
-            'state_dict': model.state_dict(),
-            'best_acc1': best_acc1,
-            'optimizer': optimizer.state_dict(),
-        }, is_best, finetune_path)
+            else:
+                train(train_loader, model, criterion, optimizer, epoch, logging, args)
+                tuning_fin_time = time.time()
+                one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+                acc1 = validate(val_loader, model, criterion, args)
 
+            # remember best acc@1 and save checkpoint
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
 
-    if args.validate_per_cluster:
-        runtime_helper.check_before_merge = False
-        runtime_helper.make_register_file = True
-        acc1 = pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, logging)
+            logging.info(f'Best acc at epoch {epoch}: {best_acc1}')
+            if is_best:
+                best_epoch = epoch
+                register_acc = best_acc1
+
+            # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': model.state_dict(),
+                'best_acc1': best_acc1,
+                'optimizer': optimizer.state_dict(),
+            }, is_best, finetune_path)
+
+        logging.info(f'Model:{model_idx} training finish')
+        if args.validate_per_cluster:
+            runtime_helper.check_before_merge = False
+            runtime_helper.make_register_file = True
+            if args.training_per_batch:
+                test_loader = test_loader_queue[model_idx]
+            acc1 = pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, train_loader, logging)
+
+        del model
+        del criterion
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:

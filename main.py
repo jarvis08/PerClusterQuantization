@@ -36,6 +36,8 @@ parser.add_argument('--visualize_clustering', action='store_true',
                     help="Visualize clustering result with PCA-ed training dataset")
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
+parser.add_argument('--training_per_batch', default=False, type=bool, help='concurrent training same model each batch')
+
 args_daq, tmp = parser.parse_known_args()
 
 arch = None
@@ -59,10 +61,12 @@ if __name__ == '__main__':
     clustering_model = None
     if args_daq.cluster > 1:
         from Clustering import get_clustering_model
+        cls_data_loaders = data_loaders[0]
         if not args_daq.clustering_path:
             from utils.misc import set_clustering_dir
             args_daq.clustering_path = set_clustering_dir(args_daq, arch)
-            clustering_model = get_clustering_model(args_daq, data_loaders)
+
+            clustering_model = get_clustering_model(args_daq, cls_data_loaders)
         else:
             clustering_model = get_clustering_model(args_daq)
 

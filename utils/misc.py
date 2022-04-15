@@ -404,9 +404,9 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     return top1.avg
 
 
-def register_ema_per_cluster(args, model):
+def register_ema_per_cluster(args, model, train_loader):
     from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq
-    with open (f'ema_result_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+    with open (f'ema_result_{args.arch}_{args.dataset}_{train_loader.batch_size}.txt', 'a') as f:
         for module in model.modules():
             if isinstance(module, QuantAct_Daq):
                 n_cluster = len(module.x_min)
@@ -420,7 +420,10 @@ def upper_model_make(args, runtime_helper, quantize_arch, bit_config, set_args_a
     upper_model, upper_teacher = create_model(args)
     upper_model_dict = transfer_param(args, upper_model) if args.transfer_param else None
 
-    runtime_helper.num_clusters = runtime_helper.sub_clusters
+    if args.training_per_batch:
+        runtime_helper.num_clusters = args.cluster
+    else:
+        runtime_helper.num_clusters = runtime_helper.sub_clusters
 
     if args.arch.lower() == 'alexnet':
         upper_model = quantize_arch(upper_model, upper_model_dict, runtime_helper)
@@ -469,7 +472,7 @@ def upper_model_make(args, runtime_helper, quantize_arch, bit_config, set_args_a
     return upper_model, cp_optimizer
 
 
-def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, logger=None,hvd=None):
+def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, train_loader, logger=None,hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -553,7 +556,7 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
     if runtime_helper.make_register_file:
         save_model = 'upper_model' if args.upper_model_training else 'normal_model'
         if runtime_helper.check_before_merge:
-            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_before_merge.txt', 'a') as f:
+            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_{train_loader.batch_size}before_merge.txt', 'a') as f:
                     f.write('\n')
                     f.write(f'{datetime.now().strftime("%m-%d-%H%M")}\n')
                     f.write(f'val:{runtime_helper.total_upper_avg.val}, avg:{runtime_helper.total_upper_avg.avg}, sum:{runtime_helper.total_upper_avg.sum},count:{runtime_helper.total_upper_avg.count}\n')
@@ -561,7 +564,7 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
                     for instance in runtime_helper.ori_cluster_acc:
                         f.write(f'val:{instance.val}, avg:{instance.avg}, sum:{instance.sum}, count:{instance.count}\n')
         else:
-            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_after_merge.txt', 'a') as f:
+            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_{train_loader.batch_size}_after_merge.txt', 'a') as f:
                 f.write('\n')
                 f.write(f'{datetime.now().strftime("%m-%d-%H%M")}\n')
                 f.write(f'val:{runtime_helper.total_avg.val}, avg:{runtime_helper.total_avg.avg}, sum:{runtime_helper.total_avg.sum},count:{runtime_helper.total_avg.count}\n')
@@ -570,7 +573,7 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
                     f.write(f'val:{instance.val}, avg:{instance.avg}, sum:{instance.sum}, count:{instance.count}\n')
 
         if args.register_ema_per_cluster:
-            register_ema_per_cluster(args, model)
+            register_ema_per_cluster(args, model, train_loader)
         
 
     return top1.avg
