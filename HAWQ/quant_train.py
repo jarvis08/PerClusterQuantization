@@ -179,7 +179,6 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet20_cifar10': q_resnet20,
                       'resnet20_cifar100': q_resnet20,
                       'resnet20_svhn': q_resnet20,
-                    #   'resnet20_unfold': q_resnet20_unfold,
                       'alexnet': q_alexnet,
                       'densenet121': q_densenet,
                       'inceptionv3': q_inceptionv3,
@@ -250,15 +249,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     def create_model(args):
         pretrained = args.pretrained and not args.resume
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
-        if 'unfold' in args.arch:
-            if args.data.lower() == 'cifar10':
-                model = ptcv_get_model('resnet20_cifar10', pretrained=pretrained)
-            elif args.data.lower() == 'cifar100':
-                model = ptcv_get_model('resnet20_cifar100', pretrained=pretrained)
-            elif args.data.lower() == 'svhn':
-                model = ptcv_get_model('resnet20_svhn', pretrained=pretrained)
-        else:
-            model = ptcv_get_model(args.arch, pretrained=pretrained)
+        model = ptcv_get_model(args.arch, pretrained=pretrained)
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=pretrained)
