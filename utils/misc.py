@@ -473,8 +473,6 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    runtime_helper.check_before_merge = True
-
     if not runtime_helper.check_before_merge:
         for i in range(len(runtime_helper.fin_cluster_acc)):
             runtime_helper.fin_cluster_acc[i] = AverageMeter()
@@ -492,7 +490,7 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, _ in enumerate(t):
-                t.set_description("Upper model Validate")
+                t.set_description("Per Cluster Validate")
 
                 input, target, runtime_helper.batch_cluster = container.get_batch()
                 input, target = input.cuda(), target.cuda()
@@ -548,13 +546,14 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
     if logger:
         if hvd:
             if hvd.rank() == 0:
-                logger.debug("[Upper Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+                logger.debug("[Per Cluster  Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         else:
-            logger.debug("[Upper Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+            logger.debug("[Per Cluster Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
 
     if runtime_helper.make_register_file:
+        save_model = 'upper_model' if args.upper_model_training else 'normal_model'
         if runtime_helper.check_before_merge:
-            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_upper_model_before_merge.txt', 'a') as f:
+            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_before_merge.txt', 'a') as f:
                     f.write('\n')
                     f.write(f'{datetime.now().strftime("%m-%d-%H%M")}\n')
                     f.write(f'val:{runtime_helper.total_upper_avg.val}, avg:{runtime_helper.total_upper_avg.avg}, sum:{runtime_helper.total_upper_avg.sum},count:{runtime_helper.total_upper_avg.count}\n')
@@ -562,15 +561,16 @@ def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criteri
                     for instance in runtime_helper.ori_cluster_acc:
                         f.write(f'val:{instance.val}, avg:{instance.avg}, sum:{instance.sum}, count:{instance.count}\n')
         else:
-            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_upper_model_after_merge.txt', 'a') as f:
+            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_after_merge.txt', 'a') as f:
                 f.write('\n')
                 f.write(f'{datetime.now().strftime("%m-%d-%H%M")}\n')
-                f.write(f'val:{runtime_helper.total_upper_avg.val}, avg:{runtime_helper.total_upper_avg.avg}, sum:{runtime_helper.total_upper_avg.sum},count:{runtime_helper.total_upper_avg.count}\n')
+                f.write(f'val:{runtime_helper.total_avg.val}, avg:{runtime_helper.total_avg.avg}, sum:{runtime_helper.total_avg.sum},count:{runtime_helper.total_avg.count}\n')
                 f.write('-\n')
-                for instance in runtime_helper.ori_cluster_acc:
+                for instance in runtime_helper.fin_cluster_acc:
                     f.write(f'val:{instance.val}, avg:{instance.avg}, sum:{instance.sum}, count:{instance.count}\n')
-        
-        register_ema_per_cluster(args, model)
+
+        if args.register_ema_per_cluster:
+            register_ema_per_cluster(args, model)
         
 
     return top1.avg

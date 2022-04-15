@@ -174,7 +174,9 @@ parser.add_argument('--fixed-point-quantization',
 
 parser.add_argument('--transfer_param', action='store_true', help='copy params of torchcv pretrained models')
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
-parser.add_argument('--upper_model_training', default=True, type=bool, help='NNAC upper cluster model training')
+parser.add_argument('--upper_model_training', default=False, type=bool, help='NNAC upper cluster model training')
+parser.add_argument('--validate_per_cluster', default=False, type=bool, help='Register per cluster Accuracy')
+parser.add_argument('--register_ema_per_cluster', default=False, type=bool, help='Register per cluster EMA value when validate_per_cluster')
 
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
@@ -288,9 +290,125 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 model_dict[cur[0]].copy_(loaded_dict[from_[0]])
         return model_dict
 
+    def eval_resume(args, model):
+        if args.resume and not args.resume_quantize:
+            if os.path.isfile(args.resume):
+                logging.info("=> loading checkpoint '{}'".format(args.resume))
+
+                checkpoint = torch.load(args.resume)['state_dict']
+                model_key_list = list(model.state_dict().keys())
+                for key in model_key_list:
+                    if 'num_batches_tracked' in key: model_key_list.remove(key)
+                i = 0
+                modified_dict = {}
+                for key, value in checkpoint.items():
+                    if 'scaling_factor' in key: continue
+                    if 'num_batches_tracked' in key: continue
+                    if 'weight_integer' in key: continue
+                    if 'min' in key or 'max' in key: continue
+                    modified_key = model_key_list[i]
+                    modified_dict[modified_key] = value
+                    i += 1
+                logging.info(model.load_state_dict(modified_dict, strict=False))
+            else:
+                logging.info("=> no checkpoint found at '{}'".format(args.resume))
+        return model
+
+    def quant_resume(args, model):
+        if args.resume and args.resume_quantize:
+            if os.path.isfile(args.resume):
+                logging.info("=> loading quantized checkpoint '{}'".format(args.resume))
+                checkpoint = torch.load(args.resume)['state_dict']
+                modified_dict = {}
+                for key, value in checkpoint.items():
+                    if 'num_batches_tracked' in key: continue
+                    if 'weight_integer' in key: continue
+                    if 'bias_integer' in key: continue
+
+                    modified_key = key.replace("module.", "")
+                    modified_dict[modified_key] = value
+                model.load_state_dict(modified_dict, strict=False)
+            else:
+                logging.info("=> no quantized checkpoint found at '{}'".format(args.resume))
+        return model
+
+    def resume_optimizer(args, optimizer):
+        # optionally resume optimizer and meta information from a checkpoint
+        if args.resume:
+            if os.path.isfile(args.resume):
+                if args.gpu is None:
+                    checkpoint = torch.load(args.resume)
+                else:
+                    # Map model to be loaded to specified single gpu.
+                    loc = 'cuda:{}'.format(args.gpu)
+                    checkpoint = torch.load(args.resume, map_location=loc)
+                args.start_epoch = checkpoint['epoch']
+                best_acc1 = checkpoint['best_acc1']
+                if args.gpu is not None:
+                    # best_acc1 may be from a checkpoint from a different GPU
+                    best_acc1 = best_acc1.to(args.gpu)
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                logging.info("=> loaded optimizer and meta information from checkpoint '{}' (epoch {})".
+                             format(args.resume, checkpoint['epoch']))
+            else:
+                logging.info("=> no checkpoint found at '{}'".format(args.resume))
+        return optimizer
+
+    def set_runtime_helper(args):
+        if args.cluster > 1:
+            runtime_helper = RuntimeHelper()
+            runtime_helper.set_pcq_arguments(args)
+            return runtime_helper
+        return None
+
+    def get_quantize_model(args, model, quantize_arch, runtime_helper):
+        if args.arch.lower() == 'alexnet':
+            return quantize_arch(model, model_dict, runtime_helper)
+        return quantize_arch(model, runtime_helper)
+
+    def set_quantize_param(args, model, bit_config):
+        name_counter = 0
+
+        for name, m in model.named_modules():
+            if name in bit_config.keys():
+                name_counter += 1
+                setattr(m, 'quant_mode', 'symmetric')
+                setattr(m, 'bias_bit', args.bias_bit)
+                setattr(m, 'quantize_bias', (args.bias_bit != 0))
+                setattr(m, 'per_channel', args.channel_wise)
+                setattr(m, 'act_percentile', args.act_percentile)
+                setattr(m, 'act_range_momentum', args.act_range_momentum)
+                setattr(m, 'weight_percentile', args.weight_percentile)
+                setattr(m, 'fix_flag', False)
+                setattr(m, 'fix_BN', args.fix_BN)
+                setattr(m, 'fix_BN_threshold', args.fix_BN_threshold)
+                setattr(m, 'training_BN_mode', args.fix_BN)
+                setattr(m, 'checkpoint_iter_threshold', args.checkpoint_iter)
+                setattr(m, 'save_path', args.save_path)
+                setattr(m, 'fixed_point_quantization', args.fixed_point_quantization)
+
+                if type(bit_config[name]) is tuple:
+                    bitwidth = bit_config[name][0]
+                    if bit_config[name][1] == 'hook':
+                        m.register_forward_hook(hook_fn_forward)
+                        global hook_keys
+                        hook_keys.append(name)
+                else:
+                    bitwidth = bit_config[name]
+
+                if hasattr(m, 'activation_bit'):
+                    setattr(m, 'activation_bit', bitwidth)
+                    if bitwidth == 4:
+                        setattr(m, 'quant_mode', 'asymmetric')
+                else:
+                    setattr(m, 'weight_bit', bitwidth)
+
+        logging.info("match all modules defined in bit_config: {}".format(len(bit_config.keys()) == name_counter))
+        return model
+
+
     global best_acc1
     args.gpu = gpu
-    runtime_helper = None
 
     if args.gpu is not None:
         logging.info("Use GPU: {} for training".format(args.gpu))
@@ -309,138 +427,25 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     args.arch = set_args_arch(args)
     model, teacher = create_model(args)  # Create Model
     model_dict = transfer_param(args, model) if args.transfer_param else None
-
-    if args.resume and not args.resume_quantize:
-        if os.path.isfile(args.resume):
-            logging.info("=> loading checkpoint '{}'".format(args.resume))
-
-            checkpoint = torch.load(args.resume)['state_dict']
-            model_key_list = list(model.state_dict().keys())
-            for key in model_key_list:
-                if 'num_batches_tracked' in key: model_key_list.remove(key)
-            i = 0
-            modified_dict = {}
-            for key, value in checkpoint.items():
-                if 'scaling_factor' in key: continue
-                if 'num_batches_tracked' in key: continue
-                if 'weight_integer' in key: continue
-                if 'min' in key or 'max' in key: continue
-                modified_key = model_key_list[i]
-                modified_dict[modified_key] = value
-                i += 1
-            logging.info(model.load_state_dict(modified_dict, strict=False))
-        else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume))
-
-    if args.cluster > 1:
-        runtime_helper = RuntimeHelper()
-        runtime_helper.set_pcq_arguments(args)
+    model = eval_resume(args, model)
+    runtime_helper = set_runtime_helper(args)
 
     quantize_arch = quantize_arch_dict[args.arch]
-
-    if args.arch.lower() == 'alexnet':
-        model = quantize_arch(model, model_dict, runtime_helper)
-    else:
-        model = quantize_arch(model, runtime_helper)
+    model = get_quantize_model(args, model, quantize_arch, runtime_helper)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
-    name_counter = 0
+    model = set_quantize_param(args, model, bit_config)
 
-    for name, m in model.named_modules():
-        if name in bit_config.keys():
-            name_counter += 1
-            setattr(m, 'quant_mode', 'symmetric')
-            setattr(m, 'bias_bit', args.bias_bit)
-            setattr(m, 'quantize_bias', (args.bias_bit != 0))
-            setattr(m, 'per_channel', args.channel_wise)
-            setattr(m, 'act_percentile', args.act_percentile)
-            setattr(m, 'act_range_momentum', args.act_range_momentum)
-            setattr(m, 'weight_percentile', args.weight_percentile)
-            setattr(m, 'fix_flag', False)
-            setattr(m, 'fix_BN', args.fix_BN)
-            setattr(m, 'fix_BN_threshold', args.fix_BN_threshold)
-            setattr(m, 'training_BN_mode', args.fix_BN)
-            setattr(m, 'checkpoint_iter_threshold', args.checkpoint_iter)
-            setattr(m, 'save_path', args.save_path)
-            setattr(m, 'fixed_point_quantization', args.fixed_point_quantization)
-
-            if type(bit_config[name]) is tuple:
-                bitwidth = bit_config[name][0]
-                if bit_config[name][1] == 'hook':
-                    m.register_forward_hook(hook_fn_forward)
-                    global hook_keys
-                    hook_keys.append(name)
-            else:
-                bitwidth = bit_config[name]
-
-            if hasattr(m, 'activation_bit'):
-                setattr(m, 'activation_bit', bitwidth)
-                if bitwidth == 4:
-                    setattr(m, 'quant_mode', 'asymmetric')
-            else:
-                setattr(m, 'weight_bit', bitwidth)
-
-    logging.info("match all modules defined in bit_config: {}".format(len(bit_config.keys()) == name_counter))
     logging.info(model)
 
-    if args.resume and args.resume_quantize:
-        if os.path.isfile(args.resume):
-            logging.info("=> loading quantized checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)['state_dict']
-            modified_dict = {}
-            for key, value in checkpoint.items():
-                if 'num_batches_tracked' in key: continue
-                if 'weight_integer' in key: continue
-                if 'bias_integer' in key: continue
+    model = quant_resume(args, model)
 
-                modified_key = key.replace("module.", "")
-                modified_dict[modified_key] = value
-            model.load_state_dict(modified_dict, strict=False)
-        else:
-            logging.info("=> no quantized checkpoint found at '{}'".format(args.resume))
-
-    if args.distributed:
-        # For multiprocessing distributed, DistributedDataParallel constructor
-        # should always set the single device scope, otherwise,
-        # DistributedDataParallel will use all available devices.
-        if args.gpu is not None:
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
-            # When using a single GPU per process and per
-            # DistributedDataParallel, we need to divide the batch size
-            # ourselves based on the total number of GPUs we have
-            args.batch_size = int(args.batch_size / ngpus_per_node)
-            args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-            if args.distill_method != 'None':
-                teacher.cuda(args.gpu)
-                teacher = torch.nn.parallel.DistributedDataParallel(teacher, device_ids=[args.gpu])
-        else:
-            model.cuda()
-            # DistributedDataParallel will divide and allocate batch_size to all
-            # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-            if args.distill_method != 'None':
-                teacher.cuda()
-                teacher = torch.nn.parallel.DistributedDataParallel(teacher)
-    elif args.gpu is not None:
+    if args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
         if args.distill_method != 'None':
             teacher = teacher.cuda(args.gpu)
-    else:
-        # DataParallel will divide and allocate batch_size to all available GPUs
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
-            # teacher is not alexnet or vgg
-            if args.distill_method != 'None':
-                teacher = torch.nn.DataParallel(teacher).cuda()
-        else:
-            model = torch.nn.DataParallel(model).cuda()
-            if args.distill_method != 'None':
-                teacher = torch.nn.DataParallel(teacher).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -449,25 +454,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    # optionally resume optimizer and meta information from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
-            args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            logging.info("=> loaded optimizer and meta information from checkpoint '{}' (epoch {})".
-                         format(args.resume, checkpoint['epoch']))
-        else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume))
+
+    optimizer = resume_optimizer(args, optimizer)
 
     cudnn.benchmark = True
 
@@ -481,9 +469,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         clustering_model.nn_aware_clustering(model, train_loader, prev_arch, runtime_helper)
         model.toggle_full_precision()
 
-
-    upper_model = None
-
     if args.evaluate:
         if args.cluster > 1:
             runtime_helper.check_before_merge = False
@@ -492,6 +477,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         validate(test_loader, model, criterion, args)
         return
 
+    upper_model = None
     if args.upper_model_training:
         cp_train_loader = data_loaders['aug_train']
         cp_val_loader = data_loaders['val']
@@ -542,6 +528,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         runtime_helper.num_clusters = args.cluster
         args.upper_model_training = False
 
+
+
     # Origin Training Epoch part
     best_epoch = 0
     register_acc = 0
@@ -554,8 +542,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     is_best = False
 
     for epoch in range(args.start_epoch, args.epochs):
-        # if args.distributed:
-        #     train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
         if args.cluster > 1:
@@ -598,6 +584,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             }, is_best, finetune_path)
 
 
+    if args.validate_per_cluster:
+        runtime_helper.check_before_merge = False
+        runtime_helper.make_register_file = True
+        acc1 = pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, logging)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
