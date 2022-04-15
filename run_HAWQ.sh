@@ -1,6 +1,7 @@
 #! /bin/bash
 
-PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+#PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+PRETRAINED_MODEL_PATH="pretrained_models"
 
 
 
@@ -10,16 +11,16 @@ PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 GPU_NUM=0
 
 # alexnet / resnet20 / resnet50 / densenet121
-MODEL=""
+MODEL="alexnet"
  # svhn / cifar10 / cifar100 / imagenet           
-DATASET=""
+DATASET="cifar10"
 
-CLUSTER=                # 16 / 8 / 4 / 2
+CLUSTER=4                # 16 / 8 / 4 / 2
 SUB_CLUSTER=            # 32 / 16 / 8 / 4
 SIM_METHOD=""           # and / jaccard
 REPR_METHOD="max"       # FIXED TO MAX
 
-FIRST_RUN=true          # true / false
+FIRST_RUN=false          # true / false
 
 BATCH=128               # 128 / 64 / 32
 LEARNING_RATE=0.001     # 0.001 / 0.0001      
@@ -64,7 +65,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -88,7 +89,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -98,6 +99,8 @@ else
                 --batch-size $BATCH \
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+                --resume "result/hawq/fine/cifar10/alexnet_4bit/04-12-1411/checkpoint.pth.tar"
+                --resume-quantize
         fi
     else
         if [ "$FIRST_RUN" = true ]; then            
@@ -114,7 +117,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -141,7 +144,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \

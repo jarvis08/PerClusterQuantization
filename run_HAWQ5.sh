@@ -1,9 +1,10 @@
 #! /bin/bash
 
-PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+#PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+PRETRAINED_MODEL_PATH="pretrained_models"
 
 MODEL="alexnet"
-DATASET="cifar10"
+DATASET="cifar100"
 PRETRAINED_MODEL="alexnet"
 
 BATCH=128

@@ -478,6 +478,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
         model.toggle_full_precision()
 
+    set_save_dir()
 
     if args.evaluate:
         validate(test_loader, model, criterion, args)
