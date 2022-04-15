@@ -929,7 +929,7 @@ class QuantAveragePool2d(Module):
             x = x[0]
 
         if x_scaling_factor is None:
-            return self.final_pool(x)
+            return self.final_pool(x), None
 
         x_scaling_factor = x_scaling_factor.view(-1)
         correct_scaling_factor = x_scaling_factor
