@@ -41,7 +41,7 @@ if [ -z ${CLUSTER} ]; then
         --fix-BN \
         --pretrained \
         --channel-wise true \
-        --checpoint-iter -1 \
+        --checkpoint-iter -1 \
         --quant-scheme uniform4 \
         --gpu 0 \
         --data $DATASET \
@@ -64,7 +64,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -88,7 +88,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -114,7 +114,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -141,7 +141,7 @@ else
                 --fix-BN \
                 --pretrained \
                 --channel-wise true \
-                --checpoint-iter -1 \
+                --checkpoint-iter -1 \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \

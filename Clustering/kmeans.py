@@ -118,8 +118,8 @@ class KMeansClustering(object):
             prev_centers = None
             is_converged = False
             best_model_inertia = 9999999999999999
-            print("Train K-means model 10 times, and choose the best model")
-            for trial in range(10):
+            print("Train K-means model 5 times, and choose the best model")
+            for trial in range(5):
                 n_clusters = self.args.cluster if not self.args.nnac else self.args.sub_cluster
                 model = MiniBatchKMeans(n_clusters=n_clusters, batch_size=self.args.batch,
                                         tol=self.args.kmeans_tol, random_state=0)
@@ -159,8 +159,8 @@ class KMeansClustering(object):
 
             n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
             best_model_inertia = 9999999999999999
-            print("Train K-means model 10 times, and choose the best model")
-            for trial in range(10):
+            print("Train K-means model 5 times, and choose the best model")
+            for trial in range(5):
                 model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
                 if model.inertia_ < best_model_inertia:
                     best_model = model

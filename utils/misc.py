@@ -319,30 +319,20 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     model.eval()
 
     container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,
-                               clustering_model.args.dataset, clustering_model.args.batch)
+                               clustering_model.args.dataset, clustering_model.args.val_batch)
     container.initialize_generator()
-    # container.set_next_batch()
-    # container.prepare_validate_per_cluster()
     container.set_next_batch()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             # for i, (input, target) in enumerate(t):
             for i, _ in enumerate(t):
                 t.set_description("Validate")
-                # input_gpu = input.cuda(non_blocking=True)
-                # target = target.cuda(non_blocking=True)
-                # input_gpu, target, c = container.get_batch()
-                # runtime_helper.qat_batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                # runtime_helper.qat_batch_cluster = runtime_helper.qat_batch_cluster.cuda()
-                # output = model(input_gpu)
-
                 input, target, runtime_helper.batch_cluster = container.get_batch()
                 input, target = input.cuda(), target.cuda()
                 runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64,
                                                                 device='cuda', requires_grad=False)
                 output = model(input)
 
-                # container.prepare_validate_per_cluster()
                 container.set_next_batch()
 
                 loss = criterion(output, target)
