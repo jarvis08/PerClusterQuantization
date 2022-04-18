@@ -461,14 +461,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     cudnn.benchmark = True
 
     if args.training_per_batch:
-        train_loader_queue = [None for _ in range(len(data_loaders))]
-        val_loader_queue = [None for _ in range(len(data_loaders))]
-        test_loader_queue = [None for _ in range(len(data_loaders))]
+        train_loader = [None for _ in range(len(data_loaders))]
+        val_loader = [None for _ in range(len(data_loaders))]
+        test_loader = [None for _ in range(len(data_loaders))]
 
         for i in range(len(data_loaders)):
-            train_loader_queue[i] = data_loaders[i]['aug_train']
-            val_loader_queue[i] = data_loaders[i]['val']
-            test_loader_queue[i] = data_loaders[i]['test']
+            train_loader[i] = data_loaders[i]['aug_train']
+            val_loader[i] = data_loaders[i]['val']
+            test_loader[i] = data_loaders[i]['test']
 
     else:
         train_loader = data_loaders[0]['aug_train']
@@ -479,7 +479,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
         if args.training_per_batch:
-            train_loader = train_loader_queue[0]
+            train_loader = train_loader[0]
         clustering_model.nn_aware_clustering(model, train_loader, prev_arch, runtime_helper)
         model.toggle_full_precision()
 
@@ -543,6 +543,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         args.upper_model_training = False
 
 
+
     # Origin Training Epoch part
     best_epoch = 0
     register_acc = 0
@@ -560,10 +561,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     # model copy for batch nums
     if args.training_per_batch:
-        model_queue = [None for _ in range(len(data_loaders))]
-        criterion_queue = [None for _ in range(len(data_loaders))]
-        optimizer_queue = [None for _ in range(len(data_loaders))]
-        for idx in range(len(data_loaders)):
+        model_queue = [None for _ in range(len(train_loader))]
+        criterion_queue = [None for _ in range(len(train_loader))]
+        optimizer_queue = [None for _ in range(len(train_loader))]
+        for idx in range(len(train_loader)):
             model, optimizer = upper_model_make(args, runtime_helper, quantize_arch, bit_config, set_args_arch,
                                                 create_model, transfer_param)
             model = model.cpu()
@@ -572,12 +573,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             criterion_queue[idx] = nn.CrossEntropyLoss().cpu()
 
     model_idx = 0
-    for model_idx in range(len(data_loaders)):
+    for model_idx in range(len(train_loader)):
         if args.training_per_batch:
             model = model_queue[model_idx]
-            train_loader = train_loader_queue[model_idx]
+            train_loader = train_loader[model_idx]
             optimizer = optimizer_queue[model_idx]
-            val_loader = val_loader_queue[model_idx]
+            val_loader = val_loader[model_idx]
             criterion = criterion_queue[model_idx]
 
             model = model.cuda(args.gpu)
@@ -622,12 +623,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'optimizer': optimizer.state_dict(),
             }, is_best, finetune_path)
 
-        logging.info(f'Model:{model_idx} training finish')
+
         if args.validate_per_cluster:
             runtime_helper.check_before_merge = False
             runtime_helper.make_register_file = True
-            if args.training_per_batch:
-                test_loader = test_loader_queue[model_idx]
             acc1 = pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, train_loader, logging)
 
         del model

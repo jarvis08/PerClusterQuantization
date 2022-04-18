@@ -61,12 +61,11 @@ if __name__ == '__main__':
     clustering_model = None
     if args_daq.cluster > 1:
         from Clustering import get_clustering_model
-        cls_data_loaders = data_loaders[0]
         if not args_daq.clustering_path:
             from utils.misc import set_clustering_dir
             args_daq.clustering_path = set_clustering_dir(args_daq, arch)
 
-            clustering_model = get_clustering_model(args_daq, cls_data_loaders)
+            clustering_model = get_clustering_model(args_daq, data_loaders)
         else:
             clustering_model = get_clustering_model(args_daq)
 
