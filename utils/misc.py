@@ -34,22 +34,9 @@ class RuntimeHelper(object):
         self.fzero = None   ###
 
         self.qat_batch_cluster = None
-        
-        # for per clsuter info, using upper model etc..
-        self.sub_clusters = None
-        self.check_before_merge = True
-        self.fin_cluster = None
-        self.ori_cluster = None
-        self.fin_cluster_acc = None
-        self.ori_cluster_acc = None
-        
-        self.total_upper_avg = None
-        self.total_avg = None
-        self.make_register_file = False
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
-        self.sub_clusters = args.sub_cluster
         self.val_batch = args.val_batch
 
         mask = torch.ones(1, dtype=torch.int64, device='cuda')
@@ -58,13 +45,9 @@ class RuntimeHelper(object):
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
         self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
 
-        # for per clsuter info, using upper model etc..
-        self.fin_cluster_acc = [ 0 for _ in range(self.num_clusters) ]
-        self.ori_cluster_acc = [ 0 for _ in range(self.sub_clusters) ]
-
 
 class InputContainer(object):
-    def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, batch_size, runtime_helper=None):
+    def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, batch_size):
         img_size = 224 if dataset_name == 'imagenet' else 32
         self.num_clusters = num_clusters
         self.batch_size = batch_size
@@ -80,8 +63,6 @@ class InputContainer(object):
         self.generator = iter(self.data_loader)
         self.index = 0
 
-        self.runtime_helper = runtime_helper
-
     def initialize_generator(self):
         self.generator = iter(self.data_loader)
 
@@ -92,7 +73,7 @@ class InputContainer(object):
             except StopIteration:
                 self.epoch_done = True
                 break
-            cluster_info = self.clustering_model.predict_cluster_of_batch(images, self.runtime_helper)
+            cluster_info = self.clustering_model.predict_cluster_of_batch(images)
             self.set_data_per_cluster(images, targets, cluster_info)
             if self.ready_cluster is not None:
                 break
@@ -103,8 +84,6 @@ class InputContainer(object):
         for c in range(self.num_clusters):
             if self.container[c][0].size(0) >= self.batch_size:
                 self.ready_cluster = c
-                self.runtime_helper.fin_cluster = c
-                self.runtime_helper.ori_cluster = c
                 break
 
         if self.ready_cluster is None and not self.epoch_done:
@@ -131,8 +110,6 @@ class InputContainer(object):
 
             if self.container[c][0].size(0) >= self.batch_size:
                 self.ready_cluster = c
-                self.runtime_helper.fin_cluster = c
-                self.runtime_helper.ori_cluster = c
 
     @torch.no_grad()
     def gather_and_get_data(self, images, targets, cluster_info):
@@ -305,7 +282,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
         model.train()
 
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
-                               clustering_model.args.dataset, clustering_model.args.batch, runtime_helper)
+                               clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()
     container.set_next_batch()
     with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
@@ -338,35 +315,24 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
-    
 
     model.eval()
 
     container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,
-                               clustering_model.args.dataset, clustering_model.args.batch, runtime_helper)
+                               clustering_model.args.dataset, clustering_model.args.val_batch)
     container.initialize_generator()
-    # container.set_next_batch()
-    # container.prepare_validate_per_cluster()
     container.set_next_batch()
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             # for i, (input, target) in enumerate(t):
             for i, _ in enumerate(t):
                 t.set_description("Validate")
-                # input_gpu = input.cuda(non_blocking=True)
-                # target = target.cuda(non_blocking=True)
-                # input_gpu, target, c = container.get_batch()
-                # runtime_helper.qat_batch_cluster = clustering_model.predict_cluster_of_batch(input)
-                # runtime_helper.qat_batch_cluster = runtime_helper.qat_batch_cluster.cuda()
-                # output = model(input_gpu)
-
                 input, target, runtime_helper.batch_cluster = container.get_batch()
                 input, target = input.cuda(), target.cuda()
                 runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64,
                                                                 device='cuda', requires_grad=False)
                 output = model(input)
 
-                # container.prepare_validate_per_cluster()
                 container.set_next_batch()
 
                 loss = criterion(output, target)
@@ -401,181 +367,6 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         else:
             logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
-    return top1.avg
-
-
-def register_ema_per_cluster(args, model, train_loader):
-    from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq
-    with open (f'ema_result_{args.arch}_{args.dataset}_{train_loader.batch_size}.txt', 'a') as f:
-        for module in model.modules():
-            if isinstance(module, QuantAct_Daq):
-                n_cluster = len(module.x_min)
-                f.write(f'{n_cluster}\n')
-                for ema_min, ema_max in zip(module.x_min, module.x_max):
-                    f.write(f'{ema_min},{ema_max}\n')
-
-def upper_model_make(args, runtime_helper, quantize_arch, bit_config, set_args_arch, create_model, transfer_param):
-    prev_arch = args.arch
-    args.arch = set_args_arch(args)
-    upper_model, upper_teacher = create_model(args)
-    upper_model_dict = transfer_param(args, upper_model) if args.transfer_param else None
-
-    if args.training_per_batch:
-        runtime_helper.num_clusters = args.cluster
-    else:
-        runtime_helper.num_clusters = runtime_helper.sub_clusters
-
-    if args.arch.lower() == 'alexnet':
-        upper_model = quantize_arch(upper_model, upper_model_dict, runtime_helper)
-    else:
-        upper_model = quantize_arch(upper_model, runtime_helper)
-
-    name_counter = 0
-    for name, m in upper_model.named_modules():
-        if name in bit_config.keys():
-            name_counter += 1
-            setattr(m, 'quant_mode', 'symmetric')
-            setattr(m, 'bias_bit', args.bias_bit)
-            setattr(m, 'quantize_bias', (args.bias_bit != 0))
-            setattr(m, 'per_channel', args.channel_wise)
-            setattr(m, 'act_percentile', args.act_percentile)
-            setattr(m, 'act_range_momentum', args.act_range_momentum)
-            setattr(m, 'weight_percentile', args.weight_percentile)
-            setattr(m, 'fix_flag', False)
-            setattr(m, 'fix_BN', args.fix_BN)
-            setattr(m, 'fix_BN_threshold', args.fix_BN_threshold)
-            setattr(m, 'training_BN_mode', args.fix_BN)
-            setattr(m, 'checkpoint_iter_threshold', args.checkpoint_iter)
-            setattr(m, 'save_path', args.save_path)
-            setattr(m, 'fixed_point_quantization', args.fixed_point_quantization)
-
-            if type(bit_config[name]) is tuple:
-                bitwidth = bit_config[name][0]
-                if bit_config[name][1] == 'hook':
-                    m.register_forward_hook(hook_fn_forward)
-            else:
-                bitwidth = bit_config[name]
-
-            if hasattr(m, 'activation_bit'):
-                setattr(m, 'activation_bit', bitwidth)
-                if bitwidth == 4:
-                    setattr(m, 'quant_mode', 'asymmetric')
-            else:
-                setattr(m, 'weight_bit', bitwidth)
-
-
-    logging.info("[Upper Model] match all modules defined in bit_config: {}".format(len(bit_config.keys()) == name_counter))
-    logging.info(upper_model)
-    cp_optimizer = torch.optim.SGD(upper_model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    upper_model = upper_model.cuda(args.gpu)
-
-    return upper_model, cp_optimizer
-
-
-def pcq_validate_per_cluster(args, model, clustering_model, test_loader, criterion, runtime_helper, train_loader, logger=None,hvd=None):
-    losses = AverageMeter()
-    top1 = AverageMeter()
-
-    if not runtime_helper.check_before_merge:
-        for i in range(len(runtime_helper.fin_cluster_acc)):
-            runtime_helper.fin_cluster_acc[i] = AverageMeter()
-    else:
-        for i in range(len(runtime_helper.ori_cluster_acc)):
-            runtime_helper.ori_cluster_acc[i] = AverageMeter()
-
-    model.eval()
-
-    container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters, 
-            clustering_model.args.dataset, clustering_model.args.batch, runtime_helper)
-
-    container.initialize_generator()
-    container.set_next_batch()
-    with torch.no_grad():
-        with tqdm(test_loader, unit="batch", ncols=90) as t:
-            for i, _ in enumerate(t):
-                t.set_description("Per Cluster Validate")
-
-                input, target, runtime_helper.batch_cluster = container.get_batch()
-                input, target = input.cuda(), target.cuda()
-                runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64,
-                                                                device='cuda', requires_grad=False)
-
-                output = model(input)
-
-                container.set_next_batch()
-
-                loss = criterion(output, target)
-                prec = accuracy(output, target)[0]
-                losses.update(loss.item(), input.size(0))
-                top1.update(prec.item(), input.size(0))
-
-                if runtime_helper.check_before_merge:
-                    runtime_helper.ori_cluster_acc[runtime_helper.ori_cluster].update(prec.item(), input.size(0))
-                else:
-                    runtime_helper.fin_cluster_acc[runtime_helper.fin_cluster].update(prec.item(), input.size(0))
-
-                t.set_postfix(loss=losses.avg, acc=top1.avg)
-
-                if container.ready_cluster is None:
-                    break
-
-
-            container.check_leftover()
-            for c in range(container.num_clusters):
-                if container.leftover_cluster_data[c]:
-                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
-                    input, target = input.cuda(), target.cuda()
-                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
-
-                    output = model(input)
-
-                    loss = criterion(output, target)
-                    prec = accuracy(output, target)[0]
-                    losses.update(loss.item(), input.size(0))
-                    top1.update(prec.item(), input.size(0))
-
-                    t.set_postfix(loss=losses.avg, acc=top1.avg)
-
-                    if runtime_helper.check_before_merge:
-                        runtime_helper.ori_cluster_acc[runtime_helper.ori_cluster].update(prec.item(), input.size(0))
-                    else:
-                        runtime_helper.fin_cluster_acc[runtime_helper.fin_cluster].update(prec.item(), input.size(0))
-
-            if runtime_helper.check_before_merge:
-                runtime_helper.total_upper_avg = top1
-            else:
-                runtime_helper.total_avg = top1
-
-    if logger:
-        if hvd:
-            if hvd.rank() == 0:
-                logger.debug("[Per Cluster  Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
-        else:
-            logger.debug("[Per Cluster Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
-
-    if runtime_helper.make_register_file:
-        save_model = 'upper_model' if args.upper_model_training else 'normal_model'
-        if runtime_helper.check_before_merge:
-            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_{train_loader.batch_size}before_merge.txt', 'a') as f:
-                    f.write('\n')
-                    f.write(f'{datetime.now().strftime("%m-%d-%H%M")}\n')
-                    f.write(f'val:{runtime_helper.total_upper_avg.val}, avg:{runtime_helper.total_upper_avg.avg}, sum:{runtime_helper.total_upper_avg.sum},count:{runtime_helper.total_upper_avg.count}\n')
-                    f.write('-\n')
-                    for instance in runtime_helper.ori_cluster_acc:
-                        f.write(f'val:{instance.val}, avg:{instance.avg}, sum:{instance.sum}, count:{instance.count}\n')
-        else:
-            with open(f'{args.arch}_{args.dataset}_{args.sub_cluster}_{save_model}_{train_loader.batch_size}_after_merge.txt', 'a') as f:
-                f.write('\n')
-                f.write(f'{datetime.now().strftime("%m-%d-%H%M")}\n')
-                f.write(f'val:{runtime_helper.total_avg.val}, avg:{runtime_helper.total_avg.avg}, sum:{runtime_helper.total_avg.sum},count:{runtime_helper.total_avg.count}\n')
-                f.write('-\n')
-                for instance in runtime_helper.fin_cluster_acc:
-                    f.write(f'val:{instance.val}, avg:{instance.avg}, sum:{instance.sum}, count:{instance.count}\n')
-
-        if args.register_ema_per_cluster:
-            register_ema_per_cluster(args, model, train_loader)
-        
-
     return top1.avg
 
 
@@ -686,8 +477,6 @@ def set_save_dir(args, allow_existence=True):
     else:
         path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
     path = add_path(path, datetime.now().strftime("%m-%d-%H%M"), allow_existence=allow_existence)
-    if args.upper_model_training:
-        path = add_path(path, 'upper_model')
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path

@@ -1,29 +1,28 @@
 #! /bin/bash
 
-#PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
-PRETRAINED_MODEL_PATH="pretrained_models"
+PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
 
 
 
 ###################################################
 
-GPU_NUM=0
+GPU_NUM=${1}
 
 # alexnet / resnet20 / resnet50 / densenet121
-MODEL="resnet20"
- # svhn / cifar10 / cifar100 / imagenet           
-DATASET="cifar100"
+MODEL=${2}
+# svhn / cifar10 / cifar100 / imagenet           
+DATASET=${3}
 
-CLUSTER=4                # 16 / 8 / 4 / 2
-SUB_CLUSTER=8            # 32 / 16 / 8 / 4
-SIM_METHOD="and"           # and / jaccard
+CLUSTER=${4}                # 16 / 8 / 4 / 2
+SUB_CLUSTER=${5}            # 32 / 16 / 8 / 4
+SIM_METHOD=${6}           # and / jaccard
 REPR_METHOD="max"       # FIXED TO MAX
 
-FIRST_RUN=true          # true / false
+FIRST_RUN=${7}          # true / false
 
-BATCH=128               # 128 / 64 / 32
-LEARNING_RATE=0.001     # 0.001 / 0.0001      
+BATCH=${8}               # 128 / 64 / 32
+LEARNING_RATE=${9}     # 0.001 / 0.0001      
 
 #####################################################
 
@@ -42,7 +41,7 @@ if [ -z ${CLUSTER} ]; then
         --fix-BN \
         --pretrained \
         --channel-wise true \
-        --checpoint-iter -1 \
+        --checkpoint-iter -1 \
         --quant-scheme uniform4 \
         --gpu 0 \
         --data $DATASET \
@@ -75,7 +74,7 @@ else
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         else
-            CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
+            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -99,8 +98,6 @@ else
                 --batch-size $BATCH \
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
-                --resume "result/hawq/fine/cifar10/alexnet_4bit/04-12-1411/checkpoint.pth.tar"
-                --resume-quantize
         fi
     else
         if [ "$FIRST_RUN" = true ]; then            
@@ -130,7 +127,7 @@ else
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth \
         else
-            CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \

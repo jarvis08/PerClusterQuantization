@@ -16,7 +16,6 @@ class KMeansClustering(object):
         self.args = args
         self.model = None
         self.final_cluster = None  # Used in NN-aware Clustering only
-        self.runtime_helper = None
 
     @torch.no_grad()
     def get_partitioned_batch(self, data):
@@ -93,12 +92,11 @@ class KMeansClustering(object):
 
         self.model = joblib.load(os.path.join(self.args.clustering_path, 'checkpoint.pkl'))
 
-    def predict_cluster_of_batch(self, input, runtime_helper=None):
+    def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(np.float64(kmeans_input))
-        if not runtime_helper.check_before_merge:
-            if self.final_cluster is not None:  # make output as merged cluster form
-                return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
+        if self.final_cluster is not None:  # make output as merged cluster form
+            return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
         return torch.LongTensor(cluster_info)
 
     def train_clustering_model(self, nonaug_loader, aug_loader):
@@ -120,8 +118,8 @@ class KMeansClustering(object):
             prev_centers = None
             is_converged = False
             best_model_inertia = 9999999999999999
-            print("Train K-means model 10 times, and choose the best model")
-            for trial in range(10):
+            print("Train K-means model 5 times, and choose the best model")
+            for trial in range(5):
                 n_clusters = self.args.cluster if not self.args.nnac else self.args.sub_cluster
                 model = MiniBatchKMeans(n_clusters=n_clusters, batch_size=self.args.batch,
                                         tol=self.args.kmeans_tol, random_state=0)
@@ -161,8 +159,8 @@ class KMeansClustering(object):
 
             n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
             best_model_inertia = 9999999999999999
-            print("Train K-means model 10 times, and choose the best model")
-            for trial in range(10):
+            print("Train K-means model 5 times, and choose the best model")
+            for trial in range(5):
                 model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
                 if model.inertia_ < best_model_inertia:
                     best_model = model
@@ -190,12 +188,12 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def nn_aware_clustering(self, dnn_model, train_loader, arch, runtime_helper):
+    def nn_aware_clustering(self, dnn_model, train_loader, arch):
         print('\n>>> NN-aware Clustering..')
         from utils.misc import InputContainer
 
         n_sub_clusters = self.args.sub_cluster
-        container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch, runtime_helper)
+        container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch)
         container.initialize_generator()
         container.set_next_batch()
 
