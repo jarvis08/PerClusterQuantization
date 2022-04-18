@@ -11,16 +11,16 @@ PRETRAINED_MODEL_PATH="pretrained_models"
 GPU_NUM=0
 
 # alexnet / resnet20 / resnet50 / densenet121
-MODEL="alexnet"
+MODEL="resnet20"
  # svhn / cifar10 / cifar100 / imagenet           
-DATASET="cifar10"
+DATASET="cifar100"
 
 CLUSTER=4                # 16 / 8 / 4 / 2
-SUB_CLUSTER=            # 32 / 16 / 8 / 4
-SIM_METHOD=""           # and / jaccard
+SUB_CLUSTER=8            # 32 / 16 / 8 / 4
+SIM_METHOD="and"           # and / jaccard
 REPR_METHOD="max"       # FIXED TO MAX
 
-FIRST_RUN=false          # true / false
+FIRST_RUN=true          # true / false
 
 BATCH=128               # 128 / 64 / 32
 LEARNING_RATE=0.001     # 0.001 / 0.0001      
@@ -128,7 +128,7 @@ else
                 --data $DATASET \
                 --batch-size $BATCH \
                 --transfer_param \
-                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth \
         else
             CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
@@ -156,7 +156,7 @@ else
                 --data $DATASET \
                 --batch-size $BATCH \
                 --transfer_param \
-                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth \
         fi
     fi
 fi

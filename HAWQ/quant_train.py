@@ -548,7 +548,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     best_epoch = 0
     register_acc = 0
     tuning_start_time = time.time()
-    tuning_fin_time = None
     one_epoch_time = None
 
     args.upper_model_training = False
