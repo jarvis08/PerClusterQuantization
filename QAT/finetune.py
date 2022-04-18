@@ -64,18 +64,30 @@ def visualize(args, model, epoch):
     conv_cnt = 0
     model.cpu()
     range_per_group = []
+    # weight, layer input group
+    input_group = []
+    weight_group = []
     max_ = 0
 
     for m in model.modules():
         if isinstance(m, FusedConv2d):
             conv_cnt += 1
+            # # out_channel = m.out_channels
+            # # (2, 96) -> (96, 2)
+            # output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
+            # # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
+            #
+            # min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
+            # range_per_group.append(min_max_per_group)
+            # if min_max_per_group.max() > max_:
+            #     max_ = min_max_per_group.max()
 
             # out_channel = m.out_channels
-            # (2, 96) -> (96, 2)
-            output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
+            input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
+            weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
             # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
 
-            min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
+            input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
             range_per_group.append(min_max_per_group)
             if min_max_per_group.max() > max_:
                 max_ = min_max_per_group.max()

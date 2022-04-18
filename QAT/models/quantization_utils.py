@@ -96,16 +96,17 @@ def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
 
 
 def calc_symmetric_qparams(_min, _max, bit):
-    if bit == 4:
-        s = (_max - _min) / 15
-    elif bit == 8:
-        s = (_max - _min) / 255
-    elif bit == 16:
-        s = (_max - _min) / 65535
-    elif bit == 24:
-        s = _max.sub(_min).div(16777215)
-    else:
-        s = (_max - _min) / 4294967295
+    with torch.no_grad():
+        n = 2 ** (bit - 1) - 1
+        # if per_channel:
+        #     scale, _ = torch.max(torch.stack([saturation_min.abs(), saturation_max.abs()], dim=1), dim=1)
+        #     scale = torch.clamp(scale, min=1e-8) / n
+        # else:
+        #     scale = max(saturation_min.abs(), saturation_max.abs())  #
+        #     scale = torch.clamp(scale, min=1e-8) / n
+        s = max(_min.abs(), _max.abs())
+        s = torch.clamp(s, min=1e-8) / n
+
     return s, torch.zeros_like(s, device='cuda')
 
 
