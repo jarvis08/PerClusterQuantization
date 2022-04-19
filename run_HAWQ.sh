@@ -7,22 +7,25 @@ PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
 ###################################################
 
-GPU_NUM=${1}
+#GPU_NUM=${1}
+GPU_NUM=0
 
 # alexnet / resnet20 / resnet50 / densenet121
-MODEL=${2}
+#MODEL=${2}
+MODEL="alexnet"
 # svhn / cifar10 / cifar100 / imagenet           
-DATASET=${3}
+#DATASET=${3}
+DATASET="cifar10"
 
-CLUSTER=${4}                # 16 / 8 / 4 / 2
-SUB_CLUSTER=${5}            # 32 / 16 / 8 / 4
-SIM_METHOD=${6}           # and / jaccard
+CLUSTER=4                # 16 / 8 / 4 / 2
+SUB_CLUSTER=8            # 32 / 16 / 8 / 4
+SIM_METHOD="and"           # and / jaccard
 REPR_METHOD="max"       # FIXED TO MAX
 
-FIRST_RUN=${7}          # true / false
+FIRST_RUN=true          # true / false
 
-BATCH=${8}               # 128 / 64 / 32
-LEARNING_RATE=${9}     # 0.001 / 0.0001      
+BATCH=128               # 128 / 64 / 32
+LEARNING_RATE=0.001     # 0.001 / 0.0001      
 
 #####################################################
 

@@ -38,6 +38,7 @@ def transfer_numpy_float(inputs):
 
 def register_ema(args, model):
     with open(f'acc_{args.arch}_{args.dataset}_{args.batch_size}') as f:
+        f.write(f'{args.arch}_{args.sub_cluster}_{args.lr}_{args.batch_size}_{args.repr_method}\n')
         for i in range(model.runtime_helper.num_clusters):
             f.write(f'avg:{model.runtime_helper.cluster_acc[i].avg}, count:{model.runtime_helper.cluster_acc[i].count}\n')
 
