@@ -1,20 +1,17 @@
 #! /bin/bash
 
-PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+PRETRAINED_MODEL_PATH="pretrained_models"
 
 
 
 
 ###################################################
 
-#GPU_NUM=${1}
 GPU_NUM=0
 
 # alexnet / resnet20 / resnet50 / densenet121
-#MODEL=${2}
 MODEL="alexnet"
 # svhn / cifar10 / cifar100 / imagenet           
-#DATASET=${3}
 DATASET="cifar10"
 
 CLUSTER=4                # 16 / 8 / 4 / 2
@@ -77,7 +74,7 @@ else
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
+            CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -106,7 +103,7 @@ else
         if [ "$FIRST_RUN" = true ]; then            
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
-                --epochs 100 \
+                --epochs 3 \
                 --batch $BATCH \
                 --quant_base hawq \
                 --arch $MODEL \
@@ -130,7 +127,7 @@ else
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth \
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+            CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -159,4 +156,5 @@ else
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth \
         fi
     fi
+fi
 fi
