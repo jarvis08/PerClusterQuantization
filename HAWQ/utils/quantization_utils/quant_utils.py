@@ -37,7 +37,11 @@ def transfer_numpy_float(inputs):
     return np.array(tmp_output)
 
 def register_ema(args, model):
-    with open(f'{args.arch}_{args.dataset}_{args.batch_size}') as f:
+    with open(f'acc_{args.arch}_{args.dataset}_{args.batch_size}') as f:
+        for i in range(model.runtime_helper.num_clusters):
+            f.write(f'avg:{model.runtime_helper.cluster_acc[i].avg}, count:{model.runtime_helper.cluster_acc[i].count}\n')
+
+    with open(f'ema_{args.arch}_{args.dataset}_{args.batch_size}') as f:
         for module in model.modules():
             from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq, QuantAct
             if isinstance(module, (QuantAct_Daq, QuantAct)):

@@ -513,7 +513,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'optimizer': optimizer.state_dict(),
             }, is_best, finetune_path)
 
-    register_ema(args, model)
+    if args.cluster > 1:
+        pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, True, logging)
+        register_ema(args, model)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
