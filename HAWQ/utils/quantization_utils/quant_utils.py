@@ -36,6 +36,15 @@ def transfer_numpy_float(inputs):
         tmp_output.append(float(inp))
     return np.array(tmp_output)
 
+def register_ema(args, model):
+    with open(f'{args.arch}_{args.dataset}_{args.batch_size}') as f:
+        for module in model.modules():
+            from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq, QuantAct
+            if isinstance(module, (QuantAct_Daq, QuantAct)):
+                for max_value in module.x_max:
+                    f.write(f'{max_value},')
+                f.write('\n')
+
 
 def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False, num_cluster=1):
     """

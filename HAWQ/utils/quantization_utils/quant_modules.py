@@ -353,7 +353,7 @@ class QuantAct_Daq(QuantAct):
         self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
         self.register_buffer('isDaq', torch.ones(1, dtype=torch.bool))
 
-        self.isClassifier = False
+        self.isLinear = False
 
         self.init = False
 
@@ -409,7 +409,7 @@ class QuantAct_Daq(QuantAct):
         # calculate the quantization range of the activations
         if not self.full_precision_flag:
             if self.running_stat:
-                if self.isClassifier:
+                if self.isLinear:
                     if self.act_percentile == 0:
                         x_min = x.data.min()
                         x_max = x.data.max()
