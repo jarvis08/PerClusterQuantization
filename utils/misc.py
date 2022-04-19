@@ -34,6 +34,7 @@ class RuntimeHelper(object):
         self.fzero = None   ###
 
         self.qat_batch_cluster = None
+        self.register_val = False
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
@@ -314,10 +315,10 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
                 break
 
 
-def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, final_val=False, logger=None, hvd=None):
+def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
-    if final_val:
+    if runtime_helper.register_val:
         for i in range(runtime_helper.num_clusters):
             runtime_helper.cluster_acc[i] = AverageMeter()
 
@@ -344,8 +345,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 prec = accuracy(output, target)[0]
                 losses.update(loss.item(), input.size(0))
                 top1.update(prec.item(), input.size(0))
-                if final_val:
-                    runtime_helper.cluster_acc[runtime_helper.batch_cluster].update(prec.item(), input(0))
+                if runtime_helper.register_val:
+                    runtime_helper.cluster_acc[runtime_helper.batch_cluster].update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
 
@@ -365,8 +366,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                     prec = accuracy(output, target)[0]
                     losses.update(loss.item(), input.size(0))
                     top1.update(prec.item(), input.size(0))
-                    if final_val:
-                        runtime_helper.cluster_acc[runtime_helper.batch_cluster].update(prec.item(), input(0))
+                    if runtime_helper.register_val:
+                        runtime_helper.cluster_acc[runtime_helper.batch_cluster].update(prec.item(), input.size(0))
                     t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     if logger:
