@@ -56,23 +56,26 @@ def register_weight(args, model, epoch):
     n_conv = 1
     n_fc = 1
     data = {}
-    with open(f'k_weight_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}.txt', 'a') as f:
-        for module in model.modules():
-            from HAWQ.utils.quantization_utils.quant_modules import QuantBnConv2d, QuantConv2d, QuantLinear
-            tmp_weight = []
-            if isinstance(module, (QuantConv2d, QuantBnConv2d, QuantLinear)):
-                if isinstance(module, QuantLinear):
-                    t_weight = module.weight.data.view(1, -1).clone().numpy()[0]
-                    for w in t_weight:
-                        tmp_weight.append(w)
-                    data[f'fc{n_fc}'] = tmp_weight
-                    n_fc += 1
-                else:
-                    t_weight = module.conv.weight.data.view(1, -1).clone().numpy()[0]
-                    for w in t_weight:
-                        tmp_weight.append(w)
-                    data[f'conv{n_conv}'] = tmp_weight
-                    n_conv += 1
+    for module in model.modules():
+        from HAWQ.utils.quantization_utils.quant_modules import QuantBnConv2d, QuantConv2d, QuantLinear
+        tmp_weight = []
+        if isinstance(module, (QuantConv2d, QuantBnConv2d, QuantLinear)):
+            if isinstance(module, QuantLinear):
+                t_weight = module.weight.data.view(1, -1).clone().numpy()[0]
+                for w in t_weight:
+                    tmp_weight.append(w)
+                data[f'fc{n_fc}'] = tmp_weight
+                n_fc += 1
+            else:
+                t_weight = module.conv.weight.data.view(1, -1).clone().numpy()[0]
+                for w in t_weight:
+                    tmp_weight.append(w)
+                data[f'conv{n_conv}'] = tmp_weight
+                n_conv += 1
+
+    df = pd.DataFrame(data)
+    df.to_csv(f'k_ema_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}.csv', index=True)
+
 
 
 def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False, num_cluster=1):
