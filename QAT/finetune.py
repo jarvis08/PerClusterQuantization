@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 import torch
-from torchsummary import summary
+# from torchsummary import summary
 
 from utils import *
 from .models import *
@@ -47,7 +47,7 @@ def draw_violin_graph(data, max_, identifier, arch, epoch):
 
 
 def visualize(args, model, epoch):
-    path = os.path.join('', 'skt_range')
+    path = os.path.join('', 'skt_range_yongjoo')
     if not os.path.exists(path):
         os.makedirs(path)
     # path = os.path.join(path, args.arch + args.dataset)
@@ -72,25 +72,25 @@ def visualize(args, model, epoch):
     for m in model.modules():
         if isinstance(m, FusedConv2d):
             conv_cnt += 1
-            # # out_channel = m.out_channels
-            # # (2, 96) -> (96, 2)
-            # output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
-            # # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
-            #
-            # min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
-            # range_per_group.append(min_max_per_group)
-            # if min_max_per_group.max() > max_:
-            #     max_ = min_max_per_group.max()
-
             # out_channel = m.out_channels
-            input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
-            weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
+            # (2, 96) -> (96, 2)
+            output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
             # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
 
-            input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
+            min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
             range_per_group.append(min_max_per_group)
             if min_max_per_group.max() > max_:
                 max_ = min_max_per_group.max()
+
+            # out_channel = m.out_channels
+            # input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
+            # weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
+            # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
+
+            # input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
+            # range_per_group.append(min_max_per_group)
+            # if min_max_per_group.max() > max_:
+            #     max_ = min_max_per_group.max()
 
     # violin
     # range_per_group_sorted = sorted(list(range_per_group))
