@@ -253,6 +253,7 @@ class Q_AlexNet_Daq(nn.Module):
         self.fc1.set_param(fc_block.fc, model_dict, 'output.fc1.fc')
         self.act6 = nn.ReLU()
         self.quant_act6 = QuantAct_Daq(runtime_helper=runtime_helper)
+        self.quant_act6.is_classifier = True
 
         # fc2
         fc_block = getattr(output, 'fc2')
@@ -262,6 +263,7 @@ class Q_AlexNet_Daq(nn.Module):
         self.fc2.set_param(fc_block.fc, model_dict, 'output.fc2.fc')
         self.act7 = nn.ReLU()
         self.quant_act7 = QuantAct_Daq(runtime_helper=runtime_helper)
+        self.quant_act7.is_classifier = True
 
         # fc3
         fc = getattr(output, 'fc3')
