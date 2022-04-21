@@ -473,6 +473,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_fin_time = None
     one_epoch_time = None
     check_epoch = 1
+    epoch = 0
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
@@ -523,7 +524,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         runtime_helper.register_val = True
         logging.debug("Per cluster validate Start")
         pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
-        register_ema(args, model, runtime_helper)
+        register_ema(args, model, runtime_helper, epoch)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
