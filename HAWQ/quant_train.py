@@ -472,6 +472,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
+    check_epoch = 1
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
@@ -487,6 +488,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(val_loader, model, criterion, args)
+
+        if check_epoch % 10 == 0:
+            register_ema(args, model, runtime_helper, check_epoch)
+            register_weight(args, model, check_epoch)
+        check_epoch += 1
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1

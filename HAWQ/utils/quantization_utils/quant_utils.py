@@ -36,18 +36,43 @@ def transfer_numpy_float(inputs):
         tmp_output.append(float(inp))
     return np.array(tmp_output)
 
-def register_ema(args, model, runtime_helper):
-    with open(f't_acc_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+def register_ema(args, model, runtime_helper, epoch=None):
+    if epoch is None:
+        epoch=args.epochs
+    with open(f'k_acc_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
         for i in range(runtime_helper.num_clusters):
             f.write(f'avg:{runtime_helper.cluster_acc[i].avg}, count:{runtime_helper.cluster_acc[i].count}\n')
 
-    with open(f't_ema_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+    with open(f'k_ema_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
         for module in model.modules():
             from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq, QuantAct
             if isinstance(module, (QuantAct_Daq, QuantAct)):
                 for max_value in module.x_max:
                     f.write(f'{max_value},')
                 f.write('\n')
+
+def register_weight(args, model, epoch):
+    import pandas as pd
+    n_conv = 1
+    n_fc = 1
+    data = {}
+    with open(f'k_weight_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}.txt', 'a') as f:
+        for module in model.modules():
+            from HAWQ.utils.quantization_utils.quant_modules import QuantBnConv2d, QuantConv2d, QuantLinear
+            tmp_weight = []
+            if isinstance(module, (QuantConv2d, QuantBnConv2d, QuantLinear)):
+                if isinstance(module, QuantLinear):
+                    t_weight = module.weight.data.view(1, -1).clone().numpy()[0]
+                    for w in t_weight:
+                        tmp_weight.append(w)
+                    data[f'fc{n_fc}'] = tmp_weight
+                    n_fc += 1
+                else:
+                    t_weight = module.conv.weight.data.view(1, -1).clone().numpy()[0]
+                    for w in t_weight:
+                        tmp_weight.append(w)
+                    data[f'conv{n_conv}'] = tmp_weight
+                    n_conv += 1
 
 
 def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False, num_cluster=1):
