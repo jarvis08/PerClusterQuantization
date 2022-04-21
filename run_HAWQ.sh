@@ -74,7 +74,7 @@ else
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
+            CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -103,7 +103,7 @@ else
         if [ "$FIRST_RUN" = true ]; then            
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
-                --epochs 100 \
+                --epochs 1 \
                 --batch $BATCH \
                 --quant_base hawq \
                 --arch $MODEL \
@@ -127,7 +127,7 @@ else
                 --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth \
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+            CLUSTERING_MODEL_PATH="result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \

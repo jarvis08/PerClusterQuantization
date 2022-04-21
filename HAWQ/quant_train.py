@@ -489,7 +489,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(val_loader, model, criterion, args)
 
-        if check_epoch % 10 == 0:
+        if epoch < 50 and check_epoch % 10 == 0:
             register_ema(args, model, runtime_helper, check_epoch)
             register_weight(args, model, check_epoch)
         check_epoch += 1
