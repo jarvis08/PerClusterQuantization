@@ -40,10 +40,12 @@ def register_ema(args, model, runtime_helper, epoch=None):
     if epoch is None:
         epoch=args.epochs
     with open(f'k_acc_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+        f.write(f'{args.lr}\n')
         for i in range(runtime_helper.num_clusters):
             f.write(f'avg:{runtime_helper.cluster_acc[i].avg}, count:{runtime_helper.cluster_acc[i].count}\n')
 
     with open(f'k_ema_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+        f.write(f'{args.lr}\n')
         for module in model.modules():
             from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq, QuantAct
             if isinstance(module, (QuantAct_Daq, QuantAct)):
@@ -74,7 +76,7 @@ def register_weight(args, model, epoch):
                 n_conv += 1
 
     df = pd.DataFrame(data)
-    df.to_csv(f'k_ema_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}.csv', index=True)
+    df.to_csv(f'k_ema_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}_{args.lr}.csv', index=True)
 
 
 
