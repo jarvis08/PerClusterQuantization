@@ -515,8 +515,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     if args.cluster > 1:
         runtime_helper.register_val = True
+        logging.debug("Per cluster validate Start")
         pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
-        register_ema(args, model)
+        register_ema(args, model, runtime_helper)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:

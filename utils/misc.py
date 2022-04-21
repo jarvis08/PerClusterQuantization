@@ -34,6 +34,7 @@ class RuntimeHelper(object):
         self.fzero = None   ###
 
         self.qat_batch_cluster = None
+        self.register_val = False
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
