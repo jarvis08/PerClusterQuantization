@@ -14,15 +14,15 @@ MODEL=${2}
 # svhn / cifar10 / cifar100 / imagenet           
 DATASET=${3}
 
-CLUSTER=${4}                # 16 / 8 / 4 / 2
-SUB_CLUSTER=${5}            # 32 / 16 / 8 / 4
-SIM_METHOD=${6}           # and / jaccard
+BATCH=${4}               # 128 / 64 / 32
+LEARNING_RATE=${5}     # 0.001 / 0.0001      
+
+FIRST_RUN=${6}          # true / false
+
+CLUSTER=${7}                # 16 / 8 / 4 / 2
+SUB_CLUSTER=${8}            # 32 / 16 / 8 / 4
+SIM_METHOD=${9}           # and / jaccard
 REPR_METHOD="max"       # FIXED TO MAX
-
-FIRST_RUN=${7}          # true / false
-
-BATCH=${8}               # 128 / 64 / 32
-LEARNING_RATE=${9}     # 0.001 / 0.0001      
 
 #####################################################
 
@@ -46,7 +46,7 @@ if [ -z ${CLUSTER} ]; then
         --gpu 0 \
         --data $DATASET \
         --batch-size $BATCH \
-        --transfer_param \
+	--transfer_param \
         --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
 else
     if [ -z ${SUB_CLUSTER} ]; then
@@ -71,7 +71,7 @@ else
                 --repr_method ${REPR_METHOD} \
                 --data $DATASET \
                 --batch-size $BATCH \
-                --transfer_param \
+	        --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         else
             CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
@@ -96,7 +96,7 @@ else
                 --clustering_path ${CLUSTERING_MODEL_PATH} \
                 --data $DATASET \
                 --batch-size $BATCH \
-                --transfer_param \
+	        --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         fi
     else
@@ -124,7 +124,7 @@ else
                 --similarity_method ${SIM_METHOD} \
                 --data $DATASET \
                 --batch-size $BATCH \
-                --transfer_param \
+	        --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         else
             CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
@@ -152,7 +152,7 @@ else
                 --similarity_method ${SIM_METHOD} \
                 --data $DATASET \
                 --batch-size $BATCH \
-                --transfer_param \
+	        --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         fi
     fi
