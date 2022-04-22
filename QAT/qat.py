@@ -132,7 +132,7 @@ def set_func_for_target_arch(arch, is_pcq):
 def main(args_daq, data_loaders, clustering_model):
     args = argparse.Namespace(**vars(args_qat), **vars(args_daq))
     print(vars(args))
-    assert args.arch in ['mlp', 'alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
+    assert args.arch in ['mlp', 'alexnet', 'resnet', 'resnet20', 'resnet50','bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
     if args.mode == 'fine':
         assert args.bit in [4, 8], 'Please set target bit between 4 & 8'
@@ -146,7 +146,11 @@ def main(args_daq, data_loaders, clustering_model):
                 arch = 'AlexNet'
             else:
                 arch = 'AlexNetSmall'
-        elif arch == 'resnet':
+        elif arch == 'resnet20':
+            arch = 'ResNet20'
+        elif arch == 'resnet50':
+            arch = 'ResNet50'
+        elif arch == 'resnet'
             if dataset == 'imagenet':
                 arch = 'ResNet50'
             else:
