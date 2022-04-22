@@ -150,7 +150,7 @@ def main(args_daq, data_loaders, clustering_model):
             arch = 'ResNet20'
         elif arch == 'resnet50':
             arch = 'ResNet50'
-        elif arch == 'resnet'
+        elif arch == 'resnet':
             if dataset == 'imagenet':
                 arch = 'ResNet50'
             else:
