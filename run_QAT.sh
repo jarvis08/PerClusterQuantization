@@ -43,6 +43,7 @@ if [ -z ${CLUSTER} ]; then
 	--bit_classifier 8 \
 	--bit_addcat 16 \
 	--per_channel \
+	--symmetric \
         --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
 else
     if [ "$FIRST_RUN" = true ]; then            
@@ -60,6 +61,7 @@ else
             --bit_classifier 8 \
             --bit_addcat 16 \
             --per_channel \
+	    --symmetric \
             --cluster ${CLUSTER} \
             --repr_method ${REPR_METHOD} \
             --sub_cluster ${SUB_CLUSTER} \
@@ -82,6 +84,7 @@ else
             --bit_classifier 8 \
             --bit_addcat 16 \
             --per_channel \
+	    --symmetric \
             --clustering_path ${CLUSTERING_MODEL_PATH} \
             --cluster ${CLUSTER} \
             --repr_method ${REPR_METHOD} \

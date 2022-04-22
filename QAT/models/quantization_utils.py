@@ -52,7 +52,6 @@ def get_scale_and_zeropoint(_min, _max, bit):
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
     if symmetric:
         return calc_symmetric_qparams(range_min, range_max, bit)
-
     if zero is None:
         zero = torch.tensor(0.0, device='cuda')
     _min = zero if range_min > 0.0 else range_min
@@ -60,17 +59,18 @@ def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
     return get_scale_and_zeropoint(_min, _max, bit)
 
 
-def calc_symmetric_qparams(_min, _max, bit):
-    if bit == 4:
-        s = (_max - _min) / 15
-    elif bit == 8:
-        s = (_max - _min) / 255
-    elif bit == 16:
-        s = (_max - _min) / 65535
-    elif bit == 24:
-        s = _max.sub(_min).div(16777215)
-    else:
-        s = (_max - _min) / 4294967295
+def calc_symmetric_qparams(_min, _max, bit, per_channel=False):
+    with torch.no_grad():
+        if bit == 4:
+            s = (_max - _min) / 15
+        elif bit == 8:
+            s = (_max - _min) / 255
+        elif bit == 16:
+            s = (_max - _min) / 65535
+        elif bit == 24:
+            s = _max.sub(_min).div(16777215)
+        else:
+            s = (_max - _min) / 4294967295
     return s, torch.zeros_like(s, device='cuda')    #
 
 
@@ -79,7 +79,7 @@ def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
     _min = _mat.min(dim=1).values
     _max = _mat.max(dim=1).values
     if symmetric:
-        return calc_symmetric_qparams(_min, _max, bit)
+        return calc_symmetric_qparams(_min, _max, bit, True)
     else:
         if zero is None:
             zero = torch.tensor(0.0, device='cuda')
