@@ -11,6 +11,37 @@ from time import time
 import matplotlib.pyplot as plt
 
 
+def draw_weight_out_violin_graph(input_data, weight_data, identifier, arch):
+    plt.rcParams['font.size'] = 12
+    in_channels = len(input_data)
+    pos = [i for i in range(in_channels)]
+
+    fig, ax = plt.subplots(nrows=2, ncols=1)
+
+    ax[0].violinplot(input_data, positions=pos, showmedians=True, quantiles=[[0.25] for _ in range(in_channels)])
+    ax[1].violinplot(weight_data, positions=pos, showmedians=True, quantiles=[[0.25] for _ in range(in_channels)])
+
+    # violin['cquantiles'].set_edgecolor('#ff2222')
+    # violin['cmedians'].set_edgecolor('black')
+    # violin['cquantiles'].set_linewidth(2)
+    # violin['cmedians'].set_linewidth(2)
+
+    ax.set_xlabel('Convolution Layers', size=12, alpha=0.8)
+    ax[0].set_ylabel('Input Range', size=12, alpha=0.8)
+    ax[1].set_ylabel('Weight Range', size=12, alpha=0.8)
+    ax.set_xlim(-1, in_channels)
+    # ax.set_ylim(0, max_ + 5)
+    ax.set_xticks(pos)
+    ax.set_xticklabels([i for i in pos], fontsize=8)
+    ax[0].set_title(f'{arch} Input Range per In Channels')
+    ax[1].set_title(f'{arch} Weight Range per In Channels')
+
+    plt.show()
+    # plt.savefig(identifier)
+    plt.close(fig)
+
+
+
 def draw_violin_graph(data, max_, identifier, arch, epoch):
     plt.style.use('default')
     if '20' in arch:
@@ -56,7 +87,8 @@ def visualize(args, model, epoch):
     violin_path  = os.path.join(path, 'violin_output')
     if not os.path.exists(violin_path):
         os.makedirs(violin_path)
-    naming = args.arch + '_' + args.dataset + '_' + str(epoch)
+    # naming = args.arch + '_' + args.dataset + '_' + str(epoch)
+    naming = args.arch + '_' + args.dataset
 
     print("Save range output")
     print("Save dir: ", violin_path)
@@ -69,52 +101,71 @@ def visualize(args, model, epoch):
     weight_group = []
     max_ = 0
 
+    # get input, weight distribution per input channel
     for m in model.modules():
-        if isinstance(m, FusedConv2d):
+        if isinstance(m, nn.Conv2d):
             conv_cnt += 1
-            # out_channel = m.out_channels
-            # (2, 96) -> (96, 2)
-            output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
-            # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
+            in_channel = m.in_channels
+            weight_per_filter_group = m.weight.transpose(1, 0).detach().numpy()
+            weight_per_filter_group = weight_per_filter_group.reshape(in_channel, -1)
+            weight_min_max_per_group = np.zeros((2, in_channel))
+            weight_min_max_per_group[0], weight_min_max_per_group[1] = weight_per_filter_group.min(axis=1), weight_per_filter_group.max(axis=1)
+            weight_group.append(weight_min_max_per_group[1] - weight_min_max_per_group[0])
+            input_group.append((m.input_range[1] - m.input_range[0]).numpy())
 
-            min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
-            range_per_group.append(min_max_per_group)
-            if min_max_per_group.max() > max_:
-                max_ = min_max_per_group.max()
+    draw_weight_out_violin_graph(input_group, weight_group, violin_path + f'/{naming}.png', args.arch)
 
-            # out_channel = m.out_channels
-            # input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
-            # weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
-            # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
 
-            # input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
-            # range_per_group.append(min_max_per_group)
-            # if min_max_per_group.max() > max_:
-            #     max_ = min_max_per_group.max()
+    # # get output distribution after fine-tuning
+    # for m in model.modules():
+    #     if isinstance(m, FusedConv2d):
+    #         conv_cnt += 1
+    #         # out_channel = m.out_channels
+    #         # (2, 96) -> (96, 2)
+    #         output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
+    #         # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
+    #
+    #         min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
+    #         range_per_group.append(min_max_per_group)
+    #         if min_max_per_group.max() > max_:
+    #             max_ = min_max_per_group.max()
+    #
+    #         # out_channel = m.out_channels
+    #         # input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
+    #         # weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
+    #         # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
+    #
+    #         # input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
+    #         # range_per_group.append(min_max_per_group)
+    #         # if min_max_per_group.max() > max_:
+    #         #     max_ = min_max_per_group.max()
 
     # violin
     # range_per_group_sorted = sorted(list(range_per_group))
-    draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
+    # draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
 
 
-def set_mixed_bits_per_input_channels(model, percentile):
+def set_mixed_bits_per_input_channels(pretrained, model, percentile):
     quantile_tensor = torch.tensor(percentile, device='cuda')
-    for m in model.modules():
-        if isinstance(m, FusedConv2d):
+    channel_accumulator = 0
+    for idx, m in enumerate(pretrained.modules()):
+        if isinstance(m, nn.Conv2d):
             in_channel = m.in_channels
+            channel_accumulator += in_channel
             # [16. 3. 4.4] -> [3, 16, 4, 4]
-            weight_per_filter_group = m.conv.weight.transpose(1, 0)
+            weight_per_filter_group = m.weight.transpose(1, 0)
 
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
-            min_max_per_group = torch.zeros((2, in_channel), device='cuda')
-            min_max_per_group[0], min_max_per_group[1] = weight_group.min(dim=1).values, weight_group.max(
+            weight_min_max_per_group = torch.zeros((2, in_channel), device='cuda')
+            weight_min_max_per_group[0], weight_min_max_per_group[1] = weight_group.min(dim=1).values, weight_group.max(
                 dim=1).values
-            cur_range = min_max_per_group[1] - min_max_per_group[0]
+            weight_range = weight_min_max_per_group[1] - weight_min_max_per_group[0]
+            input_range = m.input_range[1] - m.input_range[0]
 
-            cur_quantile = torch.quantile(cur_range, quantile_tensor)
-            m.w_bit.data = torch.where(cur_range <= cur_quantile, 4, 8).type(torch.int8)
-            m.low_group = (m.w_bit.data == 4).nonzero(as_tuple=True)[0]
-            m.high_group = (m.w_bit.data == 8).nonzero(as_tuple=True)[0]
+            cur_quantile = torch.quantile(weight_range, quantile_tensor)
+            m.w_bit.data = torch.where(weight_range <= cur_quantile, 4, 8).type(torch.int8)
+            model.modules()[idx].low_group = (m.w_bit.data == 4).nonzero(as_tuple=True)[0]
+            model.modules()[idx].high_group = (m.w_bit.data == 8).nonzero(as_tuple=True)[0]
 
 
 def _finetune(args, tools, data_loaders, clustering_model):
@@ -135,17 +186,22 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.nnac and clustering_model.final_cluster is None:
         clustering_model.nn_aware_clutering(pretrained_model, train_loader)
 
+    criterion = torch.nn.CrossEntropyLoss().cuda()
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
+
+    if args.mixed_precision:
+        # try inference once to record input precisions
+        validate(pretrained_model, val_loader, criterion)
+        pretrained_model.cpu()
+        visualize(args, pretrained_model, 0)
+        # set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile)
+
     if pretrained_model:
         del pretrained_model
     model.cuda()
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
-    criterion = torch.nn.CrossEntropyLoss().cuda()
-
-    if args.mixed_precision:
-        set_mixed_bits_per_input_channels(model, args.percentile)
 
     save_path_fp = ''
     epoch_to_start = 1
