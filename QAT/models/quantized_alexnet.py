@@ -57,10 +57,10 @@ class QuantizedAlexNet(nn.Module):
 class QuantizedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict, num_classes: int = 10) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
-        bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        bit, bit_first, self.num_clusters, self.runtime_helper = itemgetter('bit', 'bit_first', 'cluster', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
-        self.in_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
