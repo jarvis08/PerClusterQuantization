@@ -37,13 +37,13 @@ if [ -z ${CLUSTER} ]; then
         --arch $MODEL \
         --dataset $DATASET \
         --lr $LEARNING_RATE \
-	--smooth 0.99 \
-	--bit 4 \
-	--bit_first 8 \
-	--bit_classifier 8 \
-	--bit_addcat 16 \
-	--per_channel \
-	--symmetric \
+        --smooth 0.99 \
+        --bit 4 \
+        --bit_first 8 \
+        --bit_classifier 8 \
+        --bit_addcat 16 \
+        --per_channel \
+        --symmetric \
         --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
 else
     if [ "$FIRST_RUN" = true ]; then            
@@ -55,13 +55,13 @@ else
             --arch $MODEL \
             --dataset $DATASET \
             --lr $LEARNING_RATE \
-	    --smooth 0.99 \
+            --smooth 0.99 \
             --bit 4 \
             --bit_first 8 \
             --bit_classifier 8 \
             --bit_addcat 16 \
             --per_channel \
-	    --symmetric \
+            --symmetric \
             --cluster ${CLUSTER} \
             --repr_method ${REPR_METHOD} \
             --sub_cluster ${SUB_CLUSTER} \
@@ -78,13 +78,13 @@ else
             --arch $MODEL \
             --dataset $DATASET \
             --lr $LEARNING_RATE \
-	    --smooth 0.99 \
+            --smooth 0.99 \
             --bit 4 \
             --bit_first 8 \
             --bit_classifier 8 \
             --bit_addcat 16 \
             --per_channel \
-	    --symmetric \
+            --symmetric \
             --clustering_path ${CLUSTERING_MODEL_PATH} \
             --cluster ${CLUSTER} \
             --repr_method ${REPR_METHOD} \
