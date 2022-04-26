@@ -63,7 +63,7 @@ if [ -z ${CLUSTER} ]; then
             --per_channel \
             --symmetric \
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
-    fi  
+    fi
 else
     if [ "$FIRST_RUN" = true ]; then            
         if [ "$DATASET" = "imagenet" ]; then
