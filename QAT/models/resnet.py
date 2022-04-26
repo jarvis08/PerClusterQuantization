@@ -63,19 +63,20 @@ class BasicBlock(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         identity = x
 
+        self.ema_input_range(self.conv1, x)
         out = self.conv1(x)
-        self.ema_conv_range(self.conv1, out)
         out = self.bn1(out)
         out = self.relu(out)
 
+        self.ema_input_range(self.conv2, out)
         out = self.conv2(out)
-        self.ema_conv_range(self.conv2, out)
+        # self.ema_conv_range(self.conv2, out)
         out = self.bn2(out)
 
         if self.downsample is not None:
             # identity = self.downsample(x)
             identity = self.downsample[0](x)
-            self.ema_conv_range(self.downsample[0], identity)
+            # self.ema_conv_range(self.downsample[0], identity)
             identity = self.downsample[1](identity)
 
         out += identity
@@ -134,6 +135,19 @@ class BasicBlock(nn.Module):
             zeros_idx %= n_features
             zero_counter[l_idx][cluster, zeros_idx] += 1
         return out, l_idx
+
+    def ema_input_range(self, module, x):
+        data = x.transpose(1, 0).reshape(x.size(1), -1)
+        _max = data.max(dim=1).values
+        _min = data.min(dim=1).values
+        if module.apply_ema:
+            updated_min = module.input_range[0] * self.smooth + _min * (1 - self.smooth)
+            updated_max = module.input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+            module.input_range[0], module.input_range[1] = updated_min, updated_max
+        else:
+            module.input_range[0], module.input_range[1] = _min, _max
+            module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def ema_conv_range(self, module, x):
         data = x.view(x.size(1), -1)
@@ -376,6 +390,7 @@ class ResNet20(nn.Module):
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 m.act_range = nn.Parameter(torch.zeros((2, m.out_channels)), requires_grad=False)
+                m.input_range = nn.Parameter(torch.zeros((2, m.in_channels)), requires_grad=False)
                 m.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
@@ -397,8 +412,9 @@ class ResNet20(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        self.ema_input_range(self.conv1, x)
         x = self.conv1(x)
-        self.ema_conv_range(self.conv1, x)
+        # self.ema_conv_range(self.conv1, x)
         x = self.bn1(x)
         x = self.relu(x)
 
@@ -441,10 +457,24 @@ class ResNet20(nn.Module):
             for b in range(len(block)):
                 x, l_idx = block[b].count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx, initialized)
 
+    def ema_input_range(self, module, x):
+        data = x.transpose(1, 0).reshape(x.size(1), -1)
+        _max = data.max(dim=1).values
+        _min = data.min(dim=1).values
+        if module.apply_ema:
+            updated_min = module.input_range[0] * self.smooth + _min * (1 - self.smooth)
+            updated_max = module.input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+            module.input_range[0], module.input_range[1] = updated_min, updated_max
+        else:
+            module.input_range[0], module.input_range[1] = _min, _max
+            module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
     def ema_conv_range(self, module, x):
         data = x.view(x.size(1), -1)
         _max = data.max(dim=1).values
         _min = data.min(dim=1).values
+        # output per output channel
         if module.apply_ema:
             updated_min = module.act_range[0] * self.smooth + _min * (1 - self.smooth)
             updated_max = module.act_range[1] * self.smooth + _max * (1 - self.smooth)
@@ -453,7 +483,6 @@ class ResNet20(nn.Module):
         else:
             module.act_range[0], module.act_range[1] = _min, _max
             module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-
 
 def _resnet(
         arch: str,
