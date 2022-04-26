@@ -8,6 +8,8 @@ from .models import *
 from tqdm import tqdm
 from time import time
 
+import warnings
+warnings.filterwarnings("ignore")
 
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
