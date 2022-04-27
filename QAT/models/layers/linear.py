@@ -183,14 +183,17 @@ class PCQLinear(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        _min, _max = None, None
-        if self.is_classifier:
-            _min, _max = get_range(x)
-        else:
-            data = x.view(x.size(0) // 4, -1)   #
-            if self._activation is None:
-                _min = data.min(dim=1).values.mean()
-            _max = data.max(dim=1).values.mean()
+#        _min, _max = None, None
+#        if self.is_classifier:
+#            _min, _max = get_range(x)
+#        else:
+#            data = x.view(x.size(0) // 4, -1)   #
+#            if self._activation is None:
+#                _min = data.min(dim=1).values.mean()
+#            _max = data.max(dim=1).values.mean()
+
+        # JK
+        _min, _max = get_range(x)
 
         if self._activation:
             if self.apply_ema[cluster]:
