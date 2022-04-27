@@ -514,15 +514,24 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'optimizer': optimizer.state_dict(),
             }, is_best, finetune_path)
 
+    if args.imagenet:
+        test_score = register_acc
+    else:
+        if args.cluster > 1:
+            test_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
+        else:
+            test_score = validate(val_loader, model, criterion, args)
+
+
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
         with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
     else:
         with open(f'hawq_{args.arch}_{args.data}_cluster:{args.sub_cluster}->{args.cluster}_batch:{args.batch}_lr:{args.lr}_sim:{args.similarity_method}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, logger, args):
