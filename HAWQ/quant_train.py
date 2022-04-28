@@ -520,7 +520,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if args.cluster > 1:
             test_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
         else:
-            test_score = validate(val_loader, model, criterion, args)
+            test_score = validate(test_loader, model, criterion, args)
 
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
