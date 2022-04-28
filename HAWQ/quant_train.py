@@ -185,7 +185,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
 args_hawq, _ = parser.parse_known_args()
-args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}/".format(args_hawq.arch, args_hawq.data, os.getpid()))
+args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(args_hawq.arch, args_hawq.data, args_hawq.batch_size, os.getpid()))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
@@ -525,11 +525,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
-        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
+        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
     else:
-        with open(f'hawq_{args.arch}_{args.data}_cluster:{args.sub_cluster}->{args.cluster}_batch:{args.batch}_lr:{args.lr}_sim:{args.similarity_method}.txt', 'a') as f:
+        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
