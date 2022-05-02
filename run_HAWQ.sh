@@ -63,7 +63,7 @@ if [ -z ${CLUSTER} ]; then
             --quant-scheme uniform4 \
             --gpu 0 \
             --data $DATASET \
-            --batch-size $BATCH
+            --batch-size $BATCH \
             --transfer_param \
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
     fi
