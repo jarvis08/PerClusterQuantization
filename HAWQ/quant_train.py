@@ -455,7 +455,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     cudnn.benchmark = True
 
     train_loader = data_loaders['aug_train']
-    val_loader = data_loaders['val']
+    #val_loader = data_loaders['val']
     test_loader = data_loaders['test']
 
     if args.nnac and clustering_model.final_cluster is None:
@@ -480,13 +480,15 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                       fix_BN=args.fix_BN)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
+            #acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
+            acc1 = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
 
         else:
             train(train_loader, model, criterion, optimizer, epoch, logging, args)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = validate(val_loader, model, criterion, args)
+            #acc1 = validate(val_loader, model, criterion, args)
+            acc1 = validate(test_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -514,13 +516,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'optimizer': optimizer.state_dict(),
             }, is_best, finetune_path)
 
-    if args.imagenet:
-        test_score = register_acc
-    else:
-        if args.cluster > 1:
-            test_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
-        else:
-            test_score = validate(test_loader, model, criterion, args)
+    #if args.imagenet:
+    #    test_score = register_acc
+    #else:
+    #    if args.cluster > 1:
+    #        test_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
+    #    else:
+    #        test_score = validate(test_loader, model, criterion, args)
+    test_score = register_acc
 
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)

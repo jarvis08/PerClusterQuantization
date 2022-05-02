@@ -24,7 +24,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     pretrained_model.cuda()
 
     train_loader = data_loaders['aug_train']
-    val_loader = data_loaders['val']
+    #val_loader = data_loaders['val']
     test_loader = data_loaders['test']
     if args.nnac and clustering_model.final_cluster is None:
         clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
@@ -67,9 +67,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
         fp_score = 0
         if args.dataset != 'imagenet':
             if args.cluster > 1:
-                fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+                #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+                fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
             else:
-                fp_score = validate(model, val_loader, criterion, logger)
+                #fp_score = validate(model, val_loader, criterion, logger)
+                fp_score = validate(model, test_loader, criterion, logger)
 
         state = {
             'epoch': e,
@@ -90,10 +92,13 @@ def _finetune(args, tools, data_loaders, clustering_model):
             quantized_model.cuda()
 
             if args.cluster > 1:
-                int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
+                #int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
+                #                         logger)
+                int_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper,
                                          logger)
             else:
-                int_score = validate(quantized_model, val_loader, criterion, logger)
+                #int_score = validate(quantized_model, val_loader, criterion, logger)
+                int_score = validate(quantized_model, test_loader, criterion, logger)
 
             if int_score > best_int_val_score:
                 best_epoch = e
