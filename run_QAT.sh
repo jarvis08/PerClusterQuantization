@@ -46,7 +46,24 @@ if [ -z ${CLUSTER} ]; then
             --per_channel \
             --symmetric \
             --imagenet $IMAGENET_DATASET_PATH 
-    else 
+    elif [ "$MODEL" = resnet20 ]; then
+        CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+            --mode fine \
+            --epochs 100 \
+            --batch $BATCH \
+            --quant_base qat \
+            --arch $MODEL \
+            --dataset $DATASET \
+            --lr $LEARNING_RATE \
+            --smooth 0.99 \
+            --bit 4 \
+            --bit_first 8 \
+            --bit_classifier 8 \
+            --bit_addcat 16 \
+            --per_channel \
+            --symmetric \
+            --torchcv
+    else
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
             --epochs 100 \
@@ -88,6 +105,28 @@ else
                 --nnac true \
                 --similarity_method ${SIM_METHOD} \
                 --imagenet $IMAGENET_DATASET_PATH 
+        elif [ "$MODEL" = resnet20 ]; then
+            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                --mode fine \
+                --epochs 100 \
+                --batch $BATCH \
+                --quant_base qat \
+                --arch $MODEL \
+                --dataset $DATASET \
+                --lr $LEARNING_RATE \
+                --smooth 0.99 \
+                --bit 4 \
+                --bit_first 8 \
+                --bit_classifier 8 \
+                --bit_addcat 16 \
+                --per_channel \
+                --symmetric \
+                --torchcv \
+                --cluster ${CLUSTER} \
+                --repr_method ${REPR_METHOD} \
+                --sub_cluster ${SUB_CLUSTER} \
+                --nnac true \
+                --similarity_method ${SIM_METHOD}
         else
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
@@ -112,8 +151,8 @@ else
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         fi
     else
+        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
         if [ "$DATASET" = "imagenet" ]; then
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -136,8 +175,30 @@ else
                 --nnac true \
                 --similarity_method ${SIM_METHOD} \
                 --imagenet $IMAGENET_DATASET_PATH 
+        elif [ "$MODEL" = resnet20 ]; then
+            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                --mode fine \
+                --epochs 100 \
+                --batch $BATCH \
+                --quant_base qat \
+                --arch $MODEL \
+                --dataset $DATASET \
+                --lr $LEARNING_RATE \
+                --smooth 0.99 \
+                --bit 4 \
+                --bit_first 8 \
+                --bit_classifier 8 \
+                --bit_addcat 16 \
+                --per_channel \
+                --symmetric \
+                --torchcv \
+                --clustering_path ${CLUSTERING_MODEL_PATH} \
+                --cluster ${CLUSTER} \
+                --repr_method ${REPR_METHOD} \
+                --sub_cluster ${SUB_CLUSTER} \
+                --nnac true \
+                --similarity_method ${SIM_METHOD}
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
