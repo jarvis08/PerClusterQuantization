@@ -370,6 +370,31 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     return top1.avg
 
 
+def transfer_params(arch, dataset, qat_model):
+    from pytorchcv.model_provider import get_model as ptcv_get_model
+    model_dict = qat_model.state_dict()
+    if arch == 'resnet20':
+        torchcv = ptcv_get_model('resnet20_' + dataset, pretrained=True)
+
+    elif arch == 'resnet50':
+        torchcv = ptcv_get_model('resnet50', pretrained=True)
+
+    elif arch == 'densenet121':
+        torchcv = ptcv_get_model('densenet121', pretrained=True)
+
+    torchcv_dict = torchcv.state_dict()
+    for cv, our in zip(model_dict.items(), torchcv_dict.items()):
+        model_dict[cv[0]].copy_(torchcv_dict[our[0]])
+
+    # elif arch == 'alexnet':
+    #     checkpoint = torch.load(args.dnn_path)
+    #     loaded_dict = checkpoint['state_dict']
+    #     model_dict = model.state_dict()
+    #     for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
+    #         model_dict[cur[0]] = loaded_dict[from_[0]]
+    return qat_model
+
+
 def load_dnn_model(arg_dict, tools, path=None):
     model = None
     if arg_dict['quant_base'] == 'qat':
@@ -386,15 +411,17 @@ def load_dnn_model(arg_dict, tools, path=None):
         else:
             if arg_dict['dataset'] == 'imagenet':
                 if arg_dict['arch'] == 'MobileNetV3':
-                    return vision_models.mobilenet_v3_small(pretrained=True)
+                    model = vision_models.mobilenet_v3_small(pretrained=True)
                 elif arg_dict['arch'] == 'ResNet18':
-                    return vision_models.resnet18(pretrained=True)
+                    model = vision_models.resnet18(pretrained=True)
                 elif arg_dict['arch'] == 'AlexNet':
-                    return vision_models.alexnet(pretrained=True)
+                    model = vision_models.alexnet(pretrained=True)
                 elif arg_dict['arch'] == 'ResNet50':
-                    return vision_models.resnet50(pretrained=True)
+                    model = vision_models.resnet50(pretrained=True)
                 elif arg_dict['arch'] == 'DenseNet121':
-                    return vision_models.densenet121(pretrained=True)
+                    model = vision_models.densenet121(pretrained=True)
+                if not arg_dict['torchcv']:
+                    return model
             elif arg_dict['dataset'] == 'cifar100':
                 model = tools.pretrained_model_initializer(num_classes=100)
             else:
@@ -405,6 +432,9 @@ def load_dnn_model(arg_dict, tools, path=None):
             model = tools.pretrained_model_initializer(num_classes=100)
         else:
             model = tools.pretrained_model_initializer()
+
+    if arg_dict['torchcv']:
+        return transfer_params(arg_dict['arch'].lower(), arg_dict['dataset'].lower(), model)
 
     if path is not None:
         checkpoint = torch.load(path)
