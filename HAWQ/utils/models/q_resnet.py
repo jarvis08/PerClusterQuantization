@@ -218,6 +218,17 @@ class Q_ResNet20(nn.Module):
         self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)
 

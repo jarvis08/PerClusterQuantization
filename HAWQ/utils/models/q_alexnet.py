@@ -118,7 +118,18 @@ class Q_AlexNet(nn.Module):
         self.fc3 = QuantLinear()
         self.fc3.is_classifier = True
         self.fc3.set_param(fc, model_dict, 'output.fc3')
-        
+
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)
 
