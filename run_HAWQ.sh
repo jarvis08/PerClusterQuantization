@@ -28,28 +28,48 @@ REPR_METHOD="max"       # FIXED TO MAX
 
 
 if [ -z ${CLUSTER} ]; then
-    CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-        --mode fine \
-        --epochs 100 \
-        --batch $BATCH \
-        --quant_base hawq \
-        --arch $MODEL \
-        --dataset $DATASET \
-        --lr $LEARNING_RATE \
-        --act-range-momentum 0.99 \
-        --wd 1e-4 \
-        --fix-BN \
-        --pretrained \
-        --channel-wise true \
-        --quant-scheme uniform4 \
-        --gpu 0 \
-        --data $DATASET \
-        --batch-size $BATCH \
-	--transfer_param \
-        --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+    if [ "$MODEL" = resnet20 ]; then
+        CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+            --mode fine \
+            --epochs 100 \
+            --batch $BATCH \
+            --quant_base hawq \
+            --arch $MODEL \
+            --dataset $DATASET \
+            --lr $LEARNING_RATE \
+            --act-range-momentum 0.99 \
+            --wd 1e-4 \
+            --fix-BN \
+            --pretrained \
+            --channel-wise true \
+            --quant-scheme uniform4 \
+            --gpu 0 \
+            --data $DATASET \
+            --batch-size $BATCH
+    else 
+        CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+            --mode fine \
+            --epochs 100 \
+            --batch $BATCH \
+            --quant_base hawq \
+            --arch $MODEL \
+            --dataset $DATASET \
+            --lr $LEARNING_RATE \
+            --act-range-momentum 0.99 \
+            --wd 1e-4 \
+            --fix-BN \
+            --pretrained \
+            --channel-wise true \
+            --quant-scheme uniform4 \
+            --gpu 0 \
+            --data $DATASET \
+            --batch-size $BATCH
+            --transfer_param \
+            --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+    fi
 else
-    if [ -z ${SUB_CLUSTER} ]; then
-        if [ "$FIRST_RUN" = true ]; then
+    if [ "$FIRST_RUN" = true ]; then            
+        if [ "$MODEL" = resnet20 ]; then
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -67,12 +87,12 @@ else
                 --gpu 0 \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
+                --sub_cluster ${SUB_CLUSTER} \
+                --nnac true \
+                --similarity_method ${SIM_METHOD} \
                 --data $DATASET \
                 --batch-size $BATCH \
-	        --transfer_param \
-                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}"
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -90,40 +110,17 @@ else
                 --gpu 0 \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
-                --clustering_path ${CLUSTERING_MODEL_PATH} \
+                --sub_cluster ${SUB_CLUSTER} \
+                --nnac true \
+                --similarity_method ${SIM_METHOD} \
                 --data $DATASET \
                 --batch-size $BATCH \
-	        --transfer_param \
+                --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         fi
     else
-        if [ "$FIRST_RUN" = true ]; then            
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base hawq \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --act-range-momentum 0.99 \
-                --wd 1e-4 \
-                --fix-BN \
-                --pretrained \
-                --channel-wise true \
-                --quant-scheme uniform4 \
-                --gpu 0 \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD} \
-                --data $DATASET \
-                --batch-size $BATCH \
-	        --transfer_param \
-                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
-        else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+        if [ "$MODEL" = resnet20 ]; then
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
                 --epochs 100 \
@@ -147,7 +144,31 @@ else
                 --similarity_method ${SIM_METHOD} \
                 --data $DATASET \
                 --batch-size $BATCH \
-	        --transfer_param \
+        else
+            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                --mode fine \
+                --epochs 100 \
+                --batch $BATCH \
+                --quant_base hawq \
+                --arch $MODEL \
+                --dataset $DATASET \
+                --lr $LEARNING_RATE \
+                --act-range-momentum 0.99 \
+                --wd 1e-4 \
+                --fix-BN \
+                --pretrained \
+                --channel-wise true \
+                --quant-scheme uniform4 \
+                --gpu 0 \
+                --cluster ${CLUSTER} \
+                --repr_method ${REPR_METHOD} \
+                --clustering_path ${CLUSTERING_MODEL_PATH} \
+                --sub_cluster ${SUB_CLUSTER} \
+                --nnac true \
+                --similarity_method ${SIM_METHOD} \
+                --data $DATASET \
+                --batch-size $BATCH \
+                --transfer_param \
                 --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
         fi
     fi
