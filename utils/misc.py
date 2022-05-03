@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import logging
 import random
+import pandas as pd
 
 
 class RuntimeHelper(object):
@@ -36,6 +37,12 @@ class RuntimeHelper(object):
         self.qat_batch_cluster = None
         self.register_val = False
 
+        self.check_activation = False
+        self.args = None
+        self.epoch = None
+        self.ldx = 0
+        self.layer_ldx = 0
+
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
@@ -45,9 +52,244 @@ class RuntimeHelper(object):
         self.mask_2d = mask.view(-1, 1)
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
         self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
+        self.cluster_acc = [None for _ in range(self.num_clusters)]
 
-        self.cluster_acc =[None for _ in range(self.num_clusters)]
-        self.register_val = False
+    def set_activation_arr(self, model):
+        n_layer = 0
+        for module in model.modules():
+            from HAWQ.utils.quantization_utils.quant_modules import QuantAct, QuantAct_Daq
+            if isinstance(module, (QuantAct, QuantAct_Daq)):
+                n_layer += 1
+        self.activation_arr = [[] for _ in range(n_layer)]
+        self.ema_arr = [None for _ in range(n_layer)]
+        #self.ema_arr = torch.zeros(4).detach()
+        #self.max_value_per_batch = [[] for _ in range(n_layer)]
+        self.max_value_per_batch = None
+        self.n_act = n_layer
+
+    """
+    def count_activation(self, values):
+        with torch.no_grad():
+            print(f'Count Activation {self.ldx}.. for bin\n')
+            if self.ldx > 4:
+                print('Pass Linear activation\n')
+                return
+            if len(self.activation_arr[self.ldx]) == 0:
+                print(f'Make {self.ldx} arr space\n')
+                _max = round(round(values.max().item() / 0.01) * 1.5)
+                self.activation_arr[self.ldx] = [0 for _ in range(_max)]
+
+            for v in tqdm(values.reshape(-1), desc=f'Activation {self.ldx} count', ncols=105):
+                idx = round(v.item() / 0.01)
+                if idx < 0:
+                    idx = 0
+                if idx > len(self.activation_arr[self.ldx]):
+                    idx = len(self.activation_arr[self.ldx]) - 1
+                self.activation_arr[self.ldx][idx] + 1
+    """
+
+    def count_activation(self, values):
+        if self.ldx > 4:
+            return
+
+        with torch.no_grad():
+            if len(self.activation_arr[self.ldx]) == 0:
+                _max = round(round(values.max().item() / 0.01) * 1.5)
+                self.activation_len = _max
+                self.activation_arr = [torch.zeros(self.activation_len).detach() for _ in range(5)]
+                if self.args.cluster > 1:
+                    for ldx in range(5):
+                        self.activation_arr[ldx] = [torch.zeros(self.activation_len).detach() for _ in range(self.args.cluster)]
+
+            new_max = round(values.max().item() / 0.01)
+            if self.activation_len < new_max:
+                old_max = self.activation_len
+                self.activation_len = new_max
+                new_activation_arr = [torch.zeros(self.activation_len).detach() for _ in range(5)]
+                if self.args.cluster > 1:
+                    for ldx in range(5):
+                        new_activation_arr[ldx] = [torch.zeros(self.activation_len).detach() for _ in range(4)]
+                
+                for i in range(5):
+                    if self.args.cluster > 1:
+                        from copy import deepcopy
+                        tmp = deepcopy(self.activation_arr[i])
+                        self.activation_arr[i] = new_activation_arr[i]
+                        for c in range(4):
+                            self.activation_arr[i][c] = new_activation_arr[i][c]
+                            self.activation_arr[i][c][:old_max] = tmp[c]
+                    else:
+                        from copy import deepcopy
+                        tmp = deepcopy(self.activation_arr[i])
+                        self.activation_arr[i] = new_activation_arr[i]
+                        self.activation_arr[i][:old_max] = tmp
+
+            _values = values.detach().view(-1)
+            if self.args.cluster >1:
+                self.activation_arr[self.ldx][self.batch_cluster][0] += len((_values == 0).nonzero(as_tuple=True)[0])
+                for i in range(1, self.activation_len):
+                    _min = 0.01 * (i - 1)
+                    _max = 0.01 * i
+                    self.activation_arr[self.ldx][self.batch_cluster][i] += len(((_values > _min) & (_values < _max)).nonzero(as_tuple=True)[0])
+            else:
+                self.activation_arr[self.ldx][0] += len((_values == 0).nonzero(as_tuple=True)[0])
+                for i in range(1, self.activation_len):
+                    _min = 0.01 * (i - 1)
+                    _max = 0.01 * i
+                    self.activation_arr[self.ldx][i] += len(((_values > _min) & (_values < _max)).nonzero(as_tuple=True)[0])
+
+
+    def set_weight_arr(self, model):
+        n_layer = 0
+        self.weight_len = 0
+        v_max = 0
+        for module in model.modules():
+            from HAWQ.utils.quantization_utils.quant_modules import QuantConv2d, QuantBnConv2d
+            if isinstance(module, (QuantConv2d, QuantBnConv2d)):
+                n_layer += 1
+                if isinstance(module, QuantConv2d):
+                    v_max = round(module.weight.max().item() / 0.01) * 2
+                else:
+                    v_max = round(module.conv.weight.max().item() / 0.01) * 2
+
+                if self.weight_len < v_max:
+                    self.weight_len = v_max
+
+        v_min = round(module.conv.weight.min().item())
+        self.n_layer = n_layer
+        n_layer = -1
+        idx = 0
+        zero_point = 0
+        self.weight_arr = [torch.zeros(self.weight_len).detach() for _ in range(self.n_layer)]
+        with torch.no_grad():
+            for module in model.modules():
+                from HAWQ.utils.quantization_utils.quant_modules import QuantConv2d, QuantBnConv2d
+                if isinstance(module, (QuantConv2d, QuantBnConv2d)):
+                    n_layer += 1
+                    if isinstance(module, QuantConv2d):
+                        _weight = module.weight.detach().view(-1) 
+                        self.weight_arr[n_layer][0] += len(((_weight <= 0)).nonzero(as_tuple=True)[0])
+                        for step in range(v_min, 0):
+                            _min = 0.01 * (step - 1)
+                            _max = 0.01 * step
+                            self.weight_arr[n_layer][idx] += len(((_weight > _min) & (_weight < _max)).nonzero(as_tuple=True)[0])
+                            idx += 1
+                        zero_point = idx
+                        for i in range(0, self.weight_len):
+                            _min = 0.01 * (i - 1)
+                            _max = 0.01 * i
+                            self.weight_arr[n_layer][idx] += len(((_weight > _min) & (_weight < _max)).nonzero(as_tuple=True)[0])
+                            idx += 1
+                    else:
+                        pass
+
+            tmp_dict = {}
+            print('Save weight to exel file...')
+            #tmp = [[] for _ in range(self.n_layer)]
+            for ldx in range(self.n_layer):
+                tmp = []
+                for v in self.weight_arr[ldx].view(-1):
+                    tmp.append(v.item())
+                tmp_dict[ldx] = tmp
+                tmp_dict[f'{ldx}_zero_point'] = zero_point 
+                tmp_dict[f'{ldx}_weight_v_min'] = v_min
+                tmp_dict[f'{ldx}_weight_v_max'] = v_max
+            df = pd.DataFrame(data=tmp_dict)
+            with pd.ExcelWriter(f'{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.epoch}_{self.args.lr}_weight.xlsx') as writer:
+                df.to_excel(writer, sheet_name=f'weight_{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.lr}')
+
+    def set_activation_value(self, values):
+        if self.args.arch == 'alexnet':
+            if self.ldx > 6:
+                return
+
+        if self.activation_arr[self.ldx] == None:
+            print('Activation First setting')
+            self.activation_arr[self.ldx] = values.reshape(-1)
+        else:
+            print('Activation concat')
+            t = self.activation_arr[self.ldx].reshape(-1)
+            self.activation_arr[self.ldx] = torch.cat((t, values.reshape(-1)))
+
+    def set_max_value_per_batch_arr(self):
+        self.max_value_per_batch_arr = [[] for _ in range(6)]
+        if self.args.cluster > 1:
+            for ldx in range(6):
+                self.max_value_per_batch_arr[ldx] = [[] for _ in range(4)]
+
+    def set_max_value_per_batch(self, value):
+        if self.ldx > 6:
+            return
+        if not isinstance(value, float):
+            value = max(value)
+        if self.args.cluster > 1:
+            try:
+                self.max_value_per_batch_arr[self.ldx][self.batch_cluster].append(value)
+            except:
+                print('Out of bound')
+                print(self.batch_cluster, self.ldx, self.max_value_per_batch_arr)
+        else:
+            self.max_value_per_batch_arr[self.ldx].append(value)
+
+    def save_max_value_per_batch(self):
+        tmp_dict = {}
+        print('Save max value per batch ...')
+        if self.args.cluster > 1:
+            for ldx in range(6):
+                for c in range(4):
+                    tmp_dict[f'{ldx}_{c}'] = self.max_value_per_batch_arr[0][ldx][c]
+
+            df = pd.DataFrame(data=tmp_dict)
+            with pd.ExcelWriter(f'{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.epoch}_{self.args.lr}_max_value_per_batch.xlsx') as writer :
+                df.to_excel(writer, sheet_name=f'{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.epoch}_{self.args.lr}_max_value_per_batch.xlsx')
+
+        else:
+            for ldx in range(6):
+                tmp_dict[ldx] = self.max_value_per_batch_arr[ldx]
+
+            df = pd.DataFrame(data=tmp_dict)
+            with pd.ExcelWriter(f'{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.epoch}_{self.args.lr}_max_value_per_batch.xlsx') as writer :
+                df.to_excel(writer, sheet_name=f'{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.epoch}_{self.args.lr}_max_value_per_batch.xlsx')
+
+    def set_ema_values(self, values):
+        if self.args.arch == 'alexnet':
+            if self.ldx > 6:
+                return
+
+        self.ema_arr[self.ldx] = values 
+
+    def save_activation_exel(self):
+        tmp_dict = {}
+        print('Save activation to exel file...')
+        if self.args.cluster > 1:
+            for ldx in range(6):
+                for c in range(4):
+                    for v in self.activation_arr[ldx][c].view(-1):
+                        tmp.append(v.item())
+                    tmp_dict[f'{ldx}_{c}'] = tmp
+
+            df = pd.DataFrame(data=tmp_dict)
+            with pd.ExcelWriter(f'per_cluster_{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.epoch}_{self.args.lr}_activation.xlsx') as writer:
+                df.to_excel(writer, sheet_name=f'activation_{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.args.lr}')
+        else:
+            for ldx in range(6):
+                tmp = []
+                for v in self.activation_arr[ldx].view(-1):
+                    tmp.append(v.item())
+                tmp_dict[ldx] = tmp
+
+                tmp_max = []
+                """
+                for v in self.max_value_per_batch[ldx].view(-1):
+                    tmp_max.append(v.item())
+                tmp_dict[f'{ldx}_max_per_batch'] = tmp_max
+                """
+            df = pd.DataFrame(data=tmp_dict)
+            with pd.ExcelWriter(f'total_activation_{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.epoch}_{self.args.lr}_activation.xlsx') as writer:
+                df.to_excel(writer, sheet_name=f'activation_{self.args.arch}_{self.args.dataset}_{self.args.batch_size}_{self.args.cluster}_{self.args.lr}')
+
+    def set_args(self, args):
+        self.args = args
 
 
 class InputContainer(object):
@@ -56,7 +298,7 @@ class InputContainer(object):
         self.num_clusters = num_clusters
         self.batch_size = batch_size
         self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)]
-                          for _ in range(num_clusters)]
+                for _ in range(num_clusters)]
 
         self.data_loader = data_loader
         self.clustering_model = clustering_model

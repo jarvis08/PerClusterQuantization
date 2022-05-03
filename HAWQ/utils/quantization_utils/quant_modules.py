@@ -177,8 +177,11 @@ class QuantAct(Module):
                  quant_mode="symmetric",
                  fix_flag=False,
                  act_percentile=0,
-                 fixed_point_quantization=False):
+                 fixed_point_quantization=False,
+                 runtime_helper=None):
         super(QuantAct, self).__init__()
+
+        self.runtime_helper = runtime_helper
 
         self.activation_bit = activation_bit
         self.act_range_momentum = act_range_momentum
@@ -252,6 +255,10 @@ class QuantAct(Module):
                 if self.act_percentile == 0:
                     x_min = x.data.min()
                     x_max = x.data.max()
+                    data = x.view(x.size(0), -1).clone().detach()
+                    #if self.runtime_helper.check_activation:
+                    #    self.runtime_helper.count_activation(data)
+                    #    self.runtime_helper.set_max_value_per_batch(data.max().item())
                 elif self.quant_mode == 'symmetric':
                     x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
                                                     self.act_percentile, output_tensor=True)
@@ -275,6 +282,11 @@ class QuantAct(Module):
                     self.x_min = self.x_min * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
                     self.x_max = self.x_max * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
 
+
+                if self.runtime_helper.check_activation:
+                    #self.runtime_helper.set_ema_values(self.x_max)
+                    self.runtime_helper.ldx += 1
+            
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
                                                                            self.x_min, self.x_max, False)
@@ -416,6 +428,10 @@ class QuantAct_Daq(QuantAct):
                 else:
                     if self.act_percentile == 0:
                         data = x.view(x.size(0), -1).clone().detach()
+                        if self.runtime_helper.check_activation:
+                            #self.runtime_helper.count_activation(data)
+                            self.runtime_helper.set_max_value_per_batch(data.max().item())
+
                         _max = data.max(dim=1).values.mean()
                         _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
                         x_max = _max
@@ -444,6 +460,10 @@ class QuantAct_Daq(QuantAct):
                 except:
                     print('fixed_point_fn / self.x_min :', self.x_min)
                     print('fixed_point_fn / self.x_max :', self.x_max)
+
+                if self.runtime_helper.check_activation:
+                    self.runtime_helper.set_ema_values(self.x_max)
+                    self.runtime_helper.ldx += 1
 
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,

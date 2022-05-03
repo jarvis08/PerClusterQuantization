@@ -26,6 +26,8 @@ torch.set_num_threads(8)
 
 import warnings
 warnings.filterwarnings("ignore")
+#import torch.multiprocessing
+#torch.multiprocessing.set_sharing_strategy('file_system')
 
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
@@ -350,15 +352,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         return optimizer
 
     def set_runtime_helper(args):
-        if args.cluster > 1:
-            runtime_helper = RuntimeHelper()
-            runtime_helper.set_pcq_arguments(args)
-            return runtime_helper
-        return None
+        #if args.cluster > 1:
+        runtime_helper = RuntimeHelper()
+        runtime_helper.set_pcq_arguments(args)
+        return runtime_helper
+        #return None
 
     def get_quantize_model(args, model, quantize_arch, runtime_helper):
         if args.arch.lower() == 'alexnet':
-            return quantize_arch(model, model_dict, runtime_helper)
+            if args.cluster > 1:
+                return quantize_arch(model, model_dict, runtime_helper)
+            else:
+                return quantize_arch(model, model_dict, runtime_helper)
         return quantize_arch(model, runtime_helper)
 
     def set_quantize_param(args, model, bit_config):
@@ -424,6 +429,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     model_dict = transfer_param(args, model) if args.transfer_param else None
     model = eval_resume(args, model)
     runtime_helper = set_runtime_helper(args)
+    runtime_helper.set_args(args)
 
     quantize_arch = quantize_arch_dict[args.arch]
     model = get_quantize_model(args, model, quantize_arch, runtime_helper)
@@ -472,8 +478,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
+    check_epoch = 1
+    epoch = 0
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
+
+        if check_epoch % 10 == 0:
+            #runtime_helper.check_activation = True
+            runtime_helper.epoch = check_epoch
+            #runtime_helper.set_activation_arr(model)
+            runtime_helper.set_max_value_per_batch_arr()
 
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
@@ -487,6 +501,17 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(val_loader, model, criterion, args)
+
+        if epoch < 55 and check_epoch % 10 == 0:
+            #runtime_helper.check_activation = False
+            #runtime_helper.save_activation_exel()
+            #runtime_helper.set_weight_arr(model)
+            #runtime_helper.save_max_value_per_batch()
+            register_ema(args, model, runtime_helper, check_epoch)
+            register_weight(args, model, check_epoch)
+
+        runtime_helper.check_activation = False
+        check_epoch += 1
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -517,7 +542,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         runtime_helper.register_val = True
         logging.debug("Per cluster validate Start")
         pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
-        register_ema(args, model, runtime_helper)
+        register_ema(args, model, runtime_helper, epoch)
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:

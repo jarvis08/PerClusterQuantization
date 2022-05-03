@@ -103,7 +103,7 @@ else
         if [ "$FIRST_RUN" = true ]; then            
             CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                 --mode fine \
-                --epochs 3 \
+                --epochs 1 \
                 --batch $BATCH \
                 --quant_base hawq \
                 --arch $MODEL \

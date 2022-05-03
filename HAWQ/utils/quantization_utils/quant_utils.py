@@ -36,18 +36,70 @@ def transfer_numpy_float(inputs):
         tmp_output.append(float(inp))
     return np.array(tmp_output)
 
-def register_ema(args, model, runtime_helper):
-    with open(f't_acc_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
-        for i in range(runtime_helper.num_clusters):
-            f.write(f'avg:{runtime_helper.cluster_acc[i].avg}, count:{runtime_helper.cluster_acc[i].count}\n')
+def count_bin(values, runtime_helper): 
+    _max = values.max().item()
+    num = int(_max / 0.05)
+    tmp = [0 for _ in range(num+10)]
+    for v in values.reshape(-1):
+        idx = int(v.item()/0.05)
+        if idx < 0:
+            idx = 0
+        tmp[idx] += 1
 
-    with open(f't_ema_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+    with open(f's_{runtime_helper.args.arch}_{runtime_helper.args.dataset}_{runtime_helper.args.batch_size}_{runtime_helper.epoch}_{runtime_helper.args.lr}_{runtime_helper.ldx}_bin.txt', 'a') as f:
+        for v in tmp:
+            f.write(f'{v},')
+        f.write('\n')
+
+def register_ema(args, model, runtime_helper, epoch=None):
+    if epoch is None:
+        epoch=args.epochs
+
+    if epoch > 50:
+        with open(f's_{args.arch}_{args.dataset}_{args.batch_size}.txt', 'a') as f:
+            f.write(f'{args.lr}\n')
+            for i in range(runtime_helper.num_clusters):
+                f.write(f'avg:{runtime_helper.cluster_acc[i].avg}, count:{runtime_helper.cluster_acc[i].count}\n')
+
+    with open(f's_ema_{args.arch}_{args.dataset}_{args.batch_size}_{args.cluster}_{epoch}_{args.lr}.txt', 'a') as f:
+        f.write(f'{args.lr}\n')
         for module in model.modules():
             from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq, QuantAct
             if isinstance(module, (QuantAct_Daq, QuantAct)):
                 for max_value in module.x_max:
                     f.write(f'{max_value},')
                 f.write('\n')
+
+def register_weight(args, model, epoch):
+    import pandas as pd
+    n_conv = 1
+    n_fc = 1
+    data = {}
+    #with open(f'k_weight_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}_{args.lr}.txt', 'w') as f:
+    for module in model.modules():
+        from HAWQ.utils.quantization_utils.quant_modules import QuantBnConv2d, QuantConv2d, QuantLinear
+        tmp_weight = []
+        if isinstance(module, (QuantConv2d, QuantBnConv2d, QuantLinear)):
+            if isinstance(module, QuantLinear):
+                with open(f'k_hawq_weight_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}_fc{n_fc}_{args.lr}.txt', 'w') as f:
+                    t_weight = module.weight.data.view(1, -1).clone().cpu().numpy()[0]
+                    for w in t_weight:
+                        f.write(f'{w},')
+                n_fc += 1
+            else:
+                with open(f'k_hawq_weight_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}_conv{n_conv}_{args.lr}.txt', 'w') as f:
+                    t_weight = module.conv.weight.data.view(1, -1).clone().cpu().numpy()[0]
+                    for w in t_weight:
+                        f.write(f'{w},')
+                n_conv += 1
+                    #f.write('\n')
+                        #tmp_weight.append(w)
+                    #data[f'conv{n_conv}'] = tmp_weight
+                    #n_conv += 1
+
+    #df = pd.DataFrame(data)
+    #df.to_csv(f'k_ema_{args.arch}_{args.dataset}_{args.batch_size}_{epoch}_{args.lr}.csv', index=True)
+
 
 
 def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False, num_cluster=1):
