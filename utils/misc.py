@@ -413,16 +413,19 @@ def load_dnn_model(arg_dict, tools, path=None):
                 model = tools.fused_model_initializer(arg_dict)
         else:
             if arg_dict['dataset'] == 'imagenet':
-                if arg_dict['arch'] == 'MobileNetV3':
-                    model = vision_models.mobilenet_v3_small(pretrained=True)
-                elif arg_dict['arch'] == 'ResNet18':
-                    model = vision_models.resnet18(pretrained=True)
-                elif arg_dict['arch'] == 'AlexNet':
-                    model = vision_models.alexnet(pretrained=True)
-                elif arg_dict['arch'] == 'ResNet50':
-                    model = vision_models.resnet50(pretrained=True)
-                elif arg_dict['arch'] == 'DenseNet121':
-                    model = vision_models.densenet121(pretrained=True)
+                if arg_dict['nnac']:
+                    model = tools.pretrained_model_initializer(pretrained=True)
+                else:
+                    if arg_dict['arch'] == 'MobileNetV3':
+                        model = vision_models.mobilenet_v3_small(pretrained=True)
+                    elif arg_dict['arch'] == 'ResNet18':
+                        model = vision_models.resnet18(pretrained=True)
+                    elif arg_dict['arch'] == 'AlexNet':
+                        model = vision_models.alexnet(pretrained=True)
+                    elif arg_dict['arch'] == 'ResNet50':
+                        model = vision_models.resnet50(pretrained=True)
+                    elif arg_dict['arch'] == 'DenseNet121':
+                        model = vision_models.densenet121(pretrained=True)
                 if not arg_dict['torchcv']:
                     return model
             elif arg_dict['dataset'] == 'cifar100':

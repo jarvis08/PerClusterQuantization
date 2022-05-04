@@ -118,6 +118,7 @@ def set_func_for_target_arch(arch, is_pcq):
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
     elif arch == 'DenseNet121':
+        setattr(tools, 'pretrained_model_initializer', densenet121)
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)
