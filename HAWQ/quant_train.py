@@ -434,10 +434,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     logging.info(model)
 
-    import copy
-    fp_model = copy.deepcopy(model).cuda(args.gpu)
-    fp_model.toggle_full_precision()
-
     model = quant_resume(args, model)
 
     if args.gpu is not None:
@@ -469,93 +465,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.evaluate:
         validate(test_loader, model, criterion, args)
         return
-
-    def experiment(test_loader, model, fp_model, criterion, args):
-        saturated_TP = 0
-        saturated_TN = 0
-        saturated_FP = 0
-        saturated_FN = 0
-        saturated = 0
-
-        non_saturated_TP = 0
-        non_saturated_TN = 0
-        non_saturated_FP = 0
-        non_saturated_FN = 0
-        non_saturated = 0
-
-        freeze_model(model)
-        model.eval()
-
-        with torch.no_grad():
-            for i, (images, target) in enumerate(test_loader):
-                if args.gpu is not None:
-                    images = images.cuda(args.gpu, non_blocking=True)
-                target = target.cuda(args.gpu, non_blocking=True)
-                batch_size = target.size(0)
-
-                output, activ = model(images)
-                # output = output[0]
-                # loss = criterion(output, target)
-
-                INT_pred = prediction(output,target)
-
-                output, _ = fp_model(images)
-                # output = fp_model(images)
-                output = output[0]
-                # loss = criterion(output, target)
-
-                FP_pred = prediction(output, target)
-
-                #############
-
-                saturated += activ.sum(0).item()
-                non_saturated += batch_size - activ.sum(0).item()
-
-                saturated_INT_pred = torch.masked_select(INT_pred, activ)
-                non_saturated_INT_pred = torch.masked_select(INT_pred, ~activ)
-
-                saturated_FP_pred = torch.masked_select(FP_pred, activ)
-                non_saturated_FP_pred = torch.masked_select(FP_pred, ~activ)
-
-                saturated_TP += torch.logical_and(saturated_FP_pred, saturated_INT_pred).sum(0).item()
-                saturated_TN += torch.logical_and(~saturated_FP_pred, ~saturated_INT_pred).sum(0).item()
-                saturated_FP += torch.logical_and(~saturated_FP_pred, saturated_INT_pred).sum(0).item()
-                saturated_FN += torch.logical_and(saturated_FP_pred, ~saturated_INT_pred).sum(0).item()
-
-                non_saturated_TP += torch.logical_and(non_saturated_FP_pred, non_saturated_INT_pred).sum(0).item()
-                non_saturated_TN += torch.logical_and(~non_saturated_FP_pred, ~non_saturated_INT_pred).sum(0).item()
-                non_saturated_FP += torch.logical_and(~non_saturated_FP_pred, non_saturated_INT_pred).sum(0).item()
-                non_saturated_FN += torch.logical_and(non_saturated_FP_pred, ~non_saturated_INT_pred).sum(0).item()
-
-                #############
-
-        print("=======================")
-        print(saturated)
-        print(saturated_TP)
-        print(saturated_TN)
-        print(saturated_FP)
-        print(saturated_FN)
-        print("-----------------------")
-        print(non_saturated)
-        print(non_saturated_TP)
-        print(non_saturated_TN)
-        print(non_saturated_FP)
-        print(non_saturated_FN)
-        print("=======================")
-
-        return
-
-
-    def prediction(output, target):
-        with torch.no_grad():
-            _, pred = output.topk(1, 1, True, True)
-            pred = pred.t()
-            correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-            return correct
-
-    # experiment(train_loader, model, fp_model, criterion, args)
-    # return
 
     best_epoch = 0
     register_acc = 0
