@@ -316,7 +316,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    if args.quant_base == 'hawq':
+    if clustering_model.args.quant_base == 'hawq':
         freeze_model(model)
     model.eval()
 
@@ -370,7 +370,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
         else:
             logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
 
-    if args.quant_base == 'hawq':
+    if clustering_model.args.quant_base == 'hawq':
         unfreeze_model(model)
     return top1.avg
 
