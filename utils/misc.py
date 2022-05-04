@@ -311,7 +311,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
-            if i == 2:
+            if i == 20: 
                 break
 
 

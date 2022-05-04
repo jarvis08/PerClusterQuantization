@@ -114,7 +114,7 @@ class _DenseLayer(nn.Module):
             zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
             out = self.conv1(out)
-            out = self.bn2(out)
+            out = self.norm2(out)
             out = self.relu2(out)
             n_features = out.view(-1).size(0)
             zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
@@ -192,7 +192,7 @@ class _DenseBlock(nn.ModuleDict):
         for name, layer in self.items():
             new_features, l_idx = layer.count_zeros_per_index(features, cluster, n_clusters, zero_counter, l_idx)
             features.append(new_features)
-            return torch.cat(features, 1)
+        return torch.cat(features, 1), l_idx
 
 
 class _Transition(nn.Sequential):
@@ -205,7 +205,7 @@ class _Transition(nn.Sequential):
         self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
         self.initialized = False
 
-    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx):
         if not self.initialized:
             self.initialized = True
             _x = x[0].unsqueeze(0)
