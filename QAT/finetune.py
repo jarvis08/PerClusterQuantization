@@ -121,6 +121,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
+    test_score = best_int_val_score
+    '''
     # Test quantized model which scored the best with validation dataset
     if test_loader is None:
         test_score = best_int_val_score
@@ -132,6 +134,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
         else:
             test_score = validate(quantized_model, test_loader, criterion, logger)
+    '''
 
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
