@@ -32,21 +32,21 @@ def get_range(x):
 def get_scale_and_zeropoint(_min, _max, bit):
     if bit == 4:
         s = (_max - _min) / 15
-        z = - torch.round(_min / s)
+        z = - torch.round(_min / s).type(torch.cuda.IntTensor)
         return s, torch.clamp(z, 0, 15)
     elif bit == 8:
         s = (_max - _min) / 255
-        z = -128 - torch.round(_min / s)
+        z = -128 - torch.round(_min / s).type(torch.cuda.IntTensor)
         return s, torch.clamp(z, -128, 127)
     elif bit == 16:
         s = (_max - _min) / 65535
-        z = -32768 - torch.round(_min / s)
+        z = -32768 - torch.round(_min / s).type(torch.cuda.IntTensor)
         return s, torch.clamp(z, -32768, 32767)
     elif bit == 24:
         s = _max.sub(_min).div(16777215)
-        return s, torch.zeros(s.shape, device='cuda')
+        return s, torch.zeros(s.shape, dtype=torch.int, device='cuda')
     s = (_max - _min) / 4294967295
-    return s, torch.tensor(0, device='cuda')
+    return s, torch.tensor(0, dtype=torch.int, device='cuda')
 
 
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
@@ -71,7 +71,7 @@ def calc_symmetric_qparams(_min, _max, bit, per_channel=False):
             s = _max.sub(_min).div(16777215)
         else:
             s = (_max - _min) / 4294967295
-    return s, torch.zeros_like(s, device='cuda')    #
+    return s, torch.zeros_like(s, dtype=torch.int, device='cuda')    #
 
 
 def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):

@@ -218,6 +218,9 @@ class DenseNet(nn.Module):
         out = self.classifier(out)
         return out
 
+    # def count_zeros_per_index(self, x, cluster, n_clusters):
+
+
 
 def _load_state_dict(model: nn.Module, model_url: str, progress: bool) -> None:
     # '.'s are no longer allowed in module names, but previous _DenseLayer

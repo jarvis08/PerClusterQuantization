@@ -137,11 +137,11 @@ class QuantizedResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(QuantizedResNet, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(self.bit_first, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -403,8 +403,10 @@ def quantize_pcq_block(_fp, _int):
 
 
 def quantize_resnet(fp_model, int_model):
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.target_bit.data = fp_model.target_bit
+    int_model.in_bit.data = fp_model.in_bit
+    int_model.scale.data = fp_model.scale
+    int_model.zero_point.data = fp_model.zero_point
     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
     int_model.bn1 = quantize(fp_model.bn1, int_model.bn1)
     int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
@@ -412,6 +414,17 @@ def quantize_resnet(fp_model, int_model):
     int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
     if int_model.num_blocks == 4:
         int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
+        int_model.maxpool.bit.data = int_model.bn1.a_bit.data
+        int_model.maxpool.zero_point.data = int_model.bn1.z3.data
+
+    int_model.a_bit.data = fp_model.a_bit
+    int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
+    int_model.z1.data = fp_model.z1
+    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
+    int_model.z_target.data = fp_model.z_target
+    int_model.M0.data = fp_model.M0
+    int_model.shift.data = fp_model.shift
+
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
 

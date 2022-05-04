@@ -24,18 +24,17 @@ class PCQDenseLayer(nn.Module):
         super(PCQDenseLayer, self).__init__()
         self.arg_dict = arg_dict
 
-        arg_bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit.data = torch.tensor(arg_bit, dtype=torch.int8) if a_bit is None \
-            else torch.tensor(a_bit, dtype=torch.int8)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
-        self.bn1 = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
+        self.bn1 = PCQBnReLU(num_input_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv1 = PCQConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False,
-                               arg_dict=arg_dict, a_bit=self.a_bit)
-        self.bn2 = PCQBnReLU(bn_size * growth_rate, activation=nn.ReLU, arg_dict=arg_dict)
+                               arg_dict=arg_dict, a_bit=bit_conv_act)
+        self.bn2 = PCQBnReLU(bn_size * growth_rate, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False,
-                               arg_dict=arg_dict, a_bit=self.a_bit)
+                               arg_dict=arg_dict, a_bit=bit_conv_act)
         self.memory_efficient = memory_efficient
 
     # torchscript does not yet support *args, so we overload method
@@ -64,9 +63,9 @@ class PCQTransition(nn.Sequential):
     def __init__(self, arg_dict, num_input_features: int, num_output_features: int, a_bit=None) -> None:
         super(PCQTransition, self).__init__()
         self.arg_dict = arg_dict
-        arg_bit, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
         self.a_bit.data = torch.tensor(arg_bit, dtype=torch.int8) if a_bit is None \
             else torch.tensor(a_bit, dtype=torch.int8)
 
@@ -246,11 +245,13 @@ class PCQDenseNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.bit)
-        return fake_quantize(x, s, z, self.bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
+        return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.bit)
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
+        self.s_target, self.z_target = calc_qparams_per_cluster(self.features.first_norm.act_range, self.target_bit, zero)
         conv_s, conv_z = self.features.first_conv.set_qparams(self.scale, self.zero_point)
         block1_s, block1_z = self.features.denseblock1.set_block_qparams()
         block2_s, block2_z = self.features.denseblock2.set_block_qparams()

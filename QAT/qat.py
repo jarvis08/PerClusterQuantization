@@ -122,11 +122,12 @@ def set_func_for_target_arch(arch, is_pcq):
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)
             setattr(tools, 'fuser', set_pcq_densenet)
-            setattr(tools, 'quantizer', quantize_pcq_densenet)
+            # setattr(tools, 'quantizer', quantize_pcq_densenet)
         else:
             setattr(tools, 'fused_model_initializer', fused_densenet)
             setattr(tools, 'fuser', set_fused_densenet)
-            setattr(tools, 'quantizer', quantize_densenet)
+            # setattr(tools, 'quantizer', quantize_densenet)
+        setattr(tools, 'quantizer', quantize_densenet)
     return tools
 
 

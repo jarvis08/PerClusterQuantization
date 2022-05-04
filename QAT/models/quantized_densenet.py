@@ -21,8 +21,7 @@ class QuantizedDenseLayer(nn.Module):
     ) -> None:
         super(QuantizedDenseLayer, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
 
         self.bn1 = QuantizedBn2d(num_input_features, arg_dict=arg_dict)
         self.conv1 = QuantizedConv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
@@ -40,9 +39,9 @@ class QuantizedDenseLayer(nn.Module):
 
         x = torch.cat(prev_features, 1)
         out = self.bn1(x)
-        out = self.conv1(out)
+        out = self.conv1(out.type(torch.cuda.FloatTensor))
         out = self.bn2(out)
-        out = self.conv2(out)
+        out = self.conv2(out.type(torch.cuda.FloatTensor))
         return out
 
 
@@ -50,8 +49,7 @@ class QuantizedTransition(nn.Sequential):
     def __init__(self, arg_dict, num_input_features: int, num_output_features: int) -> None:
         super(QuantizedTransition, self).__init__()
         self.arg_dict = arg_dict
-        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
 
         self.bn = QuantizedBn2d(num_input_features, arg_dict=arg_dict)
         self.conv = QuantizedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False, arg_dict=arg_dict)
@@ -59,7 +57,7 @@ class QuantizedTransition(nn.Sequential):
 
     def forward(self, x):
         out = self.bn(x)
-        out = self.conv(out)
+        out = self.conv(out.type(torch.cuda.FloatTensor))
         out = self.pool(out)
         out = out.type(torch.cuda.IntTensor)
         out = out.type(torch.cuda.FloatTensor)
@@ -81,8 +79,7 @@ class QuantizedDenseBlock(nn.ModuleDict):
         super(QuantizedDenseBlock, self).__init__()
         self.arg_dict = arg_dict
         self.num_layers = num_layers
-        self.bit, self.num_clusters = itemgetter('bit', 'cluster')(arg_dict)
-        self.q_max = 2 ** self.bit - 1
+        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
 
         for i in range(num_layers):
             layer = QuantizedDenseLayer(
@@ -115,11 +112,11 @@ class QuantizedDenseNet(nn.Module):
         memory_efficient: bool = False
     ) -> None:
         super(QuantizedDenseNet, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(self.bit_first, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
@@ -169,17 +166,21 @@ class QuantizedDenseNet(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
-        out = self.features(x)
+        # out = self.features(x)
+        out = self.features[0](x.type(torch.cuda.FloatTensor))
+        out = self.features[1](out)
+        if self.a_bit > self.target_bit:
+            out = rescale_matrix(out.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                               self.shift, self.target_bit, self.runtime_helper)
+        out = self.features[2](out.type(torch.cuda.FloatTensor))
+        out = self.features[3:](out)
+
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = out.type(torch.cuda.IntTensor)
         out = out.type(torch.cuda.FloatTensor)
         out = torch.flatten(out, 1)
-        if self.a_bit > self.target_bit:
-            out = rescale_matrix(out.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                               self.shift, self.target_bit, self.runtime_helper)
-            out = self.classifier(out.type(torch.cuda.FloatTensor))
-        else:
-            out = self.classifier(out)
+
+        out = self.classifier(out)
         return out.type(torch.cuda.FloatTensor)
 
 
@@ -218,8 +219,11 @@ def quantize_trans(_fp, _int):
 
 
 def quantize_densenet(fp_model, int_model):
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+    int_model.target_bit.data = fp_model.target_bit
+    assert int_model.in_bit.data == fp_model.in_bit.data, 'bit for input must be same. Fused model {fp_model.in_bit.data}, Quantized model {int_model.in_bit.data}'
+    int_model.in_bit.data = fp_model.in_bit
+    int_model.scale.data = fp_model.scale
+    int_model.zero_point.data = fp_model.zero_point
     int_model.features.first_conv = quantize(fp_model.features.first_conv, int_model.features.first_conv)
     int_model.features.first_norm = quantize(fp_model.features.first_norm, int_model.features.first_norm)
     int_model.features.denseblock1 = quantize_block(fp_model.features.denseblock1, int_model.features.denseblock1)
@@ -231,23 +235,31 @@ def quantize_densenet(fp_model, int_model):
     int_model.features.denseblock4 = quantize_block(fp_model.features.denseblock4, int_model.features.denseblock4)
     int_model.features.last_norm = quantize(fp_model.features.last_norm, int_model.features.last_norm)
     int_model.classifier = quantize(fp_model.classifier, int_model.classifier)
+
+    int_model.a_bit.data = fp_model.a_bit
+    int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
+    int_model.z1.data = fp_model.z1
+    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
+    int_model.z_target.data = fp_model.z_target
+    int_model.M0.data = fp_model.M0
+    int_model.shift.data = fp_model.shift
     return int_model
 
 
-def quantize_pcq_densenet(fp_model, int_model):
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
-    int_model.features.first_conv = quantize(fp_model.features.first_conv, int_model.features.first_conv)
-    int_model.features.first_norm = quantize(fp_model.features.first_norm, int_model.features.first_norm)
-    int_model.features.maxpool.bit.data = int_model.features.first_norm.a_bit.data
-    int_model.features.maxpool.zero_point.data = int_model.features.first_norm.z3.data
-    int_model.features.denseblock1 = quantize_block(fp_model.features.denseblock1, int_model.features.denseblock1)
-    int_model.features.transition1 = quantize_trans(fp_model.features.transition1, int_model.features.transition1)
-    int_model.features.denseblock2 = quantize_block(fp_model.features.denseblock2, int_model.features.denseblock2)
-    int_model.features.transition2 = quantize_trans(fp_model.features.transition2, int_model.features.transition2)
-    int_model.features.denseblock3 = quantize_block(fp_model.features.denseblock3, int_model.features.denseblock3)
-    int_model.features.transition3 = quantize_trans(fp_model.features.transition3, int_model.features.transition3)
-    int_model.features.denseblock4 = quantize_block(fp_model.features.denseblock4, int_model.features.denseblock4)
-    int_model.features.last_norm = quantize(fp_model.features.last_norm, int_model.features.last_norm)
-    int_model.classifier = quantize(fp_model.classifier, int_model.classifier)
-    return int_model
+# def quantize_pcq_densenet(fp_model, int_model):
+#     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
+#     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+#     int_model.features.first_conv = quantize(fp_model.features.first_conv, int_model.features.first_conv)
+#     int_model.features.first_norm = quantize(fp_model.features.first_norm, int_model.features.first_norm)
+#     int_model.features.maxpool.bit.data = int_model.features.first_norm.a_bit.data
+#     int_model.features.maxpool.zero_point.data = int_model.features.first_norm.z3.data
+#     int_model.features.denseblock1 = quantize_block(fp_model.features.denseblock1, int_model.features.denseblock1)
+#     int_model.features.transition1 = quantize_trans(fp_model.features.transition1, int_model.features.transition1)
+#     int_model.features.denseblock2 = quantize_block(fp_model.features.denseblock2, int_model.features.denseblock2)
+#     int_model.features.transition2 = quantize_trans(fp_model.features.transition2, int_model.features.transition2)
+#     int_model.features.denseblock3 = quantize_block(fp_model.features.denseblock3, int_model.features.denseblock3)
+#     int_model.features.transition3 = quantize_trans(fp_model.features.transition3, int_model.features.transition3)
+#     int_model.features.denseblock4 = quantize_block(fp_model.features.denseblock4, int_model.features.denseblock4)
+#     int_model.features.last_norm = quantize(fp_model.features.last_norm, int_model.features.last_norm)
+#     int_model.classifier = quantize(fp_model.classifier, int_model.classifier)
+#     return int_model

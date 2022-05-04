@@ -311,6 +311,9 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
+            if i == 2:
+                break
+
 
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
@@ -383,8 +386,8 @@ def transfer_params(arch, dataset, qat_model):
         torchcv = ptcv_get_model('densenet121', pretrained=True)
 
     torchcv_dict = torchcv.state_dict()
-    for cv, our in zip(model_dict.items(), torchcv_dict.items()):
-        model_dict[cv[0]].copy_(torchcv_dict[our[0]])
+    for our, cv in zip(model_dict.items(), torchcv_dict.items()):
+        model_dict[our[0]].copy_(torchcv_dict[cv[0]])
 
     # elif arch == 'alexnet':
     #     checkpoint = torch.load(args.dnn_path)
