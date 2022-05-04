@@ -12,7 +12,7 @@ import json
 import logging
 import random
 
-from HQWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
+from HAWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
 
 class RuntimeHelper(object):
     """
