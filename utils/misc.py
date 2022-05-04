@@ -316,6 +316,8 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     losses = AverageMeter()
     top1 = AverageMeter()
 
+    if args.quant_base == 'hawq':
+        freeze_model(model)
     model.eval()
 
     container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,
@@ -367,6 +369,9 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         else:
             logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+
+    if args.quant_base == 'hawq':
+        unfreeze_model(model)
     return top1.avg
 
 

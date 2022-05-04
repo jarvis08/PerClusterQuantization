@@ -356,7 +356,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             return runtime_helper
         return None
 
-    def get_quantize_model(args, model, quantize_arch, runtime_helper):
+    def get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper):
         if args.arch.lower() == 'alexnet':
             return quantize_arch(model, model_dict, runtime_helper)
         return quantize_arch(model, runtime_helper)
@@ -426,7 +426,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     runtime_helper = set_runtime_helper(args)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, model, quantize_arch, runtime_helper)
+    model = get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 

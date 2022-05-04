@@ -1112,6 +1112,8 @@ def unfreeze_model(model):
     """
     if type(model) == QuantAct:
         model.unfix()
+    elif type(model) == QuantAct_Daq:
+        model.unfix()
     elif type(model) == QuantConv2d:
         model.unfix()
     elif type(model) == QuantLinear:
