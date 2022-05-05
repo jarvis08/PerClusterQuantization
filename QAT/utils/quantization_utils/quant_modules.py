@@ -715,7 +715,7 @@ class QuantBnConv2d(Module):
                                                                                         w_min, w_max, self.per_channel)
                         self.weight_integer = self.weight_function(scaled_weight.detach(), self.weight_bit,
                                                                 self.convbn_scaling_factor)
-                        self.weight_float = linear_dequantize(self.weight_integer, self.convbn_scaling_factor, torch.zeros_like(self.conv_scaling_factor))
+                        self.weight_float = linear_dequantize(self.weight_integer, self.convbn_scaling_factor, torch.zeros_like(self.convbn_scaling_factor))
                         # self.weight_float = self.weight_integer * self.convbn_scaling_factor.view(1, -1, 1, 1)
                         weight = STE.apply(scaled_weight, self.weight_float)
                         if self.quantize_bias:
