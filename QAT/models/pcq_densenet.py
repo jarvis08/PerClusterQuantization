@@ -65,9 +65,9 @@ class PCQTransition(nn.Sequential):
         self.arg_dict = arg_dict
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
 
-        self.bn = PCQBnReLU(num_input_features, activation=nn.ReLU, arg_dict=arg_dict)
+        self.bn = PCQBnReLU(num_input_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv = PCQConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
                               arg_dict=arg_dict, a_bit=self.a_bit)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
@@ -256,14 +256,15 @@ class PCQDenseNet(nn.Module):
         block3_s, block3_z = self.features.denseblock3.set_block_qparams()
         block4_s, block4_z = self.features.denseblock4.set_block_qparams()
         
-        self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
-        #self.s1, self.z1 = self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
-        #self.s_target, self.z_target = calc_qparams_per_cluster(self.features.first_norm.act_range, self.target_bit, zero)
+        #self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
         
-        #self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
-        #self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
-        #for c in range(self.num_clusters):
-        #    self.M0[c], self.shift[c] = quantize_M(self.s1[c] / self.s_target[c])
+        self.s1, self.z1 = self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
+        self.s_target, self.z_target = calc_qparams_per_cluster(self.features.first_norm.act_range, self.target_bit, zero)
+        
+        self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
+        self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
+        for c in range(self.num_clusters):
+            self.M0[c], self.shift[c] = quantize_M(self.s1[c] / self.s_target[c])
 
         self.features.transition1.set_transition_qparams(block1_s, block1_z, block2_s, block2_z)
         self.features.transition2.set_transition_qparams(block2_s, block2_z, block3_s, block3_z)

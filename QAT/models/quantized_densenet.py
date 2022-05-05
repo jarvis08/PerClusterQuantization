@@ -165,14 +165,15 @@ class QuantizedDenseNet(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
-        out = self.features(x)
-        #out = self.features[0](x.type(torch.cuda.FloatTensor))
-        #out = self.features[1](out)
-        #if self.a_bit > self.target_bit:
-        #    out = rescale_matrix(out.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-        #                       self.shift, self.target_bit, self.runtime_helper)
-        #out = self.features[2](out.type(torch.cuda.FloatTensor))
-        #out = self.features[3:](out)
+        # out = self.features(x)
+        
+        out = self.features[0](x.type(torch.cuda.FloatTensor))
+        out = self.features[1](out)
+        if self.a_bit > self.target_bit:
+            out = rescale_matrix(out.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                               self.shift, self.target_bit, self.runtime_helper)
+        out = self.features[2](out.type(torch.cuda.FloatTensor))
+        out = self.features[3:](out)
 
         out = F.adaptive_avg_pool2d(out.type(torch.cuda.FloatTensor), (1, 1))
         out = out.floor()
@@ -235,12 +236,12 @@ def quantize_densenet(fp_model, int_model):
     int_model.classifier = quantize(fp_model.classifier, int_model.classifier)
 
     int_model.a_bit.data = fp_model.a_bit
-    #int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
-    #int_model.z1.data = fp_model.z1
-    #int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
-    #int_model.z_target.data = fp_model.z_target
-    #int_model.M0.data = fp_model.M0
-    #int_model.shift.data = fp_model.shift
+    int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
+    int_model.z1.data = fp_model.z1
+    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
+    int_model.z_target.data = fp_model.z_target
+    int_model.M0.data = fp_model.M0
+    int_model.shift.data = fp_model.shift
     return int_model
 
 
