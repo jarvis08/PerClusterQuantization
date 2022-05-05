@@ -94,8 +94,8 @@ class KMeansClustering(object):
 
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
-        #cluster_info = self.model.predict(np.float64(kmeans_input))
-        cluster_info = self.model.predict(np.float32(kmeans_input))
+        cluster_info = self.model.predict(np.float64(kmeans_input))
+        #cluster_info = self.model.predict(np.float32(kmeans_input))
         if self.final_cluster is not None:  # make output as merged cluster form
             return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
         return torch.LongTensor(cluster_info)

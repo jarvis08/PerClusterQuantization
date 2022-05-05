@@ -59,9 +59,7 @@ class QuantizedTransition(nn.Sequential):
         out = self.bn(x)
         out = self.conv(out.type(torch.cuda.FloatTensor))
         out = self.pool(out.type(torch.cuda.FloatTensor))
-        out = out.floor()
-        #out = out.type(torch.cuda.IntTensor)
-        #out = out.type(torch.cuda.FloatTensor)
+        out = out.floor() 
         return out
 
 
@@ -167,25 +165,23 @@ class QuantizedDenseNet(nn.Module):
         else:
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
-        out = self.features.first_conv(x.type(torch.cuda.FloatTensor))
-        out = self.features.first_norm(out)
+        # out = self.features(x)
         
-        out = self.features.maxpool(out.type(torch.cuda.FloatTensor))
-        out = self.features.denseblock1(out)
-        out = self.features.transition1(out)
-        out = self.features.denseblock2(out)
-        out = self.features.transition2(out)
-        out = self.features.denseblock3(out)
-        out = self.features.transition3(out)
-        out = self.features.denseblock4(out)
-        out = self.features.last_norm(out)
+        out = self.features[0](x.type(torch.cuda.FloatTensor))
+        out = self.features[1](out)
+        if self.a_bit > self.target_bit:
+            out = rescale_matrix(out.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
+                               self.shift, self.target_bit, self.runtime_helper)
+        out = self.features[2](out.type(torch.cuda.FloatTensor))
+        out = self.features[3:](out)
 
         out = F.adaptive_avg_pool2d(out.type(torch.cuda.FloatTensor), (1, 1))
         out = out.floor()
-
         out = torch.flatten(out, 1)
+
         out = self.classifier(out)
-        return out.type(torch.cuda.FloatTensor) 
+        return out.type(torch.cuda.FloatTensor)
+
 
 def quantized_densenet(arg_dict: dict, **kwargs):
     return QuantizedDenseNet(32, (6, 12, 24, 16), 64, arg_dict, **kwargs)
@@ -240,12 +236,12 @@ def quantize_densenet(fp_model, int_model):
     int_model.classifier = quantize(fp_model.classifier, int_model.classifier)
 
     int_model.a_bit.data = fp_model.a_bit
-    #int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
-    #int_model.z1.data = fp_model.z1
-    #int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
-    #int_model.z_target.data = fp_model.z_target
-    #int_model.M0.data = fp_model.M0
-    #int_model.shift.data = fp_model.shift
+    int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
+    int_model.z1.data = fp_model.z1
+    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
+    int_model.z_target.data = fp_model.z_target
+    int_model.M0.data = fp_model.M0
+    int_model.shift.data = fp_model.shift
     return int_model
 
 

@@ -48,23 +48,22 @@ class FusedDenseLayer(nn.Module):
         out = self.conv1(out)
         out = self.bn2(out)
         out = self.conv2(out, external_range)
-
         return out
 
     def set_layer_qparams(self, s1, z1):
         prev_s, prev_z = self.bn1.set_qparams(s1, z1)
         prev_s, prev_z = self.conv1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
-        _, _ = self.conv2.set_qparams(prev_s, prev_z, s1, z1)
+        self.conv2.set_qparams(prev_s, prev_z, s1, z1)
 
 
 class FusedTransition(nn.Sequential):
     def __init__(self, arg_dict, num_input_features: int, num_output_features: int) -> None:
         super(FusedTransition, self).__init__()
-
+        
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         self.bn = FusedBnReLU(num_input_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
@@ -80,8 +79,8 @@ class FusedTransition(nn.Sequential):
 
     def set_transition_qparams(self, s1, z1, next_block_s, next_block_z):
         prev_s, prev_z = self.bn.set_qparams(s1, z1)
-        self.s3, self.z3 = self.conv.set_qparams(prev_s, prev_z, next_block_s, next_block_z)
-        return self.s3, self.z3
+        self.conv.set_qparams(prev_s, prev_z, next_block_s, next_block_z)
+        return next_block_s, next_block_z
 
 
 class FusedDenseBlock(nn.ModuleDict):
@@ -101,7 +100,7 @@ class FusedDenseBlock(nn.ModuleDict):
         self.num_layers = num_layers
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
@@ -231,14 +230,16 @@ class FusedDenseNet(nn.Module):
         block3_s, block3_z = self.features.denseblock3.set_block_qparams()
         block4_s, block4_z = self.features.denseblock4.set_block_qparams()
 
-        self.s1, self.z1 = self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
-        self.s_target, self.z_target = calc_qparams(self.first_norm.act_range[0], self.first_norm.act_range[1],
-                                               self.target_bit)
-        self.M0, self.shift = quantize_M(self.s1 / self.s_target)
+        self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
+        #self.s1, self.z1 = self.features.first_norm.set_qparams(conv_s, conv_z, block1_s, block1_z)
+        #self.s_target, self.z_target = calc_qparams(self.features.first_norm.act_range[0], self.features.first_norm.act_range[1],
+        #                                       self.target_bit)
+        #self.M0, self.shift = quantize_M(self.s1 / self.s_target)
 
         self.features.transition1.set_transition_qparams(block1_s, block1_z, block2_s, block2_z)
         self.features.transition2.set_transition_qparams(block2_s, block2_z, block3_s, block3_z)
         self.features.transition3.set_transition_qparams(block3_s, block3_z, block4_s, block4_z)
+        
         prev_s, prev_z = self.features.last_norm.set_qparams(block4_s, block4_z)
         _, _ = self.classifier.set_qparams(prev_s, prev_z)
 

@@ -242,7 +242,8 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-
+            if i == 20:
+                break
 
 def validate(model, test_loader, criterion, logger=None, hvd=None):
     losses = AverageMeter()
@@ -311,7 +312,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
-            if i == 50: 
+            if i == 20: 
                 break
 
 
