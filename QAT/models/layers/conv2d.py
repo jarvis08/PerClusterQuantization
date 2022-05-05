@@ -16,7 +16,6 @@ class QuantizedConv2d(nn.Conv2d):
             itemgetter('bit', 'per_channel', 'symmetric', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
-        self.is_first = is_first
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
         self.sum_a2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
@@ -62,10 +61,10 @@ class QuantizedConv2d(nn.Conv2d):
                 padded = F.pad(x, to_pad, mode='constant', value=self.z1.item())
             else:  # DAQ
                 bc = self.runtime_helper.qat_batch_cluster
-                if self.is_first or self.w_bit == 8:
-                    padded = F.pad(x, to_pad, mode='constant', value=self.z1[bc].item())
-                else:
+                if self.a_bit == 4 or self.a_bit == 32:
                     padded = F.pad(x, to_pad, mode='constant', value=0) #
+                else:
+                    padded = F.pad(x, to_pad, mode='constant', value=self.z1[bc].item())
 
         out = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
         return padded.type(torch.cuda.IntTensor), out.type(torch.cuda.LongTensor)

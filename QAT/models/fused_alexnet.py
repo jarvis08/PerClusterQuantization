@@ -84,7 +84,7 @@ class FusedAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                                 w_bit=bit_first, a_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict)
+                                 w_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
                                  activation=nn.ReLU, arg_dict=arg_dict)
         self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,

@@ -13,6 +13,7 @@ parser.add_argument('--arch', default='resnet', type=str, help='Architecture to 
 parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
 
 parser.add_argument('--dali', action='store_true', help='Use GPU data augmentation DALI')
+parser.add_argument('--torchcv', action='store_true', help='Load torchcv model')
 
 parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to train')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
@@ -36,7 +37,7 @@ parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be 
 parser.add_argument('--bit_conv_act', default=16, type=int,
                     help="CONV's activation bit size when not using Conv&BN folding")
 parser.add_argument('--bit_bn_w', default=16, type=int, help="BN's weight bit size when not using CONV & BN folding")
-parser.add_argument('--bit_addcat', default=0, type=int, help="Bit size used in Skip-connection")
+parser.add_argument('--bit_addcat', default=16, type=int, help="Bit size used in Skip-connection")
 parser.add_argument('--bit_first', default=0, type=int, help="First layer's bit size")
 parser.add_argument('--bit_classifier', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
@@ -48,15 +49,15 @@ parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
-os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
+#os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
 
 # General
 if not args_qat.bit_first:
     args_qat.bit_first = args_qat.bit
 if not args_qat.bit_classifier:
     args_qat.bit_classifier = args_qat.bit
-if not args_qat.bit_addcat:
-    args_qat.bit_addcat = args_qat.bit
+# if not args_qat.bit_addcat:
+#     args_qat.bit_addcat = args_qat.bit
 
 
 def set_func_for_target_arch(arch, is_pcq):
@@ -132,12 +133,12 @@ def set_func_for_target_arch(arch, is_pcq):
 def main(args_daq, data_loaders, clustering_model):
     args = argparse.Namespace(**vars(args_qat), **vars(args_daq))
     print(vars(args))
-    assert args.arch in ['mlp', 'alexnet', 'resnet', 'bert', 'densenet', 'mobilenet'], 'Not supported architecture'
+    assert args.arch in ['mlp', 'alexnet', 'resnet', 'resnet20', 'resnet50','bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
     if args.mode == 'fine':
         assert args.bit in [4, 8], 'Please set target bit between 4 & 8'
-        if args.dataset != 'imagenet':
-            assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
+        # if args.dataset != 'imagenet':
+            # assert args.dnn_path, "Need pretrained model with the path('dnn_path' argument) for finetuning"
 
     def specify_target_arch(arch, dataset, num_clusters):
         arch = 'MLP' if arch == 'mlp' else arch
@@ -146,6 +147,10 @@ def main(args_daq, data_loaders, clustering_model):
                 arch = 'AlexNet'
             else:
                 arch = 'AlexNetSmall'
+        elif arch == 'resnet20':
+            arch = 'ResNet20'
+        elif arch == 'resnet50':
+            arch = 'ResNet50'
         elif arch == 'resnet':
             if dataset == 'imagenet':
                 arch = 'ResNet50'

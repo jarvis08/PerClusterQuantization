@@ -185,7 +185,7 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
 args_hawq, _ = parser.parse_known_args()
-args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}/".format(args_hawq.arch, args_hawq.data, os.getpid()))
+args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(args_hawq.arch, args_hawq.data, args_hawq.batch_size, os.getpid()))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
@@ -247,9 +247,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             return arch
 
     def create_model(args):
-        pretrained = args.pretrained and not args.resume
+        # pretrained = args.pretrained and not args.resume
         logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
-        model = ptcv_get_model(args.arch, pretrained=pretrained)
+        model = ptcv_get_model(args.arch, pretrained=True)
         if args.distill_method != 'None':
             logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=pretrained)
@@ -356,7 +356,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             return runtime_helper
         return None
 
-    def get_quantize_model(args, model, quantize_arch, runtime_helper):
+    def get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper):
         if args.arch.lower() == 'alexnet':
             return quantize_arch(model, model_dict, runtime_helper)
         return quantize_arch(model, runtime_helper)
@@ -426,7 +426,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     runtime_helper = set_runtime_helper(args)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, model, quantize_arch, runtime_helper)
+    model = get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper)
 
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
@@ -455,7 +455,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     cudnn.benchmark = True
 
     train_loader = data_loaders['aug_train']
-    val_loader = data_loaders['val']
     test_loader = data_loaders['test']
 
     if args.nnac and clustering_model.final_cluster is None:
@@ -472,6 +471,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
+
+    finetune_path = set_save_dir(args)
+    if not os.path.exists(finetune_path):
+        os.mkdir(finetune_path)
+
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
@@ -480,13 +484,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                       fix_BN=args.fix_BN)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logging)
+            acc1 = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
 
         else:
             train(train_loader, model, criterion, optimizer, epoch, logging, args)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = validate(val_loader, model, criterion, args)
+            acc1 = validate(test_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -498,13 +502,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             best_epoch = epoch
             register_acc = best_acc1
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                                                    and args.rank % ngpus_per_node == 0):
-
-            finetune_path = set_save_dir(args)
-            if not os.path.exists(finetune_path):
-                os.mkdir(finetune_path)
-
+        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
@@ -513,15 +511,17 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 'optimizer': optimizer.state_dict(),
             }, is_best, finetune_path)
 
+    test_score = register_acc
+
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
-        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}_{args.gpu}.txt', 'a') as f:
+        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
     else:
-        with open(f'hawq_{args.arch}_{args.data}_cluster:{args.sub_cluster}->{args.cluster}_batch:{args.batch}_lr:{args.lr}_sim:{args.similarity_method}.txt', 'a') as f:
+        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, register_acc, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, logger, args):

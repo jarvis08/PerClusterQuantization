@@ -65,7 +65,7 @@ class PCQAlexNet(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        data = x.view(x.size(0), -1)
+        data = x.view(x.size(0), -1).clone().detach()
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
@@ -103,7 +103,7 @@ class PCQAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = PCQConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True, activation=nn.ReLU,
-                               w_bit=bit_first, a_bit=bit_first, arg_dict=arg_dict)
+                               w_bit=bit_first, arg_dict=arg_dict)
         self.conv2 = PCQConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.conv3 = PCQConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
@@ -141,7 +141,7 @@ class PCQAlexNetSmall(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        data = x.view(x.size(0), -1)
+        data = x.clone().detach().view(x.size(0), -1)
         _min = data.min(dim=1).values.mean()
         _max = data.max(dim=1).values.mean()
         if self.apply_ema[cluster]:

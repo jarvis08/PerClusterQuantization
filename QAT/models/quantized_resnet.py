@@ -229,11 +229,11 @@ class QuantizedResNet(nn.Module):
 class QuantizedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(QuantizedResNet20, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.in_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
+        self.in_bit = nn.Parameter(torch.tensor(self.bit_first, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0

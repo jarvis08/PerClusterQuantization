@@ -8,6 +8,8 @@ from .models import *
 from tqdm import tqdm
 from time import time
 
+import warnings
+warnings.filterwarnings("ignore")
 
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
@@ -22,10 +24,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
     pretrained_model.cuda()
 
     train_loader = data_loaders['aug_train']
-    val_loader = data_loaders['val']
+    #val_loader = data_loaders['val']
     test_loader = data_loaders['test']
     if args.nnac and clustering_model.final_cluster is None:
-        clustering_model.nn_aware_clustering(pretrained_model, train_loader)
+        clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
     if pretrained_model:
@@ -65,9 +67,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
         fp_score = 0
         if args.dataset != 'imagenet':
             if args.cluster > 1:
-                fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+                #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+                fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
             else:
-                fp_score = validate(model, val_loader, criterion, logger)
+                #fp_score = validate(model, val_loader, criterion, logger)
+                fp_score = validate(model, test_loader, criterion, logger)
 
         state = {
             'epoch': e,
@@ -88,10 +92,13 @@ def _finetune(args, tools, data_loaders, clustering_model):
             quantized_model.cuda()
 
             if args.cluster > 1:
-                int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
+                #int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
+                #                         logger)
+                int_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper,
                                          logger)
             else:
-                int_score = validate(quantized_model, val_loader, criterion, logger)
+                #int_score = validate(quantized_model, val_loader, criterion, logger)
+                int_score = validate(quantized_model, test_loader, criterion, logger)
 
             if int_score > best_int_val_score:
                 best_epoch = e
@@ -114,6 +121,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
+    test_score = best_int_val_score
+    '''
     # Test quantized model which scored the best with validation dataset
     if test_loader is None:
         test_score = best_int_val_score
@@ -125,6 +134,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             test_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper, logger)
         else:
             test_score = validate(quantized_model, test_loader, criterion, logger)
+    '''
 
     with open(os.path.join(save_path_int, "params.json"), 'w') as f:
         tmp = vars(args)
