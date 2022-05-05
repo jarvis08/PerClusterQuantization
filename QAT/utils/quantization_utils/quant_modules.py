@@ -722,7 +722,7 @@ class QuantBnConv2d(Module):
                             bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,
                                                                                                                     -1)
                             self.bias_integer = self.weight_function(scaled_bias.detach(), self.bias_bit, bias_scaling_factor)
-                            self.weight_float = linear_dequantize(self.bias_integer, bias_scaling_factor, torch.zeros_like(bias_scaling_factor))
+                            self.bias_float = linear_dequantize(self.bias_integer, bias_scaling_factor, torch.zeros_like(bias_scaling_factor))
                             # self.bias_float = self.bias_integer * bias_scaling_factor.view(1, -1, 1, 1)
                             bias = STE.apply(scaled_bias, self.bias_float)
                     else:
