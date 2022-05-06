@@ -354,6 +354,10 @@ def transfer_qparams(_fp, _int):
         negative_values = (_int.shift < 0).nonzero(as_tuple=True)[0]
         if len(negative_values):
             _int.is_shift_neg.data = torch.tensor(True, dtype=torch.bool)
+
+    if _int.layer_type == 'QuantizedConv2d' and _int.fold_convbn:
+        _int.folded_weight = _fp.folded_weight
+        _int.folded_bias = _fp.folded_bias
     return _int
 
 
