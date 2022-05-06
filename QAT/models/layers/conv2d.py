@@ -42,6 +42,10 @@ class QuantizedConv2d(nn.Conv2d):
             self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
             self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
+        if self.fold_convbn:
+            self.folded_weight = nn.Parameter(torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
+            self.folded_bias = nn.Parameter(torch.zeros(out_channels))
+
     def forward(self, x):
         x, out = self._conv_impl(x)
         out = self._subsum(x, out)
@@ -171,15 +175,11 @@ class QuantizedConv2d(nn.Conv2d):
                     col_st, col_end = o_col * stride, o_col * stride + filter_col
                     row_st, row_end = o_row * stride, o_row * stride + filter_row
                     self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
-            # print(f'sum_al:{self.sum_a1.shape}, x:{x.shape}, z2:{self.z2.shape}')
-            # exit()
-            # sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2.reshape(self.sum_a1.shape[1]))
-            sum_a1 = self.sum_a1[:x.size(0)]
 
+            sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
             sum_a2 = self.sum_a2.mul(self.z1)
-            nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2 * 0
-            subsum =sum_q1q2
-            # subsum = sum_q1q2.add(nz1z2)
+            nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
+            subsum = sum_q1q2.add(nz1z2)
             subsum = torch.sub(subsum, sum_a1[:, None, :, :])
             subsum = torch.sub(subsum, sum_a2)
         else:
@@ -279,16 +279,6 @@ class PCQConv2d(nn.Module):
         if self._activation:
             out = self._activation(out)
         return out
-
-    # per
-    # channel
-    # shape
-    # torch.Size([16, 3, 3, 3])
-
-    # not per
-    # channel
-    # shape
-    # torch.Size([16, 3, 3, 3])
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
@@ -444,7 +434,6 @@ class FusedConv2d(nn.Module):
             alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean, \
                                           self._norm_layer.running_var, self._norm_layer.eps
             n_channel = self.conv.weight.shape[0]
-
             folded_weight = self.conv.weight.clone().detach()
             folded_bias = beta.clone().detach()
             for c in range(n_channel):
@@ -455,7 +444,6 @@ class FusedConv2d(nn.Module):
                 s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit, symmetric=self.symmetric)
                 fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
             else:
-                # calc_qparams_per_output_channel(folded_weight, self.w_bit, symmetric=self.symmetric, zero=self.runtime_helper.fzero)
                 fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit, self.runtime_helper.fzero,
                                             symmetric=self.symmetric, use_ste=False)
 
@@ -500,9 +488,7 @@ class FusedConv2d(nn.Module):
 
         if self.per_channel:
             self.fold_conv_and_bn()
-            # self.s2, self.z2 = calc_qparams_per_output_channel(self.folded_weight, self.w_bit,
-            #                                                    symmetric=self.symmetric, zero=zero)
-            self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit,
+            self.s2, self.z2 = calc_qparams_per_output_channel(self.folded_weight, self.w_bit,
                                                                symmetric=self.symmetric, zero=zero)
         else:
             if self.fold_convbn:
