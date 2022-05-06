@@ -425,9 +425,14 @@ class FusedConv2d(nn.Module):
             for c in range(n_channel):
                 folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
                 folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-
-            s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit, symmetric=self.symmetric)
-            fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
+            
+            if not self.per_channel:
+                s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit, symmetric=self.symmetric)
+                fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
+            else:
+                calc_qparams_per_output_channel(folded_weight, self.w_bit, symmetric=self.symmetric, zero=self.runtime_helper.fzero)
+                fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit, self.runtime_helper.fzero,
+                                            symmetric=self.symmetric, use_ste=False)
 
             folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
                                   self.conv.dilation, self.conv.groups)
