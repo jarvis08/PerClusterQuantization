@@ -484,32 +484,35 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                       fix_BN=args.fix_BN)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
+            if epoch > 0:
+                acc1 = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
 
         else:
             train(train_loader, model, criterion, optimizer, epoch, logging, args)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = validate(test_loader, model, criterion, args)
+            if epoch > 0:
+                acc1 = validate(test_loader, model, criterion, args)
 
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+        if epoch > 0:
+            # remember best acc@1 and save checkpoint
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
 
-        logging.info(f'Best acc at epoch {epoch}: {best_acc1}')
-        if is_best:
-            # record the best epoch
-            best_epoch = epoch
-            register_acc = best_acc1
+            logging.info(f'Best acc at epoch {epoch}: {best_acc1}')
+            if is_best:
+                # record the best epoch
+                best_epoch = epoch
+                register_acc = best_acc1
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
-                'optimizer': optimizer.state_dict(),
-            }, is_best, finetune_path)
+            if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': args.arch,
+                    'state_dict': model.state_dict(),
+                    'best_acc1': best_acc1,
+                    'optimizer': optimizer.state_dict(),
+                }, is_best, finetune_path)
 
     test_score = register_acc
 

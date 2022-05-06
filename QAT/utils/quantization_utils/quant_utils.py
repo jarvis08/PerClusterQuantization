@@ -240,16 +240,17 @@ def batch_frexp(inputs):
     return output_m.view(shape_of_input), output_e.view(shape_of_input)
 
 
-def fake_quantization(x, bit, scale, zero_point, weight_function):
+def fake_quantization(x, bit, scale, weight_function):
     _x = x.detach()
-    _x = weight_function(x, bit, scale, zero_point)
-    _x = linear_dequantize(_x, scale, zero_point)
+    _x = weight_function(x, bit, scale)
+    _x = linear_dequantize(_x, scale, torch.zeros_like(scale, requires_grad=False))
     return STE.apply(x, _x)
 
 class STE(Function):
     @staticmethod
     def forward(ctx, original, fake_quantized):
-        return fake_quantized.detach()
+        with torch.no_grad():
+            return fake_quantized
 
     @staticmethod
     def backward(ctx, grad_output):
