@@ -252,6 +252,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         arch = args.arch.lower()
         if 'resnet20' in arch:
             return "resnet20"
+        else
+            return arch
 
     def create_model(args):
         # pretrained = args.pretrained and not args.resume
