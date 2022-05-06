@@ -12,8 +12,8 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        bit, self.per_channel, self.symmetric, self.num_clusters, self.runtime_helper, self.default_batch = \
-            itemgetter('bit', 'per_channel', 'symmetric', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
+        bit, self.per_channel, self.fold_convbn, self.symmetric, self.num_clusters, self.runtime_helper, self.default_batch = \
+            itemgetter('bit', 'per_channel', 'fold_convbn', 'symmetric', 'cluster', 'runtime_helper', 'val_batch')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
@@ -42,6 +42,10 @@ class QuantizedConv2d(nn.Conv2d):
             self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
             self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
+        if self.fold_convbn:
+            self.folded_weight = None
+            self.folded_bias = None
+
     def forward(self, x):
         x, out = self._conv_impl(x)
         out = self._subsum(x, out)
@@ -66,7 +70,11 @@ class QuantizedConv2d(nn.Conv2d):
                 else:
                     padded = F.pad(x, to_pad, mode='constant', value=self.z1[bc].item())
 
-        out = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
+        if self.fold_convbn:
+            out = F.conv2d(padded, self.folded_weight, None, self.stride, (0, 0), self.dilation, self.groups)
+        else:
+            out = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
+
         return padded.type(torch.cuda.IntTensor), out.type(torch.cuda.LongTensor)
 
     def _subsum(self, x, y):
@@ -93,8 +101,12 @@ class QuantizedConv2d(nn.Conv2d):
 
         if not self.symmetric:
             input_batch, input_ch = x.shape[0], x.shape[1]
-            filter_batch, filter_ch, filter_col, filter_row = \
-                self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+            if self.fold_convbn:
+                filter_batch, filter_ch, filter_col, filter_row = \
+                    self.folded_weight.shape[0], self.folded_weight.shape[1], self.folded_weight.shape[2], self.folded_weight.shape[3]
+            else:
+                filter_batch, filter_ch, filter_col, filter_row = \
+                    self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
             if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:     #
@@ -150,7 +162,10 @@ class QuantizedConv2d(nn.Conv2d):
 
         if not self.symmetric:
             input_batch, input_ch = x.shape[0], x.shape[1]
-            filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
+            if self.fold_convbn:
+                filter_col, filter_row = self.folded_weight.shape[2], self.folded_weight.shape[3]
+            else:
+                filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
             if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:
@@ -456,21 +471,31 @@ class FusedConv2d(nn.Module):
         alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
                                       self._norm_layer.running_var, self._norm_layer.eps
         n_channel = self.conv.weight.shape[0]
-        self.conv.bias = nn.Parameter(beta)
+        self.folded_bias = nn.Parameter(beta).clone().detach()
+        self.folded_weight = self.conv.weight.clone().detach()
         for c in range(n_channel):
-            self.conv.weight.data[c] = self.conv.weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-            self.conv.bias.data[c] = self.conv.bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-        self._norm_layer = nn.Identity()
+            self.folded_weight.data[c] = self.folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
+            self.folded_bias.data[c] = self.folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
+        # self._norm_layer = nn.Identity()
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
 
         zero = self.runtime_helper.fzero
+
         if self.per_channel:
+            # self.fold_conv_and_bn()
+            # self.s2, self.z2 = calc_qparams_per_output_channel(self.folded_weight, self.w_bit,
+            #                                                    symmetric=self.symmetric, zero=zero)
             self.s2, self.z2 = calc_qparams_per_output_channel(self.conv.weight, self.w_bit,
                                                                symmetric=self.symmetric, zero=zero)
         else:
-            self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
+            if self.fold_convbn:
+                self.fold_conv_and_bn()
+                self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit,
+                                                symmetric=self.symmetric, zero=zero)
+            else:
+                self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
                                             symmetric=self.symmetric, zero=zero)
 
         if s_external is not None:
