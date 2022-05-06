@@ -105,9 +105,15 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
             setattr(tools, 'pretrained_model_initializer', resnet50)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet50)
+            elif is_folded:
+                setattr(tools, 'fused_model_initializer', fused_resnet50_folded)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet50)
-            setattr(tools, 'quantized_model_initializer', quantized_resnet50)
+
+            if is_folded:
+                setattr(tools, 'quantized_model_initializer', quantized_resnet50_folded)
+            else:
+                setattr(tools, 'quantized_model_initializer', quantized_resnet50)
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:

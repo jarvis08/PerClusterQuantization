@@ -95,12 +95,6 @@ class FoldedQuantizedBottleneck(nn.Module):
         self.conv3 = quantized_conv1x1(in_planes=width, out_planes=planes * self.expansion, arg_dict=arg_dict)
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
-        if self.downsample is not None:
-            self.bn_down = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(width, arg_dict=arg_dict)
-        self.bn2 = QuantizedBn2d(width, arg_dict=arg_dict)
-        self.bn3 = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
-
     def forward(self, x):
         identity = x
 
@@ -111,15 +105,12 @@ class FoldedQuantizedBottleneck(nn.Module):
         conv_x = conv_x.type(torch.cuda.FloatTensor)
 
         out = self.conv1(conv_x)
-        out = self.bn1(out)
         out = self.conv2(out.type(torch.cuda.FloatTensor))
-        out = self.bn2(out)
         out = self.conv3(out.type(torch.cuda.FloatTensor))
-        out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(conv_x)
-            identity = self.bn_down(identity)
+
         out = self.shortcut(identity, out)
         return out
 
@@ -128,7 +119,7 @@ class FoldedQuantizedResNet(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FoldedQuantizedResNet, self).__init__()
-        self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
@@ -160,7 +151,6 @@ class FoldedQuantizedResNet(nn.Module):
         self.base_width = width_per_group
         self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, is_first=True,
                                           arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(self.inplanes, arg_dict=arg_dict)
         self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -196,7 +186,6 @@ class FoldedQuantizedResNet(nn.Module):
             x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
-        x = self.bn1(x)
         x = self.maxpool(x.type(torch.cuda.FloatTensor))
 
         x = self.layer1(x.type(torch.cuda.LongTensor))
