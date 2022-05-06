@@ -115,9 +115,9 @@ class Q_ResNet20_Daq(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
@@ -211,10 +211,8 @@ class Q_ResNet20(nn.Module):
                 quant_unit.set_param(unit)
                 setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
 
-        self.quant_act = QuantAct()
-        self.final_pool = QuantAveragePool2d(kernel_size=8, stride=1)
-
         self.quant_act_output = QuantAct()
+        self.final_pool = QuantAveragePool2d(kernel_size=8, stride=1)
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
@@ -236,19 +234,18 @@ class Q_ResNet20(nn.Module):
         x, act_scaling_factor = self.quant_input(x)
 
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         for stage_num in range(0,3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
 
@@ -300,19 +297,18 @@ class Q_ResNet50(nn.Module):
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         
         x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
-        
         x = self.act(x)
+
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         for stage_num in range(0, 4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
 
@@ -366,19 +362,17 @@ class Q_ResNet50_Daq(nn.Module):
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
 
         x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
-
         x = self.act(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         for stage_num in range(0, 4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
 
@@ -866,27 +860,24 @@ class Q_ResBlockBn(nn.Module):
     def forward(self, x, scaling_factor_int32=None):
         # forward using the quantized modules
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
-            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, scaling_factor_int32)
         else:
             identity = x
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
-        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
+        x, weight_scaling_factor = self.quant_convbn1(x, scaling_factor_int32)
         x = nn.ReLU()(x)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
+        x, act_scaling_factor = self.quant_act1(x, scaling_factor_int32, weight_scaling_factor)
 
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
 
         x = x + identity
 
+        x = nn.ReLU()(x)
+
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, identity_weight_scaling_factor)
         else:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
-
-        x = nn.ReLU()(x)
 
         return x, act_scaling_factor
 

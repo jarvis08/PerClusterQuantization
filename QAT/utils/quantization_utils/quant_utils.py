@@ -249,12 +249,12 @@ def fake_quantization(x, bit, scale, weight_function):
 class STE(Function):
     @staticmethod
     def forward(ctx, original, fake_quantized):
-        with torch.no_grad():
-            return fake_quantized
+        # with torch.no_grad():
+        return fake_quantized.detach()
 
     @staticmethod
     def backward(ctx, grad_output):
-        return grad_output.clone(), None
+        return grad_output, None
 
 
 class ste_round(Function):
