@@ -60,7 +60,7 @@ if not args_qat.bit_classifier:
 #     args_qat.bit_addcat = args_qat.bit
 
 
-def set_func_for_target_arch(arch, is_pcq):
+def set_func_for_target_arch(arch, is_pcq, is_folded):
     tools = QuantizationTool()
     if arch == 'MLP':
         setattr(tools, 'pretrained_model_initializer', mlp)
@@ -89,11 +89,17 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
-        setattr(tools, 'quantizer', quantize_pcq_resnet)
         if is_pcq:
             setattr(tools, 'fuser', set_pcq_resnet)
+        elif is_folded:
+            setattr(tools, 'fuser', set_folded_fused_resnet)
         else:
             setattr(tools, 'fuser', set_fused_resnet)
+
+        if is_folded:
+            setattr(tools, 'quantizer', folded_quantize_pcq_resnet)
+        else:
+            setattr(tools, 'quantizer', quantize_pcq_resnet)
 
         if '50' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet50)
@@ -106,9 +112,15 @@ def set_func_for_target_arch(arch, is_pcq):
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
                 setattr(tools, 'fused_model_initializer', pcq_resnet20)
+            elif is_folded:
+                setattr(tools, 'fused_model_initializer', fused_resnet20_folded)
             else:
                 setattr(tools, 'fused_model_initializer', fused_resnet20)
-            setattr(tools, 'quantized_model_initializer', quantized_resnet20)
+
+            if is_folded:
+                setattr(tools, 'quantized_model_initializer', quantized_resnet20_folded)
+            else:
+                setattr(tools, 'quantized_model_initializer', quantized_resnet20)
 
     elif arch == 'MobileNetV3':
         setattr(tools, 'fuser', set_fused_mobilenet)
@@ -164,7 +176,7 @@ def main(args_daq, data_loaders, clustering_model):
             arch = 'DenseNet121'
 
         is_pcq = True if num_clusters > 1 else False
-        model_initializers = set_func_for_target_arch(arch, is_pcq)
+        model_initializers = set_func_for_target_arch(arch, is_pcq, args.fold_convbn)
         return arch, model_initializers
     args.arch, tools = specify_target_arch(args.arch, args.dataset, args.cluster)
 
