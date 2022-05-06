@@ -53,6 +53,7 @@ class QuantLinear(Module):
         self.counter = 0
 
         self.is_classifier = False
+        self.first_epoch = True
 
     def __repr__(self):
         s = super(QuantLinear, self).__repr__()
@@ -88,6 +89,9 @@ class QuantLinear(Module):
 
     def unfix(self):
         self.fix_flag = False
+
+    def start_fq(self):
+        self.first_epoch = False
 
     def forward(self, x, prev_act_scaling_factor=None):
         """
@@ -126,7 +130,11 @@ class QuantLinear(Module):
                 if self.quant_mode == 'symmetric':
                     self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
                                                                                     self.per_channel)
-                    weight = fake_quantization(self.weight, self.weight_bit, self.fc_scaling_factor, self.weight_function)
+                    if self.first_epoch == False:
+                        weight = fake_quantization(self.weight, self.weight_bit, self.fc_scaling_factor, 
+                                                torch.zeros_like(self.fc_scaling_factor, requires_grad=False), self.weight_function)
+                    else :
+                        weight = self.weight
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
@@ -204,6 +212,8 @@ class QuantAct(Module):
         self.act_percentile = act_percentile
         self.fixed_point_quantization = fixed_point_quantization
 
+        self.first_epoch = True
+
         self.register_buffer('x_min', torch.zeros(1))
         self.register_buffer('x_max', torch.zeros(1))
         self.register_buffer('act_scaling_factor', torch.zeros(1))
@@ -231,6 +241,9 @@ class QuantAct(Module):
         """
         self.running_stat = True
         self.fix_flag = False
+
+    def start_fq(self):
+        self.first_epoch = False
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
@@ -293,6 +306,7 @@ class QuantAct(Module):
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
                                                                            self.x_min, self.x_max, False)
+                self.act_zero_point = torch.zeros_like(self.act_scaling_factor, requires_grad=False)
             # Note that our asymmetric quantization is implemented using scaled unsigned integers
             # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
             # and the self.act_zero_point should be 0.
@@ -301,7 +315,8 @@ class QuantAct(Module):
                     self.activation_bit, self.x_min, self.x_max, True)
 
             if self.fix_flag == False:
-                x = fake_quantization(x, self.activation_bit, self.act_scaling_factor, self.act_function)
+                if self.first_epoch == False:
+                    x = fake_quantization(x, self.activation_bit, self.act_scaling_factor, self.act_zero_point, self.act_function)
                 return (x, self.act_scaling_factor)
             else:
                 if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
@@ -375,6 +390,7 @@ class QuantAct_Daq(QuantAct):
         self.register_buffer('isDaq', torch.ones(1, dtype=torch.bool))
 
         self.is_classifier = False
+        self.first_epoch = True
 
         self.init = False
 
@@ -397,6 +413,9 @@ class QuantAct_Daq(QuantAct):
         """
         self.running_stat = True
         self.fix_flag = False
+
+    def start_fq(self):
+        self.first_epoch = False
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
@@ -470,6 +489,7 @@ class QuantAct_Daq(QuantAct):
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
                                                                                self.x_min[cluster], self.x_max[cluster],
                                                                                False)
+                self.act_zero_point = torch.zeros_like(self.act_scaling_factor, requires_grad=False)
             # Note that our asymmetric quantization is implemented using scaled unsigned integers
             # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
             # and the self.act_zero_point should be 0.
@@ -478,7 +498,8 @@ class QuantAct_Daq(QuantAct):
                     self.activation_bit, self.x_min[cluster], self.x_max[cluster], True)
             
             if self.fix_flag == False:
-                x = fake_quantization(x, self.activation_bit, self.act_scaling_factor, self.act_function)
+                if self.first_epoch == False:
+                    x = fake_quantization(x, self.activation_bit, self.act_scaling_factor, self.act_zero_point, self.act_function)
                 return (x, self.act_scaling_factor)
             else:
                 if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
@@ -575,6 +596,7 @@ class QuantBnConv2d(Module):
         self.training_BN_mode = fix_BN
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
+        self.first_epoch = True
 
     def set_param(self, conv, bn):
         self.out_channels = conv.out_channels
@@ -608,6 +630,9 @@ class QuantBnConv2d(Module):
         """
         self.fix_flag = False
         self.fix_BN = self.training_BN_mode
+
+    def start_fq(self):
+        self.first_epoch = False
 
     def forward(self, x, pre_act_scaling_factor=None):
         """
@@ -645,7 +670,11 @@ class QuantBnConv2d(Module):
                     w_max = w_transform.max(dim=1).values
 
                     conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
-                    weight = fake_quantization(self.conv.weight, self.weight_bit, conv_scaling_factor, self.weight_function)
+                    if self.first_epoch == False:
+                        weight = fake_quantization(self.conv.weight, self.weight_bit, conv_scaling_factor, 
+                                                torch.zeros_like(conv_scaling_factor, requires_grad=False), self.weight_function)
+                    else:
+                        weight = self.conv.weight
                     conv_output = F.conv2d(x, weight, self.conv.bias, self.conv.stride, self.conv.padding,
                                         self.conv.dilation, self.conv.groups)
 
@@ -699,10 +728,16 @@ class QuantBnConv2d(Module):
                     if self.quant_mode == 'symmetric':
                         self.convbn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit,
                                                                                         w_min, w_max, self.per_channel)
-                        weight = fake_quantization(scaled_weight, self.weight_bit, self.convbn_scaling_factor, self.weight_function)
-                        if self.quantize_bias:
-                            bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,-1)
-                            bias = fake_quantization(scaled_bias, self.bias_bit, bias_scaling_factor, self.weight_function)
+                        if self.first_epoch == False:
+                            weight = fake_quantization(scaled_weight, self.weight_bit, self.convbn_scaling_factor, 
+                                                    torch.zeros_like(self.convbn_scaling_factor, requires_grad=False), self.weight_function)
+                            if self.quantize_bias:
+                                bias_scaling_factor = self.convbn_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1,-1)
+                                bias = fake_quantization(scaled_bias, self.bias_bit, bias_scaling_factor, 
+                                                        torch.zeros_like(bias_scaling_factor, requires_grad=False), self.weight_function)
+                        else:
+                            weight = scaled_weight
+                            bias = scaled_bias
                     else:
                         raise Exception('For weight, we only support symmetric quantization.')
 
@@ -830,6 +865,7 @@ class QuantBn(Module):
         self.training_BN_mode = fix_BN
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
+        self.first_epoch = True
 
     def set_param(self, bn):
         self.bn = bn
@@ -860,6 +896,9 @@ class QuantBn(Module):
         """
         self.fix_flag = False
         self.fix_BN = self.training_BN_mode
+
+    def start_fq(self):
+        self.first_epoch = False
 
     def forward(self, x, pre_act_scaling_factor=None):
         if type(x) is tuple:
@@ -899,7 +938,11 @@ class QuantBn(Module):
             if self.fix_flag == False:
                 if self.quant_mode == 'symmetric':
                     self.bn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max)
-                    weight = fake_quantization(scaled_weight, self.weight_bit, self.bn_scaling_factor, self.weight_function)
+                    if self.first_epoch == False:
+                        weight = fake_quantization(scaled_weight, self.weight_bit, self.bn_scaling_factor, 
+                                                torch.zeros_like(bn_scaling_factor, requires_grad=False), self.weight_function)
+                    else:
+                        weight = scaled_weight
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
@@ -1178,7 +1221,11 @@ class QuantConv2d(Module):
             if self.fix_flag == False:
                 self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
                                                                                 self.per_channel)
-                weight = fake_quantization(self.weight, self.weight_bit, self.conv_scaling_factor, self.weight_function)
+                if self.first_epoch == False:
+                    weight = fake_quantization(self.weight, self.weight_bit, self.conv_scaling_factor, 
+                                            torch.zeros_like(self.conv_scaling_factor, requires_grad=False), self.weight_function)
+                else:
+                    weight = self.weight
                 return F.conv2d(x, weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None
                 
             else:
@@ -1199,6 +1246,25 @@ class QuantConv2d(Module):
                                 self.conv.dilation, self.conv.groups)) * correct_output_scale, self.conv_scaling_factor)
         return (F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None)
 
+def first_epoch_done(model):
+    if type(model) == QuantAct:
+        model.start_fq()
+    elif type(model) == QuantAct_Daq:
+        model.start_fq()
+    elif type(model) == QuantConv2d:
+        model.start_fq()
+    elif type(model) == QuantLinear:
+        model.start_fq()
+    elif type(model) == QuantBnConv2d:
+        model.start_fq()
+    elif type(model) == nn.Sequential:
+        for n, m in model.named_children():
+            first_epoch_done(m)
+    else:
+        for attr in dir(model):
+            mod = getattr(model, attr)
+            if isinstance(mod, nn.Module) and 'norm' not in attr:
+                first_epoch_done(mod)
 
 def freeze_model(model):
     """

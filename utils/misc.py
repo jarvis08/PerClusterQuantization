@@ -13,6 +13,7 @@ import logging
 import random
 
 from HAWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
+from QAT.utils.quantization_utils.quant_modules import first_epoch_done
 
 class RuntimeHelper(object):
     """
@@ -281,6 +282,9 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
         model.eval()
     else:
         model.train()
+        
+    if epoch == 1:
+        first_epoch_done(model)
 
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
                                clustering_model.args.dataset, clustering_model.args.batch)
@@ -317,8 +321,7 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    if clustering_model.args.quant_base == 'hawq':
-        freeze_model(model)
+    freeze_model(model)
     model.eval()
 
     container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,

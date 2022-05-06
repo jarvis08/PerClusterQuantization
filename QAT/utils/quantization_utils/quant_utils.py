@@ -240,10 +240,10 @@ def batch_frexp(inputs):
     return output_m.view(shape_of_input), output_e.view(shape_of_input)
 
 
-def fake_quantization(x, bit, scale, weight_function):
+def fake_quantization(x, bit, scale, zero_point, weight_function):
     _x = x.detach()
-    _x = weight_function(x, bit, scale)
-    _x = linear_dequantize(_x, scale, torch.zeros_like(scale, requires_grad=False))
+    _x = weight_function(x, bit, scale, zero_point)
+    _x = linear_dequantize(_x, scale, zero_point)
     return STE.apply(x, _x)
 
 class STE(Function):
@@ -277,7 +277,7 @@ class SymmetricQuantFunction(Function):
     """
 
     @staticmethod
-    def forward(ctx, x, k, specified_scale=None):
+    def forward(ctx, x, k, specified_scale=None, specified_zero_point=None):
         """
         x: floating point tensor to be quantized
         k: quantization bitwidth

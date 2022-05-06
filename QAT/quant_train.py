@@ -540,6 +540,9 @@ def train(train_loader, model, criterion, optimizer, epoch, logger, args):
         model.eval()
     else:
         model.train()
+    
+    if epoch == 1:
+        first_epoch_done(model)
 
     end = time.time()
     with tqdm(train_loader, desc="Epoch {}".format(epoch), ncols=105) as t:
@@ -710,12 +713,12 @@ def validate(val_loader, model, criterion, args):
 
         logging.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
 
-    torch.save({'convbn_scaling_factor': {k: v for k, v in model.state_dict().items() if 'convbn_scaling_factor' in k},
-                'fc_scaling_factor': {k: v for k, v in model.state_dict().items() if 'fc_scaling_factor' in k},
-                'weight_integer': {k: v for k, v in model.state_dict().items() if 'weight_integer' in k},
-                'bias_integer': {k: v for k, v in model.state_dict().items() if 'bias_integer' in k},
-                'act_scaling_factor': {k: v for k, v in model.state_dict().items() if 'act_scaling_factor' in k},
-                }, args.save_path + 'quantized_checkpoint.pth.tar')
+    # torch.save({'convbn_scaling_factor': {k: v for k, v in model.state_dict().items() if 'convbn_scaling_factor' in k},
+    #             'fc_scaling_factor': {k: v for k, v in model.state_dict().items() if 'fc_scaling_factor' in k},
+    #             'weight_integer': {k: v for k, v in model.state_dict().items() if 'weight_integer' in k},
+    #             'bias_integer': {k: v for k, v in model.state_dict().items() if 'bias_integer' in k},
+    #             'act_scaling_factor': {k: v for k, v in model.state_dict().items() if 'act_scaling_factor' in k},
+    #             }, args.save_path + 'quantized_checkpoint.pth.tar')
 
     unfreeze_model(model)
 
