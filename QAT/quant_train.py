@@ -252,7 +252,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         arch = args.arch.lower()
         if 'resnet20' in arch:
             return "resnet20"
-        else
+        else:
             return arch
 
     def create_model(args):
