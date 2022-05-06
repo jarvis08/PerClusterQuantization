@@ -111,30 +111,21 @@ class FoldedFusedBottleneck(nn.Module):
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
 
-        if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
-        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn1 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
-        self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
-                                   a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn2 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
-        self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion,
-                                   a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn3 = FusedBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
+        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, norm_layer=self._norm_layer, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
+        self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation, norm_layer=self._norm_layer, activation=nn.ReLU,
+                                   a_bit=target_bit, arg_dict=arg_dict)
+        self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion, norm_layer=self._norm_layer,
+                                   a_bit=bit_addcat, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         identity = x
         out = self.conv1(x)
-        out = self.bn1(out)
         out = self.conv2(out)
-        out = self.bn2(out)
         out = self.conv3(out)
-        out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
-            identity = self.bn_down(identity)
 
         out += identity
         out = self.relu(out)
@@ -158,15 +149,11 @@ class FoldedFusedBottleneck(nn.Module):
         self.M0, self.shift = quantize_M(self.s1 / self.s_target)
 
         if self.downsample:
-            prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
-            self.bn_down.set_qparams(prev_s, prev_z)
+            self.downsample.set_qparams(s_target, z_target)
 
         prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
-        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
-        self.bn3.set_qparams(prev_s, prev_z)
+        self.conv3.set_qparams(prev_s, prev_z)
 
         self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
         nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
@@ -205,7 +192,7 @@ class FoldedFusedResNet(nn.Module):
         self.base_width = width_per_group
 
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                      w_bit=bit_first, a_bit=self.bit_addcat, arg_dict=arg_dict)
+                                      w_bit=bit_first, norm_layer=self._norm_layer, activation=nn.ReLU, a_bit=self.bit_addcat, arg_dict=arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
@@ -225,14 +212,14 @@ class FoldedFusedResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict,
-                                       a_bit=self.bit_addcat)
+                                       norm_layer=self._norm_layer, a_bit=self.bit_addcat)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
-                            base_width=self.base_width, dilation=previous_dilation, arg_dict=self.arg_dict))
+                            base_width=self.base_width, dilation=previous_dilation, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
+            layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width, norm_layer=self._norm_layer,
                                 dilation=self.dilation, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
@@ -248,7 +235,6 @@ class FoldedFusedResNet(nn.Module):
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         x = self.first_conv(x)
-        x = self.bn1(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -263,10 +249,8 @@ class FoldedFusedResNet(nn.Module):
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
-
-        s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit)
+        s1, z1 = self.first_conv.set_qparams(self.scale, self.zero_point)
+        s_target, z_target = calc_qparams(self.first_conv.act_range[0], self.first_conv.act_range[1], self.target_bit)
 
         blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
         for block in blocks:
