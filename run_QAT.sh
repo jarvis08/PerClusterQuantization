@@ -17,13 +17,11 @@ DATASET=${3}
 BATCH=${4}               # 128 / 64 / 32
 LEARNING_RATE=${5}     # 0.001 / 0.0001      
 
-RESIDUAL=${6}
+FIRST_RUN=${6}          # true / false
 
-FIRST_RUN=${7}          # true / false
-
-CLUSTER=${8}                # 16 / 8 / 4 / 2
-SUB_CLUSTER=${9}            # 32 / 16 / 8 / 4
-SIM_METHOD=${10}           # and / jaccard
+CLUSTER=${7}                # 16 / 8 / 4 / 2
+SUB_CLUSTER=${8}            # 32 / 16 / 8 / 4
+SIM_METHOD=${9}           # and / jaccard
 
 REPR_METHOD="max"       # FIXED TO MAX
 
@@ -46,7 +44,6 @@ if [ -z ${CLUSTER} ]; then
             --pretrained \
             --channel-wise true \
             --quant-scheme uniform4 \
-            --resize-qbit $RESIDUAL \
             --gpu 0 \
             --data $DATASET \
             --batch-size $BATCH
@@ -88,7 +85,6 @@ else
                 --pretrained \
                 --channel-wise true \
                 --quant-scheme uniform4 \
-                --resize_qbit $RESIDUAL \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
@@ -140,7 +136,6 @@ else
                 --pretrained \
                 --channel-wise true \
                 --quant-scheme uniform4 \
-                --resize_qbit $RESIDUAL \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
