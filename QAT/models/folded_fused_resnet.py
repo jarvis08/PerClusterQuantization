@@ -94,11 +94,12 @@ class FoldedFusedBottleneck(nn.Module):
     expansion: int = 4
 
     def __init__(self, inplane: int, planes: int, stride: int = 1, downsample=None,
-                 groups: int = 1, base_width: int = 64, dilation: int = 1, a_bit=None, arg_dict=None) -> None:
+                 groups: int = 1, base_width: int = 64, dilation: int = 1, norm_layer=None, arg_dict=None) -> None:
         super(FoldedFusedBottleneck, self).__init__()
 
         self.downsample = downsample
         self.stride = stride
+        self._norm_layer = norm_layer
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
@@ -175,6 +176,7 @@ class FoldedFusedResNet(nn.Module):
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
+        self._norm_layer = nn.BatchNorm2d
         self.inplanes = 64
         self.dilation = 1
         self.num_blocks = 4
