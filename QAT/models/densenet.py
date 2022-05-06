@@ -95,6 +95,65 @@ class _DenseLayer(nn.Module):
                                      training=self.training)
         return new_features
 
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx):
+        if isinstance(x, Tensor):
+            prev_features = [x]
+        else:
+            prev_features = x
+
+        x = torch.cat(prev_features, 1)
+
+        if not self.initialized:
+            self.initialized = True
+            _x = x[0].unsqueeze(0)
+
+            out = self.norm1(_x)
+            out = self.relu1(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+            out = self.conv1(out)
+            out = self.norm2(out)
+            out = self.relu2(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+            out = self.conv2(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        out = self.norm1(x)
+        out = self.relu1(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        out = self.conv1(out)
+        out = self.norm2(out)
+        out = self.relu2(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        out = self.conv2(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        return out, l_idx
+
 
 class _DenseBlock(nn.ModuleDict):
     _version = 2
@@ -126,6 +185,13 @@ class _DenseBlock(nn.ModuleDict):
             features.append(new_features)
         return torch.cat(features, 1)
 
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx):
+        features = [x]
+        for name, layer in self.items():
+            new_features, l_idx = layer.count_zeros_per_index(features, cluster, n_clusters, zero_counter, l_idx)
+            features.append(new_features)
+        return torch.cat(features, 1), l_idx
+
 
 class _Transition(nn.Sequential):
     def __init__(self, num_input_features: int, num_output_features: int) -> None:
@@ -135,6 +201,41 @@ class _Transition(nn.Sequential):
         self.add_module('conv', nn.Conv2d(num_input_features, num_output_features,
                                           kernel_size=1, stride=1, bias=False))
         self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
+
+    def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx):
+        if not self.initialized:
+            self.initialized = True
+            _x = x[0].unsqueeze(0)
+
+            out = self.norm(_x)
+            out = self.relu(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+            out = self.conv(out)
+            n_features = out.view(-1).size(0)
+            zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        out = self.norm(x)
+        out = self.relu(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        out = self.conv(out)
+        l_idx += 1
+        n_features = zero_counter[l_idx].size(1)
+        for i in range(out.size(0)):
+            flattened = out[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        return out, l_idx
 
 
 class DenseNet(nn.Module):
@@ -217,6 +318,30 @@ class DenseNet(nn.Module):
         out = torch.flatten(out, 1)
         out = self.classifier(out)
         return out
+
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        x = self.features[0](x)  # conv
+        x = self.features[1](x)  # bn
+        x = self.features[2](x)  # relu
+
+        if not hasattr(self, 'zero_counter'):
+            n_features = x.view(-1).size(0)
+            self.zero_counter = []
+            self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+        l_idx = 0
+        n_features = self.zero_counter[l_idx].size(1)
+        for i in range(x.size(0)):
+            flattened = x[i].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[l_idx][cluster, zeros_idx] += 1
+
+        for idx in range(3, len(self.features)):
+            if isinstance(self.features[idx], _DenseBlock) or isinstance(self.features[idx], _Transition):
+                x, l_idx = self.features[idx].count_zeros_per_index(x, cluster, n_clusters, self.zero_counter, l_idx)
+            else:
+                x = self.features[idx](x)
 
 
 def _load_state_dict(model: nn.Module, model_url: str, progress: bool) -> None:

@@ -24,7 +24,7 @@ class FusedDenseLayer(nn.Module):
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         self.bn1 = FusedBnReLU(num_input_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
@@ -64,12 +64,12 @@ class FusedTransition(nn.Sequential):
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         self.bn = FusedBnReLU(num_input_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
         self.conv = FusedConv2d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False,
-                                arg_dict=arg_dict, a_bit=bit_conv_act)
+                                arg_dict=arg_dict, a_bit=bit_addcat)
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x, next_block_range):
@@ -101,7 +101,7 @@ class FusedDenseBlock(nn.ModuleDict):
         self.num_layers = num_layers
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit_conv_act, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
@@ -153,7 +153,7 @@ class FusedDenseNet(nn.Module):
     ) -> None:
         super(FusedDenseNet, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
+        target_bit, bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster',
                          'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
@@ -166,7 +166,7 @@ class FusedDenseNet(nn.Module):
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('first_conv', FusedConv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False,
-                                       w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)),
+                                       w_bit=bit_first, a_bit=bit_conv_act, arg_dict=arg_dict)),
             ('first_norm', FusedBnReLU(num_init_features, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)),
             ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         ]))
