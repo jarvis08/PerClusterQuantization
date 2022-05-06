@@ -43,8 +43,8 @@ class QuantizedConv2d(nn.Conv2d):
             self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         if self.fold_convbn:
-            self.folded_weight = None
-            self.folded_bias = None
+            self.folded_weight = nn.Parameter(torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
+            self.folded_bias = nn.Parameter(torch.zeros(out_channels))
 
     def forward(self, x):
         x, out = self._conv_impl(x)
