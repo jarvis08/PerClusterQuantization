@@ -150,7 +150,7 @@ parser.add_argument('--channel-wise',
                     help='whether to use channel-wise quantizaiton or not')
 parser.add_argument('--resize-qbit',
                     type=str,
-                    default="True",
+                    default="False",
                     help='for residual tensor, true when high bit')
 
 parser.add_argument('--bias-bit',
