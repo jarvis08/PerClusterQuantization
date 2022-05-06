@@ -148,6 +148,10 @@ parser.add_argument('--channel-wise',
                     type=bool,
                     default=True,
                     help='whether to use channel-wise quantizaiton or not')
+parser.add_argument('--resize-qbit',
+                    type=str,
+                    default="True",
+                    help='for residual tensor, true when high bit')
 
 parser.add_argument('--bias-bit',
                     type=int,
@@ -176,9 +180,7 @@ parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
-                      'resnet20_cifar10': q_resnet20,
-                      'resnet20_cifar100': q_resnet20,
-                      'resnet20_svhn': q_resnet20,
+                      'resnet20': q_resnet20,
                       'alexnet': q_alexnet,
                       'densenet121': q_densenet,
                       'inceptionv3': q_inceptionv3,
@@ -245,6 +247,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             return "densenet121"
         else:
             return arch
+
+    def reset_args_arch(args):
+        arch = args.arch.lower()
+        if 'resnet20' in arch:
+            return "resnet20"
 
     def create_model(args):
         # pretrained = args.pretrained and not args.resume
@@ -359,7 +366,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     def get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper):
         if args.arch.lower() == 'alexnet':
             return quantize_arch(model, model_dict, runtime_helper)
-        return quantize_arch(model, runtime_helper)
+        print(args.resize_qbit)
+        return quantize_arch(model, args.resize_qbit, runtime_helper)
 
     def set_quantize_param(args, model, bit_config):
         name_counter = 0
@@ -421,6 +429,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     prev_arch = args.arch
     args.arch = set_args_arch(args)
     model, teacher = create_model(args)  # Create Model
+    args.arch = reset_args_arch(args)
+    if "true" not in args.resize_qbit.lower():
+        args.resize_qbit = False
+    else:
+        args.resize_qbit = True
     model_dict = transfer_param(args, model) if args.transfer_param else None
     model = eval_resume(args, model)
     runtime_helper = set_runtime_helper(args)
@@ -428,8 +441,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     quantize_arch = quantize_arch_dict[args.arch]
     model = get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper)
 
-    bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
-
+    if "resnet20" in args.arch and args.resize_qbit:
+        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme + "_resize"]
+    else:
+        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     model = set_quantize_param(args, model, bit_config)
 
     logging.info(model)
