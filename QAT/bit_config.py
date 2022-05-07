@@ -22,10 +22,9 @@ bit_config_dict = {
     'quant_act6': 4,
 
     'fc2': 4,
-    'quant_act7': 4,
+    'quant_act7': 8,
 
     'fc3': 8
-
 },
 
 
