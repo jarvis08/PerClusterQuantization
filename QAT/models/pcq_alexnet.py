@@ -113,7 +113,7 @@ class PCQAlexNetSmall(nn.Module):
         self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.fc1 = PCQLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict)
         self.fc3 = PCQLinear(4096, num_classes, bias=True, is_classifier=True,
                              w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
