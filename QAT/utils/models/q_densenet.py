@@ -44,12 +44,10 @@ class Q_DenseNet(nn.Module):
         self.batch_norm.set_param(post_activ.bn)
 
         self.act2 = nn.ReLU(inplace=True)
-        self.quant_act2 = QuantAct()
 
+        self.quant_act_output = QuantAct()
         self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
      
-        self.quant_act_output = QuantAct()
-
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
         self.quant_output.is_classifier = True
@@ -73,10 +71,9 @@ class Q_DenseNet(nn.Module):
 
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
         x = self.act2(x)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
 
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
 
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
@@ -211,11 +208,9 @@ class Q_DenseNet_Daq(nn.Module):
         self.batch_norm.set_param(post_activ.bn)
 
         self.act2 = nn.ReLU(inplace=True)
-        self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
+        self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
-     
-        self.quant_act_output = QuantAct_Daq(runtime_helper=runtime_helper)
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
@@ -240,10 +235,9 @@ class Q_DenseNet_Daq(nn.Module):
 
         x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
         x = self.act2(x)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, bn_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
 
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
 
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)

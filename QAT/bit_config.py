@@ -22,7 +22,7 @@ bit_config_dict = {
     'quant_act6': 4,
 
     'fc2': 4,
-    'quant_act7': 8,
+    'quant_act7': 4,
 
     'fc3': 8
 
@@ -460,7 +460,6 @@ bit_config_dict = {
     'stage4.unit16.quant_act_output': 16,
 
     'batch_norm': 16,
-    'quant_act2': 8,
     'quant_act_output': 8,
     'quant_output': 8,
 },
