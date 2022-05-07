@@ -800,10 +800,10 @@ class QuantBn(Module):
                 biases.append(self.bn.bias.clone().detach().cuda())
                 running_means.append(self.bn.running_mean.clone().detach().cuda())
                 running_vars.append(self.bn.running_var.clone().detach().cuda())
-            self.bn.weight = weights
-            self.bn.bias = biases
-            self.bn.running_mean = running_means
-            self.bn.running_var = running_vars
+            self.weights = weights
+            self.biases = biases
+            self.running_means = running_means
+            self.running_vars = running_vars
         self.bn.momentum = 0.99
 
         self.register_buffer('bn_scaling_factor', torch.zeros(1))
