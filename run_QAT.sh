@@ -40,9 +40,7 @@ if [ -z ${CLUSTER} ]; then
             --lr $LEARNING_RATE \
             --act-range-momentum 0.99 \
             --wd 1e-4 \
-            --fix-BN \
             --pretrained \
-            --channel-wise true \
             --quant-scheme uniform4 \
             --gpu 0 \
             --data $DATASET \
@@ -58,9 +56,7 @@ if [ -z ${CLUSTER} ]; then
             --lr $LEARNING_RATE \
             --act-range-momentum 0.99 \
             --wd 1e-4 \
-            --fix-BN \
             --pretrained \
-            --channel-wise true \
             --quant-scheme uniform4 \
             --gpu 0 \
             --data $DATASET \
@@ -81,9 +77,7 @@ else
                 --lr $LEARNING_RATE \
                 --act-range-momentum 0.99 \
                 --wd 1e-4 \
-                --fix-BN \
                 --pretrained \
-                --channel-wise true \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -104,9 +98,7 @@ else
                 --lr $LEARNING_RATE \
                 --act-range-momentum 0.99 \
                 --wd 1e-4 \
-                --fix-BN \
                 --pretrained \
-                --channel-wise true \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -132,9 +124,7 @@ else
                 --lr $LEARNING_RATE \
                 --act-range-momentum 0.99 \
                 --wd 1e-4 \
-                --fix-BN \
                 --pretrained \
-                --channel-wise true \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
@@ -156,9 +146,7 @@ else
                 --lr $LEARNING_RATE \
                 --act-range-momentum 0.99 \
                 --wd 1e-4 \
-                --fix-BN \
                 --pretrained \
-                --channel-wise true \
                 --quant-scheme uniform4 \
                 --gpu 0 \
                 --cluster ${CLUSTER} \
