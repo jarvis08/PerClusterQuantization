@@ -11,6 +11,75 @@ from pytorchcv.models.shufflenetv2 import ShuffleUnit, ShuffleInitBlock
 
 
 
+class Q_ResNet20(nn.Module):
+    """
+        Quantized ResNet20 model for dataset CIFAR100, CIFAR10
+    """
+    def __init__(self, model, resize_qbit):
+        super().__init__()
+        features = getattr(model, 'features')
+        init_block = getattr(features, 'init_block')
+
+        self.quant_input = QuantAct()
+
+        self.quant_init_block_convbn = QuantBnConv2d()
+        self.quant_init_block_convbn.set_param(init_block.conv, init_block.bn)
+
+        self.quant_act_int32 = QuantAct()
+        self.resize_qbit = resize_qbit
+        self.act = nn.ReLU()
+
+        self.channel = [3, 3, 3]
+
+        for stage_num in range(0, 3):
+            stage = getattr(features, "stage{}".format(stage_num + 1))
+            for unit_num in range(0, self.channel[stage_num]):
+                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
+                quant_unit = Q_ResBlockBn()
+                quant_unit.set_param(unit, resize_qbit=self.resize_qbit)
+                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
+
+        self.quant_act_output = QuantAct()
+        self.final_pool = QuantAveragePool2d(kernel_size=8, stride=1)
+
+        output = getattr(model, 'output')
+        self.quant_output = QuantLinear()
+        self.quant_output.is_classifier = True
+        self.quant_output.set_param(output)
+
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
+    def forward(self, x):
+        x, act_scaling_factor = self.quant_input(x)
+
+        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
+
+        x = self.act(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
+
+        for stage_num in range(0,3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
+
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
+
+        x = x.view(x.size(0), -1)
+        x = self.quant_output(x, act_scaling_factor)
+
+        return x
+
+
 class Q_ResNet20_Daq(nn.Module):
     """
         Quantized ResNet20 model for dataset CIFAR100, CIFAR10
@@ -122,75 +191,6 @@ class Q_ResNet20_Daq(nn.Module):
                 setattr(module, 'full_precision_flag', precision)
 
 
-class Q_ResNet20(nn.Module):
-    """
-        Quantized ResNet20 model for dataset CIFAR100, CIFAR10
-    """
-    def __init__(self, model, resize_qbit):
-        super().__init__()
-        features = getattr(model, 'features')
-        init_block = getattr(features, 'init_block')
-
-        self.quant_input = QuantAct()
-
-        self.quant_init_block_convbn = QuantBnConv2d()
-        self.quant_init_block_convbn.set_param(init_block.conv, init_block.bn)
-
-        self.quant_act_int32 = QuantAct()
-        self.resize_qbit = resize_qbit
-        self.act = nn.ReLU()
-
-        self.channel = [3, 3, 3]
-
-        for stage_num in range(0, 3):
-            stage = getattr(features, "stage{}".format(stage_num + 1))
-            for unit_num in range(0, self.channel[stage_num]):
-                unit = getattr(stage, 'unit{}'.format(unit_num + 1))
-                quant_unit = Q_ResBlockBn()
-                quant_unit.set_param(unit, resize_qbit=self.resize_qbit)
-                setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
-
-        self.quant_act_output = QuantAct()
-        self.final_pool = QuantAveragePool2d(kernel_size=8, stride=1)
-
-        output = getattr(model, 'output')
-        self.quant_output = QuantLinear()
-        self.quant_output.is_classifier = True
-        self.quant_output.set_param(output)
-
-    def toggle_full_precision(self):
-        print('Model Toggle full precision FUNC')
-        for module in self.modules():
-            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantConv2d)):
-                precision = getattr(module, 'full_precision_flag')
-                if precision:
-                    precision = False
-                else:
-                    precision = True
-                setattr(module, 'full_precision_flag', precision)
-
-    def forward(self, x):
-        x, act_scaling_factor = self.quant_input(x)
-
-        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-
-        x = self.act(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
-
-        for stage_num in range(0,3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
-
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
-
-        return x
-
-
 class Q_ResNet50(nn.Module):
     """
         Quantized ResNet50 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
@@ -220,10 +220,8 @@ class Q_ResNet50(nn.Module):
                 quant_unit.set_param(unit)
                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
 
-        self.quant_act = QuantAct()
-        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1, padding=0)
-
         self.quant_act_output = QuantAct()
+        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1, padding=0)
 
         output = getattr(model, 'output')
         self.quant_output = QuantLinear()
@@ -409,13 +407,11 @@ class Q_ResUnitBn_Daq(nn.Module):
 
     def forward(self, x, scaling_factor_int32=None):
         # forward using the quantized modules
+        act_scaling_factor = scaling_factor_int32.clone() if scaling_factor_int32 is not None else None
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
-            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, scaling_factor_int32)
         else:
             identity = x
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
         x = self.act1(x)
@@ -429,12 +425,12 @@ class Q_ResUnitBn_Daq(nn.Module):
 
         x = x + identity
 
+        x = self.act3(x)
+
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
-
-        x = self.act3(x)
 
         return x, act_scaling_factor
 
@@ -554,13 +550,11 @@ class Q_ResUnitBn(nn.Module):
 
     def forward(self, x, scaling_factor_int32=None):
         # forward using the quantized modules
+        act_scaling_factor = scaling_factor_int32.clone() if scaling_factor_int32 is not None else None
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
-            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, scaling_factor_int32)
         else:
             identity = x
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
         x = nn.ReLU()(x)
@@ -574,12 +568,12 @@ class Q_ResUnitBn(nn.Module):
 
         x = x + identity
 
+        x = nn.ReLU()(x)
+
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, identity_weight_scaling_factor)
         else:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
-
-        x = nn.ReLU()(x)
 
         return x, act_scaling_factor
 
