@@ -368,6 +368,7 @@ class PCQConv2d(nn.Module):
                     else:
                         s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
                     folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
+
         return STE.apply(general_out, folded_out)
 
 
@@ -564,7 +565,7 @@ class FusedConv2d(nn.Module):
             return self._general(x, external_range)
 
     def _general(self, x, external_range=None):
-        # zero = self.runtime_helper.fzero
+        zero = self.runtime_helper.fzero
         if self.per_channel:
             w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
