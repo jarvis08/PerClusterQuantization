@@ -1364,10 +1364,6 @@ class QuantConv2d(Module):
                 self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
                                                                                 self.per_channel)
                 weight = fake_quantization(self.weight, self.weight_bit, self.conv_scaling_factor, self.weight_function)
-                if self.quantize_bias and (self.bias is not None):
-                    bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
-                    bias = fake_quantization(self.bias, self.bias_bit, bias_scaling_factor, self.weight_function)
-                    return F.conv2d(x, weight, bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None 
                 return F.conv2d(x, weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None
                 
             else:
