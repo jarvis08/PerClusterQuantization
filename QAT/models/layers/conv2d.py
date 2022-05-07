@@ -381,8 +381,7 @@ class PCQConv2d(nn.Module):
         else:
             w = self.conv.weight.detach()
             s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
-            w = fake_quantize(self.conv.weight, s, z, self.w_bit,
-                              symmetric=self.symmetric, use_ste=self.use_ste)
+            w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
         # if not self.quant_noise:
         #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, use_ste=self.use_ste)
         # else:
@@ -422,7 +421,7 @@ class PCQConv2d(nn.Module):
                     s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
                 else:
                     s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
-                out = fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
         return out
 
 
