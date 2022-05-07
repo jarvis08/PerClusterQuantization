@@ -73,7 +73,7 @@ class PCQBasicBlock(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         if self.runtime_helper.undo_gema:
-            _max = x.max.item()
+            _max = x.max().item()
         else:
             data = x.view(x.size(0), -1)
             _max = data.max(dim=1).values.mean()
@@ -176,7 +176,7 @@ class PCQBottleneck(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         if self.runtime_helper.undo_gema:
-            _max = x.max.item()
+            _max = x.max().item()
         else:
             data = x.view(x.size(0), -1)
             _max = data.max(dim=1).values.mean()
@@ -417,7 +417,7 @@ class PCQResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
 
     @torch.no_grad()

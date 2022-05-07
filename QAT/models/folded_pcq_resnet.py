@@ -22,7 +22,7 @@ def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, ac
 class FoldedPCQBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, arg_dict=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, norm_layer=None, groups=1, base_width=64, dilation=1, arg_dict=None):
         super(FoldedPCQBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -31,6 +31,7 @@ class FoldedPCQBasicBlock(nn.Module):
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.downsample = downsample
         self.stride = stride
+        self._norm_layer = norm_layer
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
@@ -66,7 +67,7 @@ class FoldedPCQBasicBlock(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         if self.runtime_helper.undo_gema:
-            _max = x.max.item()
+            _max = x.max().item()
         else:
             data = x.view(x.size(0), -1)
             _max = data.max(dim=1).values.mean()
@@ -108,13 +109,14 @@ class FoldedPCQBottleneck(nn.Module):
     expansion: int = 4
 
     def __init__(
-            self, inplanes: int, planes: int, stride: int = 1, downsample = None,
+            self, inplanes: int, planes: int, stride: int = 1, downsample = None, norm_layer=None,
             groups: int = 1, base_width: int = 64, dilation: int = 1, arg_dict = None
     ) -> None:
         super(FoldedPCQBottleneck, self).__init__()
 
         self.downsample = downsample
         self.stride = stride
+        self._norm_layer = norm_layer
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
@@ -156,7 +158,7 @@ class FoldedPCQBottleneck(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         if self.runtime_helper.undo_gema:
-            _max = x.max.item()
+            _max = x.max().item()
         else:
             data = x.view(x.size(0), -1)
             _max = data.max(dim=1).values.mean()
@@ -195,8 +197,7 @@ class FoldedPCQBottleneck(nn.Module):
 
 
 class FoldedPCQResNet(nn.Module):
-    def __init__(self, block, layers, arg_dict, num_classes=1000, groups=1, \
-                 width_per_group=64, replace_stride_with_dilation=None):
+    def __init__(self, block, layers, arg_dict, num_classes=1000, groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FoldedPCQResNet, self).__init__()
         self.arg_dict = arg_dict
         target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
@@ -297,9 +298,8 @@ class FoldedPCQResNet(nn.Module):
     def set_quantization_params(self):
         zero = self.runtime_helper.fzero
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
-        prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
-        s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, zero)
+        s1, z1 = self.first_conv.set_qparams(self.scale, self.zero_point)
+        s_target, z_target = calc_qparams_per_cluster(self.first_conv.act_range, self.target_bit, zero)
 
         blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
         for block in blocks:
@@ -398,10 +398,8 @@ class FoldedPCQResNet20(nn.Module):
     def set_quantization_params(self):
         zero = self.runtime_helper.fzero
         self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
-        prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
-
-        s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, zero)
+        s1, z1 = self.first_conv.set_qparams(self.scale, self.zero_point)
+        s_target, z_target = calc_qparams_per_cluster(self.first_conv.act_range, self.target_bit, zero)
 
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:
@@ -436,7 +434,7 @@ def set_folded_pcq_resnet(fused, pre):
     """
     bn_momentum = fused.arg_dict['bn_momentum']
     num_clusters = fused.arg_dict['cluster']
-    num_norms = num_clusters if fused.arg_dict['multi_bn'] else 1
+    num_norms = num_clusters if fused.arg_dict['multi_norm'] else 1
     # First layer
     fused.first_conv = folded_pcq_copy_from_pretrained(fused.first_conv, pre.conv1, pre.bn1, bn_momentum, num_norms)
 

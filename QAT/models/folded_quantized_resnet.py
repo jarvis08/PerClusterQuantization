@@ -264,7 +264,7 @@ class FoldedQuantizedResNet20(nn.Module):
 
         x = self.avgpool(x.type(torch.cuda.FloatTensor))
         # x = x.floor()
-        # x = x.trunc()
+        x = x.trunc()
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:

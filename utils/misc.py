@@ -246,7 +246,6 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-            # if i == 20: break
 
 
 def validate(model, test_loader, criterion, logger=None, hvd=None):
@@ -266,7 +265,6 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
                 top1.update(prec.item(), input.size(0))
 
                 t.set_postfix(loss=losses.avg, acc=top1.avg)
-                # if i == 20: break
 
     if logger:
         if hvd:
@@ -353,21 +351,21 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
                 if container.ready_cluster is None:
                     break
 
-            container.check_leftover()
-            for c in range(container.num_clusters):
-                if container.leftover_cluster_data[c]:
-                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
-                    input, target = input.cuda(), target.cuda()
-                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
-
-                    output = model(input)
-
-                    loss = criterion(output, target)
-                    prec = accuracy(output, target)[0]
-                    losses.update(loss.item(), input.size(0))
-                    top1.update(prec.item(), input.size(0))
-
-                    t.set_postfix(loss=losses.avg, acc=top1.avg)
+            # container.check_leftover()
+            # for c in range(container.num_clusters):
+            #     if container.leftover_cluster_data[c]:
+            #         input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
+            #         input, target = input.cuda(), target.cuda()
+            #         runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
+            #
+            #         output = model(input)
+            #
+            #         loss = criterion(output, target)
+            #         prec = accuracy(output, target)[0]
+            #         losses.update(loss.item(), input.size(0))
+            #         top1.update(prec.item(), input.size(0))
+            #
+            #         t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     if logger:
         if hvd:

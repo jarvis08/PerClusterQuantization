@@ -45,9 +45,10 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.fold_convbn:
             if self.num_clusters > 1:
-                self.num_norms = self.num_clusters if self.multi_norm else 1
                 if self.multi_norm:
-                    self.folded_weight = nn.Parameter(torch.zeros(self.num_norms, out_channels, in_channels, kernel_size, kernel_size))
+                    self.folded_weight = nn.Parameter(torch.zeros(self.num_clusters, out_channels, in_channels, kernel_size, kernel_size))
+                else:
+                    self.folded_weight = nn.Parameter(torch.zeros(1, out_channels, in_channels, kernel_size, kernel_size))
                 self.folded_bias = nn.Parameter(torch.zeros(self.num_clusters, out_channels, dtype=torch.int32), requires_grad=False)
             else:
                 self.folded_weight = nn.Parameter(torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
@@ -112,7 +113,7 @@ class QuantizedConv2d(nn.Conv2d):
 
         if self.is_bias:
             if self.fold_convbn:
-                bias = torch.index_select(self.folded_bias, 0, bc)
+                bias = torch.index_select(self.folded_bias[bc], 0, bc)
                 sum_q1q2 = sum_q1q2.add(bias[None, :, None, None])
             else:
                 bias = torch.index_select(self.quantized_bias, 0, bc)
@@ -177,7 +178,6 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_q1q2 = sum_q1q2.add(self.folded_bias[None, :, None, None])
             else:
                 sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :, None, None])
-            # sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :, None, None])
 
         if not self.symmetric:
             input_batch, input_ch = x.shape[0], x.shape[1]
@@ -254,13 +254,14 @@ class PCQConv2d(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias, dilation=dilation)
 
-        self._norm_layer = None
         self.norm_layers = 0
         if norm_layer is not None and self.fold_convbn:
             self.num_norms = self.num_clusters if self.multi_norm else 1
             self._norm_layer = nn.ModuleList([norm_layer(out_channels) for _ in range(self.num_norms)])
-            self.folded_weight = nn.Parameter(torch.zeros((self.num_norms, self.out_channels, self.in_channels, kernel_size, kernel_size)), requires_grad=False)
+            self.folded_weight = nn.Parameter(torch.zeros((self.num_norms, self.out_channels, in_channels, kernel_size, kernel_size)), requires_grad=False)
             self.folded_bias = nn.Parameter(torch.zeros((self.num_norms, self.out_channels)), requires_grad=False)
+        else:
+            self._norm_layer = None
 
         self._activation = activation(inplace=True) if activation else None
         self.out_channels = out_channels
@@ -280,9 +281,10 @@ class PCQConv2d(nn.Module):
         x = self.conv(x)
         if self._norm_layer:
             if self.multi_norm:
-                x = self._norm_layer[0](x)
-            else:
                 x = self._norm_layer[cluster](x)
+            else:
+                x = self._norm_layer[0](x)
+
         if self._activation:
             x = self._activation(x)
         return x
@@ -420,12 +422,13 @@ class PCQConv2d(nn.Module):
                     s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
                 else:
                     s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
-                return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+                out = fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+        return out
 
 
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
-        assert self.training == False, 'Do not fuse layers while training.'
+        # assert self.training == False, 'Do not fuse layers while training.'
         if self.multi_norm:
             for cluster in range(self.runtime_helper.num_clusters):
                 alpha, beta, mean, var, eps = self._norm_layer[cluster].weight, self._norm_layer[cluster].bias, self._norm_layer[cluster].running_mean,\
@@ -468,7 +471,7 @@ class PCQConv2d(nn.Module):
                     self.s2[cluster], self.z2[cluster] = calc_qparams(self.folded_weight[cluster].weight.min(), self.folded_weight[cluster].max(),
                                                     self.w_bit, symmetric=self.symmetric, zero=zero)
             else:
-                self.s2, self.z2 = calc_qparams(self.folded_weight[0].weight.min(), self.folded_weight[0].max(),
+                self.s2, self.z2 = calc_qparams(self.folded_weight[0].min(), self.folded_weight[0].max(),
                                                     self.w_bit, symmetric=self.symmetric, zero=zero)
         else:
             if self.per_channel:
@@ -664,7 +667,7 @@ class FusedConv2d(nn.Module):
 
     def fold_conv_and_bn(self):
         # In case of validation, fuse pretrained Conv&BatchNorm params
-        assert self.training == False, 'Do not fuse layers while training.'
+        # assert self.training == False, 'Do not fuse layers while training.'
         alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
                                       self._norm_layer.running_var, self._norm_layer.eps
         n_channel = self.conv.weight.shape[0]
@@ -677,7 +680,6 @@ class FusedConv2d(nn.Module):
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
-
 
         if self.fold_convbn:
             assert self.per_channel == False, "per channel mode for folded fused model is not implemented"
