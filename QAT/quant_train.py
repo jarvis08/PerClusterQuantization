@@ -368,8 +368,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     def get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper):
         if args.arch.lower() == 'alexnet':
             return quantize_arch(model, model_dict, runtime_helper)
-        print(args.resize_qbit)
-        return quantize_arch(model, args.resize_qbit, runtime_helper)
+        if args.arch.lower() == 'resnet20':
+            return quantize_arch(model, args.resize_qbit, runtime_helper)
+        return quantize_arch(model, runtime_helper)
 
     def set_quantize_param(args, model, bit_config):
         name_counter = 0
