@@ -214,7 +214,8 @@ class QuantizedResNet(nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x.type(torch.cuda.FloatTensor))
-        x = x.floor()
+        # x = x.floor()
+        x = x.trunc()
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
@@ -284,7 +285,8 @@ class QuantizedResNet20(nn.Module):
         x = self.layer3(x)
 
         x = self.avgpool(x.type(torch.cuda.FloatTensor))
-        x = x.floor()
+        # x = x.floor()
+        x = x.trunc()
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
