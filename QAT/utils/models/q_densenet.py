@@ -332,7 +332,7 @@ class Q_Transition_Daq(nn.Module):
         self.act = nn.ReLU(inplace=True)
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.conv = QuantConv2d(runtime_helper=runtime_helper)
+        self.conv = QuantConv2d()
         self.conv.set_param(conv_block.conv)
 
         self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
