@@ -181,7 +181,7 @@ class Q_DenseNet_Daq(nn.Module):
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_convbn = QuantBnConv2d()
+        self.quant_init_convbn = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_init_convbn.set_param(init_block.conv, init_block.bn)
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
         self.act1 = nn.ReLU(inplace=True)
@@ -204,7 +204,7 @@ class Q_DenseNet_Daq(nn.Module):
             setattr(self, f'stage{stage_num + 1}', dense_block)
 
         post_activ = getattr(features, 'post_activ')
-        self.batch_norm = QuantBn()
+        self.batch_norm = QuantBn(runtime_helper=runtime_helper)
         self.batch_norm.set_param(post_activ.bn)
 
         self.act2 = nn.ReLU(inplace=True)
@@ -327,12 +327,12 @@ class Q_Transition_Daq(nn.Module):
     def set_param(self, trans, runtime_helper=None):
         conv_block = getattr(trans, 'conv')
 
-        self.batch_norm = QuantBn()
+        self.batch_norm = QuantBn(runtime_helper=runtime_helper)
         self.batch_norm.set_param(conv_block.bn)
         self.act = nn.ReLU(inplace=True)
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.conv = QuantConv2d()
+        self.conv = QuantConv2d(runtime_helper=runtime_helper)
         self.conv.set_param(conv_block.conv)
 
         self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
@@ -403,13 +403,13 @@ class Q_DenseUnit_Daq(nn.Module):
 
     def set_param(self, unit, runtime_helper=None):
         layer1 = getattr(unit, "conv1")
-        self.quant_bn1 = QuantBn()
+        self.quant_bn1 = QuantBn(runtime_helper=runtime_helper)
         self.quant_bn1.set_param(layer1.bn)
         self.act1 = nn.ReLU(inplace=True)
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         layer2 = getattr(unit, "conv2")
-        self.quant_convbn = QuantBnConv2d()
+        self.quant_convbn = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_convbn.set_param(layer1.conv, layer2.bn)
 
         self.act2 = nn.ReLU(inplace=True)

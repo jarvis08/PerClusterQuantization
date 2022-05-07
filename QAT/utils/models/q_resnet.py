@@ -93,7 +93,7 @@ class Q_ResNet20_Daq(nn.Module):
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_block_convbn = QuantBnConv2d()
+        self.quant_init_block_convbn = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_init_block_convbn.set_param(init_block.conv, init_block.bn)
 
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
@@ -265,7 +265,7 @@ class Q_ResNet50_Daq(nn.Module):
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_convbn = QuantBnConv2d()
+        self.quant_init_convbn = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
 
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
@@ -529,21 +529,21 @@ class Q_ResUnitBn(nn.Module):
         self.quant_act = QuantAct()
 
         convbn1 = unit.body.conv1
-        self.quant_convbn1 = QuantBnConv2d()
+        self.quant_convbn1 = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
         self.quant_act1 = QuantAct()
 
         convbn2 = unit.body.conv2
-        self.quant_convbn2 = QuantBnConv2d()
+        self.quant_convbn2 = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
         self.quant_act2 = QuantAct()
 
         convbn3 = unit.body.conv3
-        self.quant_convbn3 = QuantBnConv2d()
+        self.quant_convbn3 = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_convbn3.set_param(convbn3.conv, convbn3.bn)
 
         if self.resize_identity:
-            self.quant_identity_convbn = QuantBnConv2d()
+            self.quant_identity_convbn = QuantBnConv2d(runtime_helper=runtime_helper)
             self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
 
         self.quant_act_int32 = QuantAct()
@@ -594,7 +594,7 @@ class Q_ResBlockBn_Daq(nn.Module):
         self.quant_act = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn1 = unit.body.conv1
-        self.quant_convbn1 = QuantBnConv2d()
+        self.quant_convbn1 = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
 
         self.act1 = nn.ReLU()
@@ -602,11 +602,11 @@ class Q_ResBlockBn_Daq(nn.Module):
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn2 = unit.body.conv2
-        self.quant_convbn2 = QuantBnConv2d()
+        self.quant_convbn2 = QuantBnConv2d(runtime_helper=runtime_helper)
         self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
 
         if self.resize_identity:
-            self.quant_identity_convbn = QuantBnConv2d()
+            self.quant_identity_convbn = QuantBnConv2d(runtime_helper=runtime_helper)
             self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
 
         self.act2 = nn.ReLU()
