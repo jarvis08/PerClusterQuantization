@@ -428,7 +428,7 @@ class Q_ResUnitBn_Daq(nn.Module):
         x = self.act3(x)
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, identity_weight_scaling_factor)
         else:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
 
