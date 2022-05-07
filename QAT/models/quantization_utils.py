@@ -364,6 +364,10 @@ def quantize_folded_conv2d_weight(_fp, _int, symmetric):
     if _int.per_channel:
         _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None],
                                                _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
+        _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
+        _int.quantized_bias[0].copy_(
+            quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+
     else:
         _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
         _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
