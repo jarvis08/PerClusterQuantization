@@ -288,7 +288,7 @@ class FusedResNet(nn.Module):
         return x
 
     @torch.no_grad()
-    def _update_activation_ranges(self, x):
+    def _update_input_ranges(self, x):
         if self.runtime_helper.undo_gema:
             _min = x.min().item()
             _max = x.max().item()
@@ -386,7 +386,7 @@ class FusedResNet20(nn.Module):
         return x
 
     @torch.no_grad()
-    def _update_activation_ranges(self, x):
+    def _update_input_ranges(self, x):
         if self.runtime_helper.undo_gema:
             _min = x.min().item()
             _max = x.max().item()
