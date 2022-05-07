@@ -117,7 +117,7 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_q1q2 = sum_q1q2.add(bias[None, :, None, None])
             else:
                 bias = torch.index_select(self.quantized_bias, 0, bc)
-                sum_q1q2 = sum_q1q2.add(bias[None, :, None, None])
+                sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
 
         if not self.symmetric:
             input_batch, input_ch = x.shape[0], x.shape[1]
