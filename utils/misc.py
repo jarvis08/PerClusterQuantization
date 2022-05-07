@@ -28,6 +28,7 @@ class RuntimeHelper(object):
         self.qn_prob = 0.0
         self.num_clusters = None
         self.val_batch = None
+        self.undo_gema = False
 
         self.mask_4d = None ###
         self.mask_2d = None ###
@@ -39,6 +40,8 @@ class RuntimeHelper(object):
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
+        if args.undo_gema:
+            self.undo_gema = True
 
         mask = torch.ones(1, dtype=torch.int64, device='cuda')
         self.mask_4d = mask.view(-1, 1, 1, 1)

@@ -28,6 +28,8 @@ parser.add_argument('--partition_method', default='square', type=str, help="How 
 parser.add_argument('--repr_method', default='mean', type=str, help="How to get representation per partition")
 parser.add_argument('--similarity_method', default='and', type=str, help="How to measure similarity score")
 parser.add_argument('--clustering_path', default='', type=str, help="Trained K-means clustering model's path")
+parser.add_argument('--undo_gema', action='store_true',
+                    help='Undo gema for DAQ models')
 
 parser.add_argument('--kmeans_epoch', default=300, type=int, help='Max epoch of K-means model to train')
 parser.add_argument('--kmeans_tol', default=0.0001, type=float, help="K-means model's tolerance to detect convergence")

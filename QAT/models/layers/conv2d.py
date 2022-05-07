@@ -284,7 +284,13 @@ class PCQConv2d(nn.Module):
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         data = x.view(x.size(0), -1)
-        _max = data.max(dim=1).values.mean()
+        if self.runtime_helper.undo_gema:
+            _min = data.min()
+            _max = data.max()
+        else:
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
+
         if self._activation:
             if self.apply_ema[cluster]:
                 self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
@@ -292,7 +298,6 @@ class PCQConv2d(nn.Module):
                 self.act_range[cluster][1] = _max
                 self.apply_ema[cluster] = True
         else:
-            _min = data.min(dim=1).values.mean()
             if self.apply_ema[cluster]:
                 self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
                 self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
