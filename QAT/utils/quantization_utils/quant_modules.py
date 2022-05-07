@@ -131,7 +131,10 @@ class QuantLinear(Module):
                     self.fc_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
                                                                                     self.per_channel)
                     weight = fake_quantization(self.weight, self.weight_bit, self.fc_scaling_factor, self.weight_function)
-                    return F.linear(x, weight=weight, bias=self.bias)
+                    if not self.is_classifier:
+                        return F.linear(x, weight=weight, bias=self.bias), None
+                    else:
+                        return F.linear(x, weight=weight, bias=self.bias)
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
