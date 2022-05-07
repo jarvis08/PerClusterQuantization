@@ -132,6 +132,13 @@ class QuantLinear(Module):
                                                                                     self.per_channel)
                     if self.first_epoch == False:
                         weight = fake_quantization(self.weight, self.weight_bit, self.fc_scaling_factor, self.weight_function)
+                        if self.quantize_bias and (self.bias is not None):
+                            bias_scaling_factor = self.fc_scaling_factor.view(1, -1) * prev_act_scaling_factor.view(1, -1)
+                            bias = fake_quantization(self.bias, self.bias_bit, bias_scaling_factor, self.weight_function)
+                            if not self.is_classifier:
+                                return (F.linear(x, weight=weight, bias=bias), None)
+                            else:
+                                return F.linear(x, weight=weight, bias=bias)
                     else :
                         weight = self.weight
                 else:
@@ -221,7 +228,6 @@ class QuantAct(Module):
         self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
         self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
-        # self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
 
     def __repr__(self):
         return "{0}(activation_bit={1}, full_precision_flag={2}, " \
@@ -1087,7 +1093,7 @@ class QuantAveragePool2d(Module):
             x = x[0]
 
         if x_scaling_factor is None or not self.fix_flag:
-            return self.final_pool(x), None
+            return self.final_pool(x), x_scaling_factor
 
         x_scaling_factor = x_scaling_factor.view(-1)
         correct_scaling_factor = x_scaling_factor
@@ -1232,9 +1238,13 @@ class QuantConv2d(Module):
                                                                                 self.per_channel)
                 if self.first_epoch == False:
                     weight = fake_quantization(self.weight, self.weight_bit, self.conv_scaling_factor, self.weight_function)
+                    if self.quantize_bias and (self.bias is not None):
+                        bias_scaling_factor = self.conv_scaling_factor.view(1, -1) * pre_act_scaling_factor.view(1, -1)
+                        bias = fake_quantization(self.bias, self.bias_bit, bias_scaling_factor, self.weight_function)
+                        return F.conv2d(x, weight, bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None 
+                    return F.conv2d(x, weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None
                 else:
-                    weight = self.weight
-                return F.conv2d(x, weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None
+                    return F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None
                 
             else:
                 self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
@@ -1250,8 +1260,8 @@ class QuantConv2d(Module):
                 x_int = x / pre_act_scaling_factor
                 correct_output_scale = bias_scaling_factor.view(1, -1, 1, 1)
 
-                return (ste_round.apply(F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
-                                self.conv.dilation, self.conv.groups)) * correct_output_scale, self.conv_scaling_factor)
+                return (F.conv2d(x_int, self.weight_integer, self.bias_integer, self.conv.stride, self.conv.padding,
+                                self.conv.dilation, self.conv.groups) * correct_output_scale, self.conv_scaling_factor)
         return (F.conv2d(x, self.weight, self.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups), None)
 
 def first_epoch_done(model):

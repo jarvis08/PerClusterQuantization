@@ -250,11 +250,9 @@ class Q_AlexNet_Daq(nn.Module):
         self.quant_act5 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         self.maxpool3 = QuantMaxPool2d(ceil_mode=True)
-        # self.avgpool = QuantAveragePool2d(output=(6, 6))
         self.avgpool = QuantAveragePool2d(output=(1, 1))
 
         output = getattr(model, 'output')
-        # fc_block = getattr(features, 'fc')
 
         # fc1
         fc_block = getattr(output, 'fc1')
