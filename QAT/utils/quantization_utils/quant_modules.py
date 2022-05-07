@@ -993,6 +993,10 @@ class QuantBn(Module):
             x_scaling_factor = x[1]
             x = x[0]
 
+        if self.runtime_helper is not None:
+            cluster = self.runtime_helper.batch_cluster
+        else:
+            cluster = None
         if not self.full_precision_flag:
             if self.quant_mode == "symmetric":
                 self.weight_function = SymmetricQuantFunction.apply
