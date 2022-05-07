@@ -157,7 +157,8 @@ class PCQAlexNetSmall(nn.Module):
         return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)

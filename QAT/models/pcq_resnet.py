@@ -87,7 +87,7 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
 
@@ -189,8 +189,7 @@ class PCQBottleneck(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit,
-                            self.runtime_helper.fzero)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
@@ -524,36 +523,4 @@ def set_pcq_resnet(fused, pre):
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
 
-
-def fold_resnet_bn(model):
-    # First layer
-    model.bn1.fold_bn()
-
-    block = model.layer1  # Block 1
-    if block[0].downsample is not None:
-        block[0].bn_down.fold_bn()
-    for i in range(len(block)):
-        block[i].bn1.fold_bn()
-        block[i].bn2.fold_bn()
-
-    # Block 2
-    block = model.layer2  # Block 2
-    block[0].bn_down.fold_bn()
-    for i in range(len(block)):
-        block[i].bn1.fold_bn()
-        block[i].bn2.fold_bn()
-
-    block = model.layer3  # Block 3
-    block[0].bn_down.fold_bn()
-    for i in range(len(block)):
-        block[i].bn1.fold_bn()
-        block[i].bn2.fold_bn()
-
-    if model.num_blocks == 4:  # Block 4
-        block = model.layer4
-        block[0].bn_down.fold_bn()
-        for i in range(len(block)):
-            block[i].bn1.fold_bn()
-            block[i].bn2.fold_bn()
-    return model
 

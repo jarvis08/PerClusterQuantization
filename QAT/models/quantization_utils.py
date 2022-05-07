@@ -358,42 +358,46 @@ def transfer_qparams(_fp, _int):
     return _int
 
 
-def quantize_folded_conv2d_weight(_fp, _int, symmetric):
+def quantize_folded_conv2d_weight_and_bias(_fp, _int, symmetric):
     # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
     # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
-    if _int.per_channel:
-        _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None],
-                                               _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
-        _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
-        _int.quantized_bias[0].copy_(
-            quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+    _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
+    # pcq fold
+    if _fp.num_clusters > 1:
+        if _fp.num_norms > 1:  # multiple batch norm parameters
+            for c in range(_fp.num_clusters):
+                _int.folded_weight[c].data.copy_(quantize_matrix(_fp.folded_weight[c], _int.s2[c], _int.z2[c], _int.w_bit))
+                _int.folded_bias[c].data.copy_(
+                    quantize_matrix(_fp.folded_bias[c], _int.s1[c] * _int.s2[c], 0, bit=32, symmetric=True))
+                _int.sum_a2.data.copy_(
+                    torch.sum(_int.folded_weight[c], dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+        else:                  # single batch norm parameters
+            _int.folded_weight[0].data.copy_(quantize_matrix(_fp.folded_weight[0], _int.s2, _int.z2, _int.w_bit))
+            for c in range(_fp.num_clusters):
+                _int.folded_bias[c].data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1[c] * _int.s2, 0, bit=32, symmetric=True))
+            _int.sum_a2.data.copy_(torch.sum(_int.folded_weight[0], dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
 
-    else:
-        _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
-        _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
-        _int.quantized_bias[0].copy_(
-            quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
-    _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+    else:   # fused fold
+        if _int.per_channel:
+            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
+            _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+        else:
+            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
+            _int.folded_bias.data.copy_(
+                quantize_matrix(_fp.folded_bias[0], _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+        _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     return _int
 
 
 def quantize_conv2d_weight(_fp, _int, symmetric):
     # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
     # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
-    if _int.fold_convbn:
-        if _int.per_channel:
-            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None],
-                                                   _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
-        else:
-            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
-        _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+    if _int.per_channel:
+        _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2[:, None, None, None],
+                                               _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
     else:
-        if _int.per_channel:
-            _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2[:, None, None, None],
-                                                   _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
-        else:
-            _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
-        _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+        _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+    _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     return _int
 
 
@@ -444,7 +448,7 @@ def quantize_layer(_fp, _int):
             fp_layer = _fp.conv
             if _fp.fold_convbn:
                 fold_flag = True
-                _int = quantize_folded_conv2d_weight(_fp, _int, _fp.symmetric)
+                _int = quantize_folded_conv2d_weight_and_bias(_fp, _int, _fp.symmetric)
             else:
                 _int = quantize_conv2d_weight(fp_layer, _int, _fp.symmetric)
         else:
@@ -470,13 +474,36 @@ def quantize(_fp, _int):
     return _int
 
 
-def copy_from_pretrained(_to, _from, norm_layer=None):
+def copy_from_pretrained(_to, _from, norm_layer=None, is_folded=False):
     # Copy weights from pretrained FP model
     with torch.no_grad():
         if 'Conv' in _to.layer_type:
             _to.conv.weight.copy_(_from.weight)
             if norm_layer:
                 _to._norm_layer = deepcopy(norm_layer)
+            else:
+                if is_folded:
+                    assert norm_layer is not None, "batch norm layer should be not None while folding"
+                if _from.bias is not None:
+                    _to.conv.bias.copy_(_from.bias)
+        elif 'Linear' in _to.layer_type:
+            _to.fc.weight.copy_(_from.weight)
+            _to.fc.bias.copy_(_from.bias)
+        else:
+            _to._norm_layer = deepcopy(_from)
+    return _to
+
+
+def folded_pcq_copy_from_pretrained(_to, _from, norm_layer, momentum, num_norms):
+    # Copy weights from pretrained FP model
+    with torch.no_grad():
+        if 'Conv' in _to.layer_type:
+            _to.conv.weight.copy_(_from.weight)
+            assert norm_layer is not None, "batch norm layer should be not None while folding"
+            if norm_layer:
+                for c in range(num_norms):
+                    _to._norm_layer[c] = deepcopy(norm_layer)
+                    _to._norm_layer[c].momentum = momentum
             else:
                 if _from.bias is not None:
                     _to.conv.bias.copy_(_from.bias)

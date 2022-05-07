@@ -54,9 +54,14 @@ def _finetune(args, tools, data_loaders, clustering_model):
     logger = set_logger(save_path_fp)
 
     quantized_model = None
+    is_folded_flag = False
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
+
+        if is_folded_flag:
+            model.train()
+            is_folded_flag = False
 
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
@@ -65,7 +70,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
         opt_scheduler.step()
 
         if args.fold_convbn:
+            model.eval()
             tools.folder(model)
+            is_folded_flag = True
 
         fp_score = 0
         if args.dataset != 'imagenet':

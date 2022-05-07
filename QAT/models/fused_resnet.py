@@ -88,7 +88,7 @@ class FusedBasicBlock(nn.Module):
 
 
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
 
@@ -182,7 +182,7 @@ class FusedBottleneck(nn.Module):
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
@@ -307,7 +307,7 @@ class FusedResNet(nn.Module):
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
@@ -405,7 +405,7 @@ class FusedResNet20(nn.Module):
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):

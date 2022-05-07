@@ -80,9 +80,11 @@ class FoldedFusedBasicBlock(nn.Module):
             self.act_range[1] = _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
+
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
         return fake_quantize(x, s, z, self.target_bit, use_ste=self.use_ste)
+
 
     @torch.no_grad()
     def set_block_qparams(self, s1, z1, s_target, z_target):
@@ -142,18 +144,29 @@ class FoldedFusedBottleneck(nn.Module):
         out += identity
         out = self.relu(out)
 
-        if not self.training:
-            return out
+        if self.training:
+            self._update_activation_ranges(out)
+            if self.runtime_helper.apply_fake_quantization:
+                out = self._fake_quantize_activation(out)
+        return out
+
+    @torch.no_grad()
+    def _update_activation_ranges(self, x):
+        if self.runtime_helper.undo_gema:
+            _max = x.max().item()
+        else:
+            data = x.view(x.size(0), -1)
+            _max = data.max(dim=1).values.mean()
 
         if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
-                out = fake_quantize(out, s, z, self.target_bit, use_ste=self.use_ste)
+            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.act_range[0], self.act_range[1] = get_range(out)
+            self.act_range[1] = _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-        return out
+
+    def _fake_quantize_activation(self, x):
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
         self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
@@ -238,14 +251,9 @@ class FoldedFusedResNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            if self.apply_ema:
-                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-                    x = fake_quantize(x, s, z, self.in_bit)
-            else:
-                self.in_range[0], self.in_range[1] = get_range(x)
-                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+            self._update_input_ranges(x)
+            if self.runtime_helper.apply_fake_quantization:
+                x = self._fake_quantize_input(x)
 
         x = self.first_conv(x)
         x = self.maxpool(x)
@@ -259,6 +267,27 @@ class FoldedFusedResNet(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
+
+    @torch.no_grad()
+    def _update_input_ranges(self, x):
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
+        else:
+            data = x.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
+
+        if self.apply_ema:
+            self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.in_range[0], self.in_range[1] = _min, _max
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+    def _fake_quantize_input(self, x):
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
@@ -335,7 +364,7 @@ class FoldedFusedResNet20(nn.Module):
         return x
 
     @torch.no_grad()
-    def _update_activation_ranges(self, x):
+    def _update_input_ranges(self, x):
         if self.runtime_helper.undo_gema:
             _min = x.min().item()
             _max = x.max().item()
@@ -352,7 +381,7 @@ class FoldedFusedResNet20(nn.Module):
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
 
 
@@ -373,7 +402,7 @@ class FoldedFusedResNet20(nn.Module):
 
 
 def fused_resnet18(arg_dict, **kwargs):
-    return FoldedFusedResNet(FoldedFusedBasicBlock, [2, 2, 2, 2], arg_dict, **kwargs)
+    return FoldedFusedResNet(FoldedFusedBottleneck, [2, 2, 2, 2], arg_dict, **kwargs)
 
 
 def fused_resnet50_folded(arg_dict, **kwargs):
@@ -391,51 +420,51 @@ def set_folded_fused_resnet(fused, pre):
     """
     bn_momentum = fused.arg_dict['bn_momentum']
     # First layer
-    fused.first_conv = copy_from_pretrained(fused.first_conv, pre.conv1, pre.bn1)
+    fused.first_conv = copy_from_pretrained(fused.first_conv, pre.conv1, pre.bn1, is_folded=True)
     fused.first_conv._norm_layer.bn_momentum = bn_momentum
 
     # Block 1
     block = fused.layer1
     if block[0].downsample is not None:
-        block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer1[0].downsample[0], pre.layer1[0].downsample[1])
+        block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer1[0].downsample[0], pre.layer1[0].downsample[1], is_folded=True)
         block[0].downsample._norm_layer.bn_momentum = bn_momentum
     for i in range(len(block)):
-        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer1[i].conv1, pre.layer1[i].bn1)
-        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer1[i].conv2, pre.layer1[i].bn2)
+        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer1[i].conv1, pre.layer1[i].bn1, is_folded=True)
+        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer1[i].conv2, pre.layer1[i].bn2, is_folded=True)
         block[i].conv1._norm_layer.bn_momentum = bn_momentum
         block[i].conv2._norm_layer.bn_momentum = bn_momentum
         if type(block[i]) == FoldedFusedBottleneck:
-            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer1[i].conv3, pre.layer1[i].bn3)
+            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer1[i].conv3, pre.layer1[i].bn3, is_folded=True)
             block[i].conv3._norm_layer.bn_momentum = bn_momentum
 
     # Block 2
     block = fused.layer2
     if block[0].downsample is not None:
         block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer2[0].downsample[0],
-                                                   pre.layer2[0].downsample[1])
+                                                   pre.layer2[0].downsample[1], is_folded=True)
         block[0].downsample._norm_layer.bn_momentum = bn_momentum
     for i in range(len(block)):
-        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer2[i].conv1, pre.layer2[i].bn1)
-        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer2[i].conv2, pre.layer2[i].bn2)
+        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer2[i].conv1, pre.layer2[i].bn1, is_folded=True)
+        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer2[i].conv2, pre.layer2[i].bn2, is_folded=True)
         block[i].conv1._norm_layer.bn_momentum = bn_momentum
         block[i].conv2._norm_layer.bn_momentum = bn_momentum
         if type(block[i]) == FoldedFusedBottleneck:
-            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer2[i].conv3, pre.layer2[i].bn3)
+            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer2[i].conv3, pre.layer2[i].bn3, is_folded=True)
             block[i].conv3._norm_layer.bn_momentum = bn_momentum
 
     # Block 3
     block = fused.layer3
     if block[0].downsample is not None:
         block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer3[0].downsample[0],
-                                                   pre.layer3[0].downsample[1])
+                                                   pre.layer3[0].downsample[1], is_folded=True)
         block[0].downsample._norm_layer.bn_momentum = bn_momentum
     for i in range(len(block)):
-        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer3[i].conv1, pre.layer3[i].bn1)
-        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer3[i].conv2, pre.layer3[i].bn2)
+        block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer3[i].conv1, pre.layer3[i].bn1, is_folded=True)
+        block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer3[i].conv2, pre.layer3[i].bn2, is_folded=True)
         block[i].conv1._norm_layer.bn_momentum = bn_momentum
         block[i].conv2._norm_layer.bn_momentum = bn_momentum
         if type(block[i]) == FoldedFusedBottleneck:
-            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer3[i].conv3, pre.layer3[i].bn3)
+            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer3[i].conv3, pre.layer3[i].bn3, is_folded=True)
             block[i].conv3._norm_layer.bn_momentum = bn_momentum
 
     # Block 4
@@ -443,12 +472,12 @@ def set_folded_fused_resnet(fused, pre):
         block = fused.layer4
         if block[0].downsample is not None:
             block[0].downsample = copy_from_pretrained(block[0].downsample, pre.layer4[0].downsample[0],
-                                                       pre.layer4[0].downsample[1])
+                                                       pre.layer4[0].downsample[1], is_folded=True)
             block[0].downsample._norm_layer.bn_momentum = bn_momentum
         for i in range(len(block)):
-            block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer4[i].conv1, pre.layer4[i].bn1)
-            block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer4[i].conv2, pre.layer4[i].bn2)
-            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer4[i].conv3, pre.layer4[i].bn3)
+            block[i].conv1 = copy_from_pretrained(block[i].conv1, pre.layer4[i].conv1, pre.layer4[i].bn1, is_folded=True)
+            block[i].conv2 = copy_from_pretrained(block[i].conv2, pre.layer4[i].conv2, pre.layer4[i].bn2, is_folded=True)
+            block[i].conv3 = copy_from_pretrained(block[i].conv3, pre.layer4[i].conv3, pre.layer4[i].bn3, is_folded=True)
             block[i].conv1._norm_layer.bn_momentum = bn_momentum
             block[i].conv2._norm_layer.bn_momentum = bn_momentum
             block[i].conv3._norm_layer.bn_momentum = bn_momentum
@@ -457,43 +486,43 @@ def set_folded_fused_resnet(fused, pre):
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
 
-    def fold_resnet(model):
-        # First layer
-        model.first_conv.fold_conv_and_bn()
+def fold_fused_resnet(model):
+    # First layer
+    model.first_conv.fold_conv_and_bn()
 
-        # Block 1
-        fp_block = model.layer1
-        for i in range(len(fp_block)):
-            fp_block[i].conv1.fold_conv_and_bn()
-            fp_block[i].conv2.fold_conv_and_bn()
-            if type(fp_block[i]) == FoldedFusedBottleneck:
-                fp_block[i].conv3.fold_conv_and_bn()
+    # Block 1
+    fp_block = model.layer1
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
+        if type(fp_block[i]) == FoldedFusedBottleneck:
+            fp_block[i].conv3.fold_conv_and_bn()
 
-        # Block 2
-        fp_block = model.layer2
+    # Block 2
+    fp_block = model.layer2
+    fp_block[0].downsample.fold_conv_and_bn()
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
+        if type(fp_block[i]) == FoldedFusedBottleneck:
+            fp_block[i].conv3.fold_conv_and_bn()
+
+    # Block 3
+    fp_block = model.layer3
+    fp_block[0].downsample.fold_conv_and_bn()
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
+        if type(fp_block[i]) == FoldedFusedBottleneck:
+            fp_block[i].conv3.fold_conv_and_bn()
+
+    # Block 4
+    if model.num_blocks == 4:
+        fp_block = model.layer4
         fp_block[0].downsample.fold_conv_and_bn()
         for i in range(len(fp_block)):
             fp_block[i].conv1.fold_conv_and_bn()
             fp_block[i].conv2.fold_conv_and_bn()
             if type(fp_block[i]) == FoldedFusedBottleneck:
                 fp_block[i].conv3.fold_conv_and_bn()
-
-        # Block 3
-        fp_block = model.layer3
-        fp_block[0].downsample.fold_conv_and_bn()
-        for i in range(len(fp_block)):
-            fp_block[i].conv1.fold_conv_and_bn()
-            fp_block[i].conv2.fold_conv_and_bn()
-            if type(fp_block[i]) == FoldedFusedBottleneck:
-                fp_block[i].conv3.fold_conv_and_bn()
-
-        # Block 4
-        if model.num_blocks == 4:
-            fp_block = model.layer4
-            fp_block[0].downsample.fold_conv_and_bn()
-            for i in range(len(fp_block)):
-                fp_block[i].conv1.fold_conv_and_bn()
-                fp_block[i].conv2.fold_conv_and_bn()
-                if type(fp_block[i]) == FoldedFusedBottleneck:
-                    fp_block[i].conv3.fold_conv_and_bn()
 
