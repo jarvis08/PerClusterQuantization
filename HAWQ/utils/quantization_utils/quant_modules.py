@@ -629,6 +629,7 @@ class QuantBnConv2d(Module):
                     if self.counter == self.fix_BN_threshold:
                         print("Start Training with Folded BN")
                     self.fix_BN = True
+                    self.training_BN_mode = True
 
             # run the forward without folding BN
             if self.fix_BN == False:
@@ -848,6 +849,17 @@ class QuantBn(Module):
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
             
+            # determine whether to fold BN or not
+            if self.fix_flag == False:
+                self.counter += 1
+                if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+                    self.fix_BN = self.training_BN_mode
+                else:
+                    if self.counter == self.fix_BN_threshold:
+                        print("Start Training with Folded BN")
+                    self.fix_BN = True
+                    self.training_BN_mode = True
+
             if self.fix_BN is False:
                 batch_mean = torch.mean(x, dim=(0, 2, 3))
                 batch_var = torch.var(x, dim=(0, 2, 3))
