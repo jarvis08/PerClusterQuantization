@@ -93,6 +93,7 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
             setattr(tools, 'fuser', set_pcq_resnet)
         elif is_folded:
             setattr(tools, 'fuser', set_folded_fused_resnet)
+            setattr(tools, 'folder', fold_resnet)
         else:
             setattr(tools, 'fuser', set_fused_resnet)
 
@@ -136,6 +137,14 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
     elif arch == 'DenseNet121':
+        # if is_pcq:
+        #     setattr(tools, 'fuser', set_pcq_densenet)
+        # elif is_folded:
+        #     setattr(tools, 'fuser', set_folded_fused_densenet)
+        #     setattr(tools, 'folder', fold_densenet)
+        # else:
+        #     setattr(tools, 'fuser', set_fused_densenet)
+
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)

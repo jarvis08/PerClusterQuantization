@@ -72,7 +72,6 @@ class PCQBasicBlock(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-
         if self.runtime_helper.undo_gema:
             _max = x.max.item()
         else:
@@ -176,8 +175,12 @@ class PCQBottleneck(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        data = x.view(x.size(0), -1)
-        _max = data.max(dim=1).values.mean()
+        if self.runtime_helper.undo_gema:
+            _max = x.max.item()
+        else:
+            data = x.view(x.size(0), -1)
+            _max = data.max(dim=1).values.mean()
+
         if self.apply_ema[cluster]:
             self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
@@ -186,8 +189,9 @@ class PCQBottleneck(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.target_bit, self.runtime_helper.fzero)
-        return fake_quantize(x, s, z, self.target_bit)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit,
+                            self.runtime_helper.fzero)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
         self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
@@ -295,11 +299,12 @@ class PCQResNet(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        data = x.view(x.size(0), -1)
+
         if self.runtime_helper.undo_gema:
-            _min = data.min()
-            _max = data.max()
+            _min = x.min().item()
+            _max = x.max().item()
         else:
+            data = x.view(x.size(0), -1)
             _min = data.min(dim=1).values.mean()
             _max = data.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
@@ -397,11 +402,8 @@ class PCQResNet20(nn.Module):
         cluster = self.runtime_helper.qat_batch_cluster
 
         if self.runtime_helper.undo_gema:
-            if self.apply_ema[cluster]:
-                self.in_range[cluster][0], self.in_range[cluster][1] = ema(x, self.in_range[cluster], self.smooth)
-            else:
-                self.in_range[cluster][0], self.in_range[cluster][1] = get_range(x)
-                self.apply_ema[cluster] = True
+            _min = x.min().item()
+            _max = x.max().item()
         else:
             data = x.view(x.size(0), -1)
             _min = data.min(dim=1).values.mean()
@@ -413,7 +415,6 @@ class PCQResNet20(nn.Module):
             else:
                 self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
                 self.apply_ema[cluster] = True
-
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster

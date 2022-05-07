@@ -492,12 +492,10 @@ class FusedConv2d(nn.Module):
         zero = self.runtime_helper.fzero
 
         if self.per_channel:
-            self.fold_conv_and_bn()
             self.s2, self.z2 = calc_qparams_per_output_channel(self.folded_weight, self.w_bit,
                                                                symmetric=self.symmetric, zero=zero)
         else:
             if self.fold_convbn:
-                self.fold_conv_and_bn()
                 self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit,
                                                 symmetric=self.symmetric, zero=zero)
             else:

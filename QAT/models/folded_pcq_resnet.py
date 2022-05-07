@@ -510,35 +510,43 @@ def set_folded_fused_resnet(fused, pre):
     return fused
 
 
-def fold_resnet_bn(model):
+def fold_resnet(model):
     # First layer
-    model.bn1.fold_bn()
+    model.first_conv.fold_conv_and_bn()
 
-    block = model.layer1  # Block 1
-    if block[0].downsample is not None:
-        block[0].bn_down.fold_bn()
-    for i in range(len(block)):
-        block[i].bn1.fold_bn()
-        block[i].bn2.fold_bn()
+    # Block 1
+    fp_block = model.layer1
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
+        if type(fp_block[i]) == FoldedFusedBottleneck:
+            fp_block[i].conv3.fold_conv_and_bn()
 
     # Block 2
-    block = model.layer2  # Block 2
-    block[0].bn_down.fold_bn()
-    for i in range(len(block)):
-        block[i].bn1.fold_bn()
-        block[i].bn2.fold_bn()
+    fp_block = model.layer2
+    fp_block[0].downsample.fold_conv_and_bn()
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
+        if type(fp_block[i]) == FoldedFusedBottleneck:
+            fp_block[i].conv3.fold_conv_and_bn()
 
-    block = model.layer3  # Block 3
-    block[0].bn_down.fold_bn()
-    for i in range(len(block)):
-        block[i].bn1.fold_bn()
-        block[i].bn2.fold_bn()
+    # Block 3
+    fp_block = model.layer3
+    fp_block[0].downsample.fold_conv_and_bn()
+    for i in range(len(fp_block)):
+        fp_block[i].conv1.fold_conv_and_bn()
+        fp_block[i].conv2.fold_conv_and_bn()
+        if type(fp_block[i]) == FoldedFusedBottleneck:
+            fp_block[i].conv3.fold_conv_and_bn()
 
-    if model.num_blocks == 4:  # Block 4
-        block = model.layer4
-        block[0].bn_down.fold_bn()
-        for i in range(len(block)):
-            block[i].bn1.fold_bn()
-            block[i].bn2.fold_bn()
-    return model
+    # Block 4
+    if model.num_blocks == 4:
+        fp_block = model.layer4
+        fp_block[0].downsample.fold_conv_and_bn()
+        for i in range(len(fp_block)):
+            fp_block[i].conv1.fold_conv_and_bn()
+            fp_block[i].conv2.fold_conv_and_bn()
+            if type(fp_block[i]) == FoldedFusedBottleneck:
+                fp_block[i].conv3.fold_conv_and_bn()
 
