@@ -621,15 +621,15 @@ class QuantBnConv2d(Module):
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
             # determine whether to fold BN or not
-            if self.fix_flag == False:
-                self.counter += 1
-                if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
-                    self.fix_BN = self.training_BN_mode
-                else:
-                    if self.counter == self.fix_BN_threshold:
-                        print("Start Training with Folded BN")
-                    self.fix_BN = True
-                    self.training_BN_mode = True
+            # if self.fix_flag == False:
+            #     self.counter += 1
+            #     if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+            #         self.fix_BN = self.training_BN_mode
+            #     else:
+            #         if self.counter == self.fix_BN_threshold:
+            #             print("Start Training with Folded BN")
+            #         self.fix_BN = True
+            #         self.training_BN_mode = True
 
             # run the forward without folding BN
             if self.fix_BN == False:
@@ -666,25 +666,15 @@ class QuantBnConv2d(Module):
                 return (output, conv_scaling_factor.view(-1) * output_factor.view(-1))
             # fold BN and fix running statistics
             else:
-                if cluster is not None:
-                    running_std = torch.sqrt(self.running_vars[cluster].detach() + self.bn.eps)
-                    scale_factor = self.weights[cluster] / running_std
-                else:
-                    running_std = torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
-                    scale_factor = self.bn.weight / running_std
+                running_std = torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
+                scale_factor = self.bn.weight / running_std
                 scaled_weight = self.conv.weight * scale_factor.reshape([self.conv.out_channels, 1, 1, 1])
 
                 if self.conv.bias is not None:
                     scaled_bias = self.conv.bias
                 else:
-                    if cluster is not None :
-                        scaled_bias = torch.zeros_like(self.running_means[cluster])
-                    else:
-                        scaled_bias = torch.zeros_like(self.bn.running_mean)
-                if cluster is not None:
-                    scaled_bias = (scaled_bias - self.running_means[cluster].detach()) * scale_factor + self.biases[cluster]
-                else:
-                    scaled_bias = (scaled_bias - self.bn.running_mean.detach()) * scale_factor + self.bn.bias
+                    scaled_bias = torch.zeros_like(self.bn.running_mean)
+                scaled_bias = (scaled_bias - self.bn.running_mean.detach()) * scale_factor + self.bn.bias
 
                 if self.per_channel:
                     w_transform = scaled_weight.data.contiguous().view(self.conv.out_channels, -1)
@@ -742,18 +732,13 @@ class QuantBnConv2d(Module):
                 else:
                     self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                     self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
-            else:
-                if cluster is not None :
-                    batch_mean = self.running_means[cluster].detach()
-                    batch_var = self.running_vars[cluster].detach()
-                else:
-                    batch_mean = self.bn.running_mean.detach()
-                    batch_var = self.bn.running_var.detach()
-
-            if cluster is not None:
-                output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)  
+                    
+                output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
                 return (output_factor * (conv_output - batch_mean.view(1, -1, 1, 1)) + self.biases[cluster].view(1, -1, 1, 1), None)
             else:
+                batch_mean = self.bn.running_mean.detach()
+                batch_var = self.bn.running_var.detach()
+
                 output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
                 return (output_factor * (conv_output - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1), None)
 
@@ -850,15 +835,15 @@ class QuantBn(Module):
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
             
             # determine whether to fold BN or not
-            if self.fix_flag == False:
-                self.counter += 1
-                if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
-                    self.fix_BN = self.training_BN_mode
-                else:
-                    if self.counter == self.fix_BN_threshold:
-                        print("Start Training with Folded BN")
-                    self.fix_BN = True
-                    self.training_BN_mode = True
+            # if self.fix_flag == False:
+            #     self.counter += 1
+            #     if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+            #         self.fix_BN = self.training_BN_mode
+            #     else:
+            #         if self.counter == self.fix_BN_threshold:
+            #             print("Start Training with Folded BN")
+            #         self.fix_BN = True
+            #         self.training_BN_mode = True
 
             if self.fix_BN is False:
                 batch_mean = torch.mean(x, dim=(0, 2, 3))
@@ -880,12 +865,8 @@ class QuantBn(Module):
                     scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
                     scaled_bias = self.bn.bias - self.bn.running_mean * scaled_weight
             else :
-                if cluster is not None:
-                    scaled_weight = self.weights[cluster] / torch.sqrt(self.running_vars[cluster].detach() + self.bn.eps)
-                    scaled_bias = self.biases[cluster] - self.running_means[cluster].detach() * scaled_weight
-                else:
-                    scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
-                    scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scaled_weight
+                scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
+                scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scaled_weight
 
             if self.weight_percentile == 0:
                 w_min = scaled_weight.data.min()
@@ -923,18 +904,13 @@ class QuantBn(Module):
                 else:
                     self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                     self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
-            else:
-                if cluster is not None:
-                    batch_mean = self.running_means[cluster].detach()
-                    batch_var = self.running_vars[cluster].detach()
-                else:
-                    batch_mean = self.bn.running_mean.detach()
-                    batch_var = self.bn.running_var.detach()
 
-            if cluster is not None:
                 output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)  
                 return (output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.biases[cluster].view(1, -1, 1, 1), None)
             else:
+                batch_mean = self.bn.running_mean.detach()
+                batch_var = self.bn.running_var.detach()
+
                 output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
                 return (output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1), None)
 
