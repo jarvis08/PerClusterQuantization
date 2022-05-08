@@ -78,6 +78,23 @@ def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
     _mat = mat.view(mat.size(0), -1)
     _min = _mat.min(dim=1).values
     _max = _mat.max(dim=1).values
+
+    total_diff_min = 0
+    total_diff_max = 0
+    print(_min)
+    print(_min.min())
+    print(_max)
+    print(_max.max())
+    t_min = _min.min()
+    t_max = _max.max()
+    for v in _min.data:
+        total_diff_min += abs(t_min) - abs(v.item())
+    for v in _max.data:
+        total_diff_max += abs(t_max) - abs(v.item())
+
+    print(total_diff_min, total_diff_max)
+    exit()
+
     if symmetric:
         return calc_symmetric_qparams(_min, _max, bit, True)
     else:
