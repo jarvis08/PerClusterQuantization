@@ -19,7 +19,10 @@ class QuantizedConv2d(nn.Conv2d):
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
         self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_channels), dtype=torch.int32), requires_grad=False)
-        self.sum_a2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
+        if self.fold_convbn and self.multi_norm:
+            self.sum_a2 = nn.Parameter(torch.zeros((self.num_clusters, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
+        else:
+            self.sum_a2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1), dtype=torch.int32), requires_grad=False)
         self.sum_a1 = None  # for faster inference      ###
 
         self.out_channels = out_channels
@@ -142,16 +145,20 @@ class QuantizedConv2d(nn.Conv2d):
                 if self.multi_norm:
                     sum_a1 = self.sum_a1[:batch_size] * z2
                     nz1z2 = input_ch * filter_col * filter_row * z1 * z2
+                    sum_a2 = self.sum_a2[bc][None, :].mul(z1)
                 else:
                     sum_a1 = self.sum_a1[:batch_size] * self.z2
                     nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-            sum_a2 = self.sum_a2.mul(z1)
+                    sum_a2 = self.sum_a2.mul(z1)
 
             subsum = sum_q1q2.add(nz1z2)
             subsum = torch.sub(subsum, sum_a1)
             subsum = torch.sub(subsum, sum_a2)
         else:
-            subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
+            if self.multi_norm:
+                subsum = sum_q1q2.sub(self.sum_a2[bc][None, :].mul(z1))
+            else:
+                subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
         return subsum
 
     def _pcq_totalsum(self, subsum):

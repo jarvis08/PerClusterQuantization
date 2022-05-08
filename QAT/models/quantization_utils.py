@@ -369,8 +369,8 @@ def quantize_folded_conv2d_weight_and_bias(_fp, _int, symmetric):
                 _int.folded_weight[c].data.copy_(quantize_matrix(_fp.folded_weight[c], _int.s2[c], _int.z2[c], _int.w_bit))
                 _int.folded_bias[c].data.copy_(
                     quantize_matrix(_fp.folded_bias[c], _int.s1[c] * _int.s2[c], 0, bit=32, symmetric=True))
-                _int.sum_a2.data.copy_(
-                    torch.sum(_int.folded_weight[c], dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+                _int.sum_a2[c].data.copy_(
+                    torch.sum(_int.folded_weight[c], dim=(1, 2, 3))[:, None, None])
         else:                  # single batch norm parameters
             _int.folded_weight[0].data.copy_(quantize_matrix(_fp.folded_weight[0], _int.s2, _int.z2, _int.w_bit))
             for c in range(_fp.num_clusters):
