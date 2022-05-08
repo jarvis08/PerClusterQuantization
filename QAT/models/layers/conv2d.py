@@ -110,11 +110,13 @@ class QuantizedConv2d(nn.Conv2d):
         batch_size = x.size(0)
         bc = self.runtime_helper.qat_batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
+        if self.fold_convbn and self.multi_norm:
+            z2 = torch.index_select(self.z2, 0, bc)[None, :, None, None]
 
         if self.is_bias:
             if self.fold_convbn:
-                bias = torch.index_select(self.folded_bias[bc], 0, bc)
-                sum_q1q2 = sum_q1q2.add(bias[None, :, None, None])
+                bias = torch.index_select(self.folded_bias, 0, bc)
+                sum_q1q2 = sum_q1q2.add(bias[0][None, :, None, None])
             else:
                 bias = torch.index_select(self.quantized_bias, 0, bc)
                 sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
@@ -137,8 +139,12 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_a1 = self.sum_a1[:batch_size] * self.z2[None, :, None, None]
                 nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2[None, :, None, None]
             else:
-                sum_a1 = self.sum_a1[:batch_size] * self.z2
-                nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
+                if self.multi_norm:
+                    sum_a1 = self.sum_a1[:batch_size] * z2
+                    nz1z2 = input_ch * filter_col * filter_row * z1 * z2
+                else:
+                    sum_a1 = self.sum_a1[:batch_size] * self.z2
+                    nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
             sum_a2 = self.sum_a2.mul(z1)
 
             subsum = sum_q1q2.add(nz1z2)
@@ -467,8 +473,10 @@ class PCQConv2d(nn.Module):
             assert self.per_channel == False, 'per channel for folded pcq model, not implemented'
             if self.num_norms > 1:
                 self.s2 = torch.zeros(self.num_clusters, dtype=torch.float32)
+                self.z2 = torch.zeros(self.num_clusters, dtype=torch.float32)
+
                 for cluster in range(self.num_clusters):
-                    self.s2[cluster], self.z2[cluster] = calc_qparams(self.folded_weight[cluster].weight.min(), self.folded_weight[cluster].max(),
+                    self.s2[cluster], self.z2[cluster] = calc_qparams(self.folded_weight[cluster].min(), self.folded_weight[cluster].max(),
                                                     self.w_bit, symmetric=self.symmetric, zero=zero)
             else:
                 self.s2, self.z2 = calc_qparams(self.folded_weight[0].min(), self.folded_weight[0].max(),
