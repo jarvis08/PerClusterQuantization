@@ -415,15 +415,11 @@ class QuantAct_Daq(QuantAct):
                         x_max = x.data.max()
                 else:
                     if self.act_percentile == 0:
-                        x_min = x.data.min()
-                        x_max = x.data.max()
-                        '''
                         data = x.view(x.size(0), -1).clone().detach()
                         _max = data.max(dim=1).values.mean()
                         _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
                         x_max = _max
                         x_min = _min
-                        '''
                     elif self.quant_mode == 'symmetric':
                         x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
                                                           self.act_percentile, output_tensor=True, num_cluster=self.runtime_helper.num_clusters)
