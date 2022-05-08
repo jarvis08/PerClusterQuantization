@@ -415,11 +415,15 @@ class QuantAct_Daq(QuantAct):
                         x_max = x.data.max()
                 else:
                     if self.act_percentile == 0:
+                        x_min = x.data.min()
+                        x_max = x.data.max()
+                        '''
                         data = x.view(x.size(0), -1).clone().detach()
                         _max = data.max(dim=1).values.mean()
                         _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
                         x_max = _max
                         x_min = _min
+                        '''
                     elif self.quant_mode == 'symmetric':
                         x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
                                                           self.act_percentile, output_tensor=True, num_cluster=self.runtime_helper.num_clusters)
@@ -729,12 +733,14 @@ class QuantBnConv2d(Module):
                 if cluster is not None :
                     self.running_means[cluster] = self.running_means[cluster].detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                     self.running_vars[cluster] = self.running_vars[cluster].detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
+                    output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
+                    return (output_factor * (conv_output - batch_mean.view(1, -1, 1, 1)) + self.biases[cluster].view(1, -1, 1, 1), None)
                 else:
                     self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                     self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
+                    output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
+                    return (output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1), None)
                     
-                output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
-                return (output_factor * (conv_output - batch_mean.view(1, -1, 1, 1)) + self.biases[cluster].view(1, -1, 1, 1), None)
             else:
                 batch_mean = self.bn.running_mean.detach()
                 batch_var = self.bn.running_var.detach()
@@ -898,15 +904,16 @@ class QuantBn(Module):
                 batch_mean = torch.mean(x, dim=(0, 2, 3))
                 batch_var = torch.var(x, dim=(0, 2, 3))
 
-                if cluster is not None:
+                if cluster is not None :
                     self.running_means[cluster] = self.running_means[cluster].detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                     self.running_vars[cluster] = self.running_vars[cluster].detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
+                    output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
+                    return (output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.biases[cluster].view(1, -1, 1, 1), None)
                 else:
                     self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                     self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
-
-                output_factor = self.weights[cluster].view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)  
-                return (output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.biases[cluster].view(1, -1, 1, 1), None)
+                    output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)
+                    return (output_factor * (x - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1), None)
             else:
                 batch_mean = self.bn.running_mean.detach()
                 batch_var = self.bn.running_var.detach()
