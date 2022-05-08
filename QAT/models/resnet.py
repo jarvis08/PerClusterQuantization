@@ -198,7 +198,7 @@ class Bottleneck(nn.Module):
             n_features = out.view(-1).size(0)
             zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-            out = self.conv2(_x)
+            out = self.conv2(out)
             out = self.bn2(out)
             out = self.relu(out)
             n_features = out.view(-1).size(0)
@@ -228,7 +228,7 @@ class Bottleneck(nn.Module):
             zeros_idx %= n_features
             zero_counter[l_idx][cluster, zeros_idx] += 1
 
-        out = self.conv2(x)
+        out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
         l_idx += 1

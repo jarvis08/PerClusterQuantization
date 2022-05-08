@@ -149,6 +149,7 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
     elif arch == 'DenseNet121':
+        setattr(tools, 'pretrained_model_initializer', densenet121)
         # if is_pcq:
         #     setattr(tools, 'fuser', set_pcq_densenet)
         # elif is_folded:
