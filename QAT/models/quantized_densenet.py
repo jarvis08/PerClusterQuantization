@@ -59,7 +59,8 @@ class QuantizedTransition(nn.Sequential):
         out = self.bn(x)
         out = self.conv(out.type(torch.cuda.FloatTensor))
         out = self.pool(out.type(torch.cuda.FloatTensor))
-        out = out.floor()
+        # out = out.floor()
+        out = out.trunc()
         return out
 
 
@@ -172,7 +173,8 @@ class QuantizedDenseNet(nn.Module):
         out = self.features.last_norm(out)
 
         out = F.adaptive_avg_pool2d(out.type(torch.cuda.FloatTensor), (1, 1))
-        out = out.floor()
+        # out = out.floor()
+        out = out.trunc()
 
         out = torch.flatten(out, 1)
         out = self.classifier(out)
