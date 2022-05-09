@@ -131,8 +131,8 @@ class FusedDenseBlock(nn.ModuleDict):
             _max = out.max().item()
         else:
             data = out.view(out.size(0), -1)
-            _min = data.min(dim=1).values.mean()
-            _max = data.max(dim=1).values.mean()
+            _min = data.min(dim=1).values.mean().item()
+            _max = data.max(dim=1).values.mean().item()
 
         if self.apply_ema:
             self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
@@ -235,8 +235,8 @@ class FusedDenseNet(nn.Module):
             _max = x.max().item()
         else:
             data = x.view(x.size(0), -1)
-            _min = data.min(dim=1).values.mean()
-            _max = data.max(dim=1).values.mean()
+            _min = data.min(dim=1).values.mean().item()
+            _max = data.max(dim=1).values.mean().item()
 
         if self.apply_ema:
             self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)

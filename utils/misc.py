@@ -315,7 +315,6 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
-
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
