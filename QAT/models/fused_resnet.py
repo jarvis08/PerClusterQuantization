@@ -249,8 +249,8 @@ class FusedResNet(nn.Module):
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
         self.last_block_idx = layers[layers[3]-1]
 
-    def change_classifier_input_bit(self, bit):
-        self.layer4[self.last_block_idx].bn3.change_a_bit(bit)
+        if bit_first > target_bit:
+            self.layer4[layers[3]-1].bn3.change_a_bit(bit_first)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -362,10 +362,8 @@ class FusedResNet20(nn.Module):
         self.fc = FusedLinear(64 * block.expansion, num_classes, is_classifier=True,
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
-        self.last_block_idx = layers[2] - 1
-
-    def change_classifier_input_bit(self, bit):
-        self.layer3[self.last_block_idx].bn2.change_a_bit(bit)
+        if bit_first > target_bit:
+            self.layer3[layers[2] - 1].bn3.change_a_bit(bit_first)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None

@@ -55,7 +55,6 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     quantized_model = None
 
-    model.change_classifier_input_bit(8)
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
