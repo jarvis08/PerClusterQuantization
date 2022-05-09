@@ -244,7 +244,8 @@ class FusedResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
         self.fc = FusedLinear(512 * block.expansion, num_classes, is_classifier=True,
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
         self.last_block_idx = layers[layers[3]-1]
