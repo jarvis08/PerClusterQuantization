@@ -148,7 +148,7 @@ class PCQLinear(nn.Module):
         self.is_classifier = is_classifier
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
-        self._activation = activation(inplace=True) if activation else None
+        self._activation = activation(inplace=False) if activation else None
 
     def forward(self, x, external_range=None):
         if not self.training:
