@@ -135,10 +135,10 @@ class FusedDenseBlock(nn.ModuleDict):
             _max = data.max(dim=1).values.mean()
 
         if self.apply_ema:
-            self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
-            self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+            self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
         else:
-            self.in_range[0], self.in_range[1] = _min, _max
+            self.act_range[0], self.act_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
         return out
