@@ -355,8 +355,6 @@ class QuantAct_Daq(QuantAct):
 
         self.is_classifier = False
 
-        self.init = False
-
     def __repr__(self):
         return "{0}(activation_bit={1}, " \
                "full_precision_flag={2}, quant_mode={3}".format(

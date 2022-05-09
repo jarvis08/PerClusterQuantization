@@ -176,9 +176,7 @@ parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'resnet18': q_resnet18, 'resnet101': q_resnet101,
-                      'resnet20_cifar10': q_resnet20,
-                      'resnet20_cifar100': q_resnet20,
-                      'resnet20_svhn': q_resnet20,
+                      'resnet20': q_resnet20,
                       'alexnet': q_alexnet,
                       'densenet121': q_densenet,
                       'inceptionv3': q_inceptionv3,
@@ -243,6 +241,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             return arch + "_" + args.data.lower()
         elif arch == 'densenet':
             return "densenet121"
+        else:
+            return arch
+
+    def reset_args_arch(args):
+        arch = args.arch.lower()
+        if 'resnet20' in arch:
+            return "resnet20"
         else:
             return arch
 
@@ -421,6 +426,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     prev_arch = args.arch
     args.arch = set_args_arch(args)
     model, teacher = create_model(args)  # Create Model
+    args.arch = reset_args_arch(args)
     model_dict = transfer_param(args, model) if args.transfer_param else None
     model = eval_resume(args, model)
     runtime_helper = set_runtime_helper(args)
@@ -428,7 +434,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     quantize_arch = quantize_arch_dict[args.arch]
     model = get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper)
 
-    bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
+    if "resnet20" in args.arch and runtime_helper is not None:
+        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + "daq" + "_" + args.quant_scheme]
+        
+    else:
+        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
     model = set_quantize_param(args, model, bit_config)
 
