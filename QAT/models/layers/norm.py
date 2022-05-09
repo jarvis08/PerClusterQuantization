@@ -109,7 +109,7 @@ class PCQBnReLU(nn.Module):
 
         self.num_features = num_features
         self.norms = nn.ModuleList([nn.BatchNorm2d(num_features) for _ in range(self.num_clusters)])
-        self.activation = activation(inplace=True) if activation else None
+        self.activation = activation(inplace=False) if activation else None
 
     def change_a_bit(self, bit):
         self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
@@ -225,7 +225,7 @@ class FusedBnReLU(nn.Module):
 
         self.num_features = num_features
         self.bn = nn.BatchNorm2d(num_features)
-        self.activation = activation(inplace=True) if activation else None
+        self.activation = activation(inplace=False) if activation else None
 
     def forward(self, x, external_range=None):
         if not self.training:

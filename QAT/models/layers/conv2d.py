@@ -276,7 +276,7 @@ class PCQConv2d(nn.Module):
         else:
             self._norm_layer = None
 
-        self._activation = activation(inplace=True) if activation else None
+        self._activation = activation(inplace=False) if activation else None
         self.out_channels = out_channels
         self.in_channels = in_channels
 
