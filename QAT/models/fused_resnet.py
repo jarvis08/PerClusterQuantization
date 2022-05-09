@@ -363,7 +363,7 @@ class FusedResNet20(nn.Module):
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
         if bit_first > target_bit:
-            self.layer3[layers[2] - 1].bn3.change_a_bit(bit_first)
+            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None

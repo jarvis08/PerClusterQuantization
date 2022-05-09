@@ -54,7 +54,6 @@ def _finetune(args, tools, data_loaders, clustering_model):
     logger = set_logger(save_path_fp)
 
     quantized_model = None
-
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
