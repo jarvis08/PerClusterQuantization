@@ -64,6 +64,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
 
+        if args.fold_convbn:
+            tools.folder(model)
+
         fp_score = 0
         if args.dataset != 'imagenet':
             if args.cluster > 1:

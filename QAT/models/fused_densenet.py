@@ -189,7 +189,7 @@ class FusedDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', FusedBnReLU(num_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict))
+        self.features.add_module('last_norm', FusedBnReLU(num_features, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict))
         # Linear layer
         self.classifier = FusedLinear(num_features, num_classes, is_classifier=True, w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 

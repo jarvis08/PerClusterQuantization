@@ -113,7 +113,7 @@ class PCQAlexNetSmall(nn.Module):
         self.conv5 = PCQConv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=True,
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.fc1 = PCQLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
-        self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
+        self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict)
         self.fc3 = PCQLinear(4096, num_classes, bias=True, is_classifier=True,
                              w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
@@ -157,7 +157,8 @@ class PCQAlexNetSmall(nn.Module):
         return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)

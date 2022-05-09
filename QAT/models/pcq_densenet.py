@@ -200,7 +200,7 @@ class PCQDenseNet(nn.Module):
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
         # Last Norm
-        self.features.add_module('last_norm', PCQBnReLU(num_features, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict))
+        self.features.add_module('last_norm', PCQBnReLU(num_features, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict))
         # Linear layer
         self.classifier = PCQLinear(num_features, num_classes, is_classifier=True,
                                     w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
@@ -243,11 +243,12 @@ class PCQDenseNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit)
+        zero = self.runtime_helper.fzero
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
         conv_s, conv_z = self.features.first_conv.set_qparams(self.scale, self.zero_point)
         block1_s, block1_z = self.features.denseblock1.set_block_qparams()
         block2_s, block2_z = self.features.denseblock2.set_block_qparams()

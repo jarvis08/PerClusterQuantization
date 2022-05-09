@@ -45,6 +45,7 @@ class _DenseLayer(nn.Module):
                                            bias=False))
         self.drop_rate = float(drop_rate)
         self.memory_efficient = memory_efficient
+        self.initialized = False
 
     def bn_function(self, inputs: List[Tensor]) -> Tensor:
         concated_features = torch.cat(inputs, 1)
@@ -201,6 +202,7 @@ class _Transition(nn.Sequential):
         self.add_module('conv', nn.Conv2d(num_input_features, num_output_features,
                                           kernel_size=1, stride=1, bias=False))
         self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
+        self.initialized = False
 
     def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx):
         if not self.initialized:

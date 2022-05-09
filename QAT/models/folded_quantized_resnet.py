@@ -194,7 +194,8 @@ class FoldedQuantizedResNet(nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x.type(torch.cuda.FloatTensor))
-        x = x.floor()
+        # x = x.floor()
+        x = x.trunc()
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
@@ -262,7 +263,8 @@ class FoldedQuantizedResNet20(nn.Module):
         x = self.layer3(x)
 
         x = self.avgpool(x.type(torch.cuda.FloatTensor))
-        x = x.floor()
+        # x = x.floor()
+        x = x.trunc()
 
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
@@ -312,34 +314,34 @@ def set_shortcut_qparams(m, bit, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
     return m
 
 
-def quantize_block(_fp, _int):
-    for i in range(len(_int)):
-        _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
-        _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
-        if _fp[i].downsample:
-            _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
-            if type(_int[i]) == FoldedQuantizedBottleneck:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
-                                                        _int[i].downsample.s3, _int[i].downsample.z3,
-                                                        _int[i].bn3.s3, _int[i].bn3.z3,
-                                                        _fp[i].s3, _fp[i].z3)
-            else:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
-                                                        _int[i].downsample.s3, _int[i].downsample.z3,
-                                                        _int[i].bn2.s3, _int[i].bn2.z3,
-                                                        _fp[i].s3, _fp[i].z3)
-        else:
-            if type(_int[i]) == FoldedQuantizedBottleneck:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
-                                                        _int[i].conv1.s1, _int[i].conv1.z1,
-                                                        _int[i].bn3.s3, _int[i].bn3.z3,
-                                                        _fp[i].s3, _fp[i].z3)
-            else:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
-                                                        _int[i].conv1.s1, _int[i].conv1.z1,
-                                                        _int[i].bn2.s3, _int[i].bn2.z3,
-                                                        _fp[i].s3, _fp[i].z3)
-    return _int
+# def quantize_block(_fp, _int):
+#     for i in range(len(_int)):
+#         _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
+#         _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
+#         if _fp[i].downsample:
+#             _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
+#             if type(_int[i]) == FoldedQuantizedBottleneck:
+#                 _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+#                                                         _int[i].downsample.s3, _int[i].downsample.z3,
+#                                                         _int[i].conv3.s3, _int[i].conv3.z3,
+#                                                         _fp[i].s3, _fp[i].z3)
+#             else:
+#                 _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+#                                                         _int[i].downsample.s3, _int[i].downsample.z3,
+#                                                         _int[i].conv2.s3, _int[i].conv2.z3,
+#                                                         _fp[i].s3, _fp[i].z3)
+#         else:
+#             if type(_int[i]) == FoldedQuantizedBottleneck:
+#                 _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+#                                                         _int[i].conv1.s1, _int[i].conv1.z1,
+#                                                         _int[i].conv3.s3, _int[i].conv3.z3,
+#                                                         _fp[i].s3, _fp[i].z3)
+#             else:
+#                 _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+#                                                         _int[i].conv1.s1, _int[i].conv1.z1,
+#                                                         _int[i].conv2.s3, _int[i].conv2.z3,
+#                                                         _fp[i].s3, _fp[i].z3)
+#     return _int
 
 
 def folded_quantize_pcq_block(_fp, _int):
@@ -376,18 +378,18 @@ def folded_quantize_pcq_block(_fp, _int):
     return _int
 
 
-def quantize_resnet(fp_model, int_model):
-    int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
-    int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
-    int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
-    int_model.bn1 = quantize(fp_model.bn1, int_model.bn1)
-    int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
-    int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
-    int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
-    if int_model.num_blocks == 4:
-        int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
-    int_model.fc = quantize(fp_model.fc, int_model.fc)
-    return int_model
+# def quantize_resnet(fp_model, int_model):
+#     int_model.scale = torch.nn.Parameter(fp_model.scale, requires_grad=False)
+#     int_model.zero_point = torch.nn.Parameter(fp_model.zero_point, requires_grad=False)
+#     int_model.first_conv = quantize(fp_model.first_conv, int_model.first_conv)
+#     int_model.bn1 = quantize(fp_model.bn1, int_model.bn1)
+#     int_model.layer1 = quantize_block(fp_model.layer1, int_model.layer1)
+#     int_model.layer2 = quantize_block(fp_model.layer2, int_model.layer2)
+#     int_model.layer3 = quantize_block(fp_model.layer3, int_model.layer3)
+#     if int_model.num_blocks == 4:
+#         int_model.layer4 = quantize_block(fp_model.layer4, int_model.layer4)
+#     int_model.fc = quantize(fp_model.fc, int_model.fc)
+#     return int_model
 
 
 def folded_quantize_pcq_resnet(fp_model, int_model):

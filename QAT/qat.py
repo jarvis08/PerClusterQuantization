@@ -19,6 +19,7 @@ parser.add_argument('--epoch', default=100, type=int, help='Number of epochs to 
 parser.add_argument('--lr', default=0.01, type=float, help='Initial Learning Rate')
 parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight-decay value')
 parser.add_argument('--bn_momentum', default=0.1, type=float, help="BatchNorm2d's momentum factor")
+parser.add_argument('--multi_norm', action='store_true', help='whether use single batchnorm layer or multiple during layer fusion ')
 
 parser.add_argument('--fused', action='store_true', help='Evaluate or fine-tune fused model')
 parser.add_argument('--quantized', action='store_true', help='Evaluate quantized model')
@@ -49,7 +50,7 @@ parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
-#os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
+os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
 
 # General
 if not args_qat.bit_first:
@@ -89,26 +90,34 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
             setattr(tools, 'quantized_model_initializer', quantized_alexnet)
 
     elif 'ResNet' in arch:
-        if is_pcq:
-            setattr(tools, 'fuser', set_pcq_resnet)
-        elif is_folded:
-            setattr(tools, 'fuser', set_folded_fused_resnet)
-        else:
-            setattr(tools, 'fuser', set_fused_resnet)
-
         if is_folded:
+            if is_pcq:
+                setattr(tools, 'fuser', set_folded_pcq_resnet)
+                setattr(tools, 'folder', fold_pcq_resnet)
+            else:
+                setattr(tools, 'fuser', set_folded_fused_resnet)
+                setattr(tools, 'folder', fold_fused_resnet)
             setattr(tools, 'quantizer', folded_quantize_pcq_resnet)
         else:
+            if is_pcq:
+                setattr(tools, 'fuser', set_pcq_resnet)
+            else:
+                setattr(tools, 'fuser', set_fused_resnet)
+
             setattr(tools, 'quantizer', quantize_pcq_resnet)
 
         if '50' in arch:
             setattr(tools, 'pretrained_model_initializer', resnet50)
             if is_pcq:
-                setattr(tools, 'fused_model_initializer', pcq_resnet50)
-            elif is_folded:
-                setattr(tools, 'fused_model_initializer', fused_resnet50_folded)
+                if is_folded:
+                    setattr(tools, 'fused_model_initializer', pcq_resnet50_folded)
+                else:
+                    setattr(tools, 'fused_model_initializer', pcq_resnet50)
             else:
-                setattr(tools, 'fused_model_initializer', fused_resnet50)
+                if is_folded:
+                    setattr(tools, 'fused_model_initializer', fused_resnet50_folded)
+                else:
+                    setattr(tools, 'fused_model_initializer', fused_resnet50)
 
             if is_folded:
                 setattr(tools, 'quantized_model_initializer', quantized_resnet50_folded)
@@ -117,11 +126,15 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
         else:
             setattr(tools, 'pretrained_model_initializer', resnet20)
             if is_pcq:
-                setattr(tools, 'fused_model_initializer', pcq_resnet20)
-            elif is_folded:
-                setattr(tools, 'fused_model_initializer', fused_resnet20_folded)
+                if is_folded:
+                    setattr(tools, 'fused_model_initializer', pcq_resnet20_folded)
+                else:
+                    setattr(tools, 'fused_model_initializer', pcq_resnet20)
             else:
-                setattr(tools, 'fused_model_initializer', fused_resnet20)
+                if is_folded:
+                    setattr(tools, 'fused_model_initializer', fused_resnet20_folded)
+                else:
+                    setattr(tools, 'fused_model_initializer', fused_resnet20)
 
             if is_folded:
                 setattr(tools, 'quantized_model_initializer', quantized_resnet20_folded)
@@ -136,6 +149,15 @@ def set_func_for_target_arch(arch, is_pcq, is_folded):
         setattr(tools, 'quantized_model_initializer', quantized_mobilenet)
 
     elif arch == 'DenseNet121':
+        setattr(tools, 'pretrained_model_initializer', densenet121)
+        # if is_pcq:
+        #     setattr(tools, 'fuser', set_pcq_densenet)
+        # elif is_folded:
+        #     setattr(tools, 'fuser', set_folded_fused_densenet)
+        #     setattr(tools, 'folder', fold_densenet)
+        # else:
+        #     setattr(tools, 'fuser', set_fused_densenet)
+
         setattr(tools, 'quantized_model_initializer', quantized_densenet)
         if is_pcq:
             setattr(tools, 'fused_model_initializer', pcq_densenet)

@@ -8,6 +8,7 @@ from .fused_mlp import *
 from .fused_alexnet import *
 from .fused_resnet import *
 from .folded_fused_resnet import *
+from .folded_pcq_resnet import *
 from .fused_mobilenet import *
 from .fused_densenet import *
 
