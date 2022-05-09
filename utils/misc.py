@@ -390,16 +390,12 @@ def transfer_params(arch, dataset, qat_model):
     elif arch == 'densenet121':
         torchcv = ptcv_get_model('densenet121', pretrained=True)
 
+    assert not 'alex' in arch, "Load our pretrained model when training alexnet"
+
     torchcv_dict = torchcv.state_dict()
     for cv, our in zip(model_dict.items(), torchcv_dict.items()):
         model_dict[cv[0]].copy_(torchcv_dict[our[0]])
 
-    # elif arch == 'alexnet':
-    #     checkpoint = torch.load(args.dnn_path)
-    #     loaded_dict = checkpoint['state_dict']
-    #     model_dict = model.state_dict()
-    #     for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-    #         model_dict[cur[0]] = loaded_dict[from_[0]]
     return qat_model
 
 

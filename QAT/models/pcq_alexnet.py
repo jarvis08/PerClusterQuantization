@@ -141,9 +141,14 @@ class PCQAlexNetSmall(nn.Module):
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        data = x.clone().detach().view(x.size(0), -1)
-        _min = data.min(dim=1).values.mean()
-        _max = data.max(dim=1).values.mean()
+
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
+        else:
+            data = x.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
         if self.apply_ema[cluster]:
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)

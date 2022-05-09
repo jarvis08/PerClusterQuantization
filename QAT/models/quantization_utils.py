@@ -50,7 +50,6 @@ def get_scale_and_zeropoint(_min, _max, bit):
 
 
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
-    assert range_max <= range_min, 'Calc_qparams quantize range is wrong'
     if symmetric:
         return calc_symmetric_qparams(range_min, range_max, bit)
     if zero is None:
@@ -79,9 +78,6 @@ def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
     _mat = mat.view(mat.size(0), -1)
     _min = _mat.min(dim=1).values
     _max = _mat.max(dim=1).values
-
-    for v in (_max - _min).view(-1):
-        assert v < 0, "Quantization Range wrong"
 
     if symmetric:
         return calc_symmetric_qparams(_min, _max, bit, True)
