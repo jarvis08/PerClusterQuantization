@@ -64,13 +64,16 @@ class FusedBasicBlock(nn.Module):
             identity = self.bn_down(identity)
 
         out += identity
+
         out = self.relu(out)
 
         if self.training:
             self._update_activation_ranges(out)
             if self.runtime_helper.apply_fake_quantization:
                 out = self._fake_quantize_activation(out)
+
         return out
+
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
@@ -88,8 +91,8 @@ class FusedBasicBlock(nn.Module):
 
 
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+        return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
 
 
     @torch.no_grad()
@@ -107,8 +110,8 @@ class FusedBasicBlock(nn.Module):
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         self.bn2.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+        nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit, symmetric=False)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -159,31 +162,33 @@ class FusedBottleneck(nn.Module):
             identity = self.bn_down(identity)
 
         out += identity
+
         out = self.relu(out)
 
         if self.training:
             self._update_activation_ranges(out)
             if self.runtime_helper.apply_fake_quantization:
                 out = self._fake_quantize_activation(out)
+
         return out
 
-    @torch.no_grad()
     def _update_activation_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _max = data.max(dim=1).values.mean()
+        with torch.no_grad():
+            if self.runtime_helper.undo_gema:
+                _max = x.max().item()
+            else:
+                data = x.view(x.size(0), -1)
+                _max = data.max(dim=1).values.mean().item()
 
-        if self.apply_ema:
-            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-        else:
-            self.act_range[1] = _max
-            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+            if self.apply_ema:
+                self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.act_range[1] = _max
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.bit_addcat, symmetric=False)
+        return fake_quantize(x, s, z, self.bit_addcat, symmetric=False, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
         self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
@@ -201,8 +206,8 @@ class FusedBottleneck(nn.Module):
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
+        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+        nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit, symmetric=False)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -312,15 +317,15 @@ class FusedResNet(nn.Module):
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit)
+        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit, symmetric=False)
 
         blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
         for block in blocks:
@@ -413,15 +418,15 @@ class FusedResNet20(nn.Module):
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit)
+        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit, symmetric=False)
 
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:

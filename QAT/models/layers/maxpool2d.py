@@ -26,17 +26,17 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
             return self.maxpool(x)
 
         # Pad with 0
-        if self.bit == 4 or self.bit == 32:
-            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=0)
-            return self.maxpool(x)
-
-        bc = self.runtime_helper.qat_batch_cluster
-        if bc is None:
-            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
-                      value=self.zero_point.item())
-        else:
-            x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
-                      value=self.zero_point[bc].item())
-
+        # if self.bit == 4 or self.bit == 32:
+        x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=0)
         return self.maxpool(x)
+
+        # bc = self.runtime_helper.qat_batch_cluster
+        # if bc is None:
+        #     x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
+        #               value=self.zero_point.item())
+        # else:
+        #     x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant',
+        #               value=self.zero_point[bc].item())
+
+        # return self.maxpool(x)
 

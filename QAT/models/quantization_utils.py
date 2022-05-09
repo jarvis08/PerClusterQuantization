@@ -29,50 +29,76 @@ def get_range(x):
     return _x.min().item(), _x.max().item()
 
 
-def get_scale_and_zeropoint(_min, _max, bit):
-    if bit == 4:
-        s = (_max - _min) / 15
-        z = - torch.round(_min / s)
-        return s, torch.clamp(z, 0, 15)
-    elif bit == 8:
-        s = (_max - _min) / 255
-        z = -128 - torch.round(_min / s)
-        return s, torch.clamp(z, -128, 127)
-    elif bit == 16:
-        s = (_max - _min) / 65535
-        z = -32768 - torch.round(_min / s)
-        return s, torch.clamp(z, -32768, 32767)
-    elif bit == 24:
-        s = _max.sub(_min).div(16777215)
-        return s, torch.zeros(s.shape, device='cuda')
-    s = (_max - _min) / 4294967295
-    return s, torch.tensor(0, device='cuda')
+# def get_scale_and_zeropoint(_min, _max, bit):
+#     if bit == 4:
+#         s = (_max - _min) / 15
+#         z = - torch.round(_min / s)
+#         return s, torch.clamp(z, 0, 15)
+#     elif bit == 8:
+#         s = (_max - _min) / 255
+#         z = -128 - torch.round(_min / s)
+#         return s, torch.clamp(z, -128, 127)
+#     elif bit == 16:
+#         s = (_max - _min) / 65535
+#         z = -32768 - torch.round(_min / s)
+#         return s, torch.clamp(z, -32768, 32767)
+#     elif bit == 24:
+#         s = _max.sub(_min).div(16777215)
+#         return s, torch.zeros(s.shape, device='cuda')
+#     s = (_max - _min) / 4294967295
+#     return s, torch.tensor(0, device='cuda')
 
 
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
+    # if zero is None:
+    #     zero = torch.tensor(0.0, device='cuda')
+    # _min = zero if range_min > 0.0 else range_min
+    # _max = zero if range_max < 0.0 else range_max
+    # return get_scale_and_zeropoint(_min, _max, bit)
     if symmetric:
         return calc_symmetric_qparams(range_min, range_max, bit)
+    return calc_asymmetric_qparams(range_min, range_max, bit)
+
+
+def calc_symmetric_qparams(_min, _max, bit):
+    # with torch.no_grad():
+        # if bit == 4:
+        #     s = (_max - _min) / 15
+        # elif bit == 8:
+        #     s = (_max - _min) / 255
+        # elif bit == 16:
+        #     s = (_max - _min) / 65535
+        # elif bit == 24:
+        #     s = _max.sub(_min).div(16777215)
+        # else:
+        #     s = (_max - _min) / 4294967295
+    # return s, torch.zeros_like(s, device='cuda')    #
+    with torch.no_grad():
+        target_bit = bit.clone().type(torch.int32)
+        n = 2 ** (target_bit.data - 1) - 1
+        scale = torch.maximum(_min.abs(), _max.abs())         #
+        scale = torch.clamp(scale, min=1e-8) / float(n)
+        return scale, torch.zeros_like(scale, device='cuda')
+
+def calc_asymmetric_qparams(_min, _max, bit, zero=None):
+    # Only use Asymmetric Qparams when quantizing after ReLU
+    with torch.no_grad():
+        target_bit = bit.clone().type(torch.int32)
+        n = (2 ** target_bit.data) - 1
+        scale = torch.clamp((_max - _min), min=1e-8) / float(n)
+
+        return scale, torch.zeros_like(scale, device='cuda')
+
+def calc_qparams_per_cluster(ranges, bit, symmetric=False, zero=None):
     if zero is None:
         zero = torch.tensor(0.0, device='cuda')
-    _min = zero if range_min > 0.0 else range_min
-    _max = zero if range_max < 0.0 else range_max
-    return get_scale_and_zeropoint(_min, _max, bit)
-
-
-def calc_symmetric_qparams(_min, _max, bit, per_channel=False):
-    with torch.no_grad():
-        if bit == 4:
-            s = (_max - _min) / 15
-        elif bit == 8:
-            s = (_max - _min) / 255
-        elif bit == 16:
-            s = (_max - _min) / 65535
-        elif bit == 24:
-            s = _max.sub(_min).div(16777215)
-        else:
-            s = (_max - _min) / 4294967295
-    return s, torch.zeros_like(s, device='cuda')    #
-
+    _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
+    _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
+    # return get_scale_and_zeropoint(_min, _max, bit)
+    if symmetric:
+        return calc_symmetric_qparams(_min, _max, bit)
+    return calc_asymmetric_qparams(_min, _max, bit, zero)
+    
 
 def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
     _mat = mat.view(mat.size(0), -1)
@@ -89,14 +115,6 @@ def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
     return get_scale_and_zeropoint(_min, _max, bit)
 
 
-def calc_qparams_per_cluster(ranges, bit, zero=None):
-    if zero is None:
-        zero = torch.tensor(0.0, device='cuda')
-    _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
-    _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
-    return get_scale_and_zeropoint(_min, _max, bit)
-
-
 @torch.no_grad()
 def ema(x, averaged, smooth):
     _min, _max = torch.min(x).item(), torch.max(x).item()
@@ -108,6 +126,7 @@ def ema(x, averaged, smooth):
 def fake_quantize(x, scale, zero_point, bit, symmetric=False, use_ste=False):
     _x = x.detach()
     _x = (clamp_matrix(torch.round(_x / scale + zero_point), bit, symmetric) - zero_point) * scale
+
     if use_ste:
         return STE.apply(x, _x)
     return _x
@@ -176,21 +195,21 @@ def quantize_matrix(x, scale, zero_point, bit=None, symmetric=False):
     return clamp_matrix(quantized, bit, symmetric)
 
 
-def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None):
+def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None, symmetric=False):
     scale = torch.index_select(scale, 0, batch_cluster)[:, None]
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None]
     quantized = torch.round(x / scale + zero_point)
-    return clamp_matrix(quantized, bit)
+    return clamp_matrix(quantized, bit, symmetric)
 
 
-def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None):
+def quantize_matrix_4d(x, scale, zero_point, batch_cluster, bit=None, symmetric=False):
     scale = torch.index_select(scale, 0, batch_cluster)[:, None, None, None]
     zero_point = torch.index_select(zero_point, 0, batch_cluster)[:, None, None, None]
     quantized = torch.round(x / scale + zero_point)
-    return clamp_matrix(quantized, bit)
+    return clamp_matrix(quantized, bit, symmetric)
 
 
-def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
+def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper, symmetric=False):
     bc = runtime_helper.qat_batch_cluster
 
     if bc is None:
@@ -214,10 +233,10 @@ def rescale_matrix(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
     _x = multiply_M(_x, _m0)
     _x = shifting_without_cast(_x, _shift, getattr(runtime_helper, 'mask_{}d'.format(len(x.shape))))
     _x = _x.add(z2)
-    return clamp_matrix(_x, target_bit)
+    return clamp_matrix(_x, target_bit, symmetric)
 
 
-def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
+def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper, symmetric=False):
     bc = runtime_helper.qat_batch_cluster
     batch_size = x.size(0)
 
@@ -230,7 +249,7 @@ def rescale_matrix_2d(x, z_from, z_to, m0, shift, target_bit, runtime_helper):
     _x = multiply_M(_x, _m0)
     _x = shifting_without_cast(_x, _shift, runtime_helper.mask_2d[:batch_size])
     _x = _x.add(z2)
-    return clamp_matrix(_x, target_bit)
+    return clamp_matrix(_x, target_bit, symmetric)
 
 
 def dequantize_matrix(x, scale, zero_point):
@@ -309,20 +328,31 @@ def shifting(cur, shift, mask=1):
 
 
 def clamp_matrix(x, bit=None, symmetric=False):
-    if bit == 4:
-        if symmetric:
-            qmin, qmax = -8, 7
-        else:
-            qmin, qmax = 0, 15
-    elif bit == 8:
-        qmin, qmax = -128, 127
-    elif bit == 16:
-        qmin, qmax = -32768, 32767
-    elif bit == 24:
-        qmin, qmax = -8388608, 8388607
+    if isinstance(bit, torch.Tensor):
+        target_bit = bit.clone().detach().type(torch.int32)
+    else :
+        target_bit = bit
+    if symmetric:
+        n = 2 ** (target_bit - 1) - 1
+        return torch.clamp(x, -n - 1, n)
     else:
-        qmin, qmax = -2147483648, 2147483647
-    return torch.clamp(x, qmin, qmax)
+        n = 2 ** target_bit - 1
+        return torch.clamp(x, 0, n)
+
+    # if bit == 4:
+    #     if symmetric:
+    #         qmin, qmax = -8, 7
+    #     else:
+    #         qmin, qmax = 0, 15
+    # elif bit == 8:
+    #     qmin, qmax = -128, 127
+    # elif bit == 16:
+    #     qmin, qmax = -32768, 32767
+    # elif bit == 24:
+    #     qmin, qmax = -8388608, 8388607
+    # else:
+    #     qmin, qmax = -2147483648, 2147483647
+    # return torch.clamp(x, qmin, qmax)
 
 
 def mul_and_shift(x, M0, shift, mask=1):
@@ -360,35 +390,35 @@ def transfer_qparams(_fp, _int):
     return _int
 
 
-def quantize_folded_conv2d_weight_and_bias(_fp, _int, symmetric):
-    # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
-    # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
-    _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
-    # pcq fold
-    if _fp.num_clusters > 1:
-        if _fp.num_norms > 1:  # multiple batch norm parameters
-            for c in range(_fp.num_clusters):
-                _int.folded_weight[c].data.copy_(quantize_matrix(_fp.folded_weight[c], _int.s2[c], _int.z2[c], _int.w_bit))
-                _int.folded_bias[c].data.copy_(
-                    quantize_matrix(_fp.folded_bias[c], _int.s1[c] * _int.s2[c], 0, bit=32, symmetric=True))
-                _int.sum_a2[c].data.copy_(
-                    torch.sum(_int.folded_weight[c], dim=(1, 2, 3))[:, None, None])
-        else:                  # single batch norm parameters
-            _int.folded_weight[0].data.copy_(quantize_matrix(_fp.folded_weight[0], _int.s2, _int.z2, _int.w_bit))
-            for c in range(_fp.num_clusters):
-                _int.folded_bias[c].data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1[c] * _int.s2, 0, bit=32, symmetric=True))
-            _int.sum_a2.data.copy_(torch.sum(_int.folded_weight[0], dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+# def quantize_folded_conv2d_weight_and_bias(_fp, _int, symmetric):
+#     # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+#     # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+#     _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
+#     # pcq fold
+#     if _fp.num_clusters > 1:
+#         if _fp.num_norms > 1:  # multiple batch norm parameters
+#             for c in range(_fp.num_clusters):
+#                 _int.folded_weight[c].data.copy_(quantize_matrix(_fp.folded_weight[c], _int.s2[c], _int.z2[c], _int.w_bit))
+#                 _int.folded_bias[c].data.copy_(
+#                     quantize_matrix(_fp.folded_bias[c], _int.s1[c] * _int.s2[c], 0, bit=32, symmetric=True))
+#                 _int.sum_a2[c].data.copy_(
+#                     torch.sum(_int.folded_weight[c], dim=(1, 2, 3))[:, None, None])
+#         else:                  # single batch norm parameters
+#             _int.folded_weight[0].data.copy_(quantize_matrix(_fp.folded_weight[0], _int.s2, _int.z2, _int.w_bit))
+#             for c in range(_fp.num_clusters):
+#                 _int.folded_bias[c].data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1[c] * _int.s2, 0, bit=32, symmetric=True))
+#             _int.sum_a2.data.copy_(torch.sum(_int.folded_weight[0], dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
 
-    else:   # fused fold
-        if _int.per_channel:
-            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
-            _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1 * _int.s2, 0, bit=32, symmetric=True))
-        else:
-            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
-            _int.folded_bias.data.copy_(
-                quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
-        _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
-    return _int
+#     else:   # fused fold
+#         if _int.per_channel:
+#             _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
+#             _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+#         else:
+#             _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
+#             _int.folded_bias.data.copy_(
+#                 quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+#         _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+#     return _int
 
 
 def quantize_conv2d_weight(_fp, _int, symmetric):
@@ -398,7 +428,7 @@ def quantize_conv2d_weight(_fp, _int, symmetric):
         _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2[:, None, None, None],
                                                _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
     else:
-        _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
+        _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit, symmetric=symmetric))
     _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     return _int
 
@@ -424,16 +454,16 @@ def quantize_bn(_fp, _int):
 
         weight = _weights.div(torch.sqrt(_vars + _fp.norms[0].eps))
         bias = _biases - weight * _means
-        weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit)
+        weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit, _fp.weight_symmetric)
         _int.weight.copy_(weight.type(torch.cuda.IntTensor))
         for c in range(_int.num_clusters):
-            b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32)
+            b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32, _fp.weight_symmetric)
             _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
     else:
         w = _fp.bn.weight.clone().detach().div(torch.sqrt(_fp.bn.running_var.clone().detach() + _fp.bn.eps))
         b = _fp.bn.bias.clone().detach() - w * _fp.bn.running_mean.clone().detach()
-        w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit)
-        b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32)
+        w = quantize_matrix(w, _int.s2, _int.z2, _fp.w_bit, _fp.weight_symmetric)
+        b = quantize_matrix(b, _int.s1 * _int.s2, 0, 32, _fp.weight_symmetric)
 
         _int.weight[0].copy_(w.type(torch.cuda.IntTensor))
         _int.bias[0].copy_(b.type(torch.cuda.IntTensor))
@@ -450,12 +480,12 @@ def quantize_layer(_fp, _int):
             fp_layer = _fp.conv
             if _fp.fold_convbn:
                 fold_flag = True
-                _int = quantize_folded_conv2d_weight_and_bias(_fp, _int, _fp.symmetric)
+                _int = quantize_folded_conv2d_weight_and_bias(_fp, _int, _fp.weight_symmetric)
             else:
-                _int = quantize_conv2d_weight(fp_layer, _int, _fp.symmetric)
+                _int = quantize_conv2d_weight(fp_layer, _int, _fp.weight_symmetric)
         else:
             fp_layer = _fp.fc
-            _int = quantize_fc_weight(fp_layer, _int, _fp.symmetric)
+            _int = quantize_fc_weight(fp_layer, _int, _fp.weight_symmetric)
 
         if fp_layer.bias is not None:
             _int.is_bias.data = torch.tensor(True, dtype=torch.bool)

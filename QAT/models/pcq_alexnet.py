@@ -59,7 +59,7 @@ class PCQAlexNet(nn.Module):
         return x
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams_per_cluster(self.in_range, self.bit)
+        s, z = calc_qparams_per_cluster(self.in_range, True, self.bit)
         return fake_quantize_per_cluster_4d(x, s, z, self.bit, self.runtime_helper.qat_batch_cluster)
 
     @torch.no_grad()
@@ -76,7 +76,7 @@ class PCQAlexNet(nn.Module):
             self.apply_ema[cluster] = True
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], True, self.bit)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
@@ -158,12 +158,11 @@ class PCQAlexNetSmall(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
 
     def set_quantization_params(self):
-        zero = self.runtime_helper.fzero
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, symmetric=True)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)

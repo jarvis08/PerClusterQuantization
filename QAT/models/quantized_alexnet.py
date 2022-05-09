@@ -30,13 +30,13 @@ class QuantizedAlexNet(nn.Module):
         self.conv5 = QuantizedConv2d(256, 256, kernel_size=3, stride=1, padding=1, bias=True, arg_dict=arg_dict)
         self.fc1 = QuantizedLinear(256 * 6 * 6, 4096, arg_dict=arg_dict)
         self.fc2 = QuantizedLinear(4096, 4096, arg_dict=arg_dict)
-        self.fc3 = QuantizedLinear(4096, num_classes, arg_dict=arg_dict)
+        self.fc3 = QuantizedLinear(4096, num_classes, symmetric=True, arg_dict=arg_dict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_helper.qat_batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.q_max)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.bit, symmetric=True)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.q_max)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.bit, symmetric=True)
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -73,7 +73,7 @@ class QuantizedAlexNetSmall(nn.Module):
         self.conv5 = QuantizedConv2d(384, 256, kernel_size=3, stride=1, padding=1, arg_dict=arg_dict)
         self.fc1 = QuantizedLinear(256, 4096, arg_dict=arg_dict)
         self.fc2 = QuantizedLinear(4096, 4096, arg_dict=arg_dict)
-        self.fc3 = QuantizedLinear(4096, num_classes, arg_dict=arg_dict)
+        self.fc3 = QuantizedLinear(4096, num_classes, symmetric=True, arg_dict=arg_dict)
         self.maxpool1 = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dict)
         self.maxpool2 = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dict)
         self.maxpool3 = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dict)
@@ -81,9 +81,9 @@ class QuantizedAlexNetSmall(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_helper.qat_batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit.data, symmetric=True)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit.data, symmetric=True)
 
         x = self.conv1(x)
         x = self.maxpool1(x.type(torch.cuda.FloatTensor))

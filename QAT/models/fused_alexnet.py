@@ -32,13 +32,14 @@ class FusedAlexNet(nn.Module):
         self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc3 = FusedLinear(4096, num_classes, arg_dict=arg_dict)
 
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             if self.apply_ema:
                 self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
                 if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
-                    x = fake_quantize(x, s, z, self.bit)
+                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.bit, True)
+                    x = fake_quantize(x, s, z, self.bit, symmetric=True)
             else:
                 self.in_range[0], self.in_range[1] = get_range(x)
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
@@ -58,8 +59,9 @@ class FusedAlexNet(nn.Module):
         x = self.fc3(x)
         return x
 
+
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.bit)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.bit, symmetric=True)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
@@ -84,7 +86,7 @@ class FusedAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                                 w_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict)
+                                 w_bit=bit_first, a_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict)
         self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
                                  activation=nn.ReLU, arg_dict=arg_dict)
         self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
@@ -97,6 +99,7 @@ class FusedAlexNetSmall(nn.Module):
         self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict)
         self.fc3 = FusedLinear(4096, num_classes, bias=True, is_classifier=True,
                                w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -120,29 +123,32 @@ class FusedAlexNetSmall(nn.Module):
 
         return x
 
-    @torch.no_grad()
-    def _update_input_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _min = x.min().item()
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _min = data.min(dim=1).values.mean().item()
-            _max = data.max(dim=1).values.mean().item()
 
-        if self.apply_ema:
-            self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
-            self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
-        else:
-            self.in_range[0], self.in_range[1] = _min, _max
-            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+    def _update_input_ranges(self, x):
+        with torch.no_grad():
+            if self.runtime_helper.undo_gema:
+                _min = x.min().item()
+                _max = x.max().item()
+            else:
+                data = x.view(x.size(0), -1)
+                _min = data.min(dim=1).values.mean().item()
+                _max = data.max(dim=1).values.mean().item()
+
+            if self.apply_ema:
+                self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
+                self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.in_range[0], self.in_range[1] = _min, _max
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
+
 
     def set_quantization_params(self):
-        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit.data, symmetric=True)
         prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)

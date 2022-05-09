@@ -9,13 +9,13 @@ from .quantization_utils import *
 
 def quantized_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False, arg_dict=None):
     """3x3 convolution with padding"""
-    return QuantizedConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,
+    return QuantizedConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation, symmetric=True,
                            groups=groups, dilation=dilation, bias=bias, arg_dict=arg_dict)
 
 
 def quantized_conv1x1(in_planes, out_planes, stride=1, bias=False, arg_dict=None):
     """1x1 convolution"""
-    return QuantizedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias, arg_dict=arg_dict)
+    return QuantizedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, symmetric=True, bias=bias, arg_dict=arg_dict)
 
 
 class QuantizedBasicBlock(nn.Module):
@@ -49,9 +49,9 @@ class QuantizedBasicBlock(nn.Module):
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
         if self.downsample is not None:
-            self.bn_down = QuantizedBn2d(planes, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(planes, arg_dict=arg_dict)
-        self.bn2 = QuantizedBn2d(planes, arg_dict=arg_dict)
+            self.bn_down = QuantizedBn2d(planes, symmetric=True, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(planes, symmetric=False, arg_dict=arg_dict)
+        self.bn2 = QuantizedBn2d(planes, symmetric=True, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
@@ -59,7 +59,7 @@ class QuantizedBasicBlock(nn.Module):
         conv_x = x
         if self.a_bit > self.target_bit:
             conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
-                                    self.target_bit, self.runtime_helper)
+                                    self.target_bit, self.runtime_helper, symmetric=False)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
         out = self.conv1(conv_x)
         out = self.bn1(out)
@@ -105,10 +105,10 @@ class QuantizedBottleneck(nn.Module):
         self.shortcut = QuantizedAdd(arg_dict=arg_dict)
 
         if self.downsample is not None:
-            self.bn_down = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(width, arg_dict=arg_dict)
-        self.bn2 = QuantizedBn2d(width, arg_dict=arg_dict)
-        self.bn3 = QuantizedBn2d(planes * self.expansion, arg_dict=arg_dict)
+            self.bn_down = QuantizedBn2d(planes * self.expansion, symmetric=True, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(width, symmetric=False, arg_dict=arg_dict)
+        self.bn2 = QuantizedBn2d(width, symmetric=False, arg_dict=arg_dict)
+        self.bn3 = QuantizedBn2d(planes * self.expansion, symmetric=True, arg_dict=arg_dict)
 
     def forward(self, x):
         identity = x
@@ -116,7 +116,7 @@ class QuantizedBottleneck(nn.Module):
         conv_x = x
         if self.a_bit > self.target_bit:
             conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
-                                    self.target_bit, self.runtime_helper)
+                                    self.target_bit, self.runtime_helper, symmetric=False)
         conv_x = conv_x.type(torch.cuda.FloatTensor)
 
         out = self.conv1(conv_x)
@@ -168,15 +168,16 @@ class QuantizedResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
         self.first_conv = QuantizedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, is_first=True,
-                                          arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(self.inplanes, arg_dict=arg_dict)
+                                          symmetric=True, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(self.inplanes, symmetric=False, arg_dict=arg_dict)
         self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=1, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = QuantizedLinear(512 * block.expansion, num_classes, arg_dict=arg_dict)
+        # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
+        self.fc = QuantizedLinear(512 * block.expansion, num_classes, symmetric=True, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
@@ -200,9 +201,9 @@ class QuantizedResNet(nn.Module):
 
     def forward(self, x):
         if self.runtime_helper.qat_batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit, symmetric=True)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit, symmetric=True)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
         x = self.bn1(x)
@@ -220,7 +221,7 @@ class QuantizedResNet(nn.Module):
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
             x = rescale_matrix(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                               self.shift, self.target_bit, self.runtime_helper)
+                               self.shift, self.target_bit, self.runtime_helper, symmetric=False)
             x = self.fc(x.type(torch.cuda.FloatTensor))
         else:
             x = self.fc(x)
@@ -252,13 +253,13 @@ class QuantizedResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, is_first=True, arg_dict=arg_dict)
-        self.bn1 = QuantizedBn2d(16, arg_dict=arg_dict)
+        self.first_conv = QuantizedConv2d(3, 16, kernel_size=3, stride=1, padding=1, symmetric=True, is_first=True, arg_dict=arg_dict)
+        self.bn1 = QuantizedBn2d(16, symmetric=False, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = QuantizedLinear(64 * block.expansion, num_classes, arg_dict=arg_dict)
+        self.fc = QuantizedLinear(64 * block.expansion, num_classes, symmetric=True, arg_dict=arg_dict)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -274,9 +275,9 @@ class QuantizedResNet20(nn.Module):
 
     def forward(self, x):
         if self.runtime_helper.qat_batch_cluster is not None:
-            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
+            x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit, symmetric=True)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit, symmetric=True)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
         x = self.bn1(x)
@@ -291,7 +292,7 @@ class QuantizedResNet20(nn.Module):
         x = torch.flatten(x, 1)
         if self.a_bit > self.target_bit:
             x = rescale_matrix(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                               self.shift, self.target_bit, self.runtime_helper)
+                               self.shift, self.target_bit, self.runtime_helper, symmetric=False)
             x = self.fc(x.type(torch.cuda.FloatTensor))
         else:
             x = self.fc(x)

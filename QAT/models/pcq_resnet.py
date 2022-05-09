@@ -87,8 +87,8 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, symmetric=False)
+        return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
 
 
     @torch.no_grad()
@@ -109,9 +109,8 @@ class PCQBasicBlock(nn.Module):
         prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
         self.bn2.set_qparams(prev_s, prev_z)
 
-        zero = self.runtime_helper.fzero
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
-        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=False)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, symmetric=False)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -151,7 +150,6 @@ class PCQBottleneck(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.conv2(out)
@@ -164,33 +162,34 @@ class PCQBottleneck(nn.Module):
             identity = self.bn_down(identity)
 
         out += identity
+
         out = self.relu(out)
 
         if self.training:
             self._update_activation_ranges(out)
             if self.runtime_helper.apply_fake_quantization:
                 out = self._fake_quantize_activation(out)
+
         return out
 
-    @torch.no_grad()
     def _update_activation_ranges(self, x):
-        cluster = self.runtime_helper.qat_batch_cluster
-        if self.runtime_helper.undo_gema:
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _max = data.max(dim=1).values.mean()
-
-        if self.apply_ema[cluster]:
-            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-        else:
-            self.act_range[cluster][1] = _max
-            self.apply_ema[cluster] = True
+        with torch.no_grad():
+            cluster = self.runtime_helper.qat_batch_cluster
+            if self.runtime_helper.undo_gema:
+                _max = x.max().item()
+            else:
+                data = x.view(x.size(0), -1)
+                _max = data.max(dim=1).values.mean()
+            if self.apply_ema[cluster]:
+                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.act_range[cluster][1] = _max
+                self.apply_ema[cluster] = True
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, symmetric=False)
+        return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
         self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
@@ -211,9 +210,8 @@ class PCQBottleneck(nn.Module):
         prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
         self.bn3.set_qparams(prev_s, prev_z)
 
-        zero = self.runtime_helper.fzero
-        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, zero)
-        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, zero)
+        self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=False)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, symmetric=False)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -251,7 +249,8 @@ class PCQResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
         self.fc = PCQLinear(512 * block.expansion, num_classes, is_classifier=True,
                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
 
@@ -318,16 +317,15 @@ class PCQResNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
-        return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
 
     @torch.no_grad()
     def set_quantization_params(self):
-        zero = self.runtime_helper.fzero
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, symmetric=True)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, zero)
+        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, symmetric=False)
 
         blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
         for block in blocks:
@@ -422,17 +420,17 @@ class PCQResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
 
     @torch.no_grad()
     def set_quantization_params(self):
         zero = self.runtime_helper.fzero
-        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, zero)
+        self.scale, self.zero_point = calc_qparams_per_cluster(self.in_range, self.in_bit, symmetric=True)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, zero)
+        s_target, z_target = calc_qparams_per_cluster(self.bn1.act_range, self.target_bit, symmetric=False)
 
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:

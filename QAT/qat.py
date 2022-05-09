@@ -26,7 +26,7 @@ parser.add_argument('--quantized', action='store_true', help='Evaluate quantized
 
 parser.add_argument('--per_channel', action='store_true',
                     help='Use per output-channel quantization, or per tensor quantization')
-parser.add_argument('--symmetric', action='store_true',
+parser.add_argument('--symmetric', default=True, type=bool,
                     help="Use symmetric quantization for layers' weights")
 parser.add_argument('--fold_convbn', action='store_true',
                     help="Fake Quantize CONV's weight after folding BatchNormalization")
@@ -50,7 +50,7 @@ parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
-os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
+# os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
 
 # General
 if not args_qat.bit_first:
