@@ -111,6 +111,9 @@ class PCQBnReLU(nn.Module):
         self.norms = nn.ModuleList([nn.BatchNorm2d(num_features) for _ in range(self.num_clusters)])
         self.activation = activation(inplace=True) if activation else None
 
+    def change_a_bit(self, bit):
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+
     def forward(self, x, external_range=None):
         if not self.training:
             return self._forward_impl(x)
