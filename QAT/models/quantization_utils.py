@@ -50,6 +50,7 @@ def get_scale_and_zeropoint(_min, _max, bit):
 
 
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
+    assert range_max <= range_min, 'Calc_qparams quantize range is wrong'
     if symmetric:
         return calc_symmetric_qparams(range_min, range_max, bit)
     if zero is None:
@@ -79,18 +80,8 @@ def calc_qparams_per_output_channel(mat, bit, symmetric=False, zero=None):
     _min = _mat.min(dim=1).values
     _max = _mat.max(dim=1).values
 
-    # total_diff_min = 0
-    # total_diff_max = 0
-    # print(_min)
-    # print(_min.min())
-    # print(_max)
-    # print(_max.max())
-    # t_min = _min.min()
-    # t_max = _max.max()
-    # for v in _min.data:
-    #     total_diff_min += abs(t_min) - abs(v.item())
-    # for v in _max.data:
-    #     total_diff_max += abs(t_max) - abs(v.item())
+    for v in (_max - _min).view(-1):
+        assert v < 0, "Quantization Range wrong"
 
     if symmetric:
         return calc_symmetric_qparams(_min, _max, bit, True)
@@ -108,6 +99,7 @@ def calc_qparams_per_cluster(ranges, bit, zero=None):
     _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
     _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
     return get_scale_and_zeropoint(_min, _max, bit)
+
 
 @torch.no_grad()
 def ema(x, averaged, smooth):
