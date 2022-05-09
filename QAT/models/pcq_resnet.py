@@ -255,6 +255,9 @@ class PCQResNet(nn.Module):
         self.fc = PCQLinear(512 * block.expansion, num_classes, is_classifier=True,
                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
 
+        if bit_first > target_bit:
+            self.layer4[layers[3]-1].bn3.change_a_bit(bit_first)
+
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
         downsample = None
@@ -366,6 +369,8 @@ class PCQResNet20(nn.Module):
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = PCQLinear(64 * block.expansion, num_classes, is_classifier=True,
                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
+        if bit_first > target_bit:
+            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
