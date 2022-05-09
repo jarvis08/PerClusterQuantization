@@ -413,12 +413,12 @@ class PCQResNet20(nn.Module):
             _min = data.min(dim=1).values.mean()
             _max = data.max(dim=1).values.mean()
 
-            if self.apply_ema[cluster]:
-                self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-                self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
-                self.apply_ema[cluster] = True
+        if self.apply_ema[cluster]:
+            self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
