@@ -235,6 +235,9 @@ class FusedBnReLU(nn.Module):
             out = self._fake_quantize_activation(out, external_range)
         return out
 
+    def change_a_bit(self, bit):
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+
     def _forward_impl(self, x):
         x = self.bn(x)
         if self.activation:
