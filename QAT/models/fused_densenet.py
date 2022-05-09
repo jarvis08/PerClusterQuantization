@@ -126,11 +126,21 @@ class FusedDenseBlock(nn.ModuleDict):
         if not self.training:
             return out
 
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
+        if self.runtime_helper.undo_gema:
+            _min = out.min().item()
+            _max = out.max().item()
         else:
-            self.act_range[0], self.act_range[1] = get_range(out)
+            data = out.view(out.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
+
+        if self.apply_ema:
+            self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[0], self.act_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
         return out
 
     def set_block_qparams(self):
@@ -188,6 +198,7 @@ class FusedDenseNet(nn.Module):
                 trans = FusedTransition(arg_dict=arg_dict, num_input_features=num_features, num_output_features=num_features // 2)
                 self.features.add_module('transition%d' % (i + 1), trans)
                 num_features = num_features // 2
+
         # Last Norm
         self.features.add_module('last_norm', FusedBnReLU(num_features, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict))
         # Linear layer
@@ -195,14 +206,9 @@ class FusedDenseNet(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         if self.training:
-            if self.apply_ema:
-                self.in_range[0], self.in_range[1] = ema(x, self.in_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-                    x = fake_quantize(x, s, z, self.in_bit)
-            else:
-                self.in_range[0], self.in_range[1] = get_range(x)
-                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+            self._update_input_ranges(x)
+            if self.runtime_helper.apply_fake_quantization:
+                x = self._fake_quantize_input(x)
 
         # out = self.features(x)
         out = self.features.first_conv(x)
@@ -221,6 +227,27 @@ class FusedDenseNet(nn.Module):
         out = torch.flatten(out, 1)
         out = self.classifier(out)
         return out
+
+    @torch.no_grad()
+    def _update_input_ranges(self, x):
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
+        else:
+            data = x.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
+
+        if self.apply_ema:
+            self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.in_range[0], self.in_range[1] = _min, _max
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+    def _fake_quantize_input(self, x):
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
