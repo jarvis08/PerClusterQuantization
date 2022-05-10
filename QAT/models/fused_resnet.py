@@ -69,14 +69,12 @@ class FusedBasicBlock(nn.Module):
             identity = self.bn_down(identity)
 
         out += identity
-
         out = self.relu(out)
 
         if self.training:
             self._update_activation_ranges(out)
             if self.runtime_helper.apply_fake_quantization:
                 out = self._fake_quantize_activation(out)
-
         return out
 
 
@@ -133,7 +131,7 @@ class FusedBottleneck(nn.Module):
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
-        if out_bit is not None and (self.a_bit == self.target_bit):
+        if out_bit is not None:
             self.a_bit.data = torch.tensor(out_bit, dtype=torch.int8)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
