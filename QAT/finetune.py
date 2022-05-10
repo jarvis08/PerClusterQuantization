@@ -26,7 +26,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
     train_loader = data_loaders['aug_train']
     #val_loader = data_loaders['val']
     test_loader = data_loaders['test']
-    if args.nnac and clustering_model.final_cluster is None:
+
+    if not args.fq_nnac and args.nnac and clustering_model.final_cluster is None:
         clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
@@ -54,7 +55,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
     logger = set_logger(save_path_fp)
 
     quantized_model = None
-    for e in range(epoch_to_start, args.epoch + 1):
+    merged = False
+    e = 1
+    while e < args.epoch + 1:
+    # for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
@@ -123,6 +127,18 @@ def _finetune(args, tools, data_loaders, clustering_model):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
+
+            if e == args.fq_nnac and args.cluster > 1 and not merged:
+                clustering_model.fq_nn_aware_clustering(model, train_loader, args.arch)
+                e = 1
+                model.init_ranges()
+                model.cuda()
+                runtime_helper.apply_fake_quantization = False
+                arg_dict['cluster'] = args.target_cluster
+                del quantized_model
+                quantized_model = None
+                merged=True
+        e += 1
 
     test_score = best_int_val_score
     '''

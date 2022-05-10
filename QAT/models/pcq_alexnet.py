@@ -94,6 +94,7 @@ class PCQAlexNetSmall(nn.Module):
         super(PCQAlexNetSmall, self).__init__()
         target_bit, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        self.arg_dict = arg_dict
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
@@ -173,6 +174,93 @@ class PCQAlexNetSmall(nn.Module):
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
         self.fc3.set_qparams(prev_s, prev_z)
 
+    def init_ranges(self):
+        self.num_clusters = self.arg_dict['target_cluster']
+        self.runtime_helper.apply_fake_quantization = False
+        self.in_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
+
+        for layer in self.modules():
+            if isinstance(layer, PCQConv2d):
+                layer.num_clusters = self.arg_dict['target_cluster']
+                layer.runtime_helper.apply_fake_quantization = False
+                layer.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+                layer.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
+
+            elif isinstance(layer, PCQLinear):
+                layer.num_clusters = self.arg_dict['target_cluster']
+                layer.runtime_helper.apply_fake_quantization = False
+                layer.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+                layer.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
+
+
+    def initialize_counter(self, x, n_clusters):
+        self.zero_counter = []
+        x = self.conv1(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+        x = self.maxpool(x)
+        x = self.conv2(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+        x = self.maxpool(x)
+        x = self.conv3(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+        x = self.conv4(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+        x = self.conv5(x)
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    def count_zeros_per_index(self, x, cluster, n_clusters):
+        if not hasattr(self, 'zero_counter'):
+            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+        conv_cnt = 0
+        x = self.conv1(x)
+        n_features = self.zero_counter[conv_cnt].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+        conv_cnt += 1
+        x = self.maxpool(x)
+        x = self.conv2(x)
+        n_features = self.zero_counter[conv_cnt].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+        conv_cnt += 1
+        x = self.maxpool(x)
+        x = self.conv3(x)
+        n_features = self.zero_counter[conv_cnt].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+        conv_cnt += 1
+        x = self.conv4(x)
+        n_features = self.zero_counter[conv_cnt].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+        conv_cnt += 1
+        x = self.conv5(x)
+        n_features = self.zero_counter[conv_cnt].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[conv_cnt][cluster, zeros_idx] += 1
+        conv_cnt += 1
 
 def pcq_alexnet(arg_dict: dict, **kwargs: Any) -> PCQAlexNet:
     return PCQAlexNet(arg_dict, **kwargs)
