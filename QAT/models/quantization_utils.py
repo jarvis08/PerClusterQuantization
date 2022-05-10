@@ -456,6 +456,8 @@ def quantize_bn(_fp, _int):
         bias = _biases - weight * _means
         weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit, _fp.weight_symmetric)
         _int.weight.copy_(weight.type(torch.cuda.IntTensor))
+        print(_int.weight)
+        input()
         for c in range(_int.num_clusters):
             b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32, _fp.weight_symmetric)
             _int.bias[c].copy_(b.type(torch.cuda.IntTensor))

@@ -30,7 +30,7 @@ class QuantizedAdd(nn.Module):
             out = self._pcq_add(bypass, prev)
         else:
             out = self._general_add(bypass, prev)
-        return clamp_matrix(out, self.a_bit)
+        return clamp_matrix(out, self.a_bit, symmetric=False)
 
     def _pcq_add(self, bypass, prev):
         bc = self.runtime_helper.qat_batch_cluster

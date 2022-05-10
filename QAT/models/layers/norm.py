@@ -110,13 +110,9 @@ class PCQBnReLU(nn.Module):
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.num_features = num_features
-        self.norms = nn.ModuleList([nn.BatchNorm2d(num_features, track_running_stats=False) for _ in range(self.num_clusters)])
+        self.norms = nn.ModuleList([nn.BatchNorm2d(num_features) for _ in range(self.num_clusters)])
         self._activation = activation(inplace=False) if activation else None
         self.act_symmetric = False if activation else True
-
-
-    def change_a_bit(self, bit):
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
 
 
     def forward(self, x, external_range=None):
@@ -131,8 +127,8 @@ class PCQBnReLU(nn.Module):
 
 
     def _forward_impl(self, x):
-        bc = self.runtime_helper.qat_batch_cluster
-        out = self.norms[bc](x)
+        cluster = self.runtime_helper.qat_batch_cluster
+        out = self.norms[cluster](x)
         if self._activation:
             out = self._activation(out)
         return out
@@ -141,7 +137,6 @@ class PCQBnReLU(nn.Module):
     def _fake_quantized_bn(self, x, cluster=None):
         bn = self.norms[cluster]
         out = bn(x)
-
         with torch.no_grad():
             _x = x.detach()
             mean = _x.mean(dim=(0, 2, 3))
@@ -150,7 +145,7 @@ class PCQBnReLU(nn.Module):
             weight = bn.weight.div(torch.sqrt(var + bn.eps))
             bias = bn.bias - weight * mean
             scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_bit, symmetric=self.weight_symmetric)
-            weight = fake_quantize(weight, scale, zero_point, self.w_bit, symmetric=self.weight_symmetric)
+            weight = fake_quantize(weight, scale, zero_point, self.w_bit, symmetric=self.weight_symmetric, use_ste=self.use_ste)
 
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
         out = STE.apply(out, fake_out)
@@ -238,7 +233,7 @@ class FusedBnReLU(nn.Module):
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
         self.num_features = num_features
-        self.bn = nn.BatchNorm2d(num_features, track_running_stats=False)
+        self.bn = nn.BatchNorm2d(num_features)
         self._activation = activation(inplace=False) if activation else None
         self.act_symmetric = False if activation else True
 
@@ -253,10 +248,6 @@ class FusedBnReLU(nn.Module):
         return self._fake_quantize_activation(out, external_range)
 
 
-    def change_a_bit(self, bit):
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
-
-
     def _forward_impl(self, x):
         x = self.bn(x)
         if self._activation:
@@ -266,7 +257,6 @@ class FusedBnReLU(nn.Module):
 
     def _fake_quantized_bn(self, x):
         out = self.bn(x)
-
         with torch.no_grad():
             _x = x.detach()
             mean = _x.mean(dim=(0, 2, 3))
@@ -275,9 +265,9 @@ class FusedBnReLU(nn.Module):
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
             bias = self.bn.bias - weight * mean
             s, z = calc_qparams(weight.min(), weight.max(), self.w_bit, symmetric=self.weight_symmetric)
-            weight = fake_quantize(weight, s, z, self.w_bit, symmetric=self.weight_symmetric)
-            fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
+            weight = fake_quantize(weight, s, z, self.w_bit, symmetric=self.weight_symmetric, use_ste=self.use_ste)
 
+            fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
         out = STE.apply(out, fake_out)
         return out
 
@@ -324,6 +314,7 @@ class FusedBnReLU(nn.Module):
         self.s1, self.z1 = s1, z1
 
         weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))
+
         if weight.min() > 0:
             self.s2, self.z2 = calc_qparams(torch.tensor(0), weight.max(), self.w_bit, symmetric=self.weight_symmetric)
         elif weight.max() < 0:

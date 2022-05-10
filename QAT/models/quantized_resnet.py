@@ -55,20 +55,16 @@ class QuantizedBasicBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-
         conv_x = x
-        if self.a_bit > self.target_bit:
-            conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
-                                    self.target_bit, self.runtime_helper, symmetric=False)
-        conv_x = conv_x.type(torch.cuda.FloatTensor)
-        out = self.conv1(conv_x)
+
+        out = self.conv1(conv_x.type(torch.cuda.FloatTensor))
         out = self.bn1(out)
 
         out = self.conv2(out.type(torch.cuda.FloatTensor))
         out = self.bn2(out)
 
         if self.downsample is not None:
-            identity = self.downsample(conv_x)
+            identity = self.downsample(identity.type(torch.cuda.FloatTensor))
             identity = self.bn_down(identity)
 
         out = self.shortcut(identity, out)
@@ -112,24 +108,21 @@ class QuantizedBottleneck(nn.Module):
 
     def forward(self, x):
         identity = x
-
         conv_x = x
-        if self.a_bit > self.target_bit:
-            conv_x = rescale_matrix(x, self.z1, self.z_target, self.M0, self.shift,
-                                    self.target_bit, self.runtime_helper, symmetric=False)
-        conv_x = conv_x.type(torch.cuda.FloatTensor)
 
-        out = self.conv1(conv_x)
+        out = self.conv1(conv_x.type(torch.cuda.FloatTensor))
         out = self.bn1(out)
+
         out = self.conv2(out.type(torch.cuda.FloatTensor))
         out = self.bn2(out)
+
         out = self.conv3(out.type(torch.cuda.FloatTensor))
         out = self.bn3(out)
 
         if self.downsample is not None:
-            identity = self.downsample(conv_x)
+            identity = self.downsample(identity.type(torch.cuda.FloatTensor))
             identity = self.bn_down(identity)
-        out = self.shortcut(identity, out)
+        out = self.shortcut(identity.type(torch.cuda.FloatTensor), out.type(torch.cuda.FloatTensor))
         return out
 
 
@@ -219,12 +212,7 @@ class QuantizedResNet(nn.Module):
         x = x.trunc()
 
         x = torch.flatten(x, 1)
-        if self.a_bit > self.target_bit:
-            x = rescale_matrix(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                               self.shift, self.target_bit, self.runtime_helper, symmetric=False)
-            x = self.fc(x.type(torch.cuda.FloatTensor))
-        else:
-            x = self.fc(x)
+        x = self.fc(x)
         return x.type(torch.cuda.FloatTensor)
 
 
@@ -290,12 +278,7 @@ class QuantizedResNet20(nn.Module):
         x = x.trunc()
 
         x = torch.flatten(x, 1)
-        if self.a_bit > self.target_bit:
-            x = rescale_matrix(x.type(torch.cuda.LongTensor), self.z1, self.z_target, self.M0,
-                               self.shift, self.target_bit, self.runtime_helper, symmetric=False)
-            x = self.fc(x.type(torch.cuda.FloatTensor))
-        else:
-            x = self.fc(x)
+        x = self.fc(x)
         return x.type(torch.cuda.FloatTensor)
 
 
@@ -340,7 +323,13 @@ def set_shortcut_qparams(m, bit, s_bypass, z_bypass, s_prev, z_prev, s3, z3):
 def quantize_block(_fp, _int):
     for i in range(len(_int)):
         _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
+        _int[i].bn1 = quantize(_fp[i].bn1, _int[i].bn1)
         _int[i].conv2 = quantize(_fp[i].conv2, _int[i].conv2)
+        _int[i].bn2 = quantize(_fp[i].bn2, _int[i].bn2)
+        if type(_int[i]) == QuantizedBottleneck:
+            _int[i].conv3 = quantize(_fp[i].conv3, _int[i].conv3)
+            _int[i].bn3 = quantize(_fp[i].bn3, _int[i].bn3)
+            
         if _fp[i].downsample:
             _int[i].downsample = quantize(_fp[i].downsample, _int[i].downsample)
             if type(_int[i]) == QuantizedBottleneck:

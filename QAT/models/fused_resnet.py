@@ -23,7 +23,7 @@ def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, 
 class FusedBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1, out_bit=None,
                  norm_layer=None, arg_dict=None):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
@@ -39,15 +39,18 @@ class FusedBasicBlock(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
+        if out_bit is not None and (self.a_bit == self.target_bit):
+            self.a_bit.data = torch.tensor(out_bit, dtype=torch.int8)
+
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
         if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
+            self.bn_down = FusedBnReLU(planes, a_bit=self.target_bit, arg_dict=arg_dict)
         self.conv1 = fused_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=bit_conv_act)
-        self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
+        self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, a_bit=self.target_bit, arg_dict=arg_dict)
         self.conv2 = fused_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=bit_conv_act)
-        self.bn2 = FusedBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
+        self.bn2 = FusedBnReLU(planes, a_bit=self.target_bit, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
 
@@ -75,19 +78,19 @@ class FusedBasicBlock(nn.Module):
         return out
 
 
-    @torch.no_grad()
     def _update_activation_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _max = data.max(dim=1).values.mean()
+        with torch.no_grad():
+            if self.runtime_helper.undo_gema:
+                _max = x.max().item()
+            else:
+                data = x.view(x.size(0), -1)
+                _max = data.max(dim=1).values.mean()
 
-        if self.apply_ema:
-            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-        else:
-            self.act_range[1] = _max
-            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+            if self.apply_ema:
+                self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.act_range[1] = _max
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
 
     def _fake_quantize_activation(self, x):
@@ -95,30 +98,30 @@ class FusedBasicBlock(nn.Module):
         return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
 
 
-    @torch.no_grad()
     def set_block_qparams(self, s1, z1, s_target, z_target):
-        self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
-        self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-        self.M0, self.shift = quantize_M(self.s1 / self.s_target)
+        with torch.no_grad():
+            self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
+            self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
+            self.M0, self.shift = quantize_M(self.s1 / self.s_target)
 
-        if self.downsample:
-            prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
-            self.bn_down.set_qparams(prev_s, prev_z)
+            if self.downsample:
+                prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
+                self.bn_down.set_qparams(prev_s, prev_z)
 
-        prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
-        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
-        self.bn2.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
+            prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+            self.bn2.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
-        nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit, symmetric=False)
-        return self.s3, self.z3, nxt_s_target, nxt_z_target
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+            nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+            return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
 class FusedBottleneck(nn.Module):
     expansion: int = 4
 
-    def __init__(self, inplane:int, planes:int, stride:int=1, downsample=None,
+    def __init__(self, inplane:int, planes:int, stride:int=1, downsample=None, out_bit=None,
                  groups: int = 1, base_width:int =64, dilation:int =1, a_bit=None, arg_dict=None) -> None:
         super(FusedBottleneck, self).__init__()
 
@@ -130,6 +133,9 @@ class FusedBottleneck(nn.Module):
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
+        if out_bit is not None and (self.a_bit == self.target_bit):
+            self.a_bit.data = torch.tensor(out_bit, dtype=torch.int8)
+
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
@@ -137,16 +143,17 @@ class FusedBottleneck(nn.Module):
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
 
         if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
+            self.bn_down = FusedBnReLU(planes * self.expansion, a_bit=self.target_bit, arg_dict=arg_dict)
         self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn1 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
+        self.bn1 = FusedBnReLU(width, activation=nn.ReLU, a_bit=self.target_bit, arg_dict=arg_dict)
         self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
                                    a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn2 = FusedBnReLU(width, activation=nn.ReLU, a_bit=target_bit, arg_dict=arg_dict)
+        self.bn2 = FusedBnReLU(width, activation=nn.ReLU, a_bit=self.target_bit, arg_dict=arg_dict)
         self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion,
                                    a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn3 = FusedBnReLU(planes * self.expansion, a_bit=bit_addcat, arg_dict=arg_dict)
+        self.bn3 = FusedBnReLU(planes * self.expansion, a_bit=self.target_bit, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
+
 
     def forward(self, x):
         identity = x
@@ -172,6 +179,7 @@ class FusedBottleneck(nn.Module):
 
         return out
 
+
     def _update_activation_ranges(self, x):
         with torch.no_grad():
             if self.runtime_helper.undo_gema:
@@ -186,29 +194,32 @@ class FusedBottleneck(nn.Module):
                 self.act_range[1] = _max
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
+
     def _fake_quantize_activation(self, x):
-        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.bit_addcat, symmetric=False)
-        return fake_quantize(x, s, z, self.bit_addcat, symmetric=False, use_ste=self.use_ste)
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+        return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
+
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
-        self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
-        self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-        self.M0, self.shift = quantize_M(self.s1 / self.s_target)
+        with torch.no_grad():
+            self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
+            self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
+            self.M0, self.shift = quantize_M(self.s1 / self.s_target)
 
-        if self.downsample:
-            prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
-            self.bn_down.set_qparams(prev_s, prev_z)
+            if self.downsample:
+                prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
+                self.bn_down.set_qparams(prev_s, prev_z)
 
-        prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
-        prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
-        self.bn3.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
+            prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
+            self.bn3.set_qparams(prev_s, prev_z)
 
-        self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
-        nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit, symmetric=False)
-        return self.s3, self.z3, nxt_s_target, nxt_z_target
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+            nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
+            return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
 class FusedResNet(nn.Module):
@@ -228,9 +239,6 @@ class FusedResNet(nn.Module):
         self.inplanes = 64
         self.dilation = 1
         self.num_blocks = 4
-
-        # self.qn_incre_check = self.quant_noise + self.runtime_helper.qn_prob_increment
-
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
             # the 2x2 stride with a dilated convolution instead
@@ -243,22 +251,22 @@ class FusedResNet(nn.Module):
 
         self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                       w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
-        self.bn1 = FusedBnReLU(self.inplanes, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=self.arg_dict)
+        self.bn1 = FusedBnReLU(self.inplanes, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+        self.layer1 = self._make_layer(block, 64, layers[0], out_bit=self.a_bit)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0], out_bit=self.a_bit)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1], out_bit=self.a_bit)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2], out_bit=bit_classifier)
         # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
         self.fc = FusedLinear(512 * block.expansion, num_classes, is_classifier=True,
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
-        self.last_block_idx = layers[layers[3]-1]
+        # self.last_block_idx = layers[layers[3]-1]
 
-        if bit_first > target_bit:
-            self.layer4[layers[3]-1].bn3.change_a_bit(bit_first)
+        # if bit_first > target_bit:
+        #     self.layer4[layers[3]-1].bn3.change_a_bit(bit_first)
 
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
+    def _make_layer(self, block, planes, blocks, stride=1, dilate=False, out_bit=None):
         # Planes : n_channel_output
         downsample = None
         previous_dilation = self.dilation
@@ -274,9 +282,11 @@ class FusedResNet(nn.Module):
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
                             base_width=self.base_width, dilation=previous_dilation, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
+        for _ in range(1, blocks - 1):
             layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
                                 dilation=self.dilation, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
+                                dilation=self.dilation, out_bit=out_bit, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
@@ -299,26 +309,29 @@ class FusedResNet(nn.Module):
         x = self.fc(x)
         return x
 
-    @torch.no_grad()
-    def _update_input_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _min = x.min().item()
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _min = data.min(dim=1).values.mean()
-            _max = data.max(dim=1).values.mean()
 
-        if self.apply_ema:
-            self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
-            self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
-        else:
-            self.in_range[0], self.in_range[1] = _min, _max
-            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+    def _update_input_ranges(self, x):
+        with torch.no_grad():
+            if self.runtime_helper.undo_gema:
+                _min = x.min().item()
+                _max = x.max().item()
+            else:
+                data = x.view(x.size(0), -1)
+                _min = data.min(dim=1).values.mean()
+                _max = data.max(dim=1).values.mean()
+
+            if self.apply_ema:
+                self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
+                self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.in_range[0], self.in_range[1] = _min, _max
+                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
 
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
-        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True, use_ste=self.use_ste)
+
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
@@ -338,12 +351,13 @@ class FusedResNet(nn.Module):
         self.fc.set_qparams(self.s_target, self.z_target)
 
 
+
 class FusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(FusedResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -356,22 +370,18 @@ class FusedResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.arg_dict = arg_dict
-
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
                                       w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
-        self.bn1 = FusedBnReLU(16, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)
-        self.layer1 = self._make_layer(block, 16, layers[0])
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.bn1 = FusedBnReLU(16, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=arg_dict)
+        self.layer1 = self._make_layer(block, 16, layers[0], out_bit=self.a_bit)
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2, out_bit=self.a_bit)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2, out_bit=bit_classifier)
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = FusedLinear(64 * block.expansion, num_classes, is_classifier=True,
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
-        if bit_first > target_bit:
-            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
 
-    def _make_layer(self, block, planes, blocks, stride=1):
+    def _make_layer(self, block, planes, blocks, stride=1, out_bit=None):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride,
@@ -380,9 +390,11 @@ class FusedResNet20(nn.Module):
         layers.append(block(self.inplanes, planes, stride, downsample,
                             norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
+        for _ in range(1, blocks-1):
             layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, out_bit=out_bit, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
+
 
     def forward(self, x):
         if self.training:
@@ -399,6 +411,7 @@ class FusedResNet20(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
+
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
@@ -419,7 +432,7 @@ class FusedResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
-        return fake_quantize(x, s, z, self.in_bit, symmetric=True)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=True, use_ste=self.use_ste)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
