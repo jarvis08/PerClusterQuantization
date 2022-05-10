@@ -240,8 +240,6 @@ class FusedResNet(nn.Module):
         self.dilation = 1
         self.num_blocks = 4
         if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
             replace_stride_with_dilation = [False, False, False]
         if len(replace_stride_with_dilation) != 3:
             raise ValueError("replace_stride_with_dilation should be None "
@@ -249,9 +247,9 @@ class FusedResNet(nn.Module):
         self.groups = groups
         self.base_width = width_per_group
 
-        self.first_conv = FusedConv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                      w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
-        self.bn1 = FusedBnReLU(self.inplanes, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=self.arg_dict)
+        self.first_conv = FusedConv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                                      w_bit=self.in_bit, a_bit=self.bit_conv_act, arg_dict=arg_dict)
+        self.bn1 = FusedBnReLU(64, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=self.arg_dict)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0], out_bit=self.a_bit)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0], out_bit=self.a_bit)
@@ -261,10 +259,7 @@ class FusedResNet(nn.Module):
         self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
         self.fc = FusedLinear(512 * block.expansion, num_classes, is_classifier=True,
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
-        # self.last_block_idx = layers[layers[3]-1]
 
-        # if bit_first > target_bit:
-        #     self.layer4[layers[3]-1].bn3.change_a_bit(bit_first)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False, out_bit=None):
         # Planes : n_channel_output
@@ -371,7 +366,7 @@ class FusedResNet20(nn.Module):
         self.num_blocks = 3
 
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
-                                      w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
+                                      w_bit=self.in_bit, a_bit=self.bit_conv_act, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(16, activation=nn.ReLU, a_bit=self.a_bit, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0], out_bit=self.a_bit)
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2, out_bit=self.a_bit)

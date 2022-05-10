@@ -50,14 +50,15 @@ def get_range(x):
 
 
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
-    # if zero is None:
-    #     zero = torch.tensor(0.0, device='cuda')
-    # _min = zero if range_min > 0.0 else range_min
-    # _max = zero if range_max < 0.0 else range_max
-    # return get_scale_and_zeropoint(_min, _max, bit)
-    if symmetric:
-        return calc_symmetric_qparams(range_min, range_max, bit)
-    return calc_asymmetric_qparams(range_min, range_max, bit)
+    with torch.no_grad():
+        # if zero is None:
+        #     zero = torch.tensor(0.0, device='cuda')
+        # _min = zero if range_min > 0.0 else range_min
+        # _max = zero if range_max < 0.0 else range_max
+        # return get_scale_and_zeropoint(_min, _max, bit)
+        if symmetric:
+            return calc_symmetric_qparams(range_min, range_max, bit)
+        return calc_asymmetric_qparams(range_min, range_max, bit)
 
 
 def calc_symmetric_qparams(_min, _max, bit):
@@ -456,8 +457,6 @@ def quantize_bn(_fp, _int):
         bias = _biases - weight * _means
         weight = quantize_matrix(weight, _int.s2, _int.z2, _fp.w_bit, _fp.weight_symmetric)
         _int.weight.copy_(weight.type(torch.cuda.IntTensor))
-        print(_int.weight)
-        input()
         for c in range(_int.num_clusters):
             b = quantize_matrix(bias[c], _int.s1[c] * _int.s2, 0, 32, _fp.weight_symmetric)
             _int.bias[c].copy_(b.type(torch.cuda.IntTensor))
