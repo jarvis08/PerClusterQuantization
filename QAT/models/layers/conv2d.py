@@ -232,107 +232,19 @@ class PCQConv2d(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
-        if self.fold_convbn:
-            return self._norm_folded(x, external_range)
-        else:
-            return self._general(x, external_range)
+        cluster = self.runtime_helper.qat_batch_cluster
+        w = self._fake_quantize_weight()
+        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+        if self._activation:
+            out = self._activation(out)
+        return self._fake_quantize_activation(out, cluster, external_range)
 
 
     def _forward_impl(self, x):
-        cluster = self.runtime_helper.qat_batch_cluster
         x = self.conv(x)
-        if self._norm_layer:
-            if self.multi_norm:
-                x = self._norm_layer[cluster](x)
-            else:
-                x = self._norm_layer[0](x)
-
         if self._activation:
             x = self._activation(x)
         return x
-
-
-    # def _norm_folded(self, x, external_range=None):
-    #     cluster = self.runtime_helper.qat_batch_cluster
-    #     zero = self.runtime_helper.fzero
-
-    #     general_out = self.conv(x)
-    #     if self.multi_norm:
-    #         general_out = self._norm_layer[cluster](general_out)
-    #     else:
-    #         general_out = self._norm_layer[0](general_out)
-
-    #     if self._activation:
-    #         general_out = self._activation(general_out)
-
-    #     with torch.no_grad():
-    #         if self.multi_norm:
-    #             alpha, beta, mean, var, eps = self._norm_layer[cluster].weight, self._norm_layer[cluster].bias, \
-    #                                           self._norm_layer[cluster].running_mean, \
-    #                                           self._norm_layer[cluster].running_var, self._norm_layer[cluster].eps
-    #         else:
-    #             alpha, beta, mean, var, eps = self._norm_layer[0].weight, self._norm_layer[0].bias, \
-    #                                           self._norm_layer[0].running_mean, \
-    #                                           self._norm_layer[0].running_var, self._norm_layer[0].eps
-
-    #         n_channel = self.conv.weight.shape[0]
-
-    #         folded_weight = self.conv.weight.clone().detach()
-    #         folded_bias = beta.clone().detach()
-
-    #         for c in range(n_channel):
-    #             folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-    #             folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-
-    #         if not self.per_channel:
-    #             s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit,
-    #                                 symmetric=self.symmetric, zero=zero)
-    #             fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=False)
-    #         else:
-    #             assert self.per_channel == False, 'per channel mode for folded pcq model is not implemented'
-    #             fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit,
-    #                                                                 self.runtime_helper.fzero,
-    #                                                                 symmetric=self.symmetric, use_ste=False)
-
-    #         folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-    #                               self.conv.dilation, self.conv.groups)
-    #         if self._activation:
-    #             folded_out = self._activation(folded_out)
-
-    #         if external_range is None:
-    #             if self.runtime_helper.undo_gema:
-    #                 _min = folded_out.min().item()
-    #                 _max = folded_out.max().item()
-    #             else:
-    #                 data = folded_out.view(x.size(0), -1)
-    #                 _min = data.min(dim=1).values.mean()
-    #                 _max = data.max(dim=1).values.mean()
-
-    #             if self._activation:
-    #                 if self.apply_ema[cluster]:
-    #                     self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (
-    #                                 1 - self.smooth)
-    #                 else:
-    #                     self.act_range[cluster][1] = _max
-    #                     self.apply_ema[cluster] = True
-    #             else:
-    #                 if self.apply_ema[cluster]:
-    #                     self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (
-    #                                 1 - self.smooth)
-    #                     self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (
-    #                                 1 - self.smooth)
-    #                 else:
-    #                     self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
-    #                     self.apply_ema[cluster] = True
-
-    #             if self.runtime_helper.apply_fake_quantization:
-    #                 if external_range is not None:
-    #                     s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
-    #                 else:
-    #                     s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
-    #                 folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
-
-    #     return STE.apply(general_out, folded_out)
 
 
     def _update_activation_ranges(self, out, cluster):
@@ -367,8 +279,7 @@ class PCQConv2d(nn.Module):
         else:
             w = self.conv.weight.detach()
             s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.weight_symmetric, zero=self.zero)
-            w = fake_quantize(self.conv.weight, s, z, self.w_bit, 
-                              symmetric=self.weight_symmetric, use_ste=self.use_ste)
+            w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.weight_symmetric, use_ste=self.use_ste)
         return w
 
 
@@ -383,45 +294,6 @@ class PCQConv2d(nn.Module):
                 s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
                 out = fake_quantize(out, s, z, self.a_bit, symmetric=self.act_symmetric, use_ste=self.use_ste)
         return out
-
-
-    def _general(self, x, external_range=None):
-        cluster = self.runtime_helper.qat_batch_cluster
-        w = self._fake_quantize_weight()
-        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-        if self._activation:
-            out = self._activation(out)
-        return self._fake_quantize_activation(out, cluster, external_range)
-
-
-    def fold_conv_and_bn(self):
-        # In case of validation, fuse pretrained Conv&BatchNorm params
-        # assert self.training == False, 'Do not fuse layers while training.'
-        if self.multi_norm:
-            for cluster in range(self.runtime_helper.num_clusters):
-                alpha, beta, mean, var, eps = self._norm_layer[cluster].weight, self._norm_layer[cluster].bias, self._norm_layer[cluster].running_mean,\
-                                              self._norm_layer[cluster].running_var, self._norm_layer[cluster].eps
-                n_channel = self.conv.weight.shape[0]
-                self.folded_bias[cluster] = nn.Parameter(beta).clone().detach()
-                self.folded_weight[cluster] = self.conv.weight.clone().detach()
-                for c in range(n_channel):
-                    self.folded_weight[cluster].data[c] = self.folded_weight[cluster].data[c].mul(alpha[c]).div(
-                        torch.sqrt(var[c].add(eps)))
-                    self.folded_bias[cluster].data[c] = self.folded_bias[cluster].data[c].sub(
-                        alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-
-        else:
-            alpha, beta, mean, var, eps = self._norm_layer[0].weight, self._norm_layer[0].bias, \
-                                          self._norm_layer[0].running_mean, \
-                                          self._norm_layer[0].running_var, self._norm_layer[0].eps
-            n_channel = self.conv.weight.shape[0]
-            self.folded_bias[0] = nn.Parameter(beta).clone().detach()
-            self.folded_weight[0] = self.conv.weight.clone().detach()
-            for c in range(n_channel):
-                self.folded_weight[0].data[c] = self.folded_weight[0].data[c].mul(alpha[c]).div(
-                    torch.sqrt(var[c].add(eps)))
-                self.folded_bias[0].data[c] = self.folded_bias[0].data[c].sub(
-                    alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
 
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
@@ -482,8 +354,8 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.per_channel, self.weight_symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
-            = itemgetter('per_channel', 'symmetric', 'smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
+        self.per_channel, self.weight_symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper \
+            = itemgetter('per_channel', 'symmetric', 'smooth', 'fold_convbn', 'ste', 'runtime_helper')(arg_dict)
 
         self.num_clusters = 1
 
@@ -501,25 +373,21 @@ class FusedConv2d(nn.Module):
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
         self.act_symmetric = False if activation else True
-        self.out_channels = out_channels
-        self.in_channels = in_channels
 
 
     def forward(self, x, external_range=None):
         if not self.training:
             return self._forward_impl(x)
 
-        if self.fold_convbn:
-            return self._norm_folded(x, external_range)
-        else:
-            return self._general(x, external_range)
+        w = self._fake_quantize_weight()
+        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+        if self._activation:
+            out = self._activation(out)
+        return self._fake_quantize_activation(out, external_range)
 
 
     def _forward_impl(self, x):
         x = self.conv(x)
-        if self._norm_layer:
-            x = self._norm_layer(x)
-            
         if self._activation:
             x = self._activation(x)
         return x
@@ -556,106 +424,22 @@ class FusedConv2d(nn.Module):
                                                  symmetric=self.weight_symmetric, use_ste=self.use_ste)
         else:
             w = self.conv.weight.detach()
-            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.weight_symmetric, zero=self.zero)
-            w = fake_quantize(self.conv.weight, s, z, self.w_bit,
-                              symmetric=self.weight_symmetric, use_ste=self.use_ste)
+            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.weight_symmetric)
+            w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.weight_symmetric, use_ste=self.use_ste)
         return w
 
 
     def _fake_quantize_activation(self, out, external_range=None):
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(external_range[0], external_range[1], self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
+                s, z = calc_qparams(external_range[0], external_range[1], self.a_bit, symmetric=self.act_symmetric)
                 out = fake_quantize(out, s, z, self.a_bit, symmetric=self.act_symmetric, use_ste=self.use_ste)
         else:
             self._update_activation_ranges(out)
             if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.act_symmetric)
                 out = fake_quantize(out, s, z, self.a_bit, symmetric=self.act_symmetric, use_ste=self.use_ste)
         return out
-
-
-    def _general(self, x, external_range=None):
-        w = self._fake_quantize_weight()
-        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
-        if self._activation:
-            out = self._activation(out)
-        return self._fake_quantize_activation(out, external_range)
-
-
-    def _norm_folded(self, x, external_range=None):
-        general_out = self.conv(x)
-        general_out = self._norm_layer(general_out)
-        if self._activation:
-            general_out = self._activation(general_out)
-
-        with torch.no_grad():
-            alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean, \
-                                          self._norm_layer.running_var, self._norm_layer.eps
-            n_channel = self.conv.weight.shape[0]
-
-            folded_weight = self.conv.weight.clone().detach()
-            folded_bias = beta.clone().detach()
-
-            for c in range(n_channel):
-                folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-                folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-            
-            if not self.per_channel:
-                s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit, symmetric=self.weight_symmetric, zero=self.zero)
-                fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, symmetric=self.weight_symmetric, use_ste=False)
-            else:
-                fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit, self.zero,
-                                            symmetric=self.weight_symmetric, use_ste=False)
-
-            folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-                                  self.conv.dilation, self.conv.groups)
-            if self._activation:
-                folded_out = self._activation(folded_out)
-
-            if external_range is None:
-                if self.runtime_helper.undo_gema:
-                    _min = folded_out.min().item()
-                    _max = folded_out.max().item()
-                else:
-                    data = folded_out.view(x.size(0), -1)
-                    _min = data.min(dim=1).values.mean()
-                    _max = data.max(dim=1).values.mean()
-
-                if self._activation:
-                    if self.apply_ema:
-                        self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-                    else:
-                        self.act_range[1] = _max
-                        self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-                else:
-                    if self.apply_ema:
-                        self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
-                        self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-                    else:
-                        self.act_range[0], self.act_range[1] = _min, _max
-                        self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-
-            if self.runtime_helper.apply_fake_quantization:
-                if external_range is not None:
-                    s, z = calc_qparams(external_range[0], external_range[1], self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
-                else:
-                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
-                folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
-        return STE.apply(general_out, folded_out)
-
-
-    def fold_conv_and_bn(self):
-        # In case of validation, fuse pretrained Conv&BatchNorm params
-        # assert self.training == False, 'Do not fuse layers while training.'
-        alpha, beta, mean, var, eps = self._norm_layer.weight, self._norm_layer.bias, self._norm_layer.running_mean,\
-                                      self._norm_layer.running_var, self._norm_layer.eps
-        n_channel = self.conv.weight.shape[0]
-        self.folded_bias = nn.Parameter(beta).clone().detach()
-        self.folded_weight = self.conv.weight.clone().detach()
-        for c in range(n_channel):
-            self.folded_weight.data[c] = self.folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
-            self.folded_bias.data[c] = self.folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
 
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):

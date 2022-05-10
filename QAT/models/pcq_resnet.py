@@ -35,6 +35,7 @@ class PCQBasicBlock(nn.Module):
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         if out_bit is not None and (self.a_bit == self.target_bit):
@@ -113,7 +114,7 @@ class PCQBasicBlock(nn.Module):
         self.bn2.set_qparams(prev_s, prev_z)
 
         self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=False)
-        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=False)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, symmetric=False)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -132,6 +133,7 @@ class PCQBottleneck(nn.Module):
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         if out_bit is not None and (self.a_bit == self.target_bit):
@@ -217,7 +219,7 @@ class PCQBottleneck(nn.Module):
         self.bn3.set_qparams(prev_s, prev_z)
 
         self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=False)
-        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=False)
+        nxt_s_target, nxt_z_target = calc_qparams_per_cluster(self.act_range, self.target_bit, symmetric=False)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
 
@@ -450,13 +452,8 @@ class PCQResNet20(nn.Module):
             for b in range(len(block)):
                 s1, z1, s_target, z_target = block[b].set_block_qparams(s1, z1, s_target, z_target)
 
-        self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
-        self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-        self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
-        self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
-        for c in range(self.num_clusters):
-            self.M0[c], self.shift[c] = quantize_M(self.s1[c] / self.s_target[c])
-        self.fc.set_qparams(self.s_target, self.z_target)
+        self.s1, self.z1 = s1, z1
+        self.fc.set_qparams(self.s1, self.z1)
 
 
 def pcq_resnet18(arg_dict, **kwargs):

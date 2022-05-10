@@ -37,20 +37,22 @@ class FusedBasicBlock(nn.Module):
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
-        if out_bit is not None and (self.a_bit == self.target_bit):
+        if out_bit is not None:
             self.a_bit.data = torch.tensor(out_bit, dtype=torch.int8)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
         if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes, a_bit=self.target_bit, arg_dict=arg_dict)
-        self.conv1 = fused_conv3x3(inplanes, planes, stride, arg_dict=arg_dict, a_bit=bit_conv_act)
+            self.bn_down = FusedBnReLU(planes, a_bit=self.a_bit, arg_dict=arg_dict)
+        self.conv1 = fused_conv3x3(inplanes, planes, stride, a_bit=bit_conv_act, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(planes, activation=nn.ReLU, a_bit=self.target_bit, arg_dict=arg_dict)
-        self.conv2 = fused_conv3x3(planes, planes, arg_dict=arg_dict, a_bit=bit_conv_act)
-        self.bn2 = FusedBnReLU(planes, a_bit=self.target_bit, arg_dict=arg_dict)
+
+        self.conv2 = fused_conv3x3(planes, planes, a_bit=bit_conv_act, arg_dict=arg_dict)
+        self.bn2 = FusedBnReLU(planes, a_bit=self.a_bit, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
 
@@ -63,7 +65,7 @@ class FusedBasicBlock(nn.Module):
         out = self.bn2(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x)
+            identity = self.downsample(identity)
             identity = self.bn_down(identity)
 
         out += identity
@@ -98,24 +100,21 @@ class FusedBasicBlock(nn.Module):
         return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
 
 
-    def set_block_qparams(self, s1, z1, s_target, z_target):
+    def set_block_qparams(self, s1, z1):
         with torch.no_grad():
-            self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
-            self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-            self.M0, self.shift = quantize_M(self.s1 / self.s_target)
+            self.s1, self.z1 = s1, z1
 
             if self.downsample:
-                prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
+                prev_s, prev_z = self.downsample.set_qparams(self.s1, self.z1)
                 self.bn_down.set_qparams(prev_s, prev_z)
 
-            prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
+            prev_s, prev_z = self.conv1.set_qparams(self.s1, self.z1)
             prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
             prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
             self.bn2.set_qparams(prev_s, prev_z)
 
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
-            nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
-            return self.s3, self.z3, nxt_s_target, nxt_z_target
+            return self.s3, self.z3
 
 
 class FusedBottleneck(nn.Module):
@@ -125,12 +124,13 @@ class FusedBottleneck(nn.Module):
                  groups: int = 1, base_width:int =64, dilation:int =1, a_bit=None, arg_dict=None) -> None:
         super(FusedBottleneck, self).__init__()
 
-        self.downsample = downsample
         self.stride = stride
+        self.downsample = downsample
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
+        self.in_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
         if out_bit is not None and (self.a_bit == self.target_bit):
@@ -140,18 +140,20 @@ class FusedBottleneck(nn.Module):
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
         width = int(planes * (base_width/64.)) * groups
-        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
 
-        if self.downsample is not None:
-            self.bn_down = FusedBnReLU(planes * self.expansion, a_bit=self.target_bit, arg_dict=arg_dict)
-        self.conv1 = fused_conv1x1(in_planes=inplane, out_planes=width, a_bit=bit_conv_act, arg_dict=arg_dict)
+        if downsample is not None:
+            self.downsample = fused_conv1x1(inplane, planes * self.expansion, stride, a_bit=bit_conv_act, arg_dict=arg_dict)
+            self.bn_down = FusedBnReLU(planes * self.expansion, a_bit=self.a_bit, arg_dict=arg_dict)
+
+        self.conv1 = fused_conv1x1(inplane, width, a_bit=bit_conv_act, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(width, activation=nn.ReLU, a_bit=self.target_bit, arg_dict=arg_dict)
-        self.conv2 = fused_conv3x3(in_planes=width, out_planes=width, stride=stride, groups=groups, dilation=dilation,
+
+        self.conv2 = fused_conv3x3(width, width, stride=stride, groups=groups, dilation=dilation,
                                    a_bit=bit_conv_act, arg_dict=arg_dict)
         self.bn2 = FusedBnReLU(width, activation=nn.ReLU, a_bit=self.target_bit, arg_dict=arg_dict)
-        self.conv3 = fused_conv1x1(in_planes=width, out_planes=planes * self.expansion,
-                                   a_bit=bit_conv_act, arg_dict=arg_dict)
-        self.bn3 = FusedBnReLU(planes * self.expansion, a_bit=self.target_bit, arg_dict=arg_dict)
+
+        self.conv3 = fused_conv1x1(width, planes * self.expansion, a_bit=bit_conv_act, arg_dict=arg_dict)
+        self.bn3 = FusedBnReLU(planes * self.expansion, a_bit=self.a_bit, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
 
@@ -165,7 +167,7 @@ class FusedBottleneck(nn.Module):
         out = self.bn3(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x)
+            identity = self.downsample(identity)
             identity = self.bn_down(identity)
 
         out += identity
@@ -200,17 +202,15 @@ class FusedBottleneck(nn.Module):
         return fake_quantize(x, s, z, self.a_bit, symmetric=False, use_ste=self.use_ste)
 
 
-    def set_block_qparams(self, s1, z1, s_target, z_target):
+    def set_block_qparams(self, s1, z1):
         with torch.no_grad():
-            self.s1, self.z1 = s1, z1                          # S, Z of 8/16/32 bit
-            self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-            self.M0, self.shift = quantize_M(self.s1 / self.s_target)
+            self.s1, self.z1 = s1, z1
 
             if self.downsample:
-                prev_s, prev_z = self.downsample.set_qparams(s_target, z_target)
+                prev_s, prev_z = self.downsample.set_qparams(self.s1, self.z1)
                 self.bn_down.set_qparams(prev_s, prev_z)
 
-            prev_s, prev_z = self.conv1.set_qparams(s_target, z_target)
+            prev_s, prev_z = self.conv1.set_qparams(self.s1, self.z1)
             prev_s, prev_z = self.bn1.set_qparams(prev_s, prev_z)
             prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
             prev_s, prev_z = self.bn2.set_qparams(prev_s, prev_z)
@@ -218,8 +218,7 @@ class FusedBottleneck(nn.Module):
             self.bn3.set_qparams(prev_s, prev_z)
 
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
-            nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=False)
-            return self.s3, self.z3, nxt_s_target, nxt_z_target
+            return self.s3, self.z3
 
 
 class FusedResNet(nn.Module):
@@ -270,8 +269,7 @@ class FusedResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride, arg_dict=self.arg_dict,
-                                       a_bit=self.bit_conv_act)
+            downsample = True
 
         layers = []
         layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, groups=self.groups,
@@ -283,6 +281,7 @@ class FusedResNet(nn.Module):
         layers.append(block(self.inplanes, planes, groups=self.groups, base_width=self.base_width,
                                 dilation=self.dilation, out_bit=out_bit, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
+
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -333,17 +332,14 @@ class FusedResNet(nn.Module):
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit, symmetric=False)
 
         blocks = [self.layer1, self.layer2, self.layer3, self.layer4]
         for block in blocks:
             for b in range(len(block)):
-                s1, z1, s_target, z_target = block[b].set_block_qparams(s1, z1, s_target, z_target)
+                s1, z1 = block[b].set_block_qparams(s1, z1)
 
-        self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
-        self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-        self.M0, self.shift = quantize_M(self.s1 / self.s_target)
-        self.fc.set_qparams(self.s_target, self.z_target)
+        self.s1, self.z1 = s1, z1
+        self.fc.set_qparams(self.s1, self.z1)
 
 
 
@@ -425,26 +421,26 @@ class FusedResNet20(nn.Module):
             self.in_range[0], self.in_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
+
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
         return fake_quantize(x, s, z, self.in_bit, symmetric=True, use_ste=self.use_ste)
+
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=True)
         prev_s, prev_z = self.first_conv.set_qparams(self.scale, self.zero_point)
 
         s1, z1 = self.bn1.set_qparams(prev_s, prev_z)
-        s_target, z_target = calc_qparams(self.bn1.act_range[0], self.bn1.act_range[1], self.target_bit, symmetric=False)
 
         blocks = [self.layer1, self.layer2, self.layer3]
         for block in blocks:
             for b in range(len(block)):
-                s1, z1, s_target, z_target = block[b].set_block_qparams(s1, z1, s_target, z_target)
+                s1, z1 = block[b].set_block_qparams(s1, z1)
 
-        self.s1, self.z1 = s1, z1  # S, Z of 8/16/32 bit
-        self.s_target, self.z_target = s_target, z_target  # S, Z of 4/8 bit
-        self.M0, self.shift = quantize_M(self.s1 / self.s_target)
-        self.fc.set_qparams(self.s_target, self.z_target)
+        self.s1, self.z1 = s1, z1
+        self.fc.set_qparams(self.s1, self.z1)
+
 
 
 def fused_resnet18(arg_dict, **kwargs):
@@ -543,105 +539,3 @@ def set_fused_resnet(fused, pre):
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
 
-
-def modify_fused_resnet_qn_pre_hook(model):
-    """ 
-        Copy from pre model's params to fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # model.first_conv.quant_noise = False
-    model.first_conv.conv = _quant_noise(model.first_conv.conv, model.qn_prob, 1, bit=model.bit)
-    # Block 1
-    block = model.layer1
-    if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
-        m = block[0].downsample
-        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 4, bit=m.bit)
-    for i in range(len(block)):
-        if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-        elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-
-    # Block 2
-    block = model.layer2
-    block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            4, bit=block[0].downsample.bit)
-    for i in range(len(block)):
-        if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-        elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-
-    # Block 3
-    block = model.layer3
-    block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            4, bit=block[0].downsample.bit)
-    for i in range(len(block)):
-        if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-        elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-    # Block 4
-    if model.num_blocks == 4:
-        block = model.layer4
-        block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                                4, bit=block[0].downsample.bit)
-        for i in range(len(block)):
-            if type(block[i]) == FusedBottleneck:
-                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            elif type(block[i]) == FusedBasicBlock:
-                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-
-    # Classifier
-    model.fc.quant_noise = False
-    model.qn_prob = model.runtime_helper.qn_prob
-    # return model
-
-
-def set_hawq_resnet(hawq, pre, bn_momentum=0.99):
-    """
-        Copy from pre model's params to fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # First layer
-    hawq.quant_init_convbn.conv = copy_weight_from_pretrained(hawq.quant_init_convbn.conv, pre.conv1)
-    hawq.quant_init_convbn.bn = copy_bn_from_pretrained(hawq.quant_init_convbn.bn, pre.bn1)
-    channel = hawq.channel
-    # Block 1
-    for stage_num in range(0, 4):
-        pre_layer = getattr(pre, f'layer{stage_num+1}')
-        for channel_num in range(channel[stage_num]):
-            unit = getattr(hawq, f'stage{stage_num+1}.' + f'unit{channel_num+1}')
-            pre_unit = pre_layer[channel_num]
-            unit.quant_convbn1.conv = copy_weight_from_pretrained(unit.quant_convbn1.conv, pre_unit.conv1)
-            unit.quant_convbn1.bn = copy_bn_from_pretrained(unit.quant_convbn1.bn, pre_unit.bn1)
-            unit.quant_convbn1.bn.momentum = bn_momentum
-            unit.quant_convbn2.conv = copy_weight_from_pretrained(unit.quant_convbn2.conv, pre_unit.conv2)
-            unit.quant_convbn2.bn = copy_bn_from_pretrained(unit.quant_convbn2.bn, pre_unit.bn2)
-            unit.quant_convbn2.bn.momentum = bn_momentum
-            unit.quant_convbn3.conv = copy_weight_from_pretrained(unit.quant_convbn3.conv, pre_unit.conv3)
-            unit.quant_convbn3.bn = copy_bn_from_pretrained(unit.quant_convbn3.bn, pre_unit.bn3)
-            unit.quant_convbn3.bn.momentum = bn_momentum
-            try:
-                if unit.quant_identity_convbn is not None:
-                    unit.quant_identity_convbn.conv = copy_weight_from_pretrained(unit.quant_identity_convbn.conv,
-                                                                                  pre_unit.downsample[0])
-                    unit.quant_identity_convbn.bn = copy_bn_from_pretrained(unit.quant_identity_convbn.bn,
-                                                                                  pre_unit.downsample[1])
-                    unit.quant_identity_convbn.bn.momentum = bn_momentum
-            except:
-                pass
-    hawq.quant_output = copy_weight_from_pretrained(hawq.quant_output, pre.fc)
-    return hawq

@@ -33,16 +33,10 @@ class QuantizedBasicBlock(nn.Module):
         self.stride = stride
 
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.s_target = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.conv1 = quantized_conv3x3(inplanes, planes, stride, arg_dict=arg_dict)
         self.conv2 = quantized_conv3x3(planes, planes, arg_dict=arg_dict)
@@ -53,11 +47,11 @@ class QuantizedBasicBlock(nn.Module):
         self.bn1 = QuantizedBn2d(planes, symmetric=False, arg_dict=arg_dict)
         self.bn2 = QuantizedBn2d(planes, symmetric=True, arg_dict=arg_dict)
 
+
     def forward(self, x):
         identity = x
-        conv_x = x
 
-        out = self.conv1(conv_x.type(torch.cuda.FloatTensor))
+        out = self.conv1(x.type(torch.cuda.FloatTensor))
         out = self.bn1(out)
 
         out = self.conv2(out.type(torch.cuda.FloatTensor))
@@ -71,6 +65,7 @@ class QuantizedBasicBlock(nn.Module):
         return out
 
 
+
 class QuantizedBottleneck(nn.Module):
     expansion: int = 4
     def __init__(self, inplane: int, planes: int, stride: int = 1, downsample=None,
@@ -82,16 +77,10 @@ class QuantizedBottleneck(nn.Module):
         self.stride = stride
 
         self.num_clusters, self.runtime_helper = itemgetter('cluster', 'runtime_helper')(arg_dict)
-        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.s_target = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         width = int(planes * (base_width/64.)) * groups
         self.conv1 = quantized_conv1x1(in_planes=inplane, out_planes=width, arg_dict=arg_dict)
@@ -106,11 +95,11 @@ class QuantizedBottleneck(nn.Module):
         self.bn2 = QuantizedBn2d(width, symmetric=False, arg_dict=arg_dict)
         self.bn3 = QuantizedBn2d(planes * self.expansion, symmetric=True, arg_dict=arg_dict)
 
+
     def forward(self, x):
         identity = x
-        conv_x = x
 
-        out = self.conv1(conv_x.type(torch.cuda.FloatTensor))
+        out = self.conv1(x.type(torch.cuda.FloatTensor))
         out = self.bn1(out)
 
         out = self.conv2(out.type(torch.cuda.FloatTensor))
@@ -120,10 +109,12 @@ class QuantizedBottleneck(nn.Module):
         out = self.bn3(out)
 
         if self.downsample is not None:
-            identity = self.downsample(identity.type(torch.cuda.FloatTensor))
+            identity = self.downsample(identity)
             identity = self.bn_down(identity)
-        out = self.shortcut(identity.type(torch.cuda.FloatTensor), out.type(torch.cuda.FloatTensor))
+
+        out = self.shortcut(identity, out)
         return out
+
 
 
 class QuantizedResNet(nn.Module):
@@ -132,8 +123,6 @@ class QuantizedResNet(nn.Module):
         super(QuantizedResNet, self).__init__()
         self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
 
-        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.in_bit = nn.Parameter(torch.tensor(self.bit_first, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
 
@@ -142,11 +131,7 @@ class QuantizedResNet(nn.Module):
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.s_target = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.num_blocks = 4
         self.inplanes = 64
@@ -172,6 +157,7 @@ class QuantizedResNet(nn.Module):
         self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
         self.fc = QuantizedLinear(512 * block.expansion, num_classes, symmetric=True, arg_dict=arg_dict)
 
+
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         # Planes : n_channel_output
         downsample = None
@@ -191,6 +177,7 @@ class QuantizedResNet(nn.Module):
                                 base_width=self.base_width, dilation=self.dilation,
                                 arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
+
 
     def forward(self, x):
         if self.runtime_helper.qat_batch_cluster is not None:
@@ -216,13 +203,12 @@ class QuantizedResNet(nn.Module):
         return x.type(torch.cuda.FloatTensor)
 
 
+
 class QuantizedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(QuantizedResNet20, self).__init__()
         self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
 
-        self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
-        self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.in_bit = nn.Parameter(torch.tensor(self.bit_first, dtype=torch.int8), requires_grad=False)
         self.arg_dict = arg_dict
 
@@ -231,11 +217,7 @@ class QuantizedResNet20(nn.Module):
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
-        self.s_target = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         self.inplanes = 16
         self.dilation = 1
@@ -249,6 +231,7 @@ class QuantizedResNet20(nn.Module):
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = QuantizedLinear(64 * block.expansion, num_classes, symmetric=True, arg_dict=arg_dict)
 
+
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
@@ -261,6 +244,7 @@ class QuantizedResNet20(nn.Module):
 
         return nn.Sequential(*layers)
 
+
     def forward(self, x):
         if self.runtime_helper.qat_batch_cluster is not None:
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit, symmetric=True)
@@ -269,17 +253,18 @@ class QuantizedResNet20(nn.Module):
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
         x = self.bn1(x)
+
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
 
         x = self.avgpool(x.type(torch.cuda.FloatTensor))
-        # x = x.floor()
         x = x.trunc()
 
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x.type(torch.cuda.FloatTensor)
+
 
 
 def quantized_resnet18(arg_dict, **kwargs):
@@ -338,18 +323,18 @@ def quantize_block(_fp, _int):
                                                         _int[i].bn3.s3, _int[i].bn3.z3,
                                                         _fp[i].s3, _fp[i].z3)
             else:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data, 
                                                         _int[i].downsample.s3, _int[i].downsample.z3,
                                                         _int[i].bn2.s3, _int[i].bn2.z3,
                                                         _fp[i].s3, _fp[i].z3)
         else:
             if type(_int[i]) == QuantizedBottleneck:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data, 
                                                         _int[i].conv1.s1, _int[i].conv1.z1,
                                                         _int[i].bn3.s3, _int[i].bn3.z3,
                                                         _fp[i].s3, _fp[i].z3)
             else:
-                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data,
+                _int[i].shortcut = set_shortcut_qparams(_int[i].shortcut, _fp[i].a_bit.data, 
                                                         _int[i].conv1.s1, _int[i].conv1.z1,
                                                         _int[i].bn2.s3, _int[i].bn2.z3,
                                                         _fp[i].s3, _fp[i].z3)
@@ -358,14 +343,8 @@ def quantize_block(_fp, _int):
 
 def quantize_pcq_block(_fp, _int):
     for i in range(len(_int)):
-        _int[i].target_bit.data = _fp[i].target_bit
-        _int[i].a_bit.data = _fp[i].a_bit
         _int[i].s1.data = _fp[i].s1              # S, Z of 8/16/32 bit
         _int[i].z1.data = _fp[i].z1
-        _int[i].s_target.data = _fp[i].s_target  # S, Z of 4/8 bit
-        _int[i].z_target.data = _fp[i].z_target
-        _int[i].M0.data = _fp[i].M0
-        _int[i].shift.data = _fp[i].shift
 
         _int[i].conv1 = quantize(_fp[i].conv1, _int[i].conv1)
         _int[i].bn1 = quantize(_fp[i].bn1, _int[i].bn1)
@@ -409,7 +388,6 @@ def quantize_resnet(fp_model, int_model):
 
 
 def quantize_pcq_resnet(fp_model, int_model):
-    int_model.target_bit.data = fp_model.target_bit
     int_model.in_bit.data = fp_model.in_bit
     int_model.scale.data = fp_model.scale
     int_model.zero_point.data = fp_model.zero_point
@@ -423,13 +401,8 @@ def quantize_pcq_resnet(fp_model, int_model):
         int_model.maxpool.bit.data = int_model.bn1.a_bit.data
         int_model.maxpool.zero_point.data = int_model.bn1.z3.data
 
-    int_model.a_bit.data = fp_model.a_bit
     int_model.s1.data = fp_model.s1  # S, Z of 8/16/32 bit
     int_model.z1.data = fp_model.z1
-    int_model.s_target.data = fp_model.s_target  # S, Z of 4/8 bit
-    int_model.z_target.data = fp_model.z_target
-    int_model.M0.data = fp_model.M0
-    int_model.shift.data = fp_model.shift
 
     int_model.fc = quantize(fp_model.fc, int_model.fc)
     return int_model
