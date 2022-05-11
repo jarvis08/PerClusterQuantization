@@ -141,6 +141,7 @@ class QuantizedConv2d(nn.Conv2d):
             if self.per_channel:
                 sum_a1 = self.sum_a1[:batch_size] * self.z2[None, :, None, None]
                 nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2[None, :, None, None]
+                sum_a2 = self.sum_a2.mul(z1)
             else:
                 if self.multi_norm:
                     sum_a1 = self.sum_a1[:batch_size] * z2
@@ -150,6 +151,7 @@ class QuantizedConv2d(nn.Conv2d):
                     sum_a1 = self.sum_a1[:batch_size] * self.z2
                     nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
                     sum_a2 = self.sum_a2.mul(z1)
+
 
             subsum = sum_q1q2.add(nz1z2)
             subsum = torch.sub(subsum, sum_a1)
