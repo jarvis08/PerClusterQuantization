@@ -106,7 +106,8 @@ parser.add_argument('--data-percentage',
                     default=1,
                     help='data percentage of training data')
 parser.add_argument('--fix-BN',
-                    action='store_true',
+                    type=bool,
+                    default=True,
                     help='whether to fix BN statistics and fold BN during training')
 parser.add_argument('--fix-BN-threshold',
                     type=int,
