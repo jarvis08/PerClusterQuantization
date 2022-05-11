@@ -205,11 +205,21 @@ class QuantizedConv2d(nn.Conv2d):
                     row_st, row_end = o_row * stride, o_row * stride + filter_row
                     self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
 
-            sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+            if not self.per_channel:
+                sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+            else:
+                sum_a1 = self.sum_a1[:x.size(0)][:, None, :, :].mul(self.z2[None, :, None, None])
+            #import pdb
+            #pdb.set_trace()
+
             sum_a2 = self.sum_a2.mul(self.z1)
             nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
-            subsum = sum_q1q2.add(nz1z2)
-            subsum = torch.sub(subsum, sum_a1[:, None, :, :])
+            if not self.per_channel:
+                subsum = sum_q1q2.add(nz1z2)
+                subsum = torch.sub(subsum, sum_a1[:, None, :, :])
+            else:
+                subsum = sum_q1q2.add(nz1z2[None, :, None, None])
+                subsum = torch.sub(subsum, sum_a1)
             subsum = torch.sub(subsum, sum_a2)
         else:
             subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
