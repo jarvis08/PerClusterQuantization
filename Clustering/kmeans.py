@@ -34,7 +34,7 @@ class KMeansClustering(object):
                 rst, _ = data.topk(k=3, dim=-1)
                 rst = rst.mean(-1, keepdim=True)
             elif self.args.repr_method == 'mean':
-                rst = data.mean(-1, keepdim=True)n
+                rst = data.mean(-1, keepdim=True)
             else:
                 _min = data.min(-1, keepdim=True).values
                 _max = data.max(-1, keepdim=True).values
