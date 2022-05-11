@@ -34,7 +34,7 @@ class KMeansClustering(object):
                 rst, _ = data.topk(k=3, dim=-1)
                 rst = rst.mean(-1, keepdim=True)
             elif self.args.repr_method == 'mean':
-                rst = data.mean(-1, keepdim=True)
+                rst = data.mean(-1, keepdim=True)n
             else:
                 _min = data.min(-1, keepdim=True).values
                 _max = data.max(-1, keepdim=True).values
@@ -159,13 +159,7 @@ class KMeansClustering(object):
 
             n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
             best_model_inertia = 9999999999999999
-            print("Train K-means model 5 times, and choose the best model")
-            for trial in range(5):
-                model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
-                if model.inertia_ < best_model_inertia:
-                    best_model = model
-                    best_model_inertia = model.inertia_
-                print("Trial-{} done".format(trial))
+            model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
