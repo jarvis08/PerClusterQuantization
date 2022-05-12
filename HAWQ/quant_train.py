@@ -22,8 +22,6 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-torch.set_num_threads(8)
-
 import warnings
 warnings.filterwarnings("ignore")
 
