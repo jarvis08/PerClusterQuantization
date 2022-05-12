@@ -16,6 +16,9 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.optim
 import torch.multiprocessing as mp
+
+mp.set_sharing_strategy('file_system')
+
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
