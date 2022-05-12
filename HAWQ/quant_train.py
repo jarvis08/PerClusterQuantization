@@ -222,16 +222,8 @@ def main(args_daq, data_loaders, clustering_model):
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
-    if args.multiprocessing_distributed:
-        # Since we have ngpus_per_node processes per node, the total world_size
-        # needs to be adjusted accordingly
-        args.world_size = ngpus_per_node * args.world_size
-        # Use torch.multiprocessing.spawn to launch distributed processes: the
-        # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-    else:
-        # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
+    # Simply call main_worker function
+    main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
 
 
 def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
