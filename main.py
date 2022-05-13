@@ -3,7 +3,7 @@ import os
 from utils.torch_dataset import get_data_loaders
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
+parser.add_argument('--worker', default=1, type=int, help='Number of workers for input data loader')
 parser.add_argument('--mode', default='fine', type=str, help="pre/fine/eval/lip")
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
