@@ -243,6 +243,7 @@ class KMeansClustering(object):
         n_merged = 0
         similarity_threshold = self.args.sim_threshold
 
+        merge_step_cnt = 0
         while n_merged < to_merge:
             print(f'\n>>> Number of clusters to be merged: {to_merge - n_merged}')
             indices = [i for i in range(n_layers)]
@@ -259,6 +260,7 @@ class KMeansClustering(object):
             for group in merged_clusters:
                 exclude.update(group[0] - {min(group[0])})
 
+            prev_merged_clusters = merged_clusters
             if self.args.exclude:
                 zero_ratio_per_layer = torch.zeros(n_layers, device='cuda')
                 for l in range(n_layers):
@@ -315,6 +317,9 @@ class KMeansClustering(object):
 
             counted = count_duplicated_candidates.items()
             similar_cluster_pairs = sorted(counted, key=lambda x: (x[1][0], x[1][1]), reverse=True)
+
+            cur_cross_similarity = cross_similarity
+            cur_zero_ratio = deepcopy(zero_ratio)
 
             print(f'Merge', end='')
             for p in range(len(similar_cluster_pairs)):
@@ -379,6 +384,56 @@ class KMeansClustering(object):
             n_merged = 0
             for group in merged_clusters:
                 n_merged += len(group[0]) - 1
+
+            if merged:
+                merge_step_cnt += 1
+                print(f"Save similarity output STEP {merge_step_cnt}")
+                with open(f'{arch}_topk_{self.args.topk}_thres_{self.args.sim_threshold}_step_{merge_step_cnt}.csv', 'w') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(['top-k', self.args.topk, 'threshold', self.args.sim_threshold, 'step', merge_step_cnt])
+                    writer.writerow(['cur merged', f'{c1}, {c2}'] + [comb[0] for comb in prev_merged_clusters])
+
+                    for layer_idx in range(cur_cross_similarity.size(0)):
+                        if layer_idx not in indices:
+                            writer.writerow([f'layer {layer_idx}', '-', '-', '-', '-'])
+                            continue
+                        writer.writerow([f'layer {layer_idx}'] + [cur_cross_similarity[layer_idx][c1][c2].item(), cur_cross_similarity[layer_idx][c2][c1].item()])
+
+                    writer.writerow(['zero ratio'])
+                    for layer_idx in range(cur_cross_similarity.size(0)):
+                        if layer_idx not in indices:
+                            writer.writerow([f'layer {layer_idx}', '-', '-', '-', '-'])
+                            continue
+                        num_features = cur_zero_ratio[layer_idx][0].shape[0]
+                        writer.writerow([(cur_zero_ratio[layer_idx][ctr].sum() / num_features).item() for ctr in range(self.args.sub_cluster)])
+
+                    # # cluster combination
+                    # writer.writerow(['cluster', 'count', 'layers'])
+                    # for item in range(len(cur_cluster_info)):
+                    #     writer.writerow([tuple(cur_cluster_info[item][0]), cur_cluster_info[item][1][0],
+                    #                      tuple(cur_cluster_info[item][1][2])])
+                    # # similarity
+                    # writer.writerow(['layer', 'min', 'max', 'mean', 'std'])
+                    # total_wo_zero = cur_cross_similarity[indices].view(-1)
+                    # total_wo_zero = total_wo_zero[torch.nonzero(total_wo_zero)]
+                    # for layer_idx in range(cur_cross_similarity.size(0)):
+                    #     if layer_idx not in indices:
+                    #         writer.writerow([f'layer {layer_idx}', '-', '-', '-', '-'])
+                    #         continue
+                    #     layer_wo_zero = cur_cross_similarity[layer_idx].view(-1)
+                    #     layer_wo_zero = layer_wo_zero[torch.nonzero(layer_wo_zero)]
+                    #     writer.writerow([f'layer {layer_idx}', layer_wo_zero.min().item(), layer_wo_zero.max().item(),
+                    #                      layer_wo_zero.mean().item(), layer_wo_zero.std().item()])
+                    # writer.writerow(['Total Similarity', '', ''])
+                    # writer.writerow(['min', 'max', 'mean', 'std'])
+                    # writer.writerow([total_wo_zero.min().item(), total_wo_zero.max().item(), total_wo_zero.mean().item(),
+                    #                  total_wo_zero.std().item()])
+                    # # cout zero per layer
+                    # writer.writerow(['Count zeros per layer'])
+                    # writer.writerow([''] + [f'{i}' for i in range(n_sub_clusters)] + ['Total'])
+                    # for layer_idx in range(n_layers):
+                    #     writer.writerow([f'layer {layer_idx}'] + [f'{zero_ratio_per_layer[layer_idx][c].item()}' for c in
+                    #                                               range(n_sub_clusters + 1)])
 
         final_clusters = dict()
         n_per_final = [0 for _ in range(self.args.cluster)]
