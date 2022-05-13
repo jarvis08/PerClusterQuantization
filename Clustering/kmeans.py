@@ -281,13 +281,15 @@ class KMeansClustering(object):
                         if _to in exclude:
                             continue
                         if self.args.similarity_method == 'and':
-                            n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
+                            # n_commonly_zero = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
+                            # See weight
+                            n_commonly_zero = torch.logical_and(torch.ones(n_features) - zero_ratio[l][_from], torch.ones(n_features)- zero_ratio[l][_to]).sum()
                             similarity = n_commonly_zero / n_features
                         else : 
                             similarity = torch.logical_and(zero_ratio[l][_from], zero_ratio[l][_to]).sum() / \
                                     torch.logical_or(zero_ratio[l][_from], zero_ratio[l][_to]).sum()
                         cross_similarity[l][_from][_to] = similarity
-
+            # 조합 뽑기, Similarity cal
             sorted_dist, sorted_indices = torch.sort(cross_similarity, dim=2, descending=True)
 
             candidates_per_layer = [[] for _ in range(n_layers)]
@@ -315,7 +317,7 @@ class KMeansClustering(object):
 
             counted = count_duplicated_candidates.items()
             similar_cluster_pairs = sorted(counted, key=lambda x: (x[1][0], x[1][1]), reverse=True)
-
+            # Mering part
             print(f'Merge', end='')
             for p in range(len(similar_cluster_pairs)):
                 merged = False
