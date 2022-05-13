@@ -18,6 +18,8 @@ parser.add_argument('--mixrate', default=3, type=int,
                     help='Number of epochs to mix augmented dataset to non-augmented dataset in training of clustering')
 parser.add_argument('--sim_threshold', default=0.7, type=float,
                     help='Similarity threshold of ratio for considering similar clusters in nnac')
+parser.add_argument('--percentile', default=0.5, type=float,
+                    help='quantile tensor in nnac')
 parser.add_argument('--clustering_method', default='kmeans', type=str, help="Clustering method(K-means or BIRCH)")
 parser.add_argument('--topk', default=3, type=int, help='Number of cluster combination candidates to choose in nnac')
 parser.add_argument('--cluster', default=1, type=int, help='Number of clusters')

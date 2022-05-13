@@ -77,6 +77,44 @@ class BasicBlock(nn.Module):
 
         return out
 
+    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized):
+        if not initialized:
+            tmp = [[] for _ in range(n_clusters)]
+            max_counter.append(tmp)
+            max_counter.append(tmp)
+
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        l_idx += 1
+
+        _max = out.view(out.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+        l_idx += 1
+
+        _max = out.view(out.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
+        return out, l_idx
+
+
     def count_zeros_per_index(self, x, cluster, n_clusters, zero_counter, l_idx, initialized):
         if not initialized:
             _x = x[0].unsqueeze(0)
@@ -445,6 +483,29 @@ class ResNet20(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
+
+    def get_output_max_distribution(self, x, cluster, n_clusters):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        initialized = True
+        if not hasattr(self, 'max_counter'):
+            tmp = [[] for _ in range(n_clusters)]
+            initialized = False
+            self.max_counter = []
+            self.max_counter.append(tmp)
+        l_idx = 0
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+
+        blocks = [self.layer1, self.layer2, self.layer3]
+        for block in blocks:
+            for b in range(len(block)):
+                x, l_idx = block[b].get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx, initialized)
 
     def count_zeros_per_index(self, x, cluster, n_clusters):
         # cluster -> ready cluster idx, n_cluster -> args.sub_cluster

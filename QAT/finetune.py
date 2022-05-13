@@ -27,7 +27,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
     #val_loader = data_loaders['val']
     test_loader = data_loaders['test']
     if args.nnac and clustering_model.final_cluster is None:
-        clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
+        # clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
+        clustering_model.max_nn_aware_clustering(pretrained_model, train_loader, args.arch)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
     if pretrained_model:
