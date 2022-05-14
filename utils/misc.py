@@ -13,7 +13,6 @@ import logging
 import random
 
 from HAWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
-from QAT.utils.quantization_utils.quant_modules import first_epoch_done
 
 class RuntimeHelper(object):
     """
@@ -283,9 +282,6 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     else:
         model.train()
         
-    if epoch == 1:
-        first_epoch_done(model)
-
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
                                clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()

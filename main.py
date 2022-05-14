@@ -71,7 +71,7 @@ if __name__ == '__main__':
             clustering_model = get_clustering_model(args_daq)
 
     if args_daq.quant_base == 'qat':
-        from QAT.quant_train import main
+        from QAT.qat import main
         main(args_daq, data_loaders, clustering_model)
     else:
         from HAWQ.quant_train import main
