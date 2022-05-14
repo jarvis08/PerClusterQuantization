@@ -460,8 +460,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         model.toggle_full_precision()
         if args.max_method == 'zero':
             clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
-        elif args.max_method == 'mean' or args.max_method == 'median':
-            clustering_model.max_nn_aware_clustering(model, train_loader, args.arch)
         else:
             clustering_model.zero_max_nn_aware_clustering(model, train_loader, args.arch)
         model.toggle_full_precision()
