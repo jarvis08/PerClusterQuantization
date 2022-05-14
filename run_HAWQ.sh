@@ -181,7 +181,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		            --max_method tmp \
+		            --max_method median \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -205,7 +205,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		            --max_method tmp \
+		            --max_method median \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -236,6 +236,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
+		            --max_method median \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
@@ -260,6 +261,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
+		            --max_method median \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
