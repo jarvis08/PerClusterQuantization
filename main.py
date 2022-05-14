@@ -36,6 +36,10 @@ parser.add_argument('--visualize_clustering', action='store_true',
                     help="Visualize clustering result with PCA-ed training dataset")
 parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with dataset preprocessed in darknet")
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
+
+# merging max
+parser.add_argument('--max_method', type=str, default='zero', choices=['zero', 'median', 'mean'], help='nnac max merging mode')
+
 args_daq, tmp = parser.parse_known_args()
 
 arch = None

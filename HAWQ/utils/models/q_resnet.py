@@ -177,6 +177,32 @@ class Q_ResNet20_Daq(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
+    def get_output_max_distribution(self, x, cluster, n_clusters):
+        initialized = True
+        if not hasattr(self, 'max_counter'):
+            self.features = nn.Sequential(self.quant_init_block_conv, self.quant_init_block_bn, self.act)
+            tmp = [[] for _ in range(n_clusters)]
+            initialized = False
+            self.max_counter = []
+            self.max_counter.append(tmp)
+
+        x, _ = self.features[0](x)
+        x, _ = self.features[1](x)
+        x = self.features[2](x)
+
+        l_idx = 0
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+
+        for stage_num in range(0, 3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, l_idx = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
+                                                                initialized)
+
 
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
@@ -859,6 +885,52 @@ class Q_ResBlockBn_Daq(nn.Module):
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
         
         return x, layer_idx
+
+    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized):
+        if not initialized:
+            if self.resize_identity:
+                self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
+                                              self.quant_conv2, self.quant_bn2, self.act2,
+                                              self.quant_identity_conv, self.quant_identity_bn)
+            else:
+                self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
+                                              self.quant_conv2, self.quant_bn2, self.act2)
+
+            tmp = [[] for _ in range(n_clusters)]
+            max_counter.append(tmp)
+            max_counter.append(tmp)
+
+        if self.resize_identity:
+            identity, _ = self.features[6](x)
+            identity, _ = self.features[7](identity)
+        else:
+            identity = x
+
+        x, _ = self.features[0](x)
+        x, _ = self.features[1](x)
+        x = self.features[2](x)
+        l_idx += 1
+
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
+        x, _ = self.features[3](x)
+        x, _ = self.features[4](x)
+        x = x + identity
+        x = self.features[5](x)
+
+        l_idx += 1
+
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
+        return x, l_idx
 
 
 class Q_ResBlockBn(nn.Module):

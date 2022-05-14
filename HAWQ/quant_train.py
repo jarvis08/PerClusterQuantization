@@ -461,7 +461,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
-        clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
+        if args.max_method == 'zero':
+            clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
+        else:
+            clustering_model.max_nn_aware_clustering(model, train_loader, args.arch)
         model.toggle_full_precision()
 
     if args.evaluate:
