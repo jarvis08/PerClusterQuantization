@@ -29,56 +29,24 @@ def get_range(x):
     return _x.min().item(), _x.max().item()
 
 
-# def get_scale_and_zeropoint(_min, _max, bit):
-#     if bit == 4:
-#         s = (_max - _min) / 15
-#         z = - torch.round(_min / s)
-#         return s, torch.clamp(z, 0, 15)
-#     elif bit == 8:
-#         s = (_max - _min) / 255
-#         z = -128 - torch.round(_min / s)
-#         return s, torch.clamp(z, -128, 127)
-#     elif bit == 16:
-#         s = (_max - _min) / 65535
-#         z = -32768 - torch.round(_min / s)
-#         return s, torch.clamp(z, -32768, 32767)
-#     elif bit == 24:
-#         s = _max.sub(_min).div(16777215)
-#         return s, torch.zeros(s.shape, device='cuda')
-#     s = (_max - _min) / 4294967295
-#     return s, torch.tensor(0, device='cuda')
-
 
 def calc_qparams(range_min, range_max, bit, symmetric=False, zero=None):
     with torch.no_grad():
-        # if zero is None:
-        #     zero = torch.tensor(0.0, device='cuda')
-        # _min = zero if range_min > 0.0 else range_min
-        # _max = zero if range_max < 0.0 else range_max
-        # return get_scale_and_zeropoint(_min, _max, bit)
         if symmetric:
             return calc_symmetric_qparams(range_min, range_max, bit)
         return calc_asymmetric_qparams(range_min, range_max, bit)
 
 
 def calc_symmetric_qparams(_min, _max, bit):
-    # with torch.no_grad():
-        # if bit == 4:
-        #     s = (_max - _min) / 15
-        # elif bit == 8:
-        #     s = (_max - _min) / 255
-        # elif bit == 16:
-        #     s = (_max - _min) / 65535
-        # elif bit == 24:
-        #     s = _max.sub(_min).div(16777215)
-        # else:
-        #     s = (_max - _min) / 4294967295
-    # return s, torch.zeros_like(s, device='cuda')    #
     with torch.no_grad():
+        # target_bit = bit.clone().type(torch.int32)
+        # n = 2 ** (target_bit.data - 1) - 1
+        # scale = torch.maximum(_min.abs(), _max.abs())         #
+        # scale = torch.clamp(scale, min=1e-8) / float(n)
+
         target_bit = bit.clone().type(torch.int32)
-        n = 2 ** (target_bit.data - 1) - 1
-        scale = torch.maximum(_min.abs(), _max.abs())         #
-        scale = torch.clamp(scale, min=1e-8) / float(n)
+        n = (2 ** target_bit.data) - 1
+        scale = torch.clamp((_max - _min), min=1e-8) / float(n)
         return scale, torch.zeros_like(scale, device='cuda')
 
 def calc_asymmetric_qparams(_min, _max, bit, zero=None):
@@ -95,7 +63,6 @@ def calc_qparams_per_cluster(ranges, bit, symmetric=False, zero=None):
         zero = torch.tensor(0.0, device='cuda')
     _min = torch.where(ranges[:, 0] <= 0, ranges[:, 0], zero)
     _max = torch.where(ranges[:, 1] >= 0, ranges[:, 1], zero)
-    # return get_scale_and_zeropoint(_min, _max, bit)
     if symmetric:
         return calc_symmetric_qparams(_min, _max, bit)
     return calc_asymmetric_qparams(_min, _max, bit, zero)
