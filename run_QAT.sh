@@ -2,7 +2,7 @@
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
 
-IMAGENET_DATASET_PATH="/workspace/dataset"
+
 
 
 ###################################################
@@ -22,14 +22,14 @@ FIRST_RUN=${6}          # true / false
 CLUSTER=${7}                # 16 / 8 / 4 / 2
 SUB_CLUSTER=${8}            # 32 / 16 / 8 / 4
 SIM_METHOD=${9}           # and / jaccard
-REPR_METHOD="max"       # FIXED TO MAX
 
+REPR_METHOD="max"       # FIXED TO MAX
 
 #####################################################
 
 
 if [ -z ${CLUSTER} ]; then
-    if [ "$DATASET" = "imagenet" ]; then
+    if [ "$MODEL" = resnet20 ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
             --epochs 100 \
@@ -38,15 +38,14 @@ if [ -z ${CLUSTER} ]; then
             --arch $MODEL \
             --dataset $DATASET \
             --lr $LEARNING_RATE \
-            --smooth 0.99 \
-            --bit 4 \
-            --bit_first 8 \
-            --bit_classifier 8 \
-            --bit_addcat 4 \
-            --per_channel \
-	    --undo_gema \
-            --imagenet $IMAGENET_DATASET_PATH 
-    elif [ "$MODEL" = resnet20 ]; then
+            --act-range-momentum 0.99 \
+            --wd 1e-4 \
+            --pretrained \
+            --quant-scheme uniform4 \
+            --gpu 0 \
+            --data $DATASET \
+            --batch-size $BATCH
+    else 
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
             --epochs 100 \
@@ -55,164 +54,198 @@ if [ -z ${CLUSTER} ]; then
             --arch $MODEL \
             --dataset $DATASET \
             --lr $LEARNING_RATE \
-            --smooth 0.99 \
-            --bit 4 \
-            --bit_first 8 \
-            --bit_classifier 8 \
-            --bit_addcat 4 \
-	    --undo_gema \
-            --torchcv
-    else
-        CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-            --mode fine \
-            --epochs 100 \
-            --batch $BATCH \
-            --quant_base qat \
-            --arch $MODEL \
-            --dataset $DATASET \
-            --lr $LEARNING_RATE \
-            --smooth 0.99 \
-            --bit 4 \
-            --bit_first 8 \
-            --bit_classifier 8 \
-            --bit_addcat 4 \
-	    --undo_gema \
+            --act-range-momentum 0.99 \
+            --wd 1e-4 \
+            --pretrained \
+            --quant-scheme uniform4 \
+            --gpu 0 \
+            --data $DATASET \
+            --batch-size $BATCH \
+            --transfer_param \
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
     fi
 else
-    if [ "$FIRST_RUN" = true ]; then            
-        if [ "$DATASET" = "imagenet" ]; then
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base qat \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --smooth 0.99 \
-                --bit 4 \
-                --bit_first 8 \
-                --bit_classifier 8 \
-                --bit_addcat 4 \
-	        --undo_gema \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD} \
-                --imagenet $IMAGENET_DATASET_PATH 
-        elif [ "$MODEL" = resnet20 ]; then
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base qat \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --smooth 0.99 \
-                --bit 4 \
-                --bit_first 8 \
-                --bit_classifier 8 \
-                --bit_addcat 4 \
-	        --undo_gema \
-                --torchcv \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD}
+    if [ -z ${SUB_CLUSTER} ]; then
+        if [ "$FIRST_RUN" = true ]; then            
+            if [ "$MODEL" = resnet20 ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH
+            else
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --transfer_param \
+                    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+            fi
         else
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base qat \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --smooth 0.99 \
-                --bit 4 \
-                --bit_first 8 \
-                --bit_classifier 8 \
-                --bit_addcat 4 \
-	        --undo_gema \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD} \
-                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
+            if [ "$MODEL" = resnet20 ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --clustering_path ${CLUSTERING_MODEL_PATH} \
+                    --data $DATASET \
+                    --batch-size $BATCH
+            else
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --clustering_path ${CLUSTERING_MODEL_PATH} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --transfer_param \
+                    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+            fi
         fi
     else
-        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
-        if [ "$DATASET" = "imagenet" ]; then
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base qat \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --smooth 0.99 \
-                --bit 4 \
-                --bit_first 8 \
-                --bit_classifier 8 \
-                --bit_addcat 4 \
-	        --undo_gema \
-                --clustering_path ${CLUSTERING_MODEL_PATH} \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD} \
-                --imagenet $IMAGENET_DATASET_PATH 
-        elif [ "$MODEL" = resnet20 ]; then
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base qat \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --smooth 0.99 \
-                --bit 4 \
-                --bit_first 8 \
-                --bit_classifier 8 \
-                --bit_addcat 4 \
-	        --undo_gema \
-                --torchcv \
-                --clustering_path ${CLUSTERING_MODEL_PATH} \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD}
+        if [ "$FIRST_RUN" = true ]; then            
+            if [ "$MODEL" = resnet20 ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --sub_cluster ${SUB_CLUSTER} \
+                    --nnac true \
+                    --similarity_method ${SIM_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH
+            else
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --sub_cluster ${SUB_CLUSTER} \
+                    --nnac true \
+                    --similarity_method ${SIM_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --transfer_param \
+                    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+            fi
         else
-            CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
-                --mode fine \
-                --epochs 100 \
-                --batch $BATCH \
-                --quant_base qat \
-                --arch $MODEL \
-                --dataset $DATASET \
-                --lr $LEARNING_RATE \
-                --smooth 0.99 \
-                --bit 4 \
-                --bit_first 8 \
-                --bit_classifier 8 \
-                --bit_addcat 4 \
-	        --undo_gema \
-                --clustering_path ${CLUSTERING_MODEL_PATH} \
-                --cluster ${CLUSTER} \
-                --repr_method ${REPR_METHOD} \
-                --sub_cluster ${SUB_CLUSTER} \
-                --nnac true \
-                --similarity_method ${SIM_METHOD} \
-                --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+            if [ "$MODEL" = resnet20 ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --clustering_path ${CLUSTERING_MODEL_PATH} \
+                    --sub_cluster ${SUB_CLUSTER} \
+                    --nnac true \
+                    --similarity_method ${SIM_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH
+            else
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base qat \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --pretrained \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --clustering_path ${CLUSTERING_MODEL_PATH} \
+                    --sub_cluster ${SUB_CLUSTER} \
+                    --nnac true \
+                    --similarity_method ${SIM_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --transfer_param \
+                    --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
+            fi
         fi
     fi
 fi
