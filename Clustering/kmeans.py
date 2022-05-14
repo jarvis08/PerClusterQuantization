@@ -192,7 +192,7 @@ class KMeansClustering(object):
         container.initialize_generator()
         container.set_next_batch()
 
-        print('Count zero indices per cluster about dataset..')
+        print('Count Max Values per cluster about dataset..')
         n_per_sub = [0 for _ in range(n_sub_clusters)]
         dnn_model.eval()
         with tqdm(range(len(train_loader)), desc="Merge Clusters", ncols=90) as t:
@@ -259,7 +259,7 @@ class KMeansClustering(object):
                         max_ratio[l][c] = cur_max_counter[l][c].mean()  # Normalize counts by number of data in cluster
 
 
-            print('Calc. `And` between clusters.. (`1` means both zero)')
+            print('Calc. Distance between clusters.. (`1` means both zero)')
             # Exclude merged clusters except 1 left
             exclude = set()
             for group in merged_clusters:
