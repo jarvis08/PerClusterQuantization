@@ -1,0 +1,310 @@
+from operator import itemgetter
+
+import torch.nn as nn
+import torch
+import torch.nn.functional as F
+import numpy as np
+
+from ..quant_noise import _quant_noise
+from ..quantization_utils import *
+from .activation import *
+
+
+class QuantizedLinear(nn.Linear):
+    qat_batch_cluster = None
+
+    def __init__(self, in_features, out_features, bias=False, activation=None, symmetric=False, multiplication=True, arg_dict=None):
+        super(QuantizedLinear, self).__init__(in_features, out_features, bias)
+        self.layer_type = 'QuantizedLinear'
+        bit, self.weight_symmetric, self.num_clusters, self.runtime_helper = itemgetter('bit', 'symmetric', 'cluster', 'runtime_helper')(arg_dict)
+        self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+        self.out_features = out_features
+
+        self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
+        self.quantized_bias = nn.Parameter(torch.zeros((self.num_clusters, out_features), dtype=torch.int32), requires_grad=False)
+
+        self.sum_a2 = nn.Parameter(torch.zeros((1, out_features), dtype=torch.int32), requires_grad=False)
+        self.multiplication = multiplication
+
+        t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
+        self.s1 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.s2 = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=False)
+        self.s3 = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z1 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.z2 = nn.Parameter(torch.tensor(0, dtype=torch.int32), requires_grad=False)
+        self.z3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.is_shift_neg = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)    #
+        self.hardswish_6 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.hardswish_3 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        self.s_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
+        self.z_activation = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+
+        self.activation = activation
+        self.act_symmetric=symmetric
+
+
+    def forward(self, x):
+        out = F.linear(x, self.weight, None)
+        out = self._subsum(x, out.type(torch.cuda.LongTensor))
+        if self.multiplication:
+            out = self._totalsum(out)
+        return out
+
+
+    def _subsum(self, x, y):
+        if self.num_clusters > 1:
+            return self._pcq_subsum(x, y)
+        else:
+            return self._general_subsum(x, y)
+
+
+    def _totalsum(self, x):
+        if self.num_clusters > 1:
+            out = self._pcq_totalsum(x)
+        else:
+            out = self._general_totalsum(x)
+        return clamp_matrix(out, self.a_bit, symmetric=self.act_symmetric)
+
+
+    def _pcq_subsum(self, x, sum_q1q2):
+        bc = self.runtime_helper.qat_batch_cluster
+        z1 = torch.index_select(self.z1, 0, bc)[:, None]
+
+        if self.is_bias:
+            bias = torch.index_select(self.quantized_bias, 0, bc)
+            sum_q1q2 = sum_q1q2.add(bias)
+
+        subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
+        return subsum
+
+
+    def _pcq_totalsum(self, subsum):
+        bc = self.runtime_helper.qat_batch_cluster
+        z3 = torch.index_select(self.z3, 0, bc)[:, None]
+        M0 = torch.index_select(self.M0, 0, bc)[:, None]
+        shift = torch.index_select(self.shift, 0, bc)[:, None]
+        shape = subsum.shape
+        mask = self.runtime_helper.mask_2d[:shape[0]]
+
+        if not self.is_shift_neg:
+            total = mul_and_shift(subsum, M0, shift, mask)
+        else:
+            zero = self.runtime_helper.izero
+            neg_shift = torch.where(shift < zero, - shift, zero)
+            shift = torch.where(shift >= zero, shift, zero)
+            subsum = subsum << neg_shift
+            total = mul_and_shift(subsum, M0, shift, mask)
+        return total.add(z3)
+
+
+    def _general_subsum(self, x, sum_q1q2):
+        if self.is_bias:
+            sum_q1q2.add_(self.quantized_bias[0][None, :])
+
+        subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
+        return subsum
+
+
+    def _general_totalsum(self, subsum):
+        if self.shift < 0:
+            total = mul_and_shift(subsum << - self.shift.item(), self.M0, 0)
+        else:
+            total = mul_and_shift(subsum, self.M0, self.shift.item())
+        return total.add(self.z3)
+
+
+
+class PCQLinear(nn.Module):
+    """
+        Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
+    """
+    def __init__(self, in_features, out_features, bias=True, activation=None, is_classifier=False,
+                 w_bit=None, a_bit=None, arg_dict=None):
+        super(PCQLinear, self).__init__()
+        self.layer_type = 'PCQLinear'
+        
+        bit, self.weight_symmetric, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
+            = itemgetter('bit', 'symmetric', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+
+        w_bit = w_bit if w_bit is not None else bit
+        a_bit = a_bit if a_bit is not None else bit
+        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+        self.zero = self.runtime_helper.fzero
+
+        self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
+        self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
+        self.is_classifier = is_classifier
+
+        self.fc = nn.Linear(in_features, out_features, bias=bias)
+        self._activation = activation(inplace=False) if activation else None
+        self.act_symmetric = False if activation else True
+
+
+    def forward(self, x):
+        if not self.training:
+            return self._forward_impl(x)
+
+        cluster = self.runtime_helper.qat_batch_cluster
+        w = self._fake_quantize_weight()
+        out = F.linear(x, w, self.fc.bias)
+        if self._activation:
+            out = self._activation(out)
+        return self._fake_quantize_activation(out, cluster)
+
+
+    def _forward_impl(self, x):
+        x = self.fc(x)
+        if self._activation:
+            x = self._activation(x)
+        return x
+
+
+    def _update_activation_ranges(self, x, cluster):
+        with torch.no_grad():
+            _min, _max = get_range(x)
+
+            if self._activation:
+                if self.apply_ema[cluster]:
+                    self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+                else:
+                    self.act_range[cluster][1] = _max
+                    self.apply_ema[cluster] = True
+            else:
+                if self.apply_ema[cluster]:
+                    self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+                    self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+                else:
+                    self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+                    self.apply_ema[cluster] = True
+
+
+    def _fake_quantize_weight(self):
+        w = self.fc.weight.detach()
+        s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.weight_symmetric, zero=self.zero)
+        w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.weight_symmetric, use_ste=self.use_ste)
+        return w
+
+
+    def _fake_quantize_activation(self, out, cluster):
+        self._update_activation_ranges(out, cluster)
+        if self.runtime_helper.apply_fake_quantization:
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
+            return fake_quantize(out, s, z, self.a_bit, symmetric=self.act_symmetric, use_ste=self.use_ste)
+        return out
+
+
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        with torch.no_grad():
+            self.s1, self.z1 = s1, z1
+            self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
+                                            symmetric=self.weight_symmetric, zero=self.zero)
+
+            if s_external is not None:
+                self.s3, self.z3 = s_external, z_external
+            else:
+                self.s3, self.z3 = calc_qparams_per_cluster(self.act_range, self.a_bit, symmetric=self.act_symmetric, zero=self.zero)
+
+            self.M0 = torch.zeros(self.num_clusters, dtype=torch.int32)
+            self.shift = torch.zeros(self.num_clusters, dtype=torch.int32)
+            for c in range(self.num_clusters):
+                self.M0[c], self.shift[c] = quantize_M(self.s1[c].type(torch.double) * self.s2.type(torch.double) / self.s3[c].type(torch.double))
+            return self.s3, self.z3
+
+
+
+class FusedLinear(nn.Module):
+    """
+        Fused Layer to calculate Quantization Parameters (S & Z)
+    """
+    def __init__(self, in_features, out_features, bias=True, activation=None, is_classifier=False,
+                 w_bit=None, a_bit=None, arg_dict=None):
+        super(FusedLinear, self).__init__()
+        self.layer_type = 'FusedLinear'
+
+        self.arg_dict = arg_dict
+        bit, self.weight_symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
+            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+
+        w_bit = w_bit if w_bit is not None else bit
+        a_bit = a_bit if a_bit is not None else bit
+        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+        self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
+        self.zero = self.runtime_helper.fzero
+
+        self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
+        self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
+
+        self.fc = nn.Linear(in_features, out_features, bias=bias)
+        self._activation = activation(inplace=False) if activation else None
+        self.act_symmetric = False if activation else True
+
+
+    def forward(self, x):
+        if not self.training:
+            return self._forward_impl(x)
+
+        w = self._fake_quantize_weight()
+        out = F.linear(x, w, self.fc.bias)
+        if self._activation:
+            out = self._activation(out)
+        return self._fake_quantize_activation(out)
+
+
+    def _forward_impl(self, x):
+        x = self.fc(x)
+        if self._activation:
+            x = self._activation(x)
+        return x
+
+
+    def _update_activation_ranges(self, x):
+        with torch.no_grad():
+            _min, _max = get_range(x)
+
+            if self._activation:
+                if self.apply_ema:
+                    self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+                else:
+                    self.act_range[1] = _max
+                    self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+            else:
+                if self.apply_ema:
+                    self.act_range[0] = self.act_range[0] * self.smooth + _max * (1 - self.smooth)
+                    self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+                else:
+                    self.act_range[0], self.act_range[1] = _min, _max
+                    self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+
+    def _fake_quantize_weight(self):
+        w = self.fc.weight.detach()
+        s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.weight_symmetric)
+        w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.weight_symmetric, use_ste=self.use_ste)
+        return w
+
+
+    def _fake_quantize_activation(self, out):
+        self._update_activation_ranges(out)
+        if self.runtime_helper.apply_fake_quantization:
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.act_symmetric)
+            return fake_quantize(out, s, z, self.a_bit, symmetric=self.act_symmetric, use_ste=self.use_ste)
+        return out
+
+
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
+        with torch.no_grad():
+            self.s1, self.z1 = s1, z1
+            self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,
+                                            symmetric=self.weight_symmetric)
+
+            if s_external is not None:
+                self.s3, self.z3 = s_external, z_external
+            else:
+                self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.act_symmetric)
+
+            self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
+            return self.s3, self.z3
