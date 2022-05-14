@@ -42,9 +42,9 @@ if [ -z ${CLUSTER} ]; then
             --bit 4 \
             --bit_first 8 \
             --bit_classifier 8 \
-            --bit_addcat 16 \
+            --bit_addcat 4 \
             --per_channel \
-            --symmetric \
+	    --undo_gema \
             --imagenet $IMAGENET_DATASET_PATH 
     elif [ "$MODEL" = resnet20 ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
@@ -59,9 +59,8 @@ if [ -z ${CLUSTER} ]; then
             --bit 4 \
             --bit_first 8 \
             --bit_classifier 8 \
-            --bit_addcat 16 \
-            --per_channel \
-            --symmetric \
+            --bit_addcat 4 \
+	    --undo_gema \
             --torchcv
     else
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
@@ -76,9 +75,8 @@ if [ -z ${CLUSTER} ]; then
             --bit 4 \
             --bit_first 8 \
             --bit_classifier 8 \
-            --bit_addcat 16 \
-            --per_channel \
-            --symmetric \
+            --bit_addcat 4 \
+	    --undo_gema \
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
     fi
 else
@@ -96,9 +94,8 @@ else
                 --bit 4 \
                 --bit_first 8 \
                 --bit_classifier 8 \
-                --bit_addcat 16 \
-                --per_channel \
-                --symmetric \
+                --bit_addcat 4 \
+	        --undo_gema \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
                 --sub_cluster ${SUB_CLUSTER} \
@@ -118,9 +115,8 @@ else
                 --bit 4 \
                 --bit_first 8 \
                 --bit_classifier 8 \
-                --bit_addcat 16 \
-                --per_channel \
-                --symmetric \
+                --bit_addcat 4 \
+	        --undo_gema \
                 --torchcv \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
@@ -140,9 +136,8 @@ else
                 --bit 4 \
                 --bit_first 8 \
                 --bit_classifier 8 \
-                --bit_addcat 16 \
-                --per_channel \
-                --symmetric \
+                --bit_addcat 4 \
+	        --undo_gema \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
                 --sub_cluster ${SUB_CLUSTER} \
@@ -165,9 +160,8 @@ else
                 --bit 4 \
                 --bit_first 8 \
                 --bit_classifier 8 \
-                --bit_addcat 16 \
-                --per_channel \
-                --symmetric \
+                --bit_addcat 4 \
+	        --undo_gema \
                 --clustering_path ${CLUSTERING_MODEL_PATH} \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
@@ -188,9 +182,8 @@ else
                 --bit 4 \
                 --bit_first 8 \
                 --bit_classifier 8 \
-                --bit_addcat 16 \
-                --per_channel \
-                --symmetric \
+                --bit_addcat 4 \
+	        --undo_gema \
                 --torchcv \
                 --clustering_path ${CLUSTERING_MODEL_PATH} \
                 --cluster ${CLUSTER} \
@@ -211,9 +204,8 @@ else
                 --bit 4 \
                 --bit_first 8 \
                 --bit_classifier 8 \
-                --bit_addcat 16 \
-                --per_channel \
-                --symmetric \
+                --bit_addcat 4 \
+	        --undo_gema \
                 --clustering_path ${CLUSTERING_MODEL_PATH} \
                 --cluster ${CLUSTER} \
                 --repr_method ${REPR_METHOD} \
