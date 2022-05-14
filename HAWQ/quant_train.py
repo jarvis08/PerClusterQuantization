@@ -175,12 +175,9 @@ parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's
 
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
-                      'resnet18': q_resnet18, 'resnet101': q_resnet101,
                       'resnet20': q_resnet20,
                       'alexnet': q_alexnet,
-                      'densenet121': q_densenet,
-                      'inceptionv3': q_inceptionv3,
-                      'mobilenetv2_w1': q_mobilenetv2_w1}
+                      'densenet121': q_densenet}
 
 args_hawq, _ = parser.parse_known_args()
 args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(args_hawq.arch, args_hawq.data, args_hawq.batch_size, os.getpid()))
@@ -463,8 +460,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         model.toggle_full_precision()
         if args.max_method == 'zero':
             clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
-        else:
+        elif args.max_method == 'mean' or args.max_method == 'median':
             clustering_model.max_nn_aware_clustering(model, train_loader, args.arch)
+        else:
+            clustering_model.zero_max_nn_aware_clustering(model, train_loader, args.arch)
         model.toggle_full_precision()
 
     if args.evaluate:

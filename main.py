@@ -3,7 +3,7 @@ import os
 from utils.torch_dataset import get_data_loaders
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--worker', default=1, type=int, help='Number of workers for input data loader')
+parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
 parser.add_argument('--mode', default='fine', type=str, help="pre/fine/eval/lip")
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
@@ -38,7 +38,7 @@ parser.add_argument('--darknet', default=False, type=bool, help="Evaluate with d
 parser.add_argument('--horovod', default=False, type=bool, help="Use distributed training with horovod")
 
 # merging max
-parser.add_argument('--max_method', type=str, default='zero', choices=['zero', 'median', 'mean'], help='nnac max merging mode')
+parser.add_argument('--max_method', type=str, default='zero', choices=['zero', 'median', 'mean', 'tmp'], help='nnac max merging mode')
 
 args_daq, tmp = parser.parse_known_args()
 

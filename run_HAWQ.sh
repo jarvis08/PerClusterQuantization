@@ -133,7 +133,6 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		    --max_method median \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --data $DATASET \
                     --batch-size $BATCH
@@ -182,7 +181,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		    --max_method median \
+		            --max_method tmp \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -206,6 +205,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
+		            --max_method tmp \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
