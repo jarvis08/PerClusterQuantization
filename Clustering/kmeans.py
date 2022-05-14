@@ -242,7 +242,7 @@ class KMeansClustering(object):
         to_merge = n_sub_clusters - self.args.cluster
         n_merged = 0
         similarity_threshold = self.args.sim_threshold
-        percentile_tensor = torch.tensor([self.args.percentile], device='cuda')
+
 
         while n_merged < to_merge:
             print(f'\n>>> Number of clusters to be merged: {to_merge - n_merged}')
@@ -250,10 +250,19 @@ class KMeansClustering(object):
             # Normalize with n_data of cluster, and make 1 if greater than 80 %
             cur_max_counter = deepcopy(dnn_model.max_counter)
             max_ratio = torch.zeros((len(cur_max_counter), n_sub_clusters), device='cuda')
-            for l in range(n_layers):
-                for c in range(n_sub_clusters):
-                    max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], percentile_tensor)  # Normalize counts by number of data in cluster
-                # max_ratio[l] = torch.where(zero_ratio[l] > similarity_threshold, 1, 0)
+
+            if self.args.max_method == 'median':
+                percentile_tensor = torch.tensor([0.5], device='cuda')
+                for l in range(n_layers):
+                    for c in range(n_sub_clusters):
+                        max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], percentile_tensor)  # Normalize counts by number of data in cluster
+                    # max_ratio[l] = torch.where(zero_ratio[l] > similarity_threshold, 1, 0)
+
+            else:
+                for l in range(n_layers):
+                    for c in range(n_sub_clusters):
+                        max_ratio[l][c] = cur_max_counter[l][c].mean()  # Normalize counts by number of data in cluster
+
 
             print('Calc. `And` between clusters.. (`1` means both zero)')
             # Exclude merged clusters except 1 left
