@@ -10,67 +10,6 @@ from pytorchcv.models.common import ConvBlock
 from pytorchcv.models.shufflenetv2 import ShuffleUnit, ShuffleInitBlock
 
 
-class Q_ResNet18(nn.Module):
-    """
-        Quantized ResNet50 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
-    """
-    def __init__(self, model):
-        super().__init__()
-        features = getattr(model, 'features')
-        init_block = getattr(features, 'init_block')
-
-        self.quant_input = QuantAct()
-
-        self.quant_init_block_convbn = QuantBnConv2d()
-        self.quant_init_block_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
-
-        self.quant_act_int32 = QuantAct()
-
-        self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.act = nn.ReLU()
-
-        self.channel = [2, 2, 2, 2]
-
-        for stage_num in range(0, 4):
-            stage = getattr(features, "stage{}".format(stage_num + 1))
-            for unit_num in range(0, self.channel[stage_num]):
-                unit = getattr(stage, "unit{}".format(unit_num + 1))
-                quant_unit = Q_ResBlockBn()
-                quant_unit.set_param(unit)
-                setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
-
-        self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
-
-        self.quant_act_output = QuantAct()
-
-        output = getattr(model, 'output')
-        self.quant_output = QuantLinear()
-        self.quant_output.set_param(output)
-
-    def forward(self, x):
-        x, act_scaling_factor = self.quant_input(x)
-
-        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-
-        x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
-
-        x = self.act(x)
-
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                x, act_scaling_factor = tmp_func(x, act_scaling_factor)
-
-        x = self.final_pool(x, act_scaling_factor)
-
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-        x = x.view(x.size(0), -1)
-        x = self.quant_output(x, act_scaling_factor)
-
-        return x
-
-
 class Q_ResNet20_Daq(nn.Module):
     """
         Quantized ResNet20 model for dataset CIFAR100, CIFAR10
@@ -347,6 +286,7 @@ class Q_ResNet50(nn.Module):
 
         return x
 
+
 class Q_ResNet50_Daq(nn.Module):
     """
         Quantized ResNet50 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
@@ -463,66 +403,6 @@ class Q_ResNet50_Daq(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
-
-# class Q_ResNet101(nn.Module):
-#     """
-#        Quantized ResNet101 model from 'Deep Residual Learning for Image Recognition,' https://arxiv.org/abs/1512.03385.
-#     """
-#     def __init__(self, model):
-#         super().__init__()
-
-#         features = getattr(model, 'features')
-
-#         init_block = getattr(features, 'init_block')
-#         self.quant_input = QuantAct()
-#         self.quant_init_convbn = QuantBnConv2d()
-#         self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
-
-#         self.quant_act_int32 = QuantAct()
-
-#         self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-#         self.act = nn.ReLU()
-
-#         self.channel = [3, 4, 23, 3]
-
-#         for stage_num in range(0, 4):
-#             stage = getattr(features, "stage{}".format(stage_num + 1))
-#             for unit_num in range(0, self.channel[stage_num]):
-#                 unit = getattr(stage, "unit{}".format(unit_num + 1))
-#                 quant_unit = Q_ResUnitBn()
-#                 quant_unit.set_param(unit)
-#                 setattr(self, f"stage{stage_num + 1}.unit{unit_num + 1}", quant_unit)
-
-#         self.final_pool = QuantAveragePool2d(kernel_size=7, stride=1)
-
-#         self.quant_act_output = QuantAct()
-
-#         output = getattr(model, 'output')
-#         self.quant_output = QuantLinear()
-#         self.quant_output.set_param(output)
-
-#     def forward(self, x):
-#         x, act_scaling_factor = self.quant_input(x)
-
-#         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
-
-#         x = self.pool(x)
-#         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None)
-
-#         x = self.act(x)
-
-#         for stage_num in range(0, 4):
-#             for unit_num in range(0, self.channel[stage_num]):
-#                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-#                 x, act_scaling_factor = tmp_func(x, act_scaling_factor)
-
-#         x = self.final_pool(x, act_scaling_factor)
-
-#         x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor)
-#         x = x.view(x.size(0), -1)
-#         x = self.quant_output(x, act_scaling_factor)
-
-#         return x
 
 
 class Q_ResUnitBn_Daq(nn.Module):
@@ -670,8 +550,6 @@ class Q_ResUnitBn_Daq(nn.Module):
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
         return x, layer_idx
-
-
 
 
 class Q_ResUnitBn(nn.Module):
@@ -999,13 +877,6 @@ def q_resnet20(model, runtime_helper=None):
     else:
         net = Q_ResNet20_Daq(model, runtime_helper)
     return net
-
-# def q_resnet20_unfold(model, runtime_helper=None):
-#     if runtime_helper is None:
-#         net = Q_ResNet20_unfold(model)
-#     else:
-#         net = Q_ResNet20_unfold_Daq(model,runtime_helper)
-#     return net
 
 def q_resnet50(model, runtime_helper=None):
     if runtime_helper is None:
