@@ -28,6 +28,7 @@ class RuntimeHelper(object):
         self.qn_prob = 0.0
         self.num_clusters = None
         self.val_batch = None
+        self.undo_gema = False
 
         self.mask_4d = None ###
         self.mask_2d = None ###
@@ -39,6 +40,8 @@ class RuntimeHelper(object):
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
         self.val_batch = args.val_batch
+        if args.undo_gema:
+            self.undo_gema = True
 
         mask = torch.ones(1, dtype=torch.int64, device='cuda')
         self.mask_4d = mask.view(-1, 1, 1, 1)
@@ -281,7 +284,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
         model.eval()
     else:
         model.train()
-        
+
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
                                clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()
@@ -312,12 +315,12 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
-
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
-    freeze_model(model)
+    if clustering_model.args.quant_base == 'hawq':
+        freeze_model(model)
     model.eval()
 
     container = InputContainer(test_loader, clustering_model, runtime_helper.num_clusters,
@@ -387,16 +390,12 @@ def transfer_params(arch, dataset, qat_model):
     elif arch == 'densenet121':
         torchcv = ptcv_get_model('densenet121', pretrained=True)
 
+    assert not 'alex' in arch, "Load our pretrained model when training alexnet"
+
     torchcv_dict = torchcv.state_dict()
     for cv, our in zip(model_dict.items(), torchcv_dict.items()):
         model_dict[cv[0]].copy_(torchcv_dict[our[0]])
 
-    # elif arch == 'alexnet':
-    #     checkpoint = torch.load(args.dnn_path)
-    #     loaded_dict = checkpoint['state_dict']
-    #     model_dict = model.state_dict()
-    #     for cur, from_ in zip(model_dict.items(), loaded_dict.items()):
-    #         model_dict[cur[0]] = loaded_dict[from_[0]]
     return qat_model
 
 
@@ -415,16 +414,19 @@ def load_dnn_model(arg_dict, tools, path=None):
                 model = tools.fused_model_initializer(arg_dict)
         else:
             if arg_dict['dataset'] == 'imagenet':
-                if arg_dict['arch'] == 'MobileNetV3':
-                    model = vision_models.mobilenet_v3_small(pretrained=True)
-                elif arg_dict['arch'] == 'ResNet18':
-                    model = vision_models.resnet18(pretrained=True)
-                elif arg_dict['arch'] == 'AlexNet':
-                    model = vision_models.alexnet(pretrained=True)
-                elif arg_dict['arch'] == 'ResNet50':
-                    model = vision_models.resnet50(pretrained=True)
-                elif arg_dict['arch'] == 'DenseNet121':
-                    model = vision_models.densenet121(pretrained=True)
+                if arg_dict['nnac']:
+                    model = tools.pretrained_model_initializer(pretrained=True)
+                else:
+                    if arg_dict['arch'] == 'MobileNetV3':
+                        model = vision_models.mobilenet_v3_small(pretrained=True)
+                    elif arg_dict['arch'] == 'ResNet18':
+                        model = vision_models.resnet18(pretrained=True)
+                    elif arg_dict['arch'] == 'AlexNet':
+                        model = vision_models.alexnet(pretrained=True)
+                    elif arg_dict['arch'] == 'ResNet50':
+                        model = vision_models.resnet50(pretrained=True)
+                    elif arg_dict['arch'] == 'DenseNet121':
+                        model = vision_models.densenet121(pretrained=True)
                 if not arg_dict['torchcv']:
                     return model
             elif arg_dict['dataset'] == 'cifar100':
@@ -515,6 +517,7 @@ def set_save_dir(args, allow_existence=True):
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path
+
 
 def set_logger(path):
     logging.basicConfig(filename=os.path.join(path, "train.log"), level=logging.DEBUG)
