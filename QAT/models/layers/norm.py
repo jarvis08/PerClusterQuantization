@@ -55,14 +55,11 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq_subsum(self, x):
         bc = self.runtime_helper.qat_batch_cluster
-        weight = torch.index_select(self.weight, 0, bc)[:, :, None, None]
-        bias = torch.index_select(self.bias, 0, bc)[:, :, None, None]
-        z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
 
-        q1q2 = x.mul(weight)
+        q1q2 = x.mul(self.weight[bc][None, :, None, None])
         q1z2 = x.mul(self.z2)
-        q2z1 = weight.mul(z1)
-        return q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
+        q2z1 = self.weight[bc].mul(self.z1[bc])
+        return q1q2 - q1z2 - q2z1 + self.z1[bc] * self.z2 + self.bias[bc][None, :, None, None]
 
 
     def _pcq_totalsum(self, subsum):

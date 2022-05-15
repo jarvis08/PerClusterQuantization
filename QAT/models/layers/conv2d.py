@@ -125,17 +125,16 @@ class QuantizedConv2d(nn.Conv2d):
 
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
-        z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
-        shape = subsum.shape
+        shape = subsum.size(0)
 
         if self.per_channel:
-            M0 = torch.index_select(self.M0, 0, bc)[:, :, None, None]
-            shift = torch.index_select(self.shift, 0, bc)[:, :, None, None]
+            M0 = self.M0[bc][:, :, None, None]
+            shift = self.shift[bc][:, :, None, None]
         else:
-            M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
-            shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
+            M0 = self.M0[bc]
+            shift = self.shift[bc]
 
-        mask = self.runtime_helper.mask_4d[:shape[0]]
+        mask = self.runtime_helper.mask_4d[:shape]
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, M0, shift, mask)
         else:
@@ -144,7 +143,7 @@ class QuantizedConv2d(nn.Conv2d):
             shift = torch.where(shift >= zero, shift, zero)
             subsum = subsum << neg_shift
             total = mul_and_shift(subsum, M0, shift, mask)
-        return total.add(z3)
+        return total.add(self.z3[bc])
 
 
     def _general_subsum(self, x, sum_q1q2):

@@ -70,42 +70,32 @@ class QuantizedLinear(nn.Linear):
 
     def _pcq_subsum(self, x, sum_q1q2):
         bc = self.runtime_helper.qat_batch_cluster
-        z1 = torch.index_select(self.z1, 0, bc)[:, None]
 
         if self.is_bias:
-            bias = torch.index_select(self.quantized_bias, 0, bc)
-            sum_q1q2 = sum_q1q2.add(bias)
+            sum_q1q2 = sum_q1q2.add(self.quantized_bias[bc][None, :])
 
         if not self.symmetric:
             sum_a1 = torch.sum(x, dim=1).mul(self.z2)
-            sum_a2 = self.sum_a2.mul(z1)
+            sum_a2 = self.sum_a2.mul(self.z1[bc])
 
-            nz1z2 = x.size(1) * z1 * self.z2
+            nz1z2 = x.size(1) * self.z1[bc] * self.z2
             subsum = sum_q1q2.add(nz1z2)
             subsum = subsum.sub(sum_a1[:, None])
             subsum = subsum.sub(sum_a2)
         else:
-            subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
+            subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1[bc]))
         return subsum
 
 
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
-        z3 = torch.index_select(self.z3, 0, bc)[:, None]
-        M0 = torch.index_select(self.M0, 0, bc)[:, None]
-        shift = torch.index_select(self.shift, 0, bc)[:, None]
-        shape = subsum.shape
-        mask = self.runtime_helper.mask_2d[:shape[0]]
+        mask = self.runtime_helper.mask_2d[:subsum.size(0)]
 
         if not self.is_shift_neg:
-            total = mul_and_shift(subsum, M0, shift, mask)
+            total = mul_and_shift(subsum, self.M0[bc], self.shift[bc].item(), mask)
         else:
-            zero = self.runtime_helper.izero
-            neg_shift = torch.where(shift < zero, - shift, zero)
-            shift = torch.where(shift >= zero, shift, zero)
-            subsum = subsum << neg_shift
-            total = mul_and_shift(subsum, M0, shift, mask)
-        return total.add(z3)
+            total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, 0)
+        return total.add(self.z3[bc])
 
 
     def _general_subsum(self, x, sum_q1q2):
