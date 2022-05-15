@@ -9,15 +9,17 @@ from .quant_noise import _quant_noise
 from .quantization_utils import *
 
 
-def pcq_conv3x3(in_planes, out_planes, stride=1, dilation=1, bias=False, activation=None, a_bit=None, arg_dict=None):
-    return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=dilation,
-                     bias=bias, activation=activation, a_bit=a_bit, arg_dict=arg_dict)
+def pcq_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False,
+                  activation=None, a_bit=None, arg_dict=None):
+    return PCQConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                       padding=dilation, groups=groups, dilation=dilation, bias=bias,
+                       activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
 def pcq_conv1x1(in_planes, out_planes, stride=1, bias=False, activation=None, a_bit=None, arg_dict=None):
     return PCQConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                     activation=activation, a_bit=a_bit, arg_dict=arg_dict)
-
+                       activation=activation, a_bit=a_bit, arg_dict=arg_dict)
+                       
 
 class PCQBasicBlock(nn.Module):
     expansion = 1
@@ -89,7 +91,7 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, self.runtime_helper.fzero)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
 
@@ -371,8 +373,9 @@ class PCQResNet20(nn.Module):
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = PCQLinear(64 * block.expansion, num_classes, 
                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
+
         if bit_first > target_bit:
-            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
+            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_classifier)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None

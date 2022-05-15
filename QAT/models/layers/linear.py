@@ -94,7 +94,7 @@ class QuantizedLinear(nn.Linear):
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, self.M0[bc], self.shift[bc].item(), mask)
         else:
-            total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, 0)
+            total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, mask)
         return total.add(self.z3[bc])
 
 

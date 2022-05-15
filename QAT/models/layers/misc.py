@@ -65,6 +65,7 @@ class QuantizedAdd(nn.Module):
             x2 = mul_and_shift(prev, M0_prev, shift, mask)
         return (x1 + x2).add(z3)
 
+
     def _general_add(self, bypass, prev):
         bypass = bypass - self.z_bypass
         prev = prev - self.z_prev

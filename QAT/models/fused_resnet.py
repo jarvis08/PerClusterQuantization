@@ -348,8 +348,6 @@ class FusedResNet20(nn.Module):
         self.dilation = 1
         self.num_blocks = 3
 
-        self.arg_dict = arg_dict
-
         self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
                                       w_bit=bit_first, a_bit=self.bit_conv_act, arg_dict=arg_dict)
         self.bn1 = FusedBnReLU(16, activation=nn.ReLU, a_bit=bit_addcat, arg_dict=arg_dict)
@@ -361,7 +359,7 @@ class FusedResNet20(nn.Module):
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
         if bit_first > target_bit:
-            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
+            self.layer3[layers[2] - 1].bn2.change_a_bit(bit_classifier)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None

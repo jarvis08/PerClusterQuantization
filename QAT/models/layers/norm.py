@@ -68,7 +68,7 @@ class QuantizedBn2d(nn.Module):
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, self.M0[bc], self.shift[bc].item(), mask)
         else:
-            total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, 0)
+            total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, mask)
         return total.add(self.z3[bc])
 
 
@@ -104,7 +104,7 @@ class PCQBnReLU(nn.Module):
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
 
         self.num_features = num_features
-        self.norms = nn.ModuleList([nn.BatchNorm2d(num_features) for _ in range(self.num_clusters)])
+        self.norms = nn.ModuleList([nn.BatchNorm2d(num_features, momentum=self.momentum) for _ in range(self.num_clusters)])
         self.activation = activation(inplace=False) if activation else None
 
 
@@ -127,6 +127,7 @@ class PCQBnReLU(nn.Module):
     def _forward_impl(self, x):
         bc = self.runtime_helper.qat_batch_cluster
         out = self.norms[bc](x)
+
         if self.activation:
             out = self.activation(out)
         return out
@@ -212,8 +213,8 @@ class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
-            itemgetter('smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
+        self.momentum, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
+            itemgetter('bn_momentum', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -224,7 +225,7 @@ class FusedBnReLU(nn.Module):
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
         self.num_features = num_features
-        self.bn = nn.BatchNorm2d(num_features)
+        self.bn = nn.BatchNorm2d(num_features, momentum=self.momentum)
         self.activation = activation(inplace=False) if activation else None
 
 
