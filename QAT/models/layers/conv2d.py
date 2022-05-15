@@ -106,7 +106,7 @@ class QuantizedConv2d(nn.Conv2d):
         return clamp_matrix(out, self.a_bit, self.act_symmetric)
 
 
-    def _pcq_subsum(self, x, sum_q1q2):
+def _pcq_subsum(self, x, sum_q1q2):
         batch_size = x.size(0)
         bc = self.runtime_helper.qat_batch_cluster
         z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
@@ -121,10 +121,43 @@ class QuantizedConv2d(nn.Conv2d):
                 bias = torch.index_select(self.quantized_bias, 0, bc)
                 sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
 
-        if self.multi_norm:
-            subsum = sum_q1q2.sub(self.sum_a2[bc][None, :].mul(z1))
+        if not self.weight_symmetric:
+            input_batch, input_ch = x.shape[0], x.shape[1]
+            filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+            stride = self.stride[0]
+            output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:     #
+                self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
+            for o_col in range(output_col):
+                for o_row in range(output_row):
+                    col_st, col_end = o_col * stride, o_col * stride + filter_col
+                    row_st, row_end = o_row * stride, o_row * stride + filter_row
+                    self.sum_a1[:batch_size, 0, o_col, o_row] = \
+                        torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+
+            if self.per_channel:
+                sum_a1 = self.sum_a1[:batch_size] * self.z2[None, :, None, None]
+                nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2[None, :, None, None]
+                sum_a2 = self.sum_a2.mul(z1)
+            else:
+                if self.multi_norm:
+                    sum_a1 = self.sum_a1[:batch_size] * z2
+                    nz1z2 = input_ch * filter_col * filter_row * z1 * z2
+                    sum_a2 = self.sum_a2[bc][None, :].mul(z1)
+                else:
+                    sum_a1 = self.sum_a1[:batch_size] * self.z2
+                    nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
+                    sum_a2 = self.sum_a2.mul(z1)
+
+
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = torch.sub(subsum, sum_a1)
+            subsum = torch.sub(subsum, sum_a2)
         else:
-            subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
+            if self.multi_norm:
+                subsum = sum_q1q2.sub(self.sum_a2[bc][None, :].mul(z1))
+            else:
+                subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
         return subsum
 
 
@@ -160,7 +193,35 @@ class QuantizedConv2d(nn.Conv2d):
             else:
                 sum_q1q2 = sum_q1q2.add(self.quantized_bias[0][None, :, None, None])
 
-        subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
+        if not self.weight_symmetric or not self.act_symmetric:
+            input_batch, input_ch = x.shape[0], x.shape[1]
+            filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
+            stride = self.stride[0]
+            output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:
+                self.sum_a1 = torch.zeros((input_batch, output_col, output_row), dtype=torch.int32, device='cuda')
+            for o_col in range(output_col):
+                for o_row in range(output_row):
+                    col_st, col_end = o_col * stride, o_col * stride + filter_col
+                    row_st, row_end = o_row * stride, o_row * stride + filter_row
+                    self.sum_a1[:x.size(0), o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+
+            if not self.per_channel:
+                sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
+            else:
+                sum_a1 = self.sum_a1[:x.size(0)][:, None, :, :].mul(self.z2[None, :, None, None])
+
+            sum_a2 = self.sum_a2.mul(self.z1)
+            nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
+            if not self.per_channel:
+                subsum = sum_q1q2.add(nz1z2)
+                subsum = torch.sub(subsum, sum_a1[:, None, :, :])
+            else:
+                subsum = sum_q1q2.add(nz1z2[None, :, None, None])
+                subsum = torch.sub(subsum, sum_a1)
+            subsum = torch.sub(subsum, sum_a2)
+        else:
+            subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
         return subsum
 
 
@@ -223,7 +284,11 @@ class PCQConv2d(nn.Module):
             self._norm_layer = None
 
         self._activation = activation(inplace=False) if activation else None
-        self.act_symmetric = False if activation else True
+        if self.weight_symmetric and not activation:
+            self.act_symmetric = True
+        else:
+            self.act_symmetric = False
+        
         self.out_channels = out_channels
         self.in_channels = in_channels
 
@@ -372,7 +437,10 @@ class FusedConv2d(nn.Module):
                               groups=self.groups, bias=bias, dilation=dilation)
         self._norm_layer = norm_layer(out_channels) if norm_layer else None
         self._activation = activation(inplace=False) if activation else None
-        self.act_symmetric = False if activation else True
+        if self.weight_symmetric and not activation:
+            self.act_symmetric = True
+        else:
+            self.act_symmetric = False
 
 
     def forward(self, x, external_range=None):

@@ -77,7 +77,16 @@ class QuantizedLinear(nn.Linear):
             bias = torch.index_select(self.quantized_bias, 0, bc)
             sum_q1q2 = sum_q1q2.add(bias)
 
-        subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
+        if not self.weight_symmetric or not self.act_symmetric:
+            sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+            sum_a2 = self.sum_a2.mul(z1)
+
+            nz1z2 = x.size(1) * z1 * self.z2
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = subsum.sub(sum_a1[:, None])
+            subsum = subsum.sub(sum_a2)
+        else:
+            subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
         return subsum
 
 
@@ -104,7 +113,16 @@ class QuantizedLinear(nn.Linear):
         if self.is_bias:
             sum_q1q2.add_(self.quantized_bias[0][None, :])
 
-        subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
+        if not self.weight_symmetric or not self.act_symmetric:
+            sum_a1 = torch.sum(x, dim=1).mul(self.z2)
+            sum_a2 = self.sum_a2.mul(self.z1)
+
+            nz1z2 = x.size(1) * self.z1 * self.z2
+            subsum = sum_q1q2.add(nz1z2)
+            subsum = subsum.sub(sum_a1[:, None])
+            subsum = subsum.sub(sum_a2)
+        else:
+            subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
         return subsum
 
 
@@ -141,7 +159,10 @@ class PCQLinear(nn.Module):
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
-        self.act_symmetric = False if activation else True
+        if self.weight_symmetric and not activation:
+            self.act_symmetric = True
+        else:
+            self.act_symmetric = False
 
 
     def forward(self, x):
@@ -240,7 +261,10 @@ class FusedLinear(nn.Module):
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
-        self.act_symmetric = False if activation else True
+        if self.weight_symmetric and not activation:
+            self.act_symmetric = True
+        else:
+            self.act_symmetric = False
 
 
     def forward(self, x):

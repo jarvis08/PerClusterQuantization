@@ -417,8 +417,8 @@ class KMeansClustering(object):
                 if merged:
                     # threshold_per_merged_cluster = max_data_num_per_merged_cluster
                     break
-                # else :
-                #     threshold_per_merged_cluster = int(threshold_per_merged_cluster * 1.05)
+                else :
+                    threshold_per_merged_cluster = int(threshold_per_merged_cluster * 1.05)
 
             n_merged = 0
             for group in merged_clusters:
