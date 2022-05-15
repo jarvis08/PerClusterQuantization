@@ -112,56 +112,47 @@ class QuantizedConv2d(nn.Conv2d):
     def _pcq_subsum(self, x, sum_q1q2):
         batch_size = x.size(0)
         bc = self.runtime_helper.qat_batch_cluster
-        z1 = torch.index_select(self.z1, 0, bc)[:, None, None, None]
-        if self.fold_convbn and self.multi_norm:
-            z2 = torch.index_select(self.z2, 0, bc)[None, :, None, None]
 
         if self.is_bias:
-            if self.fold_convbn:
-                bias = torch.index_select(self.folded_bias, 0, bc)
-                sum_q1q2 = sum_q1q2.add(bias[0][None, :, None, None])
+            if self.folded_convbn:
+                sum_q1q2 = sum_q1q2.add(self.folded_bias[bc][None, :, None, None])
             else:
-                bias = torch.index_select(self.quantized_bias, 0, bc)
-                sum_q1q2 = sum_q1q2.add(bias[:, :, None, None])
-
+                sum_q1q2 = sum_q1q2.add(self.quantized_bias[bc][None, :, None, None])
+                
         if not self.symmetric:
             input_batch, input_ch = x.shape[0], x.shape[1]
-            filter_batch, filter_ch, filter_col, filter_row = self.weight.shape[0], self.weight.shape[1], self.weight.shape[2], self.weight.shape[3]
+            filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
             stride = self.stride[0]
             output_col, output_row = sum_q1q2.shape[2], sum_q1q2.shape[3]
-            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:     #
+            if self.sum_a1 is None or self.sum_a1.shape[0] != input_batch:
                 self.sum_a1 = torch.zeros((input_batch, 1, output_col, output_row), dtype=torch.int32, device='cuda')
             for o_col in range(output_col):
                 for o_row in range(output_row):
                     col_st, col_end = o_col * stride, o_col * stride + filter_col
                     row_st, row_end = o_row * stride, o_row * stride + filter_row
-                    self.sum_a1[:batch_size, 0, o_col, o_row] = \
-                        torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
+                    self.sum_a1[:batch_size, 0, o_col, o_row] = torch.sum(x[:, :, col_st: col_end, row_st: row_end], (1, 2, 3))
 
-            if self.per_channel:
-                sum_a1 = self.sum_a1[:batch_size] * self.z2[None, :, None, None]
-                nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2[None, :, None, None]
-                sum_a2 = self.sum_a2.mul(z1)
+            if not self.per_channel:
+                sum_a1 = self.sum_a1[:batch_size].mul(self.z2)
             else:
-                if self.multi_norm:
-                    sum_a1 = self.sum_a1[:batch_size] * z2
-                    nz1z2 = input_ch * filter_col * filter_row * z1 * z2
-                    sum_a2 = self.sum_a2[bc][None, :].mul(z1)
-                else:
-                    sum_a1 = self.sum_a1[:batch_size] * self.z2
-                    nz1z2 = input_ch * filter_col * filter_row * z1 * self.z2
-                    sum_a2 = self.sum_a2.mul(z1)
+                sum_a1 = self.sum_a1[:batch_size][:, None, :, :].mul(self.z2[None, :, None, None])
 
-
-            subsum = sum_q1q2.add(nz1z2)
-            subsum = torch.sub(subsum, sum_a1)
+            sum_a2 = self.sum_a2.mul(self.z1[bc])
+            nz1z2 = input_ch * filter_col * filter_row * self.z1[bc] * self.z2
+            if not self.per_channel:
+                subsum = sum_q1q2.add(nz1z2)
+                subsum = torch.sub(subsum, sum_a1)
+            else:
+                subsum = sum_q1q2.add(nz1z2[None, :, None, None])
+                subsum = torch.sub(subsum, sum_a1)
             subsum = torch.sub(subsum, sum_a2)
         else:
             if self.multi_norm:
-                subsum = sum_q1q2.sub(self.sum_a2[bc][None, :].mul(z1))
+                subsum = sum_q1q2.sub(self.sum_a2[bc][None, :].mul(self.z1[bc]))
             else:
-                subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
+                subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1[bc]))
         return subsum
+
 
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
