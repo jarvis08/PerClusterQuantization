@@ -69,7 +69,7 @@ class QuantizedBn2d(nn.Module):
             total = mul_and_shift(subsum, self.M0[bc], self.shift[bc].item(), mask)
         else:
             total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, 0)
-        return total.add(z3[bc])
+        return total.add(self.z3[bc])
 
 
     def _general_subsum(self, x):
