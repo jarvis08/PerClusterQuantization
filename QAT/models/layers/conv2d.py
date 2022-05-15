@@ -114,7 +114,7 @@ class QuantizedConv2d(nn.Conv2d):
         bc = self.runtime_helper.qat_batch_cluster
 
         if self.is_bias:
-            if self.folded_convbn:
+            if self.fold_convbn:
                 sum_q1q2 = sum_q1q2.add(self.folded_bias[bc][None, :, None, None])
             else:
                 sum_q1q2 = sum_q1q2.add(self.quantized_bias[bc][None, :, None, None])
