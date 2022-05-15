@@ -87,7 +87,7 @@ class PCQBasicBlock(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
 
@@ -189,7 +189,7 @@ class PCQBottleneck(nn.Module):
 
     def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_block_qparams(self, s1, z1, s_target, z_target):
@@ -422,7 +422,7 @@ class PCQResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
+        s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit, self.runtime_helper.fzero)
         return fake_quantize(x, s, z, self.in_bit)
 
     @torch.no_grad()
