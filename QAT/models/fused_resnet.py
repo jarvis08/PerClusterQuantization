@@ -2,29 +2,28 @@ import torch
 import torch.nn as nn
 
 from .layers import *
-from .quant_noise import _quant_noise
 from .quantization_utils import *
 
 
 def fused_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1, bias=False,
-                  norm_layer=None, activation=None, a_bit=None, arg_dict=None):
+                  activation=None, a_bit=None, arg_dict=None):
     """3x3 convolution with padding"""
     return FusedConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                        padding=dilation, groups=groups, dilation=dilation, bias=bias,
-                       norm_layer=norm_layer, activation=activation, a_bit=a_bit, arg_dict=arg_dict)
+                       activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
-def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, norm_layer=None, activation=None, a_bit=None, arg_dict=None):
+def fused_conv1x1(in_planes, out_planes, stride=1, bias=False, activation=None, a_bit=None, arg_dict=None):
     """1x1 convolution"""
     return FusedConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=bias,
-                       norm_layer=norm_layer, activation=activation, a_bit=a_bit, arg_dict=arg_dict)
+                       activation=activation, a_bit=a_bit, arg_dict=arg_dict)
 
 
 class FusedBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 norm_layer=None, arg_dict=None):
+                 arg_dict=None):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -224,7 +223,6 @@ class FusedResNet(nn.Module):
         self.dilation = 1
         self.num_blocks = 4
 
-        # self.qn_incre_check = self.quant_noise + self.runtime_helper.qn_prob_increment
 
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -246,7 +244,7 @@ class FusedResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.avgpool = nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
-        self.fc = FusedLinear(512 * block.expansion, num_classes, is_classifier=True,
+        self.fc = FusedLinear(512 * block.expansion, num_classes, 
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
         self.last_block_idx = layers[layers[3]-1]
 
@@ -346,7 +344,6 @@ class FusedResNet20(nn.Module):
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
-        self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16
         self.dilation = 1
         self.num_blocks = 3
@@ -360,7 +357,7 @@ class FusedResNet20(nn.Module):
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = FusedLinear(64 * block.expansion, num_classes, is_classifier=True,
+        self.fc = FusedLinear(64 * block.expansion, num_classes, 
                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
         if bit_first > target_bit:
@@ -372,11 +369,10 @@ class FusedResNet20(nn.Module):
             downsample = fused_conv1x1(self.inplanes, planes * block.expansion, stride,
                                        a_bit=self.bit_conv_act, arg_dict=self.arg_dict)
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample,
-                            norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+        layers.append(block(self.inplanes, planes, stride, downsample, arg_dict=self.arg_dict))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
+            layers.append(block(self.inplanes, planes, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -530,105 +526,3 @@ def set_fused_resnet(fused, pre):
     fused.fc = copy_from_pretrained(fused.fc, pre.fc)
     return fused
 
-
-def modify_fused_resnet_qn_pre_hook(model):
-    """ 
-        Copy from pre model's params to fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # model.first_conv.quant_noise = False
-    model.first_conv.conv = _quant_noise(model.first_conv.conv, model.qn_prob, 1, bit=model.bit)
-    # Block 1
-    block = model.layer1
-    if len(model.layer3) == 6: #ResNet50 일땐 첫번째 블록에도 downsample이 있음.
-        m = block[0].downsample
-        m.conv = _quant_noise(m.conv, m.runtime_helper.qn_prob, 4, bit=m.bit)
-    for i in range(len(block)):
-        if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-        elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-
-    # Block 2
-    block = model.layer2
-    block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            4, bit=block[0].downsample.bit)
-    for i in range(len(block)):
-        if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-        elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-
-    # Block 3
-    block = model.layer3
-    block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                            4, bit=block[0].downsample.bit)
-    for i in range(len(block)):
-        if type(block[i]) == FusedBottleneck:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-        elif type(block[i]) == FusedBasicBlock:
-            block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-            block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-    # Block 4
-    if model.num_blocks == 4:
-        block = model.layer4
-        block[0].downsample.conv = _quant_noise(block[0].downsample.conv, block[0].downsample.runtime_helper.qn_prob,
-                                                4, bit=block[0].downsample.bit)
-        for i in range(len(block)):
-            if type(block[i]) == FusedBottleneck:
-                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 4, bit=block[i].bit)
-                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-                block[i].conv3.conv = _quant_noise(block[i].conv3.conv, block[i].conv3.runtime_helper.qn_prob, 4, bit=block[i].bit)
-            elif type(block[i]) == FusedBasicBlock:
-                block[i].conv1.conv = _quant_noise(block[i].conv1.conv, block[i].conv1.runtime_helper.qn_prob, 9, bit=block[i].bit)
-                block[i].conv2.conv = _quant_noise(block[i].conv2.conv, block[i].conv2.runtime_helper.qn_prob, 9, bit=block[i].bit)
-
-    # Classifier
-    model.fc.quant_noise = False
-    model.qn_prob = model.runtime_helper.qn_prob
-    # return model
-
-
-def set_hawq_resnet(hawq, pre, bn_momentum=0.99):
-    """
-        Copy from pre model's params to fused layers.
-        Use fused architecture, but not really fused (use CONV & BN seperately)
-    """
-    # First layer
-    hawq.quant_init_convbn.conv = copy_weight_from_pretrained(hawq.quant_init_convbn.conv, pre.conv1)
-    hawq.quant_init_convbn.bn = copy_bn_from_pretrained(hawq.quant_init_convbn.bn, pre.bn1)
-    channel = hawq.channel
-    # Block 1
-    for stage_num in range(0, 4):
-        pre_layer = getattr(pre, f'layer{stage_num+1}')
-        for channel_num in range(channel[stage_num]):
-            unit = getattr(hawq, f'stage{stage_num+1}.' + f'unit{channel_num+1}')
-            pre_unit = pre_layer[channel_num]
-            unit.quant_convbn1.conv = copy_weight_from_pretrained(unit.quant_convbn1.conv, pre_unit.conv1)
-            unit.quant_convbn1.bn = copy_bn_from_pretrained(unit.quant_convbn1.bn, pre_unit.bn1)
-            unit.quant_convbn1.bn.momentum = bn_momentum
-            unit.quant_convbn2.conv = copy_weight_from_pretrained(unit.quant_convbn2.conv, pre_unit.conv2)
-            unit.quant_convbn2.bn = copy_bn_from_pretrained(unit.quant_convbn2.bn, pre_unit.bn2)
-            unit.quant_convbn2.bn.momentum = bn_momentum
-            unit.quant_convbn3.conv = copy_weight_from_pretrained(unit.quant_convbn3.conv, pre_unit.conv3)
-            unit.quant_convbn3.bn = copy_bn_from_pretrained(unit.quant_convbn3.bn, pre_unit.bn3)
-            unit.quant_convbn3.bn.momentum = bn_momentum
-            try:
-                if unit.quant_identity_convbn is not None:
-                    unit.quant_identity_convbn.conv = copy_weight_from_pretrained(unit.quant_identity_convbn.conv,
-                                                                                  pre_unit.downsample[0])
-                    unit.quant_identity_convbn.bn = copy_bn_from_pretrained(unit.quant_identity_convbn.bn,
-                                                                                  pre_unit.downsample[1])
-                    unit.quant_identity_convbn.bn.momentum = bn_momentum
-            except:
-                pass
-    hawq.quant_output = copy_weight_from_pretrained(hawq.quant_output, pre.fc)
-    return hawq

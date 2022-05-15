@@ -48,6 +48,7 @@ class PCQBasicBlock(nn.Module):
         self.bn2 = PCQBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
+
     def forward(self, x):
         identity = x
 
@@ -68,6 +69,7 @@ class PCQBasicBlock(nn.Module):
             if self.runtime_helper.apply_fake_quantization:
                 out = self._fake_quantize_activation(out)
         return out
+
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
@@ -252,7 +254,7 @@ class PCQResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = PCQLinear(512 * block.expansion, num_classes, is_classifier=True,
+        self.fc = PCQLinear(512 * block.expansion, num_classes,
                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
 
         if bit_first > target_bit:
@@ -367,7 +369,7 @@ class PCQResNet20(nn.Module):
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = PCQLinear(64 * block.expansion, num_classes, is_classifier=True,
+        self.fc = PCQLinear(64 * block.expansion, num_classes, 
                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=self.arg_dict)
         if bit_first > target_bit:
             self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)

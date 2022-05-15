@@ -95,8 +95,8 @@ class FusedAlexNetSmall(nn.Module):
                                  activation=nn.ReLU, arg_dict=arg_dict)
         self.fc1 = FusedLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc2 = FusedLinear(4096, 4096, bias=True, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict)
-        self.fc3 = FusedLinear(4096, num_classes, bias=True, is_classifier=True,
-                               w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
+        self.fc3 = FusedLinear(4096, num_classes, bias=True, w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -120,6 +120,7 @@ class FusedAlexNetSmall(nn.Module):
 
         return x
 
+
     @torch.no_grad()
     def _update_input_ranges(self, x):
         if self.runtime_helper.undo_gema:
@@ -137,9 +138,11 @@ class FusedAlexNetSmall(nn.Module):
             self.in_range[0], self.in_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
+
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
+
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
@@ -176,12 +179,3 @@ def set_fused_alexnet(fused, pre):
     fused.fc3 = copy_from_pretrained(fused.fc3, pre.classifier[6])
     return fused
 
-def modify_fused_alexnet_qn_pre_hook(model):
-    model.conv1.conv = _quant_noise(model.conv1.conv, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.conv2.conv = _quant_noise(model.conv2.conv, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.conv3.conv = _quant_noise(model.conv3.conv, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.conv4.conv = _quant_noise(model.conv4.conv, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.conv5.conv = _quant_noise(model.conv5.conv, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.fc1.fc = _quant_noise(model.fc1.fc, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.fc2.fc = _quant_noise(model.fc2.fc, model.runtime_helper.qn_prob, 1, bit=model.bit)
-    model.fc3.fc = _quant_noise(model.fc3.fc, model.runtime_helper.qn_prob, 1, bit=model.bit)

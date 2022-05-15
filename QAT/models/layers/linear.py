@@ -44,6 +44,7 @@ class QuantizedLinear(nn.Linear):
 
         self.activation = activation
 
+
     def forward(self, x):
         out = F.linear(x, self.weight, None)
         out = self._subsum(x, out.type(torch.cuda.LongTensor))
@@ -51,11 +52,13 @@ class QuantizedLinear(nn.Linear):
             out = self._totalsum(out)
         return out
 
+
     def _subsum(self, x, y):
         if self.num_clusters > 1:
             return self._pcq_subsum(x, y)
         else:
             return self._general_subsum(x, y)
+
 
     def _totalsum(self, x):
         if self.num_clusters > 1:
@@ -63,6 +66,7 @@ class QuantizedLinear(nn.Linear):
         else:
             out = self._general_totalsum(x)
         return clamp_matrix(out, self.a_bit)
+
 
     def _pcq_subsum(self, x, sum_q1q2):
         bc = self.runtime_helper.qat_batch_cluster
@@ -84,6 +88,7 @@ class QuantizedLinear(nn.Linear):
             subsum = sum_q1q2.sub(self.sum_a2.mul(z1))
         return subsum
 
+
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
         z3 = torch.index_select(self.z3, 0, bc)[:, None]
@@ -102,6 +107,7 @@ class QuantizedLinear(nn.Linear):
             total = mul_and_shift(subsum, M0, shift, mask)
         return total.add(z3)
 
+
     def _general_subsum(self, x, sum_q1q2):
         if self.is_bias:
             sum_q1q2.add_(self.quantized_bias[0][None, :])
@@ -118,6 +124,7 @@ class QuantizedLinear(nn.Linear):
             subsum = sum_q1q2.sub(self.sum_a2.mul(self.z1))
         return subsum
 
+
     def _general_totalsum(self, subsum):
         if self.shift < 0:
             total = mul_and_shift(subsum << - self.shift.item(), self.M0, 0)
@@ -126,17 +133,18 @@ class QuantizedLinear(nn.Linear):
         return total.add(self.z3)
 
 
+
 class PCQLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters(S & Z) with multiple clusters
     """
-    def __init__(self, in_features, out_features, bias=True, activation=None, is_classifier=False,
+    def __init__(self, in_features, out_features, bias=True, activation=None,
                  w_bit=None, a_bit=None, arg_dict=None):
         super(PCQLinear, self).__init__()
         self.layer_type = 'PCQLinear'
         
-        bit, self.symmetric, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste, self.quant_noise, self.qn_prob\
-            = itemgetter('bit', 'symmetric', 'smooth', 'cluster', 'runtime_helper', 'ste', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.symmetric, self.smooth, self.num_clusters, self.runtime_helper, self.use_ste\
+            = itemgetter('bit', 'symmetric', 'smooth', 'cluster', 'runtime_helper', 'ste')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
@@ -145,21 +153,21 @@ class PCQLinear(nn.Module):
 
         self.act_range = nn.Parameter(torch.zeros((self.num_clusters, 2)), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(self.num_clusters, dtype=torch.bool), requires_grad=False)
-        self.is_classifier = is_classifier
 
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
 
-    def forward(self, x, external_range=None):
+
+    def forward(self, x):
         if not self.training:
             return self._forward_impl(x)
 
-        out = self._pcq(x)
-        if external_range is None:
-            self._update_activation_ranges(out)
+        out = self._fake_quantize_forward(x)
+        self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
-            out = self._fake_quantize_activation(out, external_range)
+            out = self._fake_quantize_activation(out)
         return out
+
 
     def _forward_impl(self, x):
         x = self.fc(x)
@@ -167,56 +175,37 @@ class PCQLinear(nn.Module):
             x = self._activation(x)
         return x
 
-    def _pcq(self, x):
+
+    def _fake_quantize_forward(self, x):
         w = self.fc.weight.detach()
         s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=self.runtime_helper.fzero)
-        if not self.quant_noise:
-            w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
-        else:
-            w = apply_qn(self.fc.weight, s, z, self.w_bit, qn_prob=self.qn_prob)
+        w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
 
         out = F.linear(x, w, self.fc.bias)
         if self._activation:
             out = self._activation(out)
         return out
 
+
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-#        _min, _max = None, None
-#        if self.is_classifier:
-#            _min, _max = get_range(x)
-#        else:
-#            data = x.view(x.size(0) // 4, -1)   #
-#            if self._activation is None:
-#                _min = data.min(dim=1).values.mean()
-#            _max = data.max(dim=1).values.mean()
-
-        # JK
         _min, _max = get_range(x)
 
-        if self._activation:
-            if self.apply_ema[cluster]:
-                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.act_range[cluster][1] = _max
-                self.apply_ema[cluster] = True
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            if self.apply_ema[cluster]:
-                self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
-                self.apply_ema[cluster] = True
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
-    def _fake_quantize_activation(self, x, external_range=None):
+
+    def _fake_quantize_activation(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         zero = self.runtime_helper.fzero
-        if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero=zero)
-        else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero=zero)
+        s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero=zero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
@@ -237,18 +226,19 @@ class PCQLinear(nn.Module):
         return self.s3, self.z3
 
 
+
 class FusedLinear(nn.Module):
     """
         Fused Layer to calculate Quantization Parameters (S & Z)
     """
-    def __init__(self, in_features, out_features, bias=True, activation=None, is_classifier=False,
+    def __init__(self, in_features, out_features, bias=True, activation=None,
                  w_bit=None, a_bit=None, arg_dict=None):
         super(FusedLinear, self).__init__()
         self.layer_type = 'FusedLinear'
 
         self.arg_dict = arg_dict
-        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob \
-            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob')(arg_dict)
+        bit, self.symmetric, self.smooth, self.use_ste, self.runtime_helper \
+            = itemgetter('bit', 'symmetric', 'smooth', 'ste', 'runtime_helper')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else bit
         a_bit = a_bit if a_bit is not None else bit
@@ -261,34 +251,55 @@ class FusedLinear(nn.Module):
         self.fc = nn.Linear(in_features, out_features, bias=bias)
         self._activation = activation(inplace=False) if activation else None
 
+
     def forward(self, x):
         if not self.training:
-            x = self.fc(x)
-            if self._activation:
-                x = self._activation(x)
-            return x
+            return self._forward_impl(x)
 
+        out = self._fake_quantize_weight(x)
+        self._update_activation_ranges(out)
+        if self.runtime_helper.apply_fake_quantization:
+            out = self._fake_quantize_activation(out)
+        return out
+
+
+    def _forward_impl(self, x):
+        x = self.fc(x)
+        if self._activation:
+            x = self._activation(x)
+        return x
+        
+
+    def _fake_quantize_weight(self, x):
         w = self.fc.weight.detach()
         s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
-        if not self.quant_noise:
-            w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
-        else:
-            w = apply_qn(self.fc.weight, s, z, self.w_bit, qn_prob=self.qn_prob)
+        w = fake_quantize(self.fc.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
 
         out = F.linear(x, w, self.fc.bias)
         if self._activation:
             out = self._activation(out)
-
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-        else:
-            self.act_range[0], self.act_range[1] = get_range(out)
-            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return out
 
+
+    @torch.no_grad()
+    def _update_activation_ranges(self, x):
+        _min, _max = get_range(x)
+
+        if self.apply_ema:
+            self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[0], self.act_range[1] = _min, _max
+            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+
+    def _fake_quantize_activation(self, x):
+        zero = self.runtime_helper.fzero
+        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, zero=zero)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+
+
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
         self.s2, self.z2 = calc_qparams(self.fc.weight.min(), self.fc.weight.max(), self.w_bit,

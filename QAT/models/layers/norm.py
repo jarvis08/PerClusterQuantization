@@ -30,11 +30,13 @@ class QuantizedBn2d(nn.Module):
         self.weight = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
         self.bias = nn.Parameter(torch.zeros((self.num_clusters, num_features), dtype=torch.int32), requires_grad=False)
 
+
     def forward(self, x):
         out = self._subsum(x)
         if self.multiplication:
             out = self._totalsum(out)
         return out
+
 
     def _subsum(self, x):
         if self.num_clusters > 1:
@@ -42,12 +44,14 @@ class QuantizedBn2d(nn.Module):
         else:
             return self._general_subsum(x)
 
+
     def _totalsum(self, x):
         if self.num_clusters > 1:
             out = self._pcq_totalsum(x)
         else:
             out = self._general_totalsum(x)
         return clamp_matrix(out, self.a_bit)
+
 
     def _pcq_subsum(self, x):
         bc = self.runtime_helper.qat_batch_cluster
@@ -59,6 +63,7 @@ class QuantizedBn2d(nn.Module):
         q1z2 = x.mul(self.z2)
         q2z1 = weight.mul(z1)
         return q1q2 - q1z2 - q2z1 + z1 * self.z2 + bias
+
 
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
@@ -78,11 +83,13 @@ class QuantizedBn2d(nn.Module):
             total = mul_and_shift(subsum, M0, shift, mask)
         return total.add(z3)
 
+
     def _general_subsum(self, x):
         q1q2 = x.mul(self.weight[0][None, :, None, None])
         q1z2 = x.mul(self.z2)
         q2z1 = self.weight[0].mul(self.z1)
         return q1q2 - q1z2 - q2z1[None, :, None, None] + self.z1 * self.z2 + self.bias[0][None, :, None, None]
+
 
     def _general_totalsum(self, subsum):
         if self.shift < 0:
@@ -92,12 +99,13 @@ class QuantizedBn2d(nn.Module):
         return total.add(self.z3)
 
 
+
 class PCQBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, a_bit=None, w_bit=None, arg_dict=None):
         super(PCQBnReLU, self).__init__()
         self.layer_type = 'PCQBnReLU'
-        self.momentum, arg_w_bit, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
-            itemgetter('bn_momentum', 'bit', 'smooth', 'runtime_helper', 'cluster', 'ste')(arg_dict)
+        self.momentum, self.smooth, self.runtime_helper, self.num_clusters, self.use_ste = \
+            itemgetter('bn_momentum', 'smooth', 'runtime_helper', 'cluster', 'ste')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -111,19 +119,22 @@ class PCQBnReLU(nn.Module):
         self.norms = nn.ModuleList([nn.BatchNorm2d(num_features) for _ in range(self.num_clusters)])
         self.activation = activation(inplace=False) if activation else None
 
+
     def change_a_bit(self, bit):
         self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+
 
     def forward(self, x, external_range=None):
         if not self.training:
             return self._forward_impl(x)
 
-        out = self._pcq(x)
+        out = self._fake_quantized_bn(x)
         if external_range is None:
             self._update_activation_ranges(out)
         if self.runtime_helper.apply_fake_quantization:
             out = self._fake_quantize_activation(out, external_range)
         return out
+
 
     def _forward_impl(self, x):
         bc = self.runtime_helper.qat_batch_cluster
@@ -132,7 +143,8 @@ class PCQBnReLU(nn.Module):
             out = self.activation(out)
         return out
 
-    def _pcq(self, x):
+
+    def _fake_quantized_bn(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         bn = self.norms[cluster]
         out = bn(x)
@@ -146,12 +158,13 @@ class PCQBnReLU(nn.Module):
             bias = bn.bias - weight * mean
             scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_bit, self.runtime_helper.fzero)
             weight = fake_quantize(weight, scale, zero_point, self.w_bit)
-
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
+
         out = STE.apply(out, fake_out)
         if self.activation:
             out = self.activation(out)
         return out
+
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
@@ -164,19 +177,12 @@ class PCQBnReLU(nn.Module):
             _min = data.min(dim=1).values.mean()
             _max = data.max(dim=1).values.mean()
 
-        if self.activation:
-            if self.apply_ema[cluster]:
-                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.act_range[cluster][1] = _max
-                self.apply_ema[cluster] = True
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
         else:
-            if self.apply_ema[cluster]:
-                self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
-                self.apply_ema[cluster] = True
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
 
     def _fake_quantize_activation(self, x, external_range=None):
@@ -187,6 +193,7 @@ class PCQBnReLU(nn.Module):
         else:
             s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+
 
     @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
@@ -213,12 +220,13 @@ class PCQBnReLU(nn.Module):
         return self.s3, self.z3
 
 
+
 class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
-            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
+        self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
+            itemgetter('smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -232,6 +240,11 @@ class FusedBnReLU(nn.Module):
         self.bn = nn.BatchNorm2d(num_features)
         self.activation = activation(inplace=False) if activation else None
 
+
+    def change_a_bit(self, bit):
+        self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
+
+
     def forward(self, x, external_range=None):
         if not self.training:
             return self._forward_impl(x)
@@ -243,14 +256,13 @@ class FusedBnReLU(nn.Module):
             out = self._fake_quantize_activation(out, external_range)
         return out
 
-    def change_a_bit(self, bit):
-        self.a_bit = torch.nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
 
     def _forward_impl(self, x):
-        x = self.bn(x)
+        out = self.bn(x)
         if self.activation:
-            x = self.activation(x)
-        return x
+            out = self.activation(out)
+        return out
+
 
     def _fake_quantized_bn(self, x):
         out = self.bn(x)
@@ -271,12 +283,24 @@ class FusedBnReLU(nn.Module):
             out = self.activation(out)
         return out
 
+
+    @torch.no_grad()
     def _update_activation_range(self, x):
-        if self.apply_ema:
-            self.act_range[0], self.act_range[1] = ema(x, self.act_range, self.smooth)
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
         else:
-            self.act_range[0], self.act_range[1] = get_range(x)
+            data = x.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
+
+        if self.apply_ema:
+            self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[0], self.act_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
@@ -285,6 +309,8 @@ class FusedBnReLU(nn.Module):
             s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
+
+    @torch.no_grad()
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
 
@@ -304,15 +330,3 @@ class FusedBnReLU(nn.Module):
         self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
         return self.s3, self.z3
 
-    def get_weight_qparams(self):
-        weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))
-        if weight.min() > 0:
-            s, z = calc_qparams(torch.tensor(0), weight.max(), self.w_bit)
-        elif weight.max() < 0:
-            s, z = calc_qparams(weight.min(), torch.tensor(0), self.w_bit)
-        else:
-            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
-        return s, z
-
-    def get_multiplier_qparams(self):
-        return self.M0, self.shift

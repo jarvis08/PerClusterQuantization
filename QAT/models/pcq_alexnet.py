@@ -114,8 +114,8 @@ class PCQAlexNetSmall(nn.Module):
                                activation=nn.ReLU, arg_dict=arg_dict)
         self.fc1 = PCQLinear(256, 4096, bias=True, activation=nn.ReLU, arg_dict=arg_dict)
         self.fc2 = PCQLinear(4096, 4096, bias=True, activation=nn.ReLU, a_bit=bit_classifier, arg_dict=arg_dict)
-        self.fc3 = PCQLinear(4096, num_classes, bias=True, is_classifier=True,
-                             w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
+        self.fc3 = PCQLinear(4096, num_classes, bias=True, w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -136,12 +136,13 @@ class PCQAlexNetSmall(nn.Module):
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
+
         return x
+
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-
         if self.runtime_helper.undo_gema:
             _min = x.min().item()
             _max = x.max().item()
@@ -149,6 +150,7 @@ class PCQAlexNetSmall(nn.Module):
             data = x.view(x.size(0), -1)
             _min = data.min(dim=1).values.mean()
             _max = data.max(dim=1).values.mean()
+
         if self.apply_ema[cluster]:
             self.in_range[cluster][0] = self.in_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[cluster][1] = self.in_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
@@ -156,10 +158,12 @@ class PCQAlexNetSmall(nn.Module):
             self.in_range[cluster][0], self.in_range[cluster][1] = _min, _max
             self.apply_ema[cluster] = True
 
+
     def _fake_quantize_input(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
         s, z = calc_qparams(self.in_range[cluster][0], self.in_range[cluster][1], self.in_bit)
         return fake_quantize(x, s, z, self.in_bit)
+
 
     def set_quantization_params(self):
         zero = self.runtime_helper.fzero
@@ -171,7 +175,7 @@ class PCQAlexNetSmall(nn.Module):
         prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
-        self.fc3.set_qparams(prev_s, prev_z)
+        _, _ = self.fc3.set_qparams(prev_s, prev_z)
 
 
 def pcq_alexnet(arg_dict: dict, **kwargs: Any) -> PCQAlexNet:
@@ -182,13 +186,13 @@ def pcq_alexnet_small(arg_dict: dict, num_classes=10, **kwargs: Any) -> PCQAlexN
     return PCQAlexNetSmall(arg_dict, num_classes=num_classes, **kwargs)
 
 
-def modify_pcq_alexnet_qn_pre_hook(model):
-    model.conv1.conv = _quant_noise(model.conv1.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.conv2.conv = _quant_noise(model.conv2.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.conv3.conv = _quant_noise(model.conv3.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.conv4.conv = _quant_noise(model.conv4.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.conv5.conv = _quant_noise(model.conv5.conv, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.fc1.fc = _quant_noise(model.fc1.fc, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.fc2.fc = _quant_noise(model.fc2.fc, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.fc3.fc = _quant_noise(model.fc3.fc, model.runtime_helper.qn_prob, 1, q_max=model.bit)
-    model.qn_prob = model.runtime_helper.qn_prob
+def set_pcq_alexnet(pcq, pre):
+    pcq.conv1 = copy_from_pretrained(pcq.conv1, pre.features[0])
+    pcq.conv2 = copy_from_pretrained(pcq.conv2, pre.features[3])
+    pcq.conv3 = copy_from_pretrained(pcq.conv3, pre.features[6])
+    pcq.conv4 = copy_from_pretrained(pcq.conv4, pre.features[8])
+    pcq.conv5 = copy_from_pretrained(pcq.conv5, pre.features[10])
+    pcq.fc1 = copy_from_pretrained(pcq.fc1, pre.classifier[1])
+    pcq.fc2 = copy_from_pretrained(pcq.fc2, pre.classifier[4])
+    pcq.fc3 = copy_from_pretrained(pcq.fc3, pre.classifier[6])
+    return pcq
