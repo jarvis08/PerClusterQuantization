@@ -64,6 +64,7 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
+        mask = self.runtime_helper.mask_4d[:subsum.size(0)]
         if not self.is_shift_neg:
             total = mul_and_shift(subsum, self.M0[bc], self.shift[bc].item(), mask)
         else:
@@ -143,8 +144,8 @@ class PCQBnReLU(nn.Module):
 
             weight = bn.weight.div(torch.sqrt(var + bn.eps))
             bias = bn.bias - weight * mean
-            scale, zero_point = calc_qparams(weight.min(), weight.max(), self.w_bit, self.runtime_helper.fzero)
-            weight = fake_quantize(weight, scale, zero_point, self.w_bit)
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            weight = fake_quantize(weight, s, z, self.w_bit)
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
 
         out = STE.apply(out, fake_out)
@@ -174,11 +175,10 @@ class PCQBnReLU(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.qat_batch_cluster
-        zero = self.runtime_helper.fzero
         if external_range is not None:
-            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit, zero)
+            s, z = calc_qparams(external_range[cluster][0], external_range[cluster][1], self.a_bit)
         else:
-            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit, zero)
+            s, z = calc_qparams(self.act_range[cluster][0], self.act_range[cluster][1], self.a_bit)
         return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
 
