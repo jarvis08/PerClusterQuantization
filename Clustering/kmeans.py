@@ -231,7 +231,7 @@ class KMeansClustering(object):
 
 
         n_layers = len(dnn_model.max_counter)
-        n_candidates_per_layer = max(int(n_sub_clusters / 8), self.args.topk)
+        n_candidates_per_layer = max(int(np.log2(n_sub_clusters)), self.args.topk)
         merged_clusters = []
 
         to_merge = n_sub_clusters - self.args.cluster
@@ -452,7 +452,7 @@ class KMeansClustering(object):
         with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
             args_without_nnac = json.load(f)
             if args_without_nnac['k'] != self.args.cluster:
-                path = self.args.clustering_path + f'__.nnac_{arch}_k{self.args.cluster}_sub{self.args.sub_cluster}_topk_{self.args.topk}_sim_{self.args.sim_threshold}'
+                path = self.args.clustering_path + f'__.nnac_{arch}_k{self.args.cluster}_sub{self.args.sub_cluster}_topk_{n_candidates_per_layer}_sim_{self.args.sim_threshold}'
                 print(f"Copy json and pkl file from {self.args.clustering_path} to {path}")
                 if not os.path.exists(path):
                     os.makedirs(path)

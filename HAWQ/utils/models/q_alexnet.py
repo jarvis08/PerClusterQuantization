@@ -411,7 +411,7 @@ class Q_AlexNet_Daq(nn.Module):
         x, _ = self.features[0](x)
         x = self.features[1](x)
 
-        layer_idx = 0
+        l_idx = 0
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
@@ -422,7 +422,7 @@ class Q_AlexNet_Daq(nn.Module):
         x, _ = self.features[3](x)
         x = self.features[4](x)
 
-        layer_idx += 1
+        l_idx += 1
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
@@ -433,7 +433,7 @@ class Q_AlexNet_Daq(nn.Module):
         x, _ = self.features[6](x)
         x = self.features[7](x)
 
-        layer_idx += 1
+        l_idx += 1
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
@@ -443,7 +443,7 @@ class Q_AlexNet_Daq(nn.Module):
         x, _ = self.features[8](x)
         x = self.features[9](x)
 
-        layer_idx += 1
+        l_idx += 1
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
@@ -453,7 +453,7 @@ class Q_AlexNet_Daq(nn.Module):
         x, _ = self.features[10](x)
         x = self.features[11](x)
 
-        layer_idx += 1
+        l_idx += 1
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
