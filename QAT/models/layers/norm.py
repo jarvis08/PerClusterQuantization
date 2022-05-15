@@ -64,21 +64,11 @@ class QuantizedBn2d(nn.Module):
 
     def _pcq_totalsum(self, subsum):
         bc = self.runtime_helper.qat_batch_cluster
-        z3 = torch.index_select(self.z3, 0, bc)[:, None, None, None]
-        M0 = torch.index_select(self.M0, 0, bc)[:, None, None, None]
-        shift = torch.index_select(self.shift, 0, bc)[:, None, None, None]
-        shape = subsum.shape
-        mask = self.runtime_helper.mask_4d[:shape[0]]
-
         if not self.is_shift_neg:
-            total = mul_and_shift(subsum, M0, shift, mask)
+            total = mul_and_shift(subsum, self.M0[bc], self.shift[bc].item(), mask)
         else:
-            zero = self.runtime_helper.izero
-            neg_shift = torch.where(shift < zero, - shift, zero)
-            shift = torch.where(shift >= zero, shift, zero)
-            subsum = subsum << neg_shift
-            total = mul_and_shift(subsum, M0, shift, mask)
-        return total.add(z3)
+            total = mul_and_shift(subsum << - self.shift[bc].item(), self.M0, 0)
+        return total.add(z3[bc])
 
 
     def _general_subsum(self, x):
