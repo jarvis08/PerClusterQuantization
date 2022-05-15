@@ -59,7 +59,7 @@ class QuantizedBn2d(nn.Module):
         q1q2 = x.mul(self.weight[bc][None, :, None, None])
         q1z2 = x.mul(self.z2)
         q2z1 = self.weight[bc].mul(self.z1[bc])
-        return q1q2 - q1z2 - q2z1 + self.z1[bc] * self.z2 + self.bias[bc][None, :, None, None]
+        return q1q2 - q1z2 - q2z1[None, :, None, None] + self.z1[bc] * self.z2 + self.bias[bc][None, :, None, None]
 
 
     def _pcq_totalsum(self, subsum):
