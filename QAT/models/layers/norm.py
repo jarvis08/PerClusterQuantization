@@ -156,8 +156,13 @@ class PCQBnReLU(nn.Module):
     @torch.no_grad()
     def _update_activation_ranges(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        data = x.view(x.size(0), -1)
-        _max = data.max(dim=1).values.mean()
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
+        else:
+            data = x.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
 
         if self.activation:
             if self.apply_ema[cluster]:
@@ -166,13 +171,13 @@ class PCQBnReLU(nn.Module):
                 self.act_range[cluster][1] = _max
                 self.apply_ema[cluster] = True
         else:
-            _min = data.min(dim=1).values.mean()
             if self.apply_ema[cluster]:
                 self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
                 self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
             else:
                 self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
                 self.apply_ema[cluster] = True
+
 
     def _fake_quantize_activation(self, x, external_range=None):
         cluster = self.runtime_helper.qat_batch_cluster
