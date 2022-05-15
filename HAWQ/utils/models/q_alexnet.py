@@ -407,6 +407,10 @@ class Q_AlexNet_Daq(nn.Module):
             tmp = [[] for _ in range(n_clusters)]
             self.max_counter = []
             self.max_counter.append(tmp)
+            self.max_counter.append(tmp)
+            self.max_counter.append(tmp)
+            self.max_counter.append(tmp)
+            self.max_counter.append(tmp)
 
         x, _ = self.features[0](x)
         x = self.features[1](x)
