@@ -262,7 +262,7 @@ class PCQConv2d(nn.Module):
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = self.conv.weight.detach()
-            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric, zero=zero)
+            s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
             w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
 
         out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
@@ -274,21 +274,20 @@ class PCQConv2d(nn.Module):
     @torch.no_grad()
     def _update_activation_range(self, x):
         cluster = self.runtime_helper.qat_batch_cluster
-        with torch.no_grad():
-            if self.runtime_helper.undo_gema:
-                _min = x.min().item()
-                _max = x.max().item()
-            else:
-                data = out.view(x.size(0), -1)
-                _min = data.min(dim=1).values.mean()
-                _max = data.max(dim=1).values.mean()
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
+        else:
+            data = out.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
 
-            if self.apply_ema[cluster]:
-                self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
-                self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
-                self.apply_ema[cluster] = True
+        if self.apply_ema[cluster]:
+            self.act_range[cluster][0] = self.act_range[cluster][0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[cluster][1] = self.act_range[cluster][1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[cluster][0], self.act_range[cluster][1] = _min, _max
+            self.apply_ema[cluster] = True
 
     
     def _fake_quantize_activation(self, x, external_range=None):
@@ -371,18 +370,33 @@ class FusedConv2d(nn.Module):
         if not self.training:
             return self._forward_impl(x)
 
+        out = self._fake_quantize_weight(x)
+        if external_range is None:
+            self._update_activation_range(out)
+        if self.runtime_helper.apply_fake_quantization:
+            out = self._fake_quantize_activation(out, external_range)
         return self._general(x, external_range)
 
 
     def _forward_impl(self, x):
         x = self.conv(x)
+
         if self._activation:
             x = self._activation(x)
         return x
 
 
-    def _general(self, x, external_range=None):
+    def _fake_quantize_activation(self, x, external_range=None):
+        if external_range is not None:
+            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
+        else:
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+        return fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+
+
+    def _fake_quantize_weight(self, x):
         zero = self.runtime_helper.fzero
+
         if self.per_channel:
             w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
@@ -395,21 +409,25 @@ class FusedConv2d(nn.Module):
         out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
             out = self._activation(out)
-
-        if external_range is not None:
-            if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-        else:
-            if self.apply_ema:
-                self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
-                if self.runtime_helper.apply_fake_quantization:
-                    s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                    out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-            else:
-                self.act_range[0], self.act_range[1] = get_range(out)
-                self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
         return out
+
+
+    @torch.no_grad()
+    def _update_activation_range(self, x):
+        if self.runtime_helper.undo_gema:
+            _min = x.min().item()
+            _max = x.max().item()
+        else:
+            data = out.view(x.size(0), -1)
+            _min = data.min(dim=1).values.mean()
+            _max = data.max(dim=1).values.mean()
+
+        if self.apply_ema:
+            self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
+            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+        else:
+            self.act_range[0], self.act_range[1] = _min, _max
+            self.apply_ema = torch.tensor(True, dtype=torch.bool)
 
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
