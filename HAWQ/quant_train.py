@@ -494,6 +494,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(test_loader, model, criterion, args)
 
+        if epoch == 9:
+            register_ema_per_cluster_per_layer(args, model, epoch)
+            break
+
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
