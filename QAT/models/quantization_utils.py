@@ -62,8 +62,10 @@ def get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group)
     scale = torch.zeros(_size, device='cuda')
     zero_point = torch.zeros(_size, device='cuda')
 
-    scale[low_group] = (_max[low_group] - _min[low_group]) / 15
-    zero_point[low_group] = torch.clamp(- torch.round(_min[low_group] / scale[low_group]), 0, 15)
+    # scale[low_group] = (_max[low_group] - _min[low_group]) / 15
+    # zero_point[low_group] = torch.clamp(- torch.round(_min[low_group] / scale[low_group]), 0, 15)
+    scale[low_group] = (_max[low_group] - _min[low_group]) / 60
+    zero_point[low_group] = torch.clamp(- torch.round(_min[low_group] / scale[low_group]), 0, 60)
 
     scale[high_group] = (_max[high_group] - _min[high_group]) / 255
     zero_point[high_group] = torch.clamp(-128 - torch.round(_min[high_group] / scale[high_group]), -128, 127)

@@ -387,6 +387,8 @@ class FusedConv2d(nn.Module):
 
         if self.per_channel:
             self.w_bit = torch.nn.Parameter(torch.zeros(in_channels, dtype=torch.int8), requires_grad=False)
+            self.low_group = torch.zeros(in_channels, dtype=torch.int8)
+            self.high_group = torch.zeros(in_channels, dtype=torch.int8)
         else:
             w_bit = w_bit if w_bit is not None else arg_dict['bit']
             self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
