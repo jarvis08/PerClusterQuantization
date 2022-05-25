@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore")
 
 from HAWQ.utils.models.q_alexnet import q_alexnet
 from HAWQ.utils.models.q_densenet import q_densenet
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir, register_ema_per_cluster_per_layer
 from .bit_config import *
 from .utils import *
 from pytorchcv.model_provider import get_model as ptcv_get_model
@@ -456,7 +456,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     train_loader = data_loaders['aug_train']
     test_loader = data_loaders['test']
 
-    if args.nnac and clustering_model.final_cluster is None:
+    if False and args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
         if args.max_method == 'zero':
             clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
@@ -494,7 +494,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(test_loader, model, criterion, args)
 
-        if epoch == 9:
+        if epoch == 99:
             register_ema_per_cluster_per_layer(args, model, epoch)
             break
 

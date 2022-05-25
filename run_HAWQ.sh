@@ -1,6 +1,6 @@
 #! /bin/bash
 
-PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+PRETRAINED_MODEL_PATH="/workspace/PerClusterQuantization/pretrained_models"
 
 
 

@@ -13,6 +13,9 @@ import logging
 import random
 
 from HAWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
+from HAWQ.utils.quantization_utils.quant_modules import QuantAct_Daq
+import pandas as pd
+
 
 class RuntimeHelper(object):
     """
@@ -48,6 +51,26 @@ class RuntimeHelper(object):
         self.mask_2d = mask.view(-1, 1)
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
         self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
+
+
+
+def register_ema_per_cluster_per_layer(args, model, epoch):
+    pd_dict = {}
+    ldx = 0
+    for m in model.modules():
+        if isinstance(m, (QuantAct_Daq)):
+            tmp_min_range = []
+            tmp_max_range = []
+            for _min, _max in zip(m.x_min.cpu(), m.x_max.cpu()):
+                tmp_min_range.append(_min.item())
+                tmp_max_range.append(_max.item())
+            pd_dict[f'{ldx}_min'] = tmp_min_range
+            pd_dict[f'{ldx}_max'] = tmp_max_range
+            ldx += 1
+
+    df = pd.DataFrame(pd_dict)
+    with pd.ExcelWriter(f'{args.quant_base}_{args.arch}_{args.dataset}_{args.cluster}_{args.batch_size}_{epoch+1}_epoch.xlsx') as writer:
+        df.to_excel(writer)
 
 
 class InputContainer(object):
