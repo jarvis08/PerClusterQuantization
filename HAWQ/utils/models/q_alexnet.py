@@ -404,13 +404,12 @@ class Q_AlexNet_Daq(nn.Module):
                                         self.conv3, self.act3,
                                         self.conv4, self.act4,
                                         self.conv5, self.act5)
-            tmp = [[] for _ in range(n_clusters)]
             self.max_counter = []
-            self.max_counter.append(tmp)
-            self.max_counter.append(tmp)
-            self.max_counter.append(tmp)
-            self.max_counter.append(tmp)
-            self.max_counter.append(tmp)
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
 
         x, _ = self.features[0](x)
         x = self.features[1](x)

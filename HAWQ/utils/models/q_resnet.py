@@ -856,9 +856,8 @@ class Q_ResBlockBn_Daq(nn.Module):
                 self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
                                               self.quant_conv2, self.quant_bn2, self.act2)
 
-            tmp = [[] for _ in range(n_clusters)]
-            max_counter.append(tmp)
-            max_counter.append(tmp)
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
 
         if self.resize_identity:
             identity, _ = self.features[6](x)
