@@ -3,7 +3,7 @@ import os
 from utils.torch_dataset import get_data_loaders
 
 parser = argparse.ArgumentParser(description='[PyTorch] Per Cluster Quantization')
-parser.add_argument('--worker', default=4, type=int, help='Number of workers for input data loader')
+parser.add_argument('--worker', default=0, type=int, help='Number of workers for input data loader')
 parser.add_argument('--mode', default='fine', type=str, help="pre/fine/eval/lip")
 parser.add_argument('--imagenet', default='', type=str, help="ImageNet dataset path")
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
@@ -57,7 +57,6 @@ if not args_daq.val_batch:
 # # NN-aware Clustering
 if args_daq.cluster > 1 and args_daq.sub_cluster:
     args_daq.nnac = True
-
 
 if __name__ == '__main__':
     data_loaders = get_data_loaders(args_daq)

@@ -185,8 +185,8 @@ class KMeansClustering(object):
         print('\n>>> zero-max NN-aware Clustering..')
         from utils.misc import InputContainer
 
-        n_sub_clusters = self.args.sub_cluster
-        container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.batch)
+        n_sub_clusters = self.args.cluster
+        container = InputContainer(train_loader, self, n_sub_clusters, self.args.dataset, self.args.val_batch)
         container.initialize_generator()
         container.set_next_batch()
 
@@ -197,9 +197,9 @@ class KMeansClustering(object):
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
 
-                n_per_sub[cluster] += self.args.batch
+                n_per_sub[cluster] += self.args.val_batch
                 dnn_model.get_output_max_distribution(input.cuda(), cluster, n_sub_clusters)
-                dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
+                #dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
 
                 container.set_next_batch()
                 if container.ready_cluster is None:
@@ -211,7 +211,16 @@ class KMeansClustering(object):
                                         container.leftover_batch[c][1], c
                     n_per_sub[cluster] += input.size(0)
                     dnn_model.get_output_max_distribution(input.cuda(), cluster, n_sub_clusters)
-                    dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
+                    #dnn_model.count_zeros_per_index(input.cuda(), cluster, n_sub_clusters)
+
+        import csv
+        with open(f'max_avg_{self.args.dataset}_{self.args.cluster}_test.csv', 'w', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile, delimiter='\t', lineterminator='\n')
+            #for l_idx in range(len(dnn_model.max_counter)):
+            #    csvwriter.writerow([dnn_model.max_counter[l_idx][c].mean().item() for c in range(n_sub_clusters)])
+            csvwriter.writerow([])
+            csvwriter.writerow([n_per_sub[c] for c in range(n_sub_clusters)])
+        exit()
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):

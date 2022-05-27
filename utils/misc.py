@@ -298,7 +298,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     return top1.avg
 
 
-def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger, fix_BN=False):
+def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logger, fix_BN=False, args=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -308,6 +308,9 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     else:
         model.train()
 
+    n_per_sub = None
+    if epoch == 99:
+        n_per_sub = [0 for _ in range(runtime_helper.num_clusters)]
     container = InputContainer(train_loader, clustering_model, runtime_helper.num_clusters,
                                clustering_model.args.dataset, clustering_model.args.batch)
     container.initialize_generator()
@@ -316,6 +319,8 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
         for i, _ in enumerate(t):
             input, target, runtime_helper.batch_cluster = container.get_batch()
             runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
+            if n_per_sub is not None:
+                n_per_sub[runtime_helper.batch_cluster] += clustering_model.args.batch 
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -337,6 +342,31 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
 
             if container.ready_cluster is None:
                 break
+
+            container.check_leftover()
+            for c in range(container.num_clusters):
+                if container.leftover_cluster_data[c]:
+                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
+                    input, target = input.cuda(), target.cuda()
+                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
+
+                    output = model(input)
+
+                    loss = criterion(output, target)
+                    prec = accuracy(output, target)[0]
+                    losses.update(loss.item(), input.size(0))
+                    top1.update(prec.item(), input.size(0))
+
+                    t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+    if n_per_sub is not None:
+        import csv
+        with open(f'hansung_{args.arch}_{args.dataset}_{args.cluster}_train.csv', 'w', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile, delimiter='\t', lineterminator='\n')
+            csvwriter.writerow([n_per_sub[c] for c in range(runtime_helper.num_clusters)])
+ 
+        register_ema_per_cluster_per_layer(args, model, epoch)
+
 
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()

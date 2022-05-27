@@ -455,7 +455,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     train_loader = data_loaders['aug_train']
     test_loader = data_loaders['test']
-
+    
     if False and args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
         if args.max_method == 'zero':
@@ -483,7 +483,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
         if args.cluster > 1:
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
-                      fix_BN=args.fix_BN)
+                      fix_BN=args.fix_BN, args=args)
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
@@ -493,10 +493,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             tuning_fin_time = time.time()
             one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
             acc1 = validate(test_loader, model, criterion, args)
-
-        if epoch == 99:
-            register_ema_per_cluster_per_layer(args, model, epoch)
-            break
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
