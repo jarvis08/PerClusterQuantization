@@ -1,3 +1,14 @@
+from pytorchcv.model_provider import get_model as ptcv_get_model
+from .utils import *
+from .bit_config import *
+from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
+from HAWQ.utils.models.q_densenet import q_densenet
+from HAWQ.utils.models.q_alexnet import q_alexnet
+import torchvision.models as models
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
+import torch.utils.data.distributed
+import torch.utils.data
 import argparse
 import json
 import os
@@ -19,22 +30,7 @@ import torch.multiprocessing as mp
 
 mp.set_sharing_strategy('file_system')
 
-import torch.utils.data
-import torch.utils.data.distributed
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
-
-import warnings
 warnings.filterwarnings("ignore")
-
-from HAWQ.utils.models.q_alexnet import q_alexnet
-from HAWQ.utils.models.q_densenet import q_densenet
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
-from .bit_config import *
-from .utils import *
-from pytorchcv.model_provider import get_model as ptcv_get_model
-
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data', metavar='DIR',
@@ -170,8 +166,10 @@ parser.add_argument('--fixed-point-quantization',
                     help='whether to skip deployment-oriented operations and '
                          'use fixed-point rather than integer-only quantization')
 
-parser.add_argument('--transfer_param', action='store_true', help='copy params of torchcv pretrained models')
-parser.add_argument('--dnn_path', default='', type=str, help="Pretrained model's path")
+parser.add_argument('--transfer_param', action='store_true',
+                    help='copy params of torchcv pretrained models')
+parser.add_argument('--dnn_path', default='', type=str,
+                    help="Pretrained model's path")
 
 best_acc1 = 0
 quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
@@ -180,7 +178,8 @@ quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
                       'densenet121': q_densenet}
 
 args_hawq, _ = parser.parse_known_args()
-args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(args_hawq.arch, args_hawq.data, args_hawq.batch_size, os.getpid()))
+args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(
+    args_hawq.arch, args_hawq.data, args_hawq.batch_size, os.getpid()))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
@@ -241,11 +240,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             return arch
 
     def create_model(args):
-        # pretrained = args.pretrained and not args.resume
-        logging.info("=> using pre-trained PyTorchCV model '{}'".format(args.arch))
+        pretrained = args.pretrained and not args.resume
+        logging.info(
+            "=> using pre-trained PyTorchCV model '{}'".format(args.arch))
         model = ptcv_get_model(args.arch, pretrained=True)
         if args.distill_method != 'None':
-            logging.info("=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
+            logging.info(
+                "=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
             teacher = ptcv_get_model(args.teacher_arch, pretrained=pretrained)
             return model, teacher
         return model, None
@@ -287,38 +288,50 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 checkpoint = torch.load(args.resume)['state_dict']
                 model_key_list = list(model.state_dict().keys())
                 for key in model_key_list:
-                    if 'num_batches_tracked' in key: model_key_list.remove(key)
+                    if 'num_batches_tracked' in key:
+                        model_key_list.remove(key)
                 i = 0
                 modified_dict = {}
                 for key, value in checkpoint.items():
-                    if 'scaling_factor' in key: continue
-                    if 'num_batches_tracked' in key: continue
-                    if 'weight_integer' in key: continue
-                    if 'min' in key or 'max' in key: continue
+                    if 'scaling_factor' in key:
+                        continue
+                    if 'num_batches_tracked' in key:
+                        continue
+                    if 'weight_integer' in key:
+                        continue
+                    if 'min' in key or 'max' in key:
+                        continue
                     modified_key = model_key_list[i]
                     modified_dict[modified_key] = value
                     i += 1
-                logging.info(model.load_state_dict(modified_dict, strict=False))
+                logging.info(model.load_state_dict(
+                    modified_dict, strict=False))
             else:
-                logging.info("=> no checkpoint found at '{}'".format(args.resume))
+                logging.info(
+                    "=> no checkpoint found at '{}'".format(args.resume))
         return model
 
     def quant_resume(args, model):
         if args.resume and args.resume_quantize:
             if os.path.isfile(args.resume):
-                logging.info("=> loading quantized checkpoint '{}'".format(args.resume))
+                logging.info(
+                    "=> loading quantized checkpoint '{}'".format(args.resume))
                 checkpoint = torch.load(args.resume)['state_dict']
                 modified_dict = {}
                 for key, value in checkpoint.items():
-                    if 'num_batches_tracked' in key: continue
-                    if 'weight_integer' in key: continue
-                    if 'bias_integer' in key: continue
+                    if 'num_batches_tracked' in key:
+                        continue
+                    if 'weight_integer' in key:
+                        continue
+                    if 'bias_integer' in key:
+                        continue
 
                     modified_key = key.replace("module.", "")
                     modified_dict[modified_key] = value
                 model.load_state_dict(modified_dict, strict=False)
             else:
-                logging.info("=> no quantized checkpoint found at '{}'".format(args.resume))
+                logging.info(
+                    "=> no quantized checkpoint found at '{}'".format(args.resume))
         return model
 
     def resume_optimizer(args, optimizer):
@@ -340,7 +353,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 logging.info("=> loaded optimizer and meta information from checkpoint '{}' (epoch {})".
                              format(args.resume, checkpoint['epoch']))
             else:
-                logging.info("=> no checkpoint found at '{}'".format(args.resume))
+                logging.info(
+                    "=> no checkpoint found at '{}'".format(args.resume))
         return optimizer
 
     def set_runtime_helper(args):
@@ -374,7 +388,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 setattr(m, 'training_BN_mode', args.fix_BN)
                 setattr(m, 'checkpoint_iter_threshold', args.checkpoint_iter)
                 setattr(m, 'save_path', args.save_path)
-                setattr(m, 'fixed_point_quantization', args.fixed_point_quantization)
+                setattr(m, 'fixed_point_quantization',
+                        args.fixed_point_quantization)
 
                 if type(bit_config[name]) is tuple:
                     bitwidth = bit_config[name][0]
@@ -392,9 +407,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 else:
                     setattr(m, 'weight_bit', bitwidth)
 
-        logging.info("match all modules defined in bit_config: {}".format(len(bit_config.keys()) == name_counter))
+        logging.info("match all modules defined in bit_config: {}".format(
+            len(bit_config.keys()) == name_counter))
         return model
-
 
     global best_acc1
     args.gpu = gpu
@@ -421,13 +436,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     runtime_helper = set_runtime_helper(args)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper)
+    model = get_quantize_model(
+        args, model, model_dict, quantize_arch, runtime_helper)
 
     if "resnet20" in args.arch and runtime_helper is not None:
-        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + "daq" + "_" + args.quant_scheme]
-        
+        bit_config = bit_config_dict["bit_config_" +
+                                     args.arch + "_" + "daq" + "_" + args.quant_scheme]
+
     else:
-        bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
+        bit_config = bit_config_dict["bit_config_" +
+                                     args.arch + "_" + args.quant_scheme]
 
     model = set_quantize_param(args, model, bit_config)
 
@@ -448,7 +466,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-
     optimizer = resume_optimizer(args, optimizer)
 
     cudnn.benchmark = True
@@ -459,9 +476,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
         if args.max_method == 'zero':
-            clustering_model.nn_aware_clustering(model, train_loader, prev_arch)
+            clustering_model.nn_aware_clustering(
+                model, train_loader, prev_arch)
         else:
-            clustering_model.zero_max_nn_aware_clustering(model, train_loader, args.arch)
+            clustering_model.zero_max_nn_aware_clustering(
+                model, train_loader, args.arch)
         model.toggle_full_precision()
 
     if args.evaluate:
@@ -485,13 +504,17 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
                       fix_BN=args.fix_BN)
             tuning_fin_time = time.time()
-            one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-            acc1 = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logging)
+            one_epoch_time = get_time_cost_in_string(
+                tuning_fin_time - tuning_start_time)
+            acc1 = pcq_validate(model, clustering_model,
+                                test_loader, criterion, runtime_helper, logging)
 
         else:
-            train(train_loader, model, criterion, optimizer, epoch, logging, args)
+            train(train_loader, model, criterion,
+                  optimizer, epoch, logging, args)
             tuning_fin_time = time.time()
-            one_epoch_time = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+            one_epoch_time = get_time_cost_in_string(
+                tuning_fin_time - tuning_start_time)
             acc1 = validate(test_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
@@ -532,10 +555,6 @@ def train(train_loader, model, criterion, optimizer, epoch, logger, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
-    progress = ProgressMeter(
-        len(train_loader),
-        [batch_time, data_time, losses, top1, top5],
-        prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
     if args.fix_BN == True:
@@ -575,9 +594,6 @@ def train(train_loader, model, criterion, optimizer, epoch, logger, args):
             logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} ({:.5f}) [Acc@1] {:.3f} ({:.3f}) [Acc@5] {:3f} ({:.3f})"
                          .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, acc1.item(), top1.avg, acc5.item(), top5.avg))
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
-
-            #if i % args.print_freq == 0:
-            #    progress.display(i)
 
 
 def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_loader, args, ngpus_per_node,
@@ -710,7 +726,8 @@ def validate(val_loader, model, criterion, args):
             if i % args.print_freq == 0:
                 progress.display(i)
 
-        logging.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
+        logging.info(
+            ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
 
     torch.save({'convbn_scaling_factor': {k: v for k, v in model.state_dict().items() if 'convbn_scaling_factor' in k},
                 'fc_scaling_factor': {k: v for k, v in model.state_dict().items() if 'fc_scaling_factor' in k},
@@ -727,7 +744,8 @@ def validate(val_loader, model, criterion, args):
 def save_checkpoint(state, is_best, filename=None):
     torch.save(state, filename + 'checkpoint.pth.tar')
     if is_best:
-        shutil.copyfile(filename + 'checkpoint.pth.tar', filename + 'model_best.pth.tar')
+        shutil.copyfile(filename + 'checkpoint.pth.tar',
+                        filename + 'model_best.pth.tar')
 
 
 class AverageMeter(object):
@@ -807,7 +825,7 @@ def loss_kd(output, target, teacher_output, args):
     alpha = args.distill_alpha
     T = args.temperature
     KD_loss = F.kl_div(F.log_softmax(output / T, dim=1), F.softmax(teacher_output / T, dim=1)) * (alpha * T * T) + \
-              F.cross_entropy(output, target) * (1. - alpha)
+        F.cross_entropy(output, target) * (1. - alpha)
 
     return KD_loss
 

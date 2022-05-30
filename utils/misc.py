@@ -12,7 +12,8 @@ import json
 import logging
 import random
 
-from HAWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
+from HAWQ.utils.quantization_utils.quant_modules import freeze_model, unfreeze_model
+
 
 class RuntimeHelper(object):
     """
@@ -30,10 +31,10 @@ class RuntimeHelper(object):
         self.val_batch = None
         self.undo_gema = False
 
-        self.mask_4d = None ###
-        self.mask_2d = None ###
-        self.izero = None   ###
-        self.fzero = None   ###
+        self.mask_4d = None
+        self.mask_2d = None
+        self.izero = None
+        self.fzero = None
 
         self.qat_batch_cluster = None
 
@@ -77,7 +78,8 @@ class InputContainer(object):
             except StopIteration:
                 self.epoch_done = True
                 break
-            cluster_info = self.clustering_model.predict_cluster_of_batch(images)
+            cluster_info = self.clustering_model.predict_cluster_of_batch(
+                images)
             self.set_data_per_cluster(images, targets, cluster_info)
             if self.ready_cluster is not None:
                 break
@@ -106,8 +108,10 @@ class InputContainer(object):
     def set_data_per_cluster(self, images, targets, cluster_info):
         for c in range(self.num_clusters):
             indices = (cluster_info == c).nonzero(as_tuple=True)[0]
-            self.container[c][0] = torch.cat((self.container[c][0], images[indices]))
-            self.container[c][1] = torch.cat((self.container[c][1], targets[indices]))
+            self.container[c][0] = torch.cat(
+                (self.container[c][0], images[indices]))
+            self.container[c][1] = torch.cat(
+                (self.container[c][1], targets[indices]))
 
             if self.ready_cluster is not None:
                 continue
@@ -122,8 +126,10 @@ class InputContainer(object):
         next_cluster = None
         for c in range(self.num_clusters):
             indices = (cluster_info == c).nonzero(as_tuple=True)[0]
-            self.container[c][0] = torch.cat((self.container[c][0], images[indices]))
-            self.container[c][1] = torch.cat((self.container[c][1], targets[indices]))
+            self.container[c][0] = torch.cat(
+                (self.container[c][0], images[indices]))
+            self.container[c][1] = torch.cat(
+                (self.container[c][1], targets[indices]))
 
             if next_cluster is not None:
                 continue
@@ -165,6 +171,7 @@ class InputContainer(object):
                 self.leftover_cluster_data[c] = True
                 self.leftover_batch[c][0] = self.container[c][0]
                 self.leftover_batch[c][1] = self.container[c][1]
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -269,9 +276,11 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     if logger:
         if hvd:
             if hvd.rank() == 0:
-                logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+                logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(
+                    losses.avg, top1.avg))
         else:
-            logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+            logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(
+                losses.avg, top1.avg))
     return top1.avg
 
 
@@ -292,7 +301,8 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
     with tqdm(range(len(train_loader)), desc="Epoch {}".format(epoch), ncols=90) as t:
         for i, _ in enumerate(t):
             input, target, runtime_helper.batch_cluster = container.get_batch()
-            runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
+            runtime_helper.qat_batch_cluster = torch.tensor(
+                runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
             input, target = input.cuda(), target.cuda()
             output = model(input)
 
@@ -314,6 +324,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
 
             if container.ready_cluster is None:
                 break
+
 
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
@@ -353,9 +364,11 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
             container.check_leftover()
             for c in range(container.num_clusters):
                 if container.leftover_cluster_data[c]:
-                    input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], container.leftover_batch[c][1], c
+                    input, target, runtime_helper.batch_cluster = container.leftover_batch[
+                        c][0], container.leftover_batch[c][1], c
                     input, target = input.cuda(), target.cuda()
-                    runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
+                    runtime_helper.qat_batch_cluster = torch.tensor(
+                        runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
 
                     output = model(input)
 
@@ -369,9 +382,11 @@ def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper
     if logger:
         if hvd:
             if hvd.rank() == 0:
-                logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+                logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(
+                    losses.avg, top1.avg))
         else:
-            logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+            logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(
+                losses.avg, top1.avg))
 
     if clustering_model.args.quant_base == 'hawq':
         unfreeze_model(model)
@@ -404,12 +419,14 @@ def load_dnn_model(arg_dict, tools, path=None):
     if arg_dict['quant_base'] == 'qat':
         if arg_dict['quantized']:
             if arg_dict['dataset'] == 'cifar100':
-                model = tools.quantized_model_initializer(arg_dict, num_classes=100)
+                model = tools.quantized_model_initializer(
+                    arg_dict, num_classes=100)
             else:
                 model = tools.quantized_model_initializer(arg_dict)
         elif arg_dict['fused']:
             if arg_dict['dataset'] == 'cifar100':
-                model = tools.fused_model_initializer(arg_dict, num_classes=100)
+                model = tools.fused_model_initializer(
+                    arg_dict, num_classes=100)
             else:
                 model = tools.fused_model_initializer(arg_dict)
         else:
@@ -418,7 +435,8 @@ def load_dnn_model(arg_dict, tools, path=None):
                     model = tools.pretrained_model_initializer(pretrained=True)
                 else:
                     if arg_dict['arch'] == 'MobileNetV3':
-                        model = vision_models.mobilenet_v3_small(pretrained=True)
+                        model = vision_models.mobilenet_v3_small(
+                            pretrained=True)
                     elif arg_dict['arch'] == 'ResNet18':
                         model = vision_models.resnet18(pretrained=True)
                     elif arg_dict['arch'] == 'AlexNet':
@@ -469,7 +487,7 @@ def load_tuning_info(path):
 
 
 def check_file_exist(path):
-    return os.path.isfile(path) 
+    return os.path.isfile(path)
 
 
 def add_path(prev_path, to_add, allow_existence=True):
@@ -486,13 +504,12 @@ def add_path(prev_path, to_add, allow_existence=True):
     return path
 
 
-
 def set_clustering_dir(args, arch_for_nnac=None):
     path = add_path('', 'result')
     path = add_path(path, args.clustering_method)
     path = add_path(path, arch_for_nnac)
     path = add_path(path, args.dataset)
-    
+
     if args.nnac:
         name = f'k{args.cluster}.part{args.partition}.{args.repr_method}.sub{args.sub_cluster}.topk_{args.topk}.sim_{args.sim_threshold}.{args.similarity_method}'
     else:
@@ -513,22 +530,18 @@ def set_save_dir(args, allow_existence=True):
             path = add_path(path, args.arch + '_' + str(8) + 'bit')
     else:
         path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
-    path = add_path(path, datetime.now().strftime("%m-%d-%H%M"), allow_existence=allow_existence)
+    path = add_path(path, datetime.now().strftime(
+        "%m-%d-%H%M"), allow_existence=allow_existence)
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path
 
 
 def set_logger(path):
-    logging.basicConfig(filename=os.path.join(path, "train.log"), level=logging.DEBUG)
+    logging.basicConfig(filename=os.path.join(
+        path, "train.log"), level=logging.DEBUG)
     logger = logging.getLogger()
     return logger
-
-
-# def metric_average(val, name):
-#     tensor = torch.tensor(val)
-#     avg_tensor = hvd.allreduce(tensor, name=name)
-#     return avg_tensor.item()
 
 
 def get_time_cost_in_string(t):
@@ -548,7 +561,8 @@ def make_indices_list(clustering_model, train_loader, args, runtime_helper):
         with tqdm(train_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
                 t.set_description("Indices per Cluster")
-                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(input)
+                runtime_helper.batch_cluster = clustering_model.predict_cluster_of_batch(
+                    input)
                 for c in runtime_helper.batch_cluster:
                     total_list[c].append(idx)
                     idx += 1
@@ -584,7 +598,7 @@ def make_phase2_list(args, indices_per_cluster, len_per_cluster):
                 cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
                 cur_idx[c] += n
             else:
-                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:len_per_cluster[c]]
+                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]                                                               :len_per_cluster[c]]
                 random.shuffle(indices_per_cluster[c])
                 cluster_cross_sorted += indices_per_cluster[c][:remainder]
                 cur_idx[c] = remainder
@@ -610,13 +624,16 @@ def load_indices_list(args):
         saved_args = json.load(f)
     assert args.dataset == saved_args['dataset'], \
         "Dataset should be same. \n" \
-        "Loaded dataset: {}, Current dataset: {}".format(saved_args['dataset'], args.dataset)
+        "Loaded dataset: {}, Current dataset: {}".format(
+            saved_args['dataset'], args.dataset)
     assert args.partition == saved_args['partition'], \
         "partition should be same. \n" \
-        "Loaded partition: {}, Current partition: {}".format(saved_args['partition'], args.partition)
+        "Loaded partition: {}, Current partition: {}".format(
+            saved_args['partition'], args.partition)
     assert args.data_per_cluster == saved_args['data_per_cluster'], \
         "Data per cluster should be same. \n" \
-        "Loaded data per cluster: {}, current data per cluster: {}".format(saved_args['data_per_cluster'], args.data_per_cluster)
+        "Loaded data per cluster: {}, current data per cluster: {}".format(
+            saved_args['data_per_cluster'], args.data_per_cluster)
     return saved_args['indices_list'], saved_args['len_per_cluster']
 
 
@@ -626,7 +643,8 @@ def visualize_clustering_res(visual_loader, indices_list, len_indices_list, mode
     matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
     pca = sklearn.decomposition.PCA(n_components=2)
-    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan', 'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan',
+              'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
 
     for image, _ in visual_loader:
         whole_data = model.get_partitioned_batch(image)
@@ -637,14 +655,17 @@ def visualize_clustering_res(visual_loader, indices_list, len_indices_list, mode
         # plot
         plt.figure(figsize=(8, 8))
         for i in range(num_ctr):
-            plt.scatter(pca_whole_data[indices_list[i], 0], pca_whole_data[indices_list[i], 1], c=colors[i], s=10, label='cluster {} - {}'.format(i, len_indices_list[i]), alpha=0.7, edgecolors='none')
+            plt.scatter(pca_whole_data[indices_list[i], 0], pca_whole_data[indices_list[i], 1], c=colors[i],
+                        s=10, label='cluster {} - {}'.format(i, len_indices_list[i]), alpha=0.7, edgecolors='none')
         plt.legend()
         for i in range(num_ctr):
-            plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i], s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
+            plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i],
+                        s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
         plt.suptitle('Train Dataset')
         plt.xlabel('Component 1')
         plt.ylabel('Component 2')
-        plt.savefig("k-means_partition_{}_cluster_{}.png".format(model.args.partition, num_ctr))
+        plt.savefig(
+            "k-means_partition_{}_cluster_{}.png".format(model.args.partition, num_ctr))
         plt.show()
 
 
@@ -703,13 +724,15 @@ def visualize_clustering_res(data_loader, clustering_model, indices_per_cluster,
     pca_centroids = pca.transform(centroids)
 
     plt.figure(figsize=(8, 8))
-    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan', 'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:brown', 'tab:cyan',
+              'tab:olive', 'tab:purple', 'tab:gray', 'tab:red', 'tab:pink']
     for i in range(num_clusters):
         plt.scatter(pca_data[indices_per_cluster[i], 0], pca_data[indices_per_cluster[i], 1], c=colors[i], s=10,
                     label='cluster {} - {}'.format(i, len_per_cluster[i]), alpha=0.7, edgecolors='none')
     plt.legend()
     for i in range(num_clusters):
-        plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i], s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
+        plt.scatter(pca_centroids[i, 0], pca_centroids[i, 1], c=colors[i],
+                    s=30, label="centroid", edgecolors='black', alpha=0.7, linewidth=2)
     plt.suptitle('Train Dataset')
     plt.xlabel('Component 1')
     plt.ylabel('Component 2')
@@ -740,12 +763,14 @@ def test_augmented_clustering(model, non_augmented_loader, augmented_loader):
 
     is_equal_per_data = torch.eq(non_aug_rst, aug_rst)
     not_equal_indices = (is_equal_per_data == False).nonzero(as_tuple=True)[0]
-    _, non_aug_changed_cnt_per_cluster = torch.unique(non_aug_rst[not_equal_indices], return_counts=True)
+    _, non_aug_changed_cnt_per_cluster = torch.unique(
+        non_aug_rst[not_equal_indices], return_counts=True)
 
     print("Datum assigned to different cluster = {}".format(len(not_equal_indices)))
     print("Num-data per Non-aug. Cluster = {}".format(non_aug_cnt))
     print("Num-data per Aug. Cluster = {}".format(aug_cnt))
-    print("Changed Count per Cluster = {}".format(non_aug_changed_cnt_per_cluster))
+    print("Changed Count per Cluster = {}".format(
+        non_aug_changed_cnt_per_cluster))
 
     # nonaug_all_count = [0, 0, 0, 0]
     # aug_all_count = [0, 0, 0, 0]
