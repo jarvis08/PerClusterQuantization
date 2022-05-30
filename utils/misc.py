@@ -50,6 +50,9 @@ class RuntimeHelper(object):
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
         self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
 
+    def set_num_clusters(self, num_clusters):
+        self.num_clusters = num_clusters
+
 
 class InputContainer(object):
     def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, batch_size):
@@ -325,6 +328,24 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
+        container.check_leftover()
+        for c in range(container.num_clusters):
+            if container.leftover_cluster_data[c]:
+                input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], \
+                    container.leftover_batch[c][1], c
+                input, target = input.cuda(), target.cuda()
+                runtime_helper.qat_batch_cluster = torch.tensor(runtime_helper.batch_cluster, dtype=torch.int64,
+                                                                device='cuda', requires_grad=False)
+
+                output = model(input)
+
+                loss = criterion(output, target)
+                prec = accuracy(output, target)[0]
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec.item(), input.size(0))
+
+                t.set_postfix(loss=losses.avg, acc=top1.avg)
+
 
 def pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger=None, hvd=None):
     losses = AverageMeter()
@@ -598,7 +619,8 @@ def make_phase2_list(args, indices_per_cluster, len_per_cluster):
                 cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]:remainder]
                 cur_idx[c] += n
             else:
-                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]                                                               :len_per_cluster[c]]
+                cluster_cross_sorted += indices_per_cluster[c][cur_idx[c]
+                    :len_per_cluster[c]]
                 random.shuffle(indices_per_cluster[c])
                 cluster_cross_sorted += indices_per_cluster[c][:remainder]
                 cur_idx[c] = remainder

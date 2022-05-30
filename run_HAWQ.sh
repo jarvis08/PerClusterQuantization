@@ -240,7 +240,7 @@ else
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
-                    --batch-size $BATCH \
+                    --batch-size $BATCH
             else
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \

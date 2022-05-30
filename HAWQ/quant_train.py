@@ -393,10 +393,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
                 if type(bit_config[name]) is tuple:
                     bitwidth = bit_config[name][0]
-                    if bit_config[name][1] == 'hook':
-                        m.register_forward_hook(hook_fn_forward)
-                        global hook_keys
-                        hook_keys.append(name)
                 else:
                     bitwidth = bit_config[name]
 
@@ -482,7 +478,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             clustering_model.zero_max_nn_aware_clustering(
                 model, train_loader, args.arch)
         model.toggle_full_precision()
-
+        runtime_helper.set_num_clusters(args.cluster)
     if args.evaluate:
         validate(test_loader, model, criterion, args)
         return

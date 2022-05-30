@@ -230,7 +230,6 @@ class KMeansClustering(object):
         for c in range(n_sub_clusters):
             print(f"C{c}: {n_per_sub[c]}")
         n_per_sub = torch.tensor(n_per_sub)
-        max_data_num_per_merged_cluster = sum(n_per_sub) / 2
 
         def check_other_groups(groups, cluster_id, cur_idx):
             for idx in range(len(groups)):
@@ -242,8 +241,6 @@ class KMeansClustering(object):
             return -1
 
         n_layers = len(dnn_model.zero_counter)
-        n_candidates_per_layer = int(
-            (n_sub_clusters * (n_sub_clusters - 1))/2 * 0.8)  # If discard low 20%
         merged_clusters = []
 
         to_merge = n_sub_clusters - self.args.cluster
@@ -253,6 +250,9 @@ class KMeansClustering(object):
         while n_merged < to_merge:
             print(
                 f'\n>>> Number of clusters to be merged: {to_merge - n_merged}')
+
+            n_candidates_per_layer = int(
+                ((n_sub_clusters - n_merged) * (n_sub_clusters - n_merged - 1))/2 * 0.8)  # discard low 20%
             indices = [i for i in range(n_layers)]
             zero_ratio = deepcopy(dnn_model.zero_counter)
             for l in range(n_layers):
@@ -318,6 +318,11 @@ class KMeansClustering(object):
                 k: v for k, v in count_duplicated_candidates.items() if v[0] == n_layers}
 
             pairs = list(candidates.keys())
+            print("number of candidates : ", len(pairs))
+            if len(pairs) == 0:
+                self.args.cluster = n_sub_clusters - n_merged
+                print("no candidates to merge... stop at ", self.args.cluster)
+                break
 
             # finding best pair from choosen candidates
             # measure median or mean of individual cluster's max values
@@ -452,7 +457,7 @@ class KMeansClustering(object):
             k += 1
 
         print(
-            f"\n>>> [Final] Number of data per cluster (Max.limit: {max_data_num_per_merged_cluster})")
+            f"\n>>> [Final] Number of data per cluster")
         for c in range(self.args.cluster):
             print(f"C{c}: {n_per_final[c]}")
 
