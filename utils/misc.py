@@ -328,8 +328,9 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             if container.ready_cluster is None:
                 break
 
+        import random
         container.check_leftover()
-        for c in range(container.num_clusters):
+        for c in random.sample(range(container.num_clusters), container.num_clusters):
             if container.leftover_cluster_data[c]:
                 input, target, runtime_helper.batch_cluster = container.leftover_batch[c][0], \
                     container.leftover_batch[c][1], c
