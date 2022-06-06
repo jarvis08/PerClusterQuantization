@@ -395,8 +395,10 @@ def clamp_matrix(x, bit=None, symmetric=False):
 def clamp_matrix_per_input_channel(x, low_group, high_group, symmetric=False):
     if symmetric:
         low_qmin, low_qmax = -8, 7
+        # low_qmin, low_qmax = -32, 28
     else:
-        low_qmin, low_qmax = 0, 15
+        # low_qmin, low_qmax = 0, 15
+        low_qmin, low_qmax = 0, 60
     high_qmin, high_qmax = -128, 127
 
     x[:,low_group] = torch.clamp(x[:,low_group], low_qmin, low_qmax)

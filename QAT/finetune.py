@@ -154,10 +154,24 @@ def visualize(args, model, epoch):
     # draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
 
 
-def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier):
-    import csv
+def validate_setting_bits(model, loader, criterion):
+    print('\n>>> Setting bits..')
+    # from .utils.misc import accuracy
 
-    fused = None
+    model.eval()
+    with torch.no_grad():
+        with tqdm(loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Validate")
+                input, target = input.cuda(), target.cuda()
+                output = model.set_mixed_bits(input)
+                # loss = criterion(output, target)
+                # prec = accuracy(output, target)[0]
+
+
+def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier):
+    # import csv
+
     # for p in percentile:
     # four_group = []
     # eight_group = []
@@ -165,7 +179,7 @@ def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier)
     fused_iter = iter(model.modules())
     for pre in pretrained.modules():
         if isinstance(pre, nn.Conv2d):
-            # fused = next(fused_iter)
+            fused = next(fused_iter)
             while not isinstance(fused, FusedConv2d):
                 fused = next(fused_iter)
             in_channel = pre.in_channels
@@ -216,7 +230,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         # try inference once to record input precisions
-        validate(pretrained_model, val_loader, criterion)
+        # validate(pretrained_model, val_loader, criterion)
+        validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
         # visualize(args, pretrained_model, 0)
 

@@ -407,7 +407,6 @@ class FusedConv2d(nn.Module):
         self.in_channels = in_channels
 
     def forward(self, x, external_range=None):
-
         # int_quantization.float2gemmlowp(x, 1.0, 1.0, 1, False, False, x)
         if not self.training:
             x = self.conv(x)

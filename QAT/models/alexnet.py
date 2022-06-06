@@ -77,8 +77,7 @@ class AlexNetSmall(nn.Module):
                 # module.weight_range = nn.Parameter(torch.zeros((2, module.out_channels)), requires_grad=False)
                 module.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        #x = self.features(x)
+    def set_mixed_bits(self, x: torch.Tensor) -> torch.Tensor:
         for module in self.features:
             if isinstance(module, nn.Conv2d):
                 data = x.transpose(1,0).reshape(x.size(1), -1)
@@ -94,20 +93,13 @@ class AlexNetSmall(nn.Module):
                     module.input_range[0], module.input_range[1] = _min, _max
                     module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
             x = module(x)
-            # if isinstance(module, nn.Conv2d):
-                # data = x.view(x.size(1), -1)
-                # _max = data.max(dim=1).values
-                # _min = data.min(dim=1).values
-                #
-                # if module.apply_ema:
-                #     updated_min = module.act_range[0] * self.smooth + _min * (1 - self.smooth)
-                #     updated_max = module.act_range[1] * self.smooth + _max * (1 - self.smooth)
-                #
-                #     module.act_range[0], module.act_range[1] = updated_min, updated_max
-                # else:
-                #     module.act_range[0], module.act_range[1] = _min, _max
-                #     module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
