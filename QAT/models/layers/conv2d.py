@@ -13,8 +13,8 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        bit, self.per_channel, self.fold_convbn, self.symmetric, self.num_clusters, self.multi_norm, self.runtime_helper, self.default_batch = \
-            itemgetter('bit', 'per_channel', 'fold_convbn', 'symmetric', 'cluster', 'multi_norm', 'runtime_helper', 'val_batch')(arg_dict)
+        bit, self.per_channel, self.mixed_precision, self.fold_convbn, self.symmetric, self.num_clusters, self.multi_norm, self.runtime_helper, self.default_batch = \
+            itemgetter('bit', 'per_channel', 'mixed_precision', 'fold_convbn', 'symmetric', 'cluster', 'multi_norm', 'runtime_helper', 'val_batch')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
@@ -46,6 +46,12 @@ class QuantizedConv2d(nn.Conv2d):
             self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
             self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
+        if self.mixed_precision:
+            self.low_group = torch.zeros(in_channels, dtype=torch.int8)
+            self.high_group = torch.zeros(in_channels, dtype=torch.int8)
+            self.s1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.float32), requires_grad=False)
+            self.z1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.int32), requires_grad=False)
+
         if self.fold_convbn:
             if self.num_clusters > 1:
                 if self.multi_norm:
@@ -58,6 +64,9 @@ class QuantizedConv2d(nn.Conv2d):
                 self.folded_bias = nn.Parameter(torch.zeros(out_channels, dtype=torch.int32), requires_grad=False )
 
     def forward(self, x):
+        if self.mixed_precision:
+            x = dequantize_matrix(x, self.s1, self.z1)
+            x = quantize_matrix_per_in_channel(x, self.s1_mixed, self.z1_mixed, self.low_group, self.high_group)
         x, out = self._conv_impl(x)
         out = self._subsum(x, out)
         if self.multiplication:
@@ -546,14 +555,20 @@ class FusedConv2d(nn.Module):
         self.groups = groups
 
         self.arg_dict = arg_dict
-        self.per_channel, self.symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
-            = itemgetter('per_channel', 'symmetric', 'smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
+        self.per_channel, self.symmetric, self.mixed_precision, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
+            = itemgetter('per_channel', 'symmetric', 'mixed_precision', 'smooth', 'fold_convbn', 'ste', 'runtime_helper', 'quant_noise', 'qn_prob', 'qn_each_channel')(arg_dict)
 
         self.num_clusters = 1
-
-        w_bit = w_bit if w_bit is not None else arg_dict['bit']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
-        self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
+
+        if self.mixed_precision:
+            self.w_bit = torch.nn.Parameter(torch.zeros(in_channels, dtype=torch.int8), requires_grad=False)
+            self.low_group = torch.zeros(in_channels, dtype=torch.int8)
+            self.high_group = torch.zeros(in_channels, dtype=torch.int8)
+            self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
+        else:
+            w_bit = w_bit if w_bit is not None else arg_dict['bit']
+            self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(a_bit, dtype=torch.int8), requires_grad=False)
 
         self.act_range = nn.Parameter(torch.zeros(2), requires_grad=False)
@@ -567,7 +582,6 @@ class FusedConv2d(nn.Module):
         self.in_channels = in_channels
 
     def forward(self, x, external_range=None):
-
         # int_quantization.float2gemmlowp(x, 1.0, 1.0, 1, False, False, x)
         if not self.training:
             x = self.conv(x)
@@ -587,20 +601,14 @@ class FusedConv2d(nn.Module):
         if self.per_channel:
             w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
+        elif self.mixed_precision:
+            w = fake_quantize_per_input_channel(self.conv.weight, self.low_group, self.high_group, zero,
+                                                symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = self.conv.weight.detach()
             s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
             w = fake_quantize(self.conv.weight, s, z, self.w_bit,
                               symmetric=self.symmetric, use_ste=self.use_ste)
-
-        # s, z = calc_qparams(self.conv.weight.detach().min(), self.conv.weight.detach().max(), self.w_bit,
-        #                     symmetric=self.symmetric)
-        # if not self.quant_noise:
-        #     w = fake_quantize(self.conv.weight, s, z, self.w_bit, symmetric=self.symmetric, use_ste=self.use_ste)
-        # else:
-        #     w = apply_qn(self.conv.weight, s, z, self.w_bit, qn_prob=self.qn_prob,
-        #                  kernel_size=self.conv.kernel_size, each_channel=self.qn_each_channel,
-        #                  in_feature=self.in_channels, out_feature=self.out_channels)
 
         out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
@@ -619,6 +627,16 @@ class FusedConv2d(nn.Module):
             else:
                 self.act_range[0], self.act_range[1] = get_range(out)
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+            if self.mixed_precision:
+                data = out.transpose(1, 0).reshape(out.size(1), -1)
+                _min = data.min(dim=1).values
+                _max = data.max(dim=1).values
+                if self.apply_ema:
+                    self.mixed_act_range[0] = self.mixed_act_range[0] * self.smooth + _min * (1 - self.smooth)
+                    self.mixed_act_range[1] = self.mixed_act_range[1] * self.smooth + _max * (1 - self.smooth)
+                else:
+                    self.mixed_act_range[0], self.mixed_act_range[1] = _min, _max
         return out
 
     def _norm_folded(self, x, external_range=None):
@@ -696,7 +714,8 @@ class FusedConv2d(nn.Module):
             self.folded_bias.data[c] = self.folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
         # self._norm_layer = nn.Identity()
 
-    def set_qparams(self, s1, z1, s_external=None, z_external=None):
+    def set_qparams(self, s1, z1, s_external=None, z_external=None, next_low_group=None, next_high_group=None, in_scale=None, in_zero_point=None):
+        zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
 
         if self.fold_convbn:
@@ -710,12 +729,19 @@ class FusedConv2d(nn.Module):
             else:
                 self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
                                                 symmetric=self.symmetric)
+        if self.mixed_precision:
+            self.s1_mixed, self.z1_mixed = in_scale, in_zero_point
+            self.s2_mixed, self.z2_mixed = calc_qparams_per_input_channel(self.conv.weight, self.low_group, self.high_group, symmetric=self.symmetric, zero=zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-
+            if self.mixed_precision:
+                self.s3_mixed, self.z3_mixed = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0],
+                                                                                       self.mixed_act_range[1],
+                                                                                       next_low_group,
+                                                                                       next_high_group, zero=zero)
         if self.per_channel:
             self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
             self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
@@ -724,4 +750,9 @@ class FusedConv2d(nn.Module):
                 self.M0[0][channel], self.shift[0][channel] = quantize_M(m_per_channel[channel])
         else:
             self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
-        return self.s3, self.z3
+
+        if self.mixed_precision:
+            return self.s3, self.z3, self.s3_mixed, self.z3_mixed
+        else:
+            return self.s3, self.z3
+

@@ -48,9 +48,12 @@ parser.add_argument('--qn_prob', default=0.2, type=float, help='quant noise prob
 parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant noise qn_prob increment gap')
 parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply conv each channel')
 
+parser.add_argument('--mixed_precision', action='store_true', help='For SKT')
+parser.add_argument('--percentile', default=1.0, type=float, help="threshold to split weight groups into two")
+
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
-#os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
+os.environ["CUDA_VISIBLE_DEVICES"] = args_qat.gpu
 
 # General
 if not args_qat.bit_first:

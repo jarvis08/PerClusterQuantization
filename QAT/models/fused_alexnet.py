@@ -73,11 +73,13 @@ class FusedAlexNet(nn.Module):
 class FusedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(FusedAlexNetSmall, self).__init__()
-        target_bit, bit_first, bit_classifier, self.smooth, self.runtime_helper \
-            = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'runtime_helper')(arg_dict)
+        target_bit, bit_first, bit_classifier, self.smooth, self.runtime_helper, self.mixed_precision \
+            = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'runtime_helper', 'mixed_precision')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
+        if self.mixed_precision:
+            self.mixed_range = nn.Parameter(torch.zeros(2, 3), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
@@ -122,14 +124,8 @@ class FusedAlexNetSmall(nn.Module):
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _min = x.min().item()
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _min = data.min(dim=1).values.mean().item()
-            _max = data.max(dim=1).values.mean().item()
-
+        _min = x.min().item()
+        _max = x.max().item()
         if self.apply_ema:
             self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
@@ -137,17 +133,51 @@ class FusedAlexNetSmall(nn.Module):
             self.in_range[0], self.in_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
+        if self.mixed_precision:
+            data = x.transpose(1, 0).reshape(x.size(1), -1)
+            _min = data.min(dim=1).values
+            _max = data.max(dim=1).values
+            if self.apply_ema:
+                self.mixed_range[0] = self.mixed_range[0] * self.smooth + _min * (1 - self.smooth)
+                self.mixed_range[1] = self.mixed_range[1] * self.smooth + _max * (1 - self.smooth)
+            else:
+                self.mixed_range[0], self.mixed_range[1] = _min, _max
+
+
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        if self.mixed_precision:
+            zero = self.runtime_helper.fzero
+            s, z = calc_qparams_per_input_channel_with_range(self.mixed_range[0], self.mixed_range[1], self.conv1.low_group, self.conv1.high_group, zero=zero)
+            return fake_quantize_per_input_channel(x, self.conv1.low_group, self.conv1.high_group, zero, scale=s, zero_point=z)
+        else:
+            s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+            return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
+        zero = self.runtime_helper.fzero
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
-        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv4.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
+
+        if self.mixed_precision:
+            self.s_input, self.z_input = calc_qparams_per_input_channel_with_range(self.mixed_range[0],
+                                                                                   self.mixed_range[1],
+                                                                                   self.conv1.low_group,
+                                                                                   self.conv1.high_group, zero=zero)
+            prev_s, prev_z, mixed_s, mixed_z = self.conv1.set_qparams(self.scale, self.zero_point, next_low_group=self.conv2.low_group,
+                                                    next_high_group=self.conv2.high_group, in_scale=self.s_input, in_zero_point=self.z_input)
+            prev_s, prev_z, mixed_s, mixed_z = self.conv2.set_qparams(prev_s, prev_z, next_low_group=self.conv3.low_group,
+                                                    next_high_group=self.conv3.high_group, in_scale=mixed_s, in_zero_point=mixed_z)
+            prev_s, prev_z, mixed_s, mixed_z = self.conv3.set_qparams(prev_s, prev_z, next_low_group=self.conv4.low_group,
+                                                    next_high_group=self.conv4.high_group, in_scale=mixed_s, in_zero_point=mixed_z)
+            prev_s, prev_z, mixed_s, mixed_z = self.conv4.set_qparams(prev_s, prev_z, next_low_group=self.conv5.low_group,
+                                                    next_high_group=self.conv5.high_group, in_scale=mixed_s, in_zero_point=mixed_z)
+            prev_s, prev_z, _, _ = self.conv5.set_qparams(prev_s, prev_z, in_scale=mixed_s, in_zero_point=mixed_z)
+        else:
+            prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
+            prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv4.set_qparams(prev_s, prev_z)
+            prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
+
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
         _, _ = self.fc3.set_qparams(prev_s, prev_z)

@@ -14,12 +14,15 @@ class QuantizedAlexNet(nn.Module):
 
     def __init__(self, arg_dict, num_classes: int = 1000) -> None:
         super(QuantizedAlexNet, self).__init__()
-        self.bit, self.num_clusters, self.runtime_helper = itemgetter('bit', 'cluster', 'runtime_helper')(arg_dict)
+        self.bit, self.num_clusters, self.runtime_helper, self.mixed_precision = itemgetter('bit', 'cluster', 'runtime_helper', 'mixed_precision')(arg_dict)
         self.q_max = 2 ** self.bit - 1
 
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        if self.mixed_precision:
+            self.s_input = nn.Parameter(torch.zeros(3, dtype=torch.float32), requires_grad=False)
+            self.z_input = nn.Parameter(torch.zeros(3, dtype=torch.int32), requires_grad=False)
 
         self.maxpool = QuantizedMaxPool2d(kernel_size=3, stride=2, padding=0, arg_dict=arg_dict)
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
@@ -57,7 +60,7 @@ class QuantizedAlexNet(nn.Module):
 class QuantizedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict, num_classes: int = 10) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
-        bit, bit_first, self.num_clusters, self.runtime_helper = itemgetter('bit', 'bit_first', 'cluster', 'runtime_helper')(arg_dict)
+        bit, bit_first, self.mixed_precision, self.num_clusters, self.runtime_helper = itemgetter('bit', 'bit_first', 'mixed_precision', 'cluster', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -65,6 +68,9 @@ class QuantizedAlexNetSmall(nn.Module):
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+        if self.mixed_precision:
+            self.s_input = nn.Parameter(torch.zeros(3, dtype=torch.float32), requires_grad=False)
+            self.z_input = nn.Parameter(torch.zeros(3, dtype=torch.int32), requires_grad=False)
 
         self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, is_first=True, arg_dict=arg_dict)
         self.conv2 = QuantizedConv2d(96, 256, kernel_size=5, stride=1, padding=2, arg_dict=arg_dict)
@@ -83,7 +89,10 @@ class QuantizedAlexNetSmall(nn.Module):
         if self.runtime_helper.qat_batch_cluster is not None:
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
+            if self.mixed_precision:
+                x = quantize_matrix_per_in_channel(x, self.s_input, self.z_input, self.conv1.low_group, self.conv1.high_group)
+            else:
+                x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.conv1(x)
         x = self.maxpool1(x.type(torch.cuda.FloatTensor))
@@ -120,6 +129,9 @@ def quantize_alexnet(fp_model, int_model):
     int_model.in_bit.data = fp_model.in_bit.data
     int_model.scale.data = fp_model.scale
     int_model.zero_point.data = fp_model.zero_point
+    if fp_model.mixed_precision:
+        int_model.s_input.data = fp_model.s_input
+        int_model.z_input.data = fp_model.z_input
     int_model.conv1 = quantize(fp_model.conv1, int_model.conv1)
     int_model.conv2 = quantize(fp_model.conv2, int_model.conv2)
     int_model.conv3 = quantize(fp_model.conv3, int_model.conv3)
