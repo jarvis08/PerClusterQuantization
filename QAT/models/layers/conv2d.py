@@ -65,16 +65,22 @@ class QuantizedConv2d(nn.Conv2d):
 
     def forward(self, x):
         if self.mixed_precision:
+            # drop 2 lower bits
             if self.symmetric:
-                bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda')
+                bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda').reshape(1, -1, 1, 1)
                 x[:, self.low_group] = x[:, self.low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(
                     torch.cuda.FloatTensor)
             else:
-                bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda')
+                bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda').reshape(1, -1, 1, 1)
                 x[:, self.low_group] = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+
             # # truncate
             # x[:, self.low_group] = (x[:, self.low_group] / 4).trunc()
-            # x = clamp_matrix_per_input_channel(x, self.low_group, self.high_group, only_low=True)
+            # if self.symmetric:
+            #     low_qmin, low_qmax = -8, 7
+            # else:
+            #     low_qmin, low_qmax = 0, 15
+            # x[:, self.low_group] = torch.clamp(x[:, self.low_group], low_qmin, low_qmax)
         x, out = self._conv_impl(x)
         out = self._subsum(x, out)
         if self.multiplication:
