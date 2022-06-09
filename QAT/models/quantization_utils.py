@@ -215,13 +215,23 @@ def fake_quantize_per_input_channel(x, low_group, high_group, zero, symmetric=Fa
     zero_point = zero_point[None, :, None, None]
 
     _x = clamp_matrix_per_input_channel(torch.round(_x / scale + zero_point), low_group, high_group, symmetric)
+
     if low_group.view(-1).size(0):
-        _x[:, low_group] = (_x[:, low_group] / 4).trunc()
         if symmetric:
-            low_qmin, low_qmax = -8, 7
+            bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda')
+            _x[:, low_group] = _x[:, low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
         else:
-            low_qmin, low_qmax = 0, 15
-        _x[:, low_group] = torch.clamp(_x[:, low_group], low_qmin, low_qmax) * 4
+            bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda')
+            _x[:, low_group] = _x[:, low_group].type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+
+    # # div 4 ver
+    # if low_group.view(-1).size(0):
+    #     _x[:, low_group] = (_x[:, low_group] / 4).trunc()
+    #     if symmetric:
+    #         low_qmin, low_qmax = -8, 7
+    #     else:
+    #         low_qmin, low_qmax = 0, 15
+    #     _x[:, low_group] = torch.clamp(_x[:, low_group], low_qmin, low_qmax) * 4
 
     _x = (_x - zero_point) * scale
 
@@ -296,14 +306,14 @@ def quantize_matrix_per_in_channel(x, scale, zero_point, low_group, high_group, 
     x = torch.round(x / scale + zero_point)
 
     #truncate
-    x[:, low_group] = (x[:, low_group] / 4).trunc()
+    # x[:, low_group] = (x[:, low_group] / 4).trunc()
 
-    # if symmetric:
-    #     bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda')
-    #     x = x.type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
-    # else:
-    #     bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda')
-    #     x = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+    if symmetric:
+        bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda')
+        x[:, low_group] = x[:, low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+    else:
+        bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda')
+        x[:, low_group] = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
     return clamp_matrix_per_input_channel(x, low_group, high_group, symmetric)
 
 
