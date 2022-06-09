@@ -314,12 +314,13 @@ def quantize_matrix_per_in_channel(x, scale, zero_point, low_group, high_group, 
     #     low_qmin, low_qmax = 0, 15
     # x[:, low_group] = torch.clamp(x[:, low_group], low_qmin, low_qmax)
 
-    if symmetric:
-        bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda').reshape(1, -1, 1, 1)
-        x[:, low_group] = x[:, low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
-    else:
-        bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda').reshape(1, -1, 1, 1)
-        x[:, low_group] = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+    if low_group.view(-1).size(0):
+        if symmetric:
+            bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda').reshape(1, -1, 1, 1)
+            x[:, low_group] = x[:, low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+        else:
+            bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda').reshape(1, -1, 1, 1)
+            x[:, low_group] = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
     return clamp_matrix_per_input_channel(x, low_group, high_group, symmetric)
 
 
