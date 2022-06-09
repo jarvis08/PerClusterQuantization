@@ -170,20 +170,25 @@ def validate_setting_bits(model, loader, criterion):
                 # prec = accuracy(output, target)[0]
 
 
-def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier):
+def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
     # import csv
 
     # for p in percentile:
     # four_group = []
     # eight_group = []
     quantile_tensor = torch.tensor(percentile)
+    six_counter = 0
+    eight_counter = 0
+    total_counter = 0
     fused_iter = iter(model.modules())
     for pre in pretrained.modules():
         if isinstance(pre, nn.Conv2d):
             fused = next(fused_iter)
             while not isinstance(fused, FusedConv2d):
                 fused = next(fused_iter)
+
             in_channel = pre.in_channels
+            total_counter += in_channel
             # [16. 3. 4.4] -> [3, 16, 4, 4]
             weight_per_filter_group = pre.weight.transpose(1, 0)
 
@@ -193,13 +198,28 @@ def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             input_range = pre.input_range[1] - pre.input_range[0]
 
-            input_quantile = torch.where(input_range <= torch.quantile(input_range, quantile_tensor), 1, 0)
-            weight_quantile = torch.where(weight_range <= torch.quantile(weight_range, quantile_tensor), 1, 0)
-            fused.w_bit.data = torch.where(torch.logical_and(input_quantile, weight_quantile) > 0, 6, 8).type(torch.int8)
-            fused.low_group = (fused.w_bit.data == 6).nonzero(as_tuple=True)[0]
-            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
+            # # quantile
+            # input_quantile = torch.where(input_range <= torch.quantile(input_range, quantile_tensor), 1, 0)
+            # weight_quantile = torch.where(weight_range <= torch.quantile(weight_range, quantile_tensor), 1, 0)
+            # fused.w_bit.data = torch.where(torch.logical_and(input_quantile, weight_quantile) > 0, 6, 8).type(
+            #     torch.int8)
+
+            # distance 4 times
+            input_max, weight_max = input_range.max(), weight_range.max()
+            input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
+            weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
+            fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, 6, 8).type(
+                torch.int8)
+
+            fused.low_group = (fused.w_bit.data == 6).nonzero(as_tuple=True)[0].cuda()
+            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
+
+            six_counter += len(fused.low_group)
+            eight_counter += len(fused.high_group)
+
             # four_group.append(len(fused.low_group))
             # eight_group.append(len(fused.high_group))
+    print("Total six ratio : {:.2f}% ".format(six_counter / total_counter * 100))
 
         # with open(identifier + '_mixed_ratio.csv', 'a') as csvfile:
         #     writer = csv.writer(csvfile)
@@ -281,13 +301,13 @@ def _finetune(args, tools, data_loaders, clustering_model):
             tools.folder(model)
 
         fp_score = 0
-        if args.dataset != 'imagenet':
-            if args.cluster > 1:
-                #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
-                fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
-            else:
-                #fp_score = validate(model, val_loader, criterion, logger)
-                fp_score = validate(model, test_loader, criterion, logger)
+        # if args.dataset != 'imagenet':
+        #     if args.cluster > 1:
+        #         #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
+        #         fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
+        #     else:
+        #         #fp_score = validate(model, val_loader, criterion, logger)
+        #         fp_score = validate(model, test_loader, criterion, logger)
 
         state = {
             'epoch': e,
@@ -298,7 +318,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
-            model.set_quantization_params()
+            if args.mixed_precision:
+                model.set_mixed_quantization_params(args.method)
+            else:
+                model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)

@@ -65,8 +65,9 @@ class QuantizedConv2d(nn.Conv2d):
 
     def forward(self, x):
         if self.mixed_precision:
-            x = dequantize_matrix(x, self.s1, self.z1)
-            x = quantize_matrix_per_in_channel(x, self.s1_mixed, self.z1_mixed, self.low_group, self.high_group)
+            # truncate
+            x[:, self.low_group] = (x[:, self.low_group] / 4).trunc()
+            x = clamp_matrix_per_input_channel(x, self.low_group, self.high_group, only_low=True)
         x, out = self._conv_impl(x)
         out = self._subsum(x, out)
         if self.multiplication:
@@ -211,8 +212,6 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_a1 = self.sum_a1[:x.size(0)].mul(self.z2)
             else:
                 sum_a1 = self.sum_a1[:x.size(0)][:, None, :, :].mul(self.z2[None, :, None, None])
-            #import pdb
-            #pdb.set_trace()
 
             sum_a2 = self.sum_a2.mul(self.z1)
             nz1z2 = input_ch * filter_col * filter_row * self.z1 * self.z2
@@ -632,6 +631,13 @@ class FusedConv2d(nn.Module):
                 data = out.transpose(1, 0).reshape(out.size(1), -1)
                 _min = data.min(dim=1).values
                 _max = data.max(dim=1).values
+                # if self.runtime_helper.apply_fake_quantization:
+                #     zero = self.runtime_helper.fzero
+                #     s, z = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0], self.mixed_act_range[1],
+                #                                                      self.low_group, self.high_group,
+                #                                                      zero=zero)
+                #     out = fake_quantize_per_input_channel(out, self.low_group, self.high_group, zero, use_ste=self.use_ste,
+                #                                            scale=s, zero_point=z)
                 if self.apply_ema:
                     self.mixed_act_range[0] = self.mixed_act_range[0] * self.smooth + _min * (1 - self.smooth)
                     self.mixed_act_range[1] = self.mixed_act_range[1] * self.smooth + _max * (1 - self.smooth)
@@ -714,7 +720,7 @@ class FusedConv2d(nn.Module):
             self.folded_bias.data[c] = self.folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
         # self._norm_layer = nn.Identity()
 
-    def set_qparams(self, s1, z1, s_external=None, z_external=None, next_low_group=None, next_high_group=None, in_scale=None, in_zero_point=None):
+    def set_qparams(self, s1, z1, s_external=None, z_external=None):
         zero = self.runtime_helper.fzero
         self.s1, self.z1 = s1, z1
 
@@ -729,19 +735,12 @@ class FusedConv2d(nn.Module):
             else:
                 self.s2, self.z2 = calc_qparams(self.conv.weight.min(), self.conv.weight.max(), self.w_bit,
                                                 symmetric=self.symmetric)
-        if self.mixed_precision:
-            self.s1_mixed, self.z1_mixed = in_scale, in_zero_point
-            self.s2_mixed, self.z2_mixed = calc_qparams_per_input_channel(self.conv.weight, self.low_group, self.high_group, symmetric=self.symmetric, zero=zero)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
             self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-            if self.mixed_precision:
-                self.s3_mixed, self.z3_mixed = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0],
-                                                                                       self.mixed_act_range[1],
-                                                                                       next_low_group,
-                                                                                       next_high_group, zero=zero)
+
         if self.per_channel:
             self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
             self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
@@ -751,8 +750,48 @@ class FusedConv2d(nn.Module):
         else:
             self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
 
-        if self.mixed_precision:
-            return self.s3, self.z3, self.s3_mixed, self.z3_mixed
+        return self.s3, self.z3
+
+    def choose_scale(self, scale, zero_point, method):
+        if method == 'min':
+            idx = torch.argmin(scale)
+        elif method == 'max':
+            idx = torch.argmax(scale)
+        # elif method == 'mean':
+        else:
+            assert 'method {} is not implemented'.format(method)
+        return scale[idx], zero_point[idx]
+
+    def set_mixed_qparams(self, s1, z1, method, next_low_group=None, next_high_group=None):
+        zero = self.runtime_helper.fzero
+        self.s1, self.z1 = self.choose_scale(s1, z1, method)
+
+        if self.fold_convbn:
+            assert self.per_channel == False, "per channel mode for folded fused model is not implemented"
+            self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit,
+                                                symmetric=self.symmetric)
+        else:
+            s2_mixed, z2_mixed = calc_qparams_per_input_channel(self.conv.weight, self.low_group,
+                                                                          self.high_group, symmetric=self.symmetric,
+                                                                          zero=zero)
+            self.s2, self.z2 = self.choose_scale(s2_mixed, z2_mixed, method)
+
+            if next_low_group is not None and next_high_group is not None:
+                s3_mixed, z3_mixed = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0], self.mixed_act_range[1], next_low_group, next_high_group, zero=zero)
+            else:
+                s3_mixed, z3_mixed = calc_qparams_last_conv(self.mixed_act_range[0], self.mixed_act_range[1], self.a_bit, zero=zero)
+            self.s3, self.z3 = self.choose_scale(s3_mixed, z3_mixed, method)
+            #     s3_last, z3_last = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+
+        # self.M0 = torch.zeros((1, self.out_channels), dtype=torch.int32)
+        # self.shift = torch.zeros((1, self.out_channels), dtype=torch.int32)
+        # m_per_channel = self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double)
+        # for channel in range(self.out_channels):
+        #     self.M0[0][channel], self.shift[0][channel] = quantize_M(m_per_channel[channel])
+        self.M0, self.shift = quantize_M(
+            self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
+
+        if next_low_group is not None and next_high_group is not None:
+            return s3_mixed, z3_mixed
         else:
             return self.s3, self.z3
-

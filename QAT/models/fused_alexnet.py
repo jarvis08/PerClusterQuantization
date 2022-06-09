@@ -143,7 +143,6 @@ class FusedAlexNetSmall(nn.Module):
             else:
                 self.mixed_range[0], self.mixed_range[1] = _min, _max
 
-
     def _fake_quantize_input(self, x):
         if self.mixed_precision:
             zero = self.runtime_helper.fzero
@@ -154,29 +153,45 @@ class FusedAlexNetSmall(nn.Module):
             return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
-        zero = self.runtime_helper.fzero
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
 
-        if self.mixed_precision:
-            self.s_input, self.z_input = calc_qparams_per_input_channel_with_range(self.mixed_range[0],
-                                                                                   self.mixed_range[1],
-                                                                                   self.conv1.low_group,
-                                                                                   self.conv1.high_group, zero=zero)
-            prev_s, prev_z, mixed_s, mixed_z = self.conv1.set_qparams(self.scale, self.zero_point, next_low_group=self.conv2.low_group,
-                                                    next_high_group=self.conv2.high_group, in_scale=self.s_input, in_zero_point=self.z_input)
-            prev_s, prev_z, mixed_s, mixed_z = self.conv2.set_qparams(prev_s, prev_z, next_low_group=self.conv3.low_group,
-                                                    next_high_group=self.conv3.high_group, in_scale=mixed_s, in_zero_point=mixed_z)
-            prev_s, prev_z, mixed_s, mixed_z = self.conv3.set_qparams(prev_s, prev_z, next_low_group=self.conv4.low_group,
-                                                    next_high_group=self.conv4.high_group, in_scale=mixed_s, in_zero_point=mixed_z)
-            prev_s, prev_z, mixed_s, mixed_z = self.conv4.set_qparams(prev_s, prev_z, next_low_group=self.conv5.low_group,
-                                                    next_high_group=self.conv5.high_group, in_scale=mixed_s, in_zero_point=mixed_z)
-            prev_s, prev_z, _, _ = self.conv5.set_qparams(prev_s, prev_z, in_scale=mixed_s, in_zero_point=mixed_z)
+        prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
+        prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv4.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
+
+        prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
+        prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
+        _, _ = self.fc3.set_qparams(prev_s, prev_z)
+
+    def choose_scale(self, scale, zero_point, method):
+        if method == 'min':
+            idx = torch.argmin(scale)
+        elif method == 'max':
+            idx = torch.argmax(scale)
+        # elif method == 'mean':
         else:
-            prev_s, prev_z = self.conv1.set_qparams(self.scale, self.zero_point)
-            prev_s, prev_z = self.conv2.set_qparams(prev_s, prev_z)
-            prev_s, prev_z = self.conv3.set_qparams(prev_s, prev_z)
-            prev_s, prev_z = self.conv4.set_qparams(prev_s, prev_z)
-            prev_s, prev_z = self.conv5.set_qparams(prev_s, prev_z)
+            assert 'method {} is not implemented'.format(method)
+        return scale[idx], zero_point[idx]
+
+    def set_mixed_quantization_params(self, method):
+        zero = self.runtime_helper.fzero
+        scale_mixed, zero_point_mixed = calc_qparams_per_input_channel_with_range(self.mixed_range[0],
+                                                                               self.mixed_range[1],
+                                                                               self.conv1.low_group,
+                                                                               self.conv1.high_group, zero=zero)
+        self.scale, self.zero_point = self.choose_scale(scale_mixed, zero_point_mixed, method)
+
+        prev_s, prev_z = self.conv1.set_mixed_qparams(scale_mixed, zero_point_mixed, method, next_low_group=self.conv2.low_group,
+                                                next_high_group=self.conv2.high_group)
+        prev_s, prev_z = self.conv2.set_mixed_qparams(prev_s, prev_z, method, next_low_group=self.conv3.low_group,
+                                                next_high_group=self.conv3.high_group)
+        prev_s, prev_z = self.conv3.set_mixed_qparams(prev_s, prev_z, method, next_low_group=self.conv4.low_group,
+                                                next_high_group=self.conv4.high_group)
+        prev_s, prev_z = self.conv4.set_mixed_qparams(prev_s, prev_z, method, next_low_group=self.conv5.low_group,
+                                                next_high_group=self.conv5.high_group)
+        prev_s, prev_z = self.conv5.set_mixed_qparams(prev_s, prev_z, method)
 
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
