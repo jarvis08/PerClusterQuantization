@@ -90,7 +90,7 @@ class QuantizedAlexNetSmall(nn.Module):
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
             if self.mixed_precision:
-                x = quantize_matrix_per_in_channel(x, self.scale, self.zero_point, self.conv1.low_group, self.conv1.high_group)
+                x = quantize_matrix_per_in_channel(x, self.scale, self.zero_point, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group)
             else:
                 x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 

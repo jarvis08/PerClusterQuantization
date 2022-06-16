@@ -49,6 +49,7 @@ class QuantizedConv2d(nn.Conv2d):
         if self.mixed_precision:
             self.low_group = torch.zeros(in_channels, dtype=torch.int8)
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
+            self.low_bit = torch.zeros(1, dtype=torch.int8)
             self.s1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.float32), requires_grad=False)
             self.z1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.int32), requires_grad=False)
 
@@ -67,21 +68,9 @@ class QuantizedConv2d(nn.Conv2d):
         if self.mixed_precision:
             # drop 2 lower bits
             if self.low_group.view(-1).size(0):
-                if self.symmetric:
-                    bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda').reshape(1, -1, 1, 1)
-                    x[:, self.low_group] = x[:, self.low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(
-                        torch.cuda.FloatTensor)
-                else:
-                    bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda').reshape(1, -1, 1, 1)
-                    x[:, self.low_group] = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+                x = truncate_lower_bits(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric)
+                # x[:, self.low_group] = truncate_lower_bits(x[:, self.low_group], self.low_bit, symmetric=self.symmetric)
 
-            # # truncate
-            # x[:, self.low_group] = (x[:, self.low_group] / 4).trunc()
-            # if self.symmetric:
-            #     low_qmin, low_qmax = -8, 7
-            # else:
-            #     low_qmin, low_qmax = 0, 15
-            # x[:, self.low_group] = torch.clamp(x[:, self.low_group], low_qmin, low_qmax)
         x, out = self._conv_impl(x)
         out = self._subsum(x, out)
         if self.multiplication:
@@ -578,7 +567,8 @@ class FusedConv2d(nn.Module):
             self.w_bit = torch.nn.Parameter(torch.zeros(in_channels, dtype=torch.int8), requires_grad=False)
             self.low_group = torch.zeros(in_channels, dtype=torch.int8)
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
-            self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
+            self.low_bit = torch.zeros(1, dtype=torch.int8)
+            # self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
         else:
             w_bit = w_bit if w_bit is not None else arg_dict['bit']
             self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)
@@ -615,8 +605,7 @@ class FusedConv2d(nn.Module):
             w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
         elif self.mixed_precision:
-            w = fake_quantize_per_input_channel(self.conv.weight, self.low_group, self.high_group, zero,
-                                                symmetric=self.symmetric, use_ste=self.use_ste)
+            w = fake_quantize_per_input_channel(self.conv.weight, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = self.conv.weight.detach()
             s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
@@ -641,22 +630,22 @@ class FusedConv2d(nn.Module):
                 self.act_range[0], self.act_range[1] = get_range(out)
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
-            if self.mixed_precision:
-                data = out.transpose(1, 0).reshape(out.size(1), -1)
-                _min = data.min(dim=1).values
-                _max = data.max(dim=1).values
-                # if self.runtime_helper.apply_fake_quantization:
-                #     zero = self.runtime_helper.fzero
-                #     s, z = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0], self.mixed_act_range[1],
-                #                                                      self.low_group, self.high_group,
-                #                                                      zero=zero)
-                #     out = fake_quantize_per_input_channel(out, self.low_group, self.high_group, zero, use_ste=self.use_ste,
-                #                                            scale=s, zero_point=z)
-                if self.apply_ema:
-                    self.mixed_act_range[0] = self.mixed_act_range[0] * self.smooth + _min * (1 - self.smooth)
-                    self.mixed_act_range[1] = self.mixed_act_range[1] * self.smooth + _max * (1 - self.smooth)
-                else:
-                    self.mixed_act_range[0], self.mixed_act_range[1] = _min, _max
+            # if self.mixed_precision:
+            #     data = out.transpose(1, 0).reshape(out.size(1), -1)
+            #     _min = data.min(dim=1).values
+            #     _max = data.max(dim=1).values
+            #     # if self.runtime_helper.apply_fake_quantization:
+            #     #     zero = self.runtime_helper.fzero
+            #     #     s, z = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0], self.mixed_act_range[1],
+            #     #                                                      self.low_group, self.high_group,
+            #     #                                                      zero=zero)
+            #     #     out = fake_quantize_per_input_channel(out, self.low_group, self.high_group, zero, use_ste=self.use_ste,
+            #     #                                            scale=s, zero_point=z)
+            #     if self.apply_ema:
+            #         self.mixed_act_range[0] = self.mixed_act_range[0] * self.smooth + _min * (1 - self.smooth)
+            #         self.mixed_act_range[1] = self.mixed_act_range[1] * self.smooth + _max * (1 - self.smooth)
+            #     else:
+            #         self.mixed_act_range[0], self.mixed_act_range[1] = _min, _max
         return out
 
     def _norm_folded(self, x, external_range=None):

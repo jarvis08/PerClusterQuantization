@@ -58,6 +58,7 @@ class BasicBlock(nn.Module):
         self.bn2 = norm_layer(planes)
         self.downsample = downsample
         self.stride = stride
+        self.smooth = 0.999
 
     def forward(self, x: Tensor) -> Tensor:
         identity = x
@@ -70,6 +71,41 @@ class BasicBlock(nn.Module):
         out = self.bn2(out)
 
         if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+    def set_mixed_bits_block(self, x):
+        def record_input_range(x, module):
+            assert isinstance(module, nn.Conv2d), 'layer is not conv2d'
+            data = x.transpose(1, 0).reshape(x.size(1), -1)
+            _max = data.max(dim=1).values
+            _min = data.min(dim=1).values
+
+            if module.apply_ema:
+                updated_min = module.input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = module.input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+                module.input_range[0], module.input_range[1] = updated_min, updated_max
+            else:
+                module.input_range[0], module.input_range[1] = _min, _max
+                module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+        identity = x
+
+        record_input_range(x, self.conv1)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        record_input_range(out, self.conv2)
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            record_input_range(x, self.downsample[0])
             identity = self.downsample(x)
 
         out += identity
@@ -395,6 +431,7 @@ class ResNet20(nn.Module):
         self._norm_layer = nn.BatchNorm2d
         self.inplanes = 16
         self.num_blocks = 3
+        self.smooth = 0.999
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = self._norm_layer(self.inplanes)
@@ -408,6 +445,8 @@ class ResNet20(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                m.input_range = nn.Parameter(torch.zeros((2, m.in_channels)), requires_grad=False)
+                m.apply_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -445,6 +484,38 @@ class ResNet20(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.show_params()
+
+    def set_mixed_bits(self, x: torch.Tensor) -> torch.Tensor:
+        def record_input_range(x, module):
+            assert isinstance(module, nn.Conv2d), 'layer is not conv2d'
+            data = x.transpose(1, 0).reshape(x.size(1), -1)
+            _max = data.max(dim=1).values
+            _min = data.min(dim=1).values
+
+            if module.apply_ema:
+                updated_min = module.input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = module.input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+                module.input_range[0], module.input_range[1] = updated_min, updated_max
+            else:
+                module.input_range[0], module.input_range[1] = _min, _max
+                module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+        record_input_range(x, self.conv1)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        blocks = [self.layer1, self.layer2, self.layer3]
+        for block in blocks:
+            for b in range(len(block)):
+                x = block[b].set_mixed_bits_block(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+
 
     def count_zeros_per_index(self, x, cluster, n_clusters):
         # cluster -> ready cluster idx, n_cluster -> args.sub_cluster

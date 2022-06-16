@@ -111,7 +111,6 @@ class FusedBasicBlock(nn.Module):
         nxt_s_target, nxt_z_target = calc_qparams(self.act_range[0], self.act_range[1], self.target_bit)
         return self.s3, self.z3, nxt_s_target, nxt_z_target
 
-
 class FusedBottleneck(nn.Module):
     expansion: int = 4
 
@@ -211,8 +210,8 @@ class FusedResNet(nn.Module):
                  groups=1, width_per_group=64, replace_stride_with_dilation=None):
         super(FusedResNet, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper, self.mixed_precision \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper', 'mixed_precision')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -313,7 +312,11 @@ class FusedResNet(nn.Module):
 
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        if self.mixed_precision:
+            return fake_quantize_per_input_channel(x, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group,
+                                                   scale=s, zero_point=z)
+        else:
+            return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)

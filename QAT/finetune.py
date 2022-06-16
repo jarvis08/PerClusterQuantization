@@ -7,7 +7,7 @@ from utils import *
 from .models import *
 from tqdm import tqdm
 from time import time
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -172,12 +172,12 @@ def validate_setting_bits(model, loader, criterion):
 
 def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
     # import csv
-
+    import math
     # for p in percentile:
     # four_group = []
     # eight_group = []
     quantile_tensor = torch.tensor(percentile)
-    six_counter = 0
+    low_counter = 0
     eight_counter = 0
     total_counter = 0
     fused_iter = iter(model.modules())
@@ -208,18 +208,22 @@ def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=
             input_max, weight_max = input_range.max(), weight_range.max()
             input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
             weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
-            fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, 6, 8).type(
+            low_bit = 8 - round(math.log(percentile, 2))
+            fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8).type(
                 torch.int8)
+            # # weight only
+            # fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8).type(torch.int8)
 
-            fused.low_group = (fused.w_bit.data == 6).nonzero(as_tuple=True)[0].cuda()
+            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0].cuda()
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
+            fused.low_bit = torch.tensor(low_bit, dtype=torch.int8)
 
-            six_counter += len(fused.low_group)
+            low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
 
             # four_group.append(len(fused.low_group))
-            # eight_group.append(len(fused.high_group))
-    print("Total six ratio : {:.2f}% ".format(six_counter / total_counter * 100))
+
+    print("Total low bit ratio : {:.2f}% ".format(low_counter / total_counter * 100))
 
         # with open(identifier + '_mixed_ratio.csv', 'a') as csvfile:
         #     writer = csv.writer(csvfile)
@@ -227,6 +231,7 @@ def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=
         #     # writer.writerow([four_group[i] for i in range(len(four_group))])
         #     # writer.writerow([eight_group[i] for i in range(len(eight_group))])
         #     writer.writerow(['{:2f}%'.format(four_group[i] / (four_group[i] + eight_group[i]) * 100) for i in range(len(eight_group))])
+
 
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
@@ -318,10 +323,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
         # Test quantized model, and save if performs the best
         if e > args.fq:
-            if args.mixed_precision:
-                model.set_mixed_quantization_params(args.method)
-            else:
-                model.set_quantization_params()
+            model.set_quantization_params()
+            # if args.mixed_precision:
+            #     model.set_mixed_quantization_params(args.method)
+            # else:
+            #     model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)

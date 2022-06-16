@@ -138,66 +138,123 @@ def fake_quantize(x, scale, zero_point, bit, symmetric=False, use_ste=False):
         return STE.apply(x, _x)
     return _x
 
-def calc_symmetric_qparams_per_input_channel(_min, _max, low_group, high_group):
-    scale = torch.zeros(_min.size(0), device='cuda')
+## per in channel version
+# def calc_symmetric_qparams_per_input_channel(_min, _max, low_group, high_group):
+#     scale = torch.zeros(_min.size(0), device='cuda')
+#
+#     if scale[low_group].size(0):
+#         scale[low_group], _ = torch.max(torch.stack([_max[low_group].abs(), _min[low_group].abs()], dim=1), dim=1)
+#         scale[low_group] = torch.clamp(scale[low_group], min=1e-8) / 31
+#
+#     if scale[high_group].size(0):
+#         scale[high_group], _ = torch.max(torch.stack([_max[high_group].abs(), _min[high_group].abs()], dim=1), dim=1)
+#         scale[high_group] = torch.clamp(scale[high_group], min=1e-8) / 127
+#     return scale, torch.zeros_like(scale, device='cuda')
 
-    if scale[low_group].size(0):
-        scale[low_group], _ = torch.max(torch.stack([_max[low_group].abs(), _min[low_group].abs()], dim=1), dim=1)
-        scale[low_group] = torch.clamp(scale[low_group], min=1e-8) / 31
+# def calc_qparams_per_input_channel_with_range(_min, _max, low_group, high_group, symmetric=False, zero=None):
+#     if symmetric:
+#         return calc_symmetric_qparams_per_input_channel(_min, _max, low_group, high_group)
+#     else:
+#         if zero is None:
+#             zero = torch.tensor(0.0, device='cuda')
+#         _min = torch.where(_min <= zero, _min, zero)
+#         _max = torch.where(_max >= zero, _max, zero)
+#     return get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group)
 
-    if scale[high_group].size(0):
-        scale[high_group], _ = torch.max(torch.stack([_max[high_group].abs(), _min[high_group].abs()], dim=1), dim=1)
-        scale[high_group] = torch.clamp(scale[high_group], min=1e-8) / 127
+# def calc_qparams_per_input_channel(mat, low_group, high_group, symmetric=False, zero=None):
+#     _mat = mat.transpose(1, 0).reshape(mat.size(1), -1)
+#     _min = _mat.min(dim=1).values
+#     _max = _mat.max(dim=1).values
+#     if symmetric:
+#         return calc_symmetric_qparams_per_input_channel(_min, _max, low_group, high_group)
+#     else:
+#         if zero is None:
+#             zero = torch.tensor(0.0, device='cuda')
+#         _min = torch.where(_min <= zero, _min, zero)
+#         _max = torch.where(_max >= zero, _max, zero)
+#         return get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group)
 
+# def get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group):
+#     _size = _min.size(0)
+#     scale = torch.zeros(_size, device='cuda')
+#     zero_point = torch.zeros(_size, device='cuda')
+#
+#     if scale[low_group].size(0):
+#         scale[low_group] = (_max[low_group] - _min[low_group]) / 63
+#         zero_point[low_group] = torch.clamp(- torch.round(_min[low_group] / scale[low_group]), 0, 63)
+#
+#     if scale[high_group].size(0):
+#         scale[high_group] = (_max[high_group] - _min[high_group]) / 255
+#         zero_point[high_group] = torch.clamp(- torch.round(_min[high_group] / scale[high_group]), 0, 255)
+#     return scale, zero_point
+
+# def fake_quantize_per_input_channel(x, low_bit, low_group, high_group, zero=None, symmetric=False, use_ste=False, scale=None, zero_point=None):
+#     _x = x.detach()
+#
+#     if scale is None and zero_point is None:
+#         scale, zero_point = calc_qparams_per_input_channel(_x, low_group, high_group, symmetric=symmetric, zero=zero)
+#     scale = scale[None, :, None, None]
+#     zero_point = zero_point[None, :, None, None]
+#
+#     _x = clamp_matrix_per_input_channel(torch.round(_x / scale + zero_point), low_bit, low_group, high_group, symmetric)
+#
+#     # drop 2 bits
+#     if low_group.view(-1).size(0):
+#         _x[:, low_group] = truncate_lower_bits(_x[:, low_group], low_bit, symmetric=symmetric)
+#
+#     _x = (_x - zero_point) * scale
+#
+#     if use_ste:
+#         return STE.apply(x, _x)
+#     return _x
+
+
+def calc_symmetric_qparams_per_input_channel(_min, _max):
+    scale = torch.max(_min.abs(), _max.abs())
+    scale = torch.clamp(scale, min=1e-8) / 127
     return scale, torch.zeros_like(scale, device='cuda')
 
-def calc_qparams_per_input_channel_with_range(_min, _max, low_group, high_group, symmetric=False, zero=None):
+def calc_qparams_per_input_channel_with_range(_min, _max, symmetric=False, zero=None):
     if symmetric:
-        return calc_symmetric_qparams_per_input_channel(_min, _max, low_group, high_group)
+        return calc_symmetric_qparams_per_input_channel(_min, _max)
     else:
         if zero is None:
             zero = torch.tensor(0.0, device='cuda')
         _min = torch.where(_min <= zero, _min, zero)
         _max = torch.where(_max >= zero, _max, zero)
-    return get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group)
+    return get_scale_and_zeropoint_per_input_channel(_min, _max)
 
-def calc_qparams_per_input_channel(mat, low_group, high_group, symmetric=False, zero=None):
-    _mat = mat.transpose(1, 0).reshape(mat.size(1), -1)
-    _min = _mat.min(dim=1).values
-    _max = _mat.max(dim=1).values
+def calc_qparams_per_input_channel(mat, symmetric=False, zero=None):
+    _min = mat.min()
+    _max = mat.max()
+
     if symmetric:
-        return calc_symmetric_qparams_per_input_channel(_min, _max, low_group, high_group)
+        return calc_symmetric_qparams_per_input_channel(_min, _max)
+
     else:
         if zero is None:
             zero = torch.tensor(0.0, device='cuda')
         _min = torch.where(_min <= zero, _min, zero)
         _max = torch.where(_max >= zero, _max, zero)
-    return get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group)
+    return get_scale_and_zeropoint_per_input_channel(_min, _max)
 
-
-def get_scale_and_zeropoint_per_input_channel(_min, _max, low_group, high_group):
-    _size = _min.size(0)
-    scale = torch.zeros(_size, device='cuda')
-    zero_point = torch.zeros(_size, device='cuda')
-
-    if scale[low_group].size(0):
-        scale[low_group] = (_max[low_group] - _min[low_group]) / 63
-        zero_point[low_group] = torch.clamp(- torch.round(_min[low_group] / scale[low_group]), 0, 63)
-
-    if scale[high_group].size(0):
-        scale[high_group] = (_max[high_group] - _min[high_group]) / 255
-        zero_point[high_group] = torch.clamp(- torch.round(_min[high_group] / scale[high_group]), 0, 255)
+def get_scale_and_zeropoint_per_input_channel(_min, _max):
+    scale = (_max - _min) / 255
+    zero_point = torch.clamp(- torch.round(_min / scale), 0, 255)
     return scale, zero_point
 
-def clamp_matrix_per_input_channel(x, low_group, high_group, symmetric=False, only_low=False):
-    if symmetric:
-        low_qmin, low_qmax = -32, 31
-    else:
-        low_qmin, low_qmax = 0, 63
+def clamp_matrix_per_input_channel(x, low_bit, low_group, high_group, symmetric=False, only_low=False):
+    if low_group.view(-1).size(0):
+        if symmetric:
+            q_range = 2 ** (low_bit - 1) - 1
+            low_qmin, low_qmax = -q_range - 1, q_range
+        else:
+            q_range = 2 ** low_bit - 1
+            low_qmin, low_qmax = 0, q_range
 
-    x[:, low_group] = torch.clamp(x[:, low_group], low_qmin, low_qmax)
+        x[:, low_group] = torch.clamp(x[:, low_group], low_qmin, low_qmax)
 
-    if not only_low:
+    if not only_low and high_group.view(-1).size(0):
         if symmetric:
             high_qmin, high_qmax = -128, 127
         else:
@@ -206,33 +263,46 @@ def clamp_matrix_per_input_channel(x, low_group, high_group, symmetric=False, on
         x[:,high_group] = torch.clamp(x[:,high_group], high_qmin, high_qmax)
     return x
 
-def fake_quantize_per_input_channel(x, low_group, high_group, zero, symmetric=False, use_ste=False, scale=None, zero_point=None):
+# def truncate_lower_bits(x, bit, symmetric=False):
+#     if bit == 8:
+#         return x
+#     if symmetric:
+#         if bit == 6:
+#             truncator = -4
+#         elif bit == 7:
+#             truncator = -16
+#     else:
+#         if bit == 6:
+#             truncator = 60
+#         elif bit == 7:
+#             truncator = 120
+#     bit_truncator = torch.tensor(truncator, dtype=torch.int8, device='cuda')
+#     return x.type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+
+
+def truncate_lower_bits(x, bit, low_group, high_group, symmetric=False):
+    if bit == 8:
+        return x
+
+    # bit_truncator = torch.tensor(4, dtype=torch.int8, device='cuda')
+    x[:, low_group] = torch.where(x[:, low_group] % 4 >= 2, x[:, low_group] // 4 + 1, x[:, low_group] // 4) * 4
+    return clamp_matrix_per_input_channel(x, bit, low_group, high_group, symmetric=symmetric, only_low=True)
+
+    # return x.type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
+
+
+def fake_quantize_per_input_channel(x, low_bit, low_group, high_group, zero=None, symmetric=False, use_ste=False, scale=None, zero_point=None):
     _x = x.detach()
 
     if scale is None and zero_point is None:
-        scale, zero_point = calc_qparams_per_input_channel(_x, low_group, high_group, symmetric, zero)
-    scale = scale[None, :, None, None]
-    zero_point = zero_point[None, :, None, None]
+        scale, zero_point = calc_qparams_per_input_channel(_x, symmetric=symmetric)
 
-    _x = clamp_matrix_per_input_channel(torch.round(_x / scale + zero_point), low_group, high_group, symmetric)
+    _x = clamp_matrix_per_input_channel(torch.round(_x / scale + zero_point), low_bit, low_group, high_group, symmetric=symmetric)
 
     # drop 2 bits
     if low_group.view(-1).size(0):
-        if symmetric:
-            bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda').reshape(1, -1, 1, 1)
-            _x[:, low_group] = _x[:, low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
-        else:
-            bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda').reshape(1, -1, 1, 1)
-            _x[:, low_group] = _x[:, low_group].type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
-
-    # # div 4 ver
-    # if low_group.view(-1).size(0):
-    #     _x[:, low_group] = (_x[:, low_group] / 4).trunc()
-    #     if symmetric:
-    #         low_qmin, low_qmax = -8, 7
-    #     else:
-    #         low_qmin, low_qmax = 0, 15
-    #     _x[:, low_group] = torch.clamp(_x[:, low_group], low_qmin, low_qmax) * 4
+        _x = truncate_lower_bits(_x, low_bit, low_group, high_group, symmetric=symmetric)
+        # _x[:, low_group] = truncate_lower_bits(_x[:, low_group], low_bit, symmetric=symmetric)
 
     _x = (_x - zero_point) * scale
 
@@ -303,25 +373,13 @@ def quantize_matrix(x, scale, zero_point, bit=None, symmetric=False):
     return clamp_matrix(quantized, bit, symmetric)
 
 
-def quantize_matrix_per_in_channel(x, scale, zero_point, low_group, high_group, symmetric=False):
+def quantize_matrix_per_in_channel(x, scale, zero_point, low_bit, low_group, high_group, symmetric=False):
     x = torch.round(x / scale + zero_point)
 
-    # #truncate
-    # x[:, low_group] = (x[:, low_group] / 4).trunc()
-    # if symmetric:
-    #     low_qmin, low_qmax = -8, 7
-    # else:
-    #     low_qmin, low_qmax = 0, 15
-    # x[:, low_group] = torch.clamp(x[:, low_group], low_qmin, low_qmax)
-
     if low_group.view(-1).size(0):
-        if symmetric:
-            bit_truncator = torch.tensor(-4, dtype=torch.int8, device='cuda').reshape(1, -1, 1, 1)
-            x[:, low_group] = x[:, low_group].type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
-        else:
-            bit_truncator = torch.tensor(252, dtype=torch.uint8, device='cuda').reshape(1, -1, 1, 1)
-            x[:, low_group] = x.type(torch.cuda.ByteTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
-    return clamp_matrix_per_input_channel(x, low_group, high_group, symmetric)
+        # x[:, low_group] = truncate_lower_bits(x[:, low_group], low_bit, symmetric=symmetric)
+        x = truncate_lower_bits(x, low_bit, low_group, high_group, symmetric=symmetric)
+    return clamp_matrix_per_input_channel(x, low_bit, low_group, high_group, symmetric=symmetric)
 
 
 def quantize_matrix_2d(x, scale, zero_point, batch_cluster, bit=None):
@@ -511,6 +569,7 @@ def transfer_qparams(_fp, _int):
             _fp.w_bit.data = _fp.w_bit.max()
             _int.low_group = _fp.low_group.cuda()
             _int.high_group = _fp.high_group.cuda()
+            _int.low_bit = _fp.low_bit
         _int.w_bit.data = _fp.w_bit.data
         _int.a_bit.data = _fp.a_bit.data
         negative_values = (_int.shift < 0).nonzero(as_tuple=True)[0]
@@ -564,7 +623,7 @@ def quantize_conv2d_weight(_fp, _int, symmetric):
 
 def quantize_conv2d_weight_in_channel(_fp, _int, symmetric):
     _int.weight.data.copy_(
-        quantize_matrix_per_in_channel(_fp.conv.weight, _int.s2, _int.z2, _int.low_group, _int.high_group,
+        quantize_matrix_per_in_channel(_fp.conv.weight, _int.s2, _int.z2, _int.low_bit, _int.low_group, _int.high_group,
                                        symmetric=symmetric))
     _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     return _int

@@ -78,8 +78,8 @@ class FusedAlexNetSmall(nn.Module):
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
-        if self.mixed_precision:
-            self.mixed_range = nn.Parameter(torch.zeros(2, 3), requires_grad=False)
+        # if self.mixed_precision:
+        #     self.mixed_range = nn.Parameter(torch.zeros(2, 3), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
@@ -133,24 +133,31 @@ class FusedAlexNetSmall(nn.Module):
             self.in_range[0], self.in_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
-        if self.mixed_precision:
-            data = x.transpose(1, 0).reshape(x.size(1), -1)
-            _min = data.min(dim=1).values
-            _max = data.max(dim=1).values
-            if self.apply_ema:
-                self.mixed_range[0] = self.mixed_range[0] * self.smooth + _min * (1 - self.smooth)
-                self.mixed_range[1] = self.mixed_range[1] * self.smooth + _max * (1 - self.smooth)
-            else:
-                self.mixed_range[0], self.mixed_range[1] = _min, _max
+        # if self.mixed_precision:
+        #     data = x.transpose(1, 0).reshape(x.size(1), -1)
+        #     _min = data.min(dim=1).values
+        #     _max = data.max(dim=1).values
+        #     if self.apply_ema:
+        #         self.mixed_range[0] = self.mixed_range[0] * self.smooth + _min * (1 - self.smooth)
+        #         self.mixed_range[1] = self.mixed_range[1] * self.smooth + _max * (1 - self.smooth)
+        #     else:
+        #         self.mixed_range[0], self.mixed_range[1] = _min, _max
 
     def _fake_quantize_input(self, x):
+        # if self.mixed_precision:
+        #     zero = self.runtime_helper.fzero
+        #     s, z = calc_qparams_per_input_channel_with_range(self.mixed_range[0], self.mixed_range[1], self.conv1.low_group, self.conv1.high_group, zero=zero)
+        #     return fake_quantize_per_input_channel(x, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group, zero=zero, scale=s, zero_point=z)
+        # else:
+        #     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        #     return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         if self.mixed_precision:
-            zero = self.runtime_helper.fzero
-            s, z = calc_qparams_per_input_channel_with_range(self.mixed_range[0], self.mixed_range[1], self.conv1.low_group, self.conv1.high_group, zero=zero)
-            return fake_quantize_per_input_channel(x, self.conv1.low_group, self.conv1.high_group, zero, scale=s, zero_point=z)
+            return fake_quantize_per_input_channel(x, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group,
+                                                   scale=s, zero_point=z)
         else:
-            s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
             return fake_quantize(x, s, z, self.in_bit)
+
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
