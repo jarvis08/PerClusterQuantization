@@ -163,8 +163,8 @@ class KMeansClustering(object):
                     for image, _ in t:
                         batch = torch.tensor(self.get_partitioned_batch(image))
                         x = torch.cat((x, batch))
-
             n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
+            print("Train K-means model..")
             best_model = KMeans(
                 n_clusters=n_prediction_cluster, random_state=0).fit(x)
 
