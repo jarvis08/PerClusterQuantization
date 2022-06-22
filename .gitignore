@@ -3,9 +3,11 @@ data/*
 runs/*
 exp_results.txt
 test.txt
+tmp*.sh
 
 tags
 .idea
+*.txt
 *.pyc
 *__pycache__*
 .vscode

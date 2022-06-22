@@ -111,15 +111,9 @@ class QuantLinear(Module):
             if self.per_channel:
                 w_min, _ = torch.min(w_transform, dim=1, out=None)
                 w_max, _ = torch.max(w_transform, dim=1, out=None)
-                if self.quantize_bias:
-                    b_min = self.bias.data
-                    b_max = self.bias.data
             else:
                 w_min = w_transform.min().expand(1)
                 w_max = w_transform.max().expand(1)
-                if self.quantize_bias:
-                    b_min = self.bias.data.min()
-                    b_max = self.bias.data.max()
 
             # perform the quantization
             if self.quant_mode == 'symmetric':
@@ -138,9 +132,8 @@ class QuantLinear(Module):
 
             if not self.is_classifier:
                 return (ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale, self.fc_scaling_factor)
-                # return (F.linear(x_int, self.weight_integer, self.bias_integer) * correct_output_scale, self.fc_scaling_factor)
             else:
-                return ste_round.apply(F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)) * correct_output_scale
+                return F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer) * correct_output_scale
         else:
             return (F.linear(x, weight=self.weight, bias=self.bias), None)
 
