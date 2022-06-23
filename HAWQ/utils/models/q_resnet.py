@@ -95,12 +95,8 @@ class Q_ResNet20_Daq(nn.Module):
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
 
-        self.quant_init_block_conv = QuantConv2d()
-        self.quant_init_block_conv.set_param(init_block.conv)
-        self.quant_init_block_act = QuantAct_Daq(runtime_helper=runtime_helper)
-
-        self.quant_init_block_bn = QuantBn(runtime_helper=runtime_helper)
-        self.quant_init_block_bn.set_param(init_block.bn)
+        self.quant_init_block_convbn = QuantBnConv2d()
+        self.quant_init_block_convbn.set_param(init_block.conv, init_block.bn)
 
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
 
@@ -129,10 +125,7 @@ class Q_ResNet20_Daq(nn.Module):
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)
 
-        x, weight_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
-
+        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
@@ -166,11 +159,10 @@ class Q_ResNet20_Daq(nn.Module):
     def initialize_counter(self, x, n_clusters):
         self.zero_counter = []
 
-        self.features = nn.Sequential(self.quant_init_block_conv, self.quant_init_block_bn, self.act)
+        self.features = nn.Sequential(self.quant_init_block_convbn, self.act)
         
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
@@ -187,8 +179,7 @@ class Q_ResNet20_Daq(nn.Module):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         layer_idx = 0
         n_features = self.zero_counter[layer_idx].size(1)
@@ -207,15 +198,14 @@ class Q_ResNet20_Daq(nn.Module):
     def get_output_max_distribution(self, x, cluster, n_clusters):
         initialized = True
         if not hasattr(self, 'max_counter'):
-            self.features = nn.Sequential(self.quant_init_block_conv, self.quant_init_block_bn, self.act)
+            self.features = nn.Sequential(self.quant_init_block_convbn, self.act)
             tmp = [[] for _ in range(n_clusters)]
             initialized = False
             self.max_counter = []
             self.max_counter.append(tmp)
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         l_idx = 0
         _max = x.view(x.size(0), -1).max(dim=1).values
@@ -309,13 +299,9 @@ class Q_ResNet50_Daq(nn.Module):
         self.runtime_helper = runtime_helper
 
         self.quant_input = QuantAct_Daq(runtime_helper=runtime_helper)
-
-        self.quant_init_block_conv = QuantConv2d()
-        self.quant_init_block_conv.set_param(init_block.conv)
-        self.quant_init_block_act = QuantAct_Daq(runtime_helper=runtime_helper)
-
-        self.quant_init_block_bn = QuantBn(runtime_helper=runtime_helper)
-        self.quant_init_block_bn.set_param(init_block.bn)
+        
+        self.quant_init_convbn = QuantBnConv2d()
+        self.quant_init_convbn.set_param(init_block.conv.conv, init_block.conv.bn)
 
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
 
@@ -345,9 +331,7 @@ class Q_ResNet50_Daq(nn.Module):
     def forward(self, x):
         x, act_scaling_factor = self.quant_input(x)
 
-        x, weight_scaling_factor = self.quant_init_block_conv(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_init_block_act(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_init_block_bn(x, act_scaling_factor)
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
 
         x = self.pool(x)
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor)
@@ -371,7 +355,7 @@ class Q_ResNet50_Daq(nn.Module):
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
         for module in self.modules():
-            if isinstance(module, (QuantAct_Daq, QuantLinear, QuantBnConv2d)):
+            if isinstance(module, (QuantAct_Daq, QuantLinear, QuantConv2d, QuantBn, QuantBnConv2d)):
                 precision = getattr(module, 'full_precision_flag')
                 if precision:
                     precision = False
@@ -383,12 +367,11 @@ class Q_ResNet50_Daq(nn.Module):
     def initialize_counter(self, x, n_clusters):
         self.zero_counter = []
 
-        self.features = nn.Sequential(self.quant_init_block_conv, self.quant_init_block_bn, self.pool, self.act)
+        self.features = nn.Sequential(self.quant_init_block_convbn, self.pool, self.act)
         
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
+        x = self.features[1](x)
         x = self.features[2](x)
-        x = self.features[3](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
@@ -405,9 +388,8 @@ class Q_ResNet50_Daq(nn.Module):
             self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
+        x = self.features[1](x)
         x = self.features[2](x)
-        x = self.features[3](x)
 
         layer_idx = 0
         n_features = self.zero_counter[layer_idx].size(1)
@@ -426,16 +408,15 @@ class Q_ResNet50_Daq(nn.Module):
     def get_output_max_distribution(self, x, cluster, n_clusters):
         initialized = True
         if not hasattr(self, 'max_counter'):
-            self.features = nn.Sequential(self.quant_init_block_conv, self.quant_init_block_bn, self.pool, self.act)   
+            self.features = nn.Sequential(self.quant_init_block_convbn, self.pool, self.act)   
             tmp = [[] for _ in range(n_clusters)]
             initialized = False
             self.max_counter = []
             self.max_counter.append(tmp)
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
+        x = self.features[1](x)
         x = self.features[2](x)
-        x = self.features[3](x)
 
         layer_idx = 0
         _max = x.view(x.size(0), -1).max(dim=1).values
@@ -512,9 +493,11 @@ class Q_ResUnitBn(nn.Module):
         x = x + identity
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, scaling_factor_int32, None)
 
         x = nn.ReLU()(x)
 
@@ -536,43 +519,24 @@ class Q_ResUnitBn_Daq(nn.Module):
         self.quant_act = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn1 = unit.body.conv1
-        
-        self.quant_conv1 = QuantConv2d()
-        self.quant_conv1.set_param(convbn1.conv)
-        self.quant_convbn_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_bn1 = QuantBn(runtime_helper=runtime_helper)
-        self.quant_bn1.set_param(convbn1.bn)
-        
+        self.quant_convbn1 = QuantBnConv2d()
+        self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
         self.act1 = nn.ReLU()
-        
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn2 = unit.body.conv2
-        
-        self.quant_conv2 = QuantConv2d()
-        self.quant_conv2.set_param(convbn2.conv)
-        self.quant_convbn_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_bn2 = QuantBn(runtime_helper=runtime_helper)
-        self.quant_bn2.set_param(convbn2.bn)
-        
+        self.quant_convbn2 = QuantBnConv2d()
+        self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
         self.act2 = nn.ReLU()
-        
         self.quant_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn3 = unit.body.conv3
-        
-        self.quant_conv3 = QuantConv2d()
-        self.quant_conv3.set_param(convbn3.conv)
-        self.quant_convbn_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_bn3 = QuantBn(runtime_helper=runtime_helper)
-        self.quant_bn3.set_param(convbn3.bn)
+        self.quant_convbn3 = QuantBnConv2d()
+        self.quant_convbn3.set_param(convbn3.conv, convbn3.bn)
         
         if self.resize_identity:
-            self.quant_identity_conv = QuantConv2d()
-            self.quant_identity_conv.set_param(unit.identity_conv.conv)
-            self.quant_identity_convbn_act = QuantAct_Daq(runtime_helper=runtime_helper)
-            self.quant_identity_bn = QuantBn(runtime_helper=runtime_helper)
-            self.quant_identity_bn.set_param(unit.identity_conv.bn)
+            self.quant_identity_convbn = QuantBnConv2d()
+            self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
 
         self.act3 = nn.ReLU()
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
@@ -583,39 +547,29 @@ class Q_ResUnitBn_Daq(nn.Module):
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
             identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_conv(x, identity_act_scaling_factor)
-            identity, identity_act_scaling_factor = self.quant_identity_convbn_act(identity, identity_act_scaling_factor, identity_weight_scaling_factor)
-            identity, identity_weight_scaling_factor = self.quant_identity_bn(identity, identity_act_scaling_factor)
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
         else:
             identity = x
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
-        x, weight_scaling_factor = self.quant_conv1(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_convbn_act1(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_bn1(x, act_scaling_factor)
-        
+        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
         x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
 
-        x, weight_scaling_factor = self.quant_conv2(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_convbn_act2(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_bn2(x, act_scaling_factor)
-        
+        x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
         x = self.act2(x)
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor)
 
-        x, weight_scaling_factor = self.quant_conv3(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_convbn_act3(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_bn3(x, act_scaling_factor)
+        x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
 
         x = x + identity
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, 
-                                                         identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, 
-                                                         scaling_factor_int32, None)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, scaling_factor_int32, None)
 
         x = self.act3(x)
 
@@ -626,36 +580,32 @@ class Q_ResUnitBn_Daq(nn.Module):
         self.zero_counter = zero_counter
 
         if self.resize_identity:
-            self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
-                                          self.quant_conv2, self.quant_bn2, self.act2,
-                                          self.quant_conv3, self.quant_bn3, self.act3,
-                                          self.quant_identity_conv, self.quant_identity_bn)
+            self.features = nn.Sequential(self.quant_convbn1, self.act1,
+                                          self.quant_convbn2, self.act2,
+                                          self.quant_convbn3, self.act3,
+                                          self.quant_identity_convbn)
 
-            identity, _ = self.features[9](x)
-            identity, _ = self.features[10](identity)
+            identity, _ = self.features[6](x)
         else :
             self.features = nn.Sequential(self.quant_convbn1, self.act1, 
                                           self.quant_convbn2, self.act2,
                                           self.quant_convbn3, self.act3)
             identity = x
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[3](x)
+        x, _ = self.features[2](x)
+        x = self.features[3](x)
+
+        n_features = x.view(-1).size(0)
+        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
         x, _ = self.features[4](x)
-        x = self.features[5](x)
-
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
-
-        x, _ = self.features[6](x)
-        x, _ = self.features[7](x)
         x = x + identity
-        x = self.features[8](x)
+        x = self.features[5](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
@@ -665,14 +615,12 @@ class Q_ResUnitBn_Daq(nn.Module):
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
         if self.resize_identity:
-            identity, _ = self.features[9](x)
-            identity, _ = self.features[10](identity)
+            identity, _ = self.features[6](x)
         else:
             identity = x
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         layer_idx += 1
         n_features = self.zero_counter[layer_idx].size(1)
@@ -682,22 +630,20 @@ class Q_ResUnitBn_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[3](x)
+        x, _ = self.features[2](x)
+        x = self.features[3](x)
+        
+        layer_idx += 1
+        n_features = self.zero_counter[layer_idx].size(1)
+        for idx in range(x.size(0)):
+            flattened = x[idx].view(-1)
+            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+            zeros_idx %= n_features
+            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+        
         x, _ = self.features[4](x)
-        x = self.features[5](x)
-        
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
-        
-        x, _ = self.features[6](x)
-        x, _ = self.features[7](x)
         x = x + identity
-        x = self.features[8](x)
+        x = self.features[5](x)
 
         layer_idx += 1
         n_features = self.zero_counter[layer_idx].size(1)
@@ -713,10 +659,10 @@ class Q_ResUnitBn_Daq(nn.Module):
     def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized):
         if not initialized:
             if self.resize_identity:
-                self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
-                                              self.quant_conv2, self.quant_bn2, self.act2,
-                                              self.quant_conv3, self.quant_bn3, self.act3,
-                                              self.quant_identity_conv, self.quant_identity_bn)
+                self.features = nn.Sequential(self.quant_convbn1, self.act1,
+                                              self.quant_convbn2, self.act2,
+                                              self.quant_convbn3, self.act3,
+                                              self.quant_identity_convbn)
             else:
                 self.features = nn.Sequential(self.quant_convbn1, self.act1, 
                                               self.quant_convbn2, self.act2,
@@ -727,14 +673,12 @@ class Q_ResUnitBn_Daq(nn.Module):
             max_counter.append([[] for _ in range(n_clusters)])
 
         if self.resize_identity:
-            identity, _ = self.features[9](x)
-            identity, _ = self.features[10](identity)
+            identity, _ = self.features[6](x)
         else:
             identity = x
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
         l_idx += 1
 
         _max = x.view(x.size(0), -1).max(dim=1).values
@@ -743,21 +687,19 @@ class Q_ResUnitBn_Daq(nn.Module):
         else:
             max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
 
-        x, _ = self.features[3](x)
+        x, _ = self.features[2](x)
+        x = self.features[3](x)
+        l_idx += 1
+
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
         x, _ = self.features[4](x)
-        x = self.features[5](x)
-        l_idx += 1
-
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
-
-        x, _ = self.features[6](x)
-        x, _ = self.features[7](x)
         x = x + identity
-        x = self.features[8](x)
+        x = self.features[5](x)
         l_idx += 1
 
         _max = x.view(x.size(0), -1).max(dim=1).values
@@ -818,9 +760,11 @@ class Q_ResBlockBn(nn.Module):
         x = x + identity
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, scaling_factor_int32, None)
 
         x = nn.ReLU()(x)
 
@@ -843,34 +787,20 @@ class Q_ResBlockBn_Daq(nn.Module):
         self.quant_act = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn1 = unit.body.conv1
-
-        self.quant_conv1 = QuantConv2d()
-        self.quant_conv1.set_param(convbn1.conv)
-        self.quant_convbn_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_bn1 = QuantBn(runtime_helper=runtime_helper)
-        self.quant_bn1.set_param(convbn1.bn)
-
+        self.quant_convbn1 = QuantBnConv2d()
+        self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
         self.act1 = nn.ReLU()
-
         self.quant_act1 = QuantAct_Daq(runtime_helper=runtime_helper)
 
         convbn2 = unit.body.conv2
-
-        self.quant_conv2 = QuantConv2d()
-        self.quant_conv2.set_param(convbn2.conv)
-        self.quant_convbn_act2 = QuantAct_Daq(runtime_helper=runtime_helper)
-        self.quant_bn2 = QuantBn(runtime_helper=runtime_helper)
-        self.quant_bn2.set_param(convbn2.bn)
+        self.quant_convbn2 = QuantBnConv2d()
+        self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
 
         if self.resize_identity:
-            self.quant_identity_conv = QuantConv2d()
-            self.quant_identity_conv.set_param(unit.identity_conv.conv)
-            self.quant_identity_convbn_act = QuantAct_Daq(runtime_helper=runtime_helper)
-            self.quant_identity_bn = QuantBn(runtime_helper=runtime_helper)
-            self.quant_identity_bn.set_param(unit.identity_conv.bn)
-
+            self.quant_identity_convbn = QuantBnConv2d()
+            self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
+            
         self.act2 = nn.ReLU()
-
         self.quant_act_int32 = QuantAct_Daq(runtime_helper=runtime_helper)
 
 
@@ -879,32 +809,25 @@ class Q_ResBlockBn_Daq(nn.Module):
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
             identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_conv(x, identity_act_scaling_factor)
-            identity, identity_act_scaling_factor = self.quant_identity_convbn_act(identity, identity_act_scaling_factor, identity_weight_scaling_factor)
-            identity, identity_weight_scaling_factor = self.quant_identity_bn(identity, identity_act_scaling_factor)
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
         else:
             identity = x
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32)
 
-        x, weight_scaling_factor = self.quant_conv1(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_convbn_act1(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_bn1(x, act_scaling_factor)
-        
+        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
         x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor)
 
-        x, weight_scaling_factor = self.quant_conv2(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_convbn_act2(x, act_scaling_factor, weight_scaling_factor)
-        x, weight_scaling_factor = self.quant_bn2(x, act_scaling_factor)
+        x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
 
         x = x + identity
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity,
-                                                         identity_act_scaling_factor, identity_weight_scaling_factor)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity,
-                                                         scaling_factor_int32, None)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, scaling_factor_int32, None)
 
         x = self.act2(x)
 
@@ -915,27 +838,24 @@ class Q_ResBlockBn_Daq(nn.Module):
         self.zero_counter = zero_counter
 
         if self.resize_identity:
-            self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
-                                          self.quant_conv2, self.quant_bn2, self.act2,
-                                          self.quant_identity_conv, self.quant_identity_bn)
+            self.features = nn.Sequential(self.quant_convbn1, self.act1,
+                                          self.quant_convbn2, self.act2,
+                                          self.quant_identity_convbn)
 
-            identity, _ = self.features[6](x)
-            identity, _ = self.features[7](identity)
+            identity, _ = self.features[4](x)
         else :
-            self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
-                                          self.quant_conv2, self.quant_bn2, self.act2)
+            self.features = nn.Sequential(self.quant_convbn1, self.act1,
+                                          self.quant_convbn2, self.act2)
             identity = x
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[3](x)
-        x, _ = self.features[4](x)
+        x, _ = self.features[2](x)
         x = x + identity
-        x = self.features[5](x)
+        x = self.features[3](x)
 
         n_features = x.view(-1).size(0)
         self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
@@ -945,14 +865,12 @@ class Q_ResBlockBn_Daq(nn.Module):
 
     def count_zeros_per_index(self, x, layer_idx, cluster, n_clusters):
         if self.resize_identity:
-            identity, _ = self.features[6](x)
-            identity, _ = self.features[7](identity)
+            identity, _ = self.features[4](x)
         else:
             identity = x
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
 
         layer_idx += 1
         n_features = self.zero_counter[layer_idx].size(1)
@@ -962,10 +880,9 @@ class Q_ResBlockBn_Daq(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[3](x)
-        x, _ = self.features[4](x)
+        x, _ = self.features[2](x)
         x = x + identity
-        x = self.features[5](x)
+        x = self.features[3](x)
         
         layer_idx += 1
         n_features = self.zero_counter[layer_idx].size(1)
@@ -981,25 +898,23 @@ class Q_ResBlockBn_Daq(nn.Module):
     def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized):
         if not initialized:
             if self.resize_identity:
-                self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
-                                              self.quant_conv2, self.quant_bn2, self.act2,
-                                              self.quant_identity_conv, self.quant_identity_bn)
+                self.features = nn.Sequential(self.quant_convbn1, self.act1,
+                                              self.quant_convbn2, self.act2,
+                                              self.quant_identity_convbn)
             else:
-                self.features = nn.Sequential(self.quant_conv1, self.quant_bn1, self.act1,
-                                              self.quant_conv2, self.quant_bn2, self.act2)
+                self.features = nn.Sequential(self.quant_convbn1, self.act1,
+                                              self.quant_convbn2, self.act2)
 
             max_counter.append([[] for _ in range(n_clusters)])
             max_counter.append([[] for _ in range(n_clusters)])
 
         if self.resize_identity:
-            identity, _ = self.features[6](x)
-            identity, _ = self.features[7](identity)
+            identity, _ = self.features[4](x)
         else:
             identity = x
 
         x, _ = self.features[0](x)
-        x, _ = self.features[1](x)
-        x = self.features[2](x)
+        x = self.features[1](x)
         l_idx += 1
 
         _max = x.view(x.size(0), -1).max(dim=1).values
@@ -1008,10 +923,9 @@ class Q_ResBlockBn_Daq(nn.Module):
         else:
             max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
 
-        x, _ = self.features[3](x)
-        x, _ = self.features[4](x)
+        x, _ = self.features[2](x)
         x = x + identity
-        x = self.features[5](x)
+        x = self.features[3](x)
 
         l_idx += 1
 

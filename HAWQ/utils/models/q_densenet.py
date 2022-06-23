@@ -196,7 +196,7 @@ class Q_DenseNet_Daq(nn.Module):
         for stage_num in range(4):
             stage = getattr(features, "stage{}".format(stage_num + 1)) 
 
-            if stage_num is not 0:
+            if stage_num != 0:
                 trans = getattr(stage, "trans{}".format(stage_num + 1)) 
                 quant_trans = Q_Transition_Daq()
                 quant_trans.set_param(trans, runtime_helper)

@@ -1,6 +1,7 @@
 import torch
 
-from sklearn.cluster import KMeans, MiniBatchKMeans
+from sklearn.cluster import MiniBatchKMeans
+from cuml.cluster import KMeans
 import numpy as np
 
 from tqdm import tqdm
@@ -40,7 +41,8 @@ class KMeansClustering(object):
                 _min = data.min(-1, keepdim=True).values
                 _max = data.max(-1, keepdim=True).values
                 rst = torch.cat((_min, _max), dim=-1)
-            return rst.view(rst.size(0), -1).numpy()
+            # return rst.view(rst.size(0), -1).numpy()
+            return rst.view(rst.size(0), -1)
         else:
             # To make clustering model more robust about augmentation's horizontal flip
             n_part = 4
@@ -99,7 +101,8 @@ class KMeansClustering(object):
 
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
-        cluster_info = self.model.predict(np.float64(kmeans_input))
+        # cluster_info = self.model.predict(np.float64(kmeans_input))
+        cluster_info = self.model.predict(kmeans_input)
         if self.final_cluster is not None:  # make output as merged cluster form
             return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
         return torch.LongTensor(cluster_info)
@@ -151,7 +154,8 @@ class KMeansClustering(object):
             print(">> Load Non-augmented dataset & get representations for clustering..")
             with tqdm(nonaug_loader, unit="batch", ncols=90) as t:
                 for image, _ in t:
-                    batch = torch.tensor(self.get_partitioned_batch(image))
+                    # batch = torch.tensor(self.get_partitioned_batch(image))                                                # JK
+                    batch = self.get_partitioned_batch(image).clone()
                     if x is None:
                         x = batch
                     else:
@@ -161,12 +165,19 @@ class KMeansClustering(object):
             for _ in range(self.args.mixrate):
                 with tqdm(aug_loader, unit="batch", ncols=90) as t:
                     for image, _ in t:
-                        batch = torch.tensor(self.get_partitioned_batch(image))
+                        # batch = torch.tensor(self.get_partitioned_batch(image))                                            # JK
+                        batch = self.get_partitioned_batch(image).clone()
                         x = torch.cat((x, batch))
             n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
-            print("Train K-means model..")
-            best_model = KMeans(
-                n_clusters=n_prediction_cluster, random_state=0).fit(x)
+            best_model_inertia = 9999999999999999
+            x = x.cuda()
+            print("Train K-means model 5 times, and choose the best model")
+            for trial in range(5):
+                model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
+                if model.inertia_ < best_model_inertia:
+                    best_model = model
+                    best_model_inertia = model.inertia_
+                print("Trial-{} done".format(trial))
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
@@ -208,9 +219,9 @@ class KMeansClustering(object):
 
                 n_per_sub[cluster] += self.args.batch
                 dnn_model.get_output_max_distribution(
-                    input.cuda(), cluster, n_sub_clusters)
+                    input, cluster, n_sub_clusters)
                 dnn_model.count_zeros_per_index(
-                    input.cuda(), cluster, n_sub_clusters)
+                    input, cluster, n_sub_clusters)
 
                 container.set_next_batch()
                 if container.ready_cluster is None:
@@ -222,9 +233,9 @@ class KMeansClustering(object):
                         container.leftover_batch[c][1], c
                     n_per_sub[cluster] += input.size(0)
                     dnn_model.get_output_max_distribution(
-                        input.cuda(), cluster, n_sub_clusters)
+                        input, cluster, n_sub_clusters)
                     dnn_model.count_zeros_per_index(
-                        input.cuda(), cluster, n_sub_clusters)
+                        input, cluster, n_sub_clusters)
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):

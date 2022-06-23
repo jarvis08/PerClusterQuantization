@@ -59,7 +59,8 @@ class InputContainer(object):
         img_size = 224 if dataset_name == 'imagenet' else 32
         self.num_clusters = num_clusters
         self.batch_size = batch_size
-        self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)]
+        # self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)]                 # JK
+        self.container = [[torch.zeros((0, 3, img_size, img_size)).cuda(), torch.zeros(0, dtype=torch.long).cuda()]
                           for _ in range(num_clusters)]
 
         self.data_loader = data_loader
@@ -78,6 +79,8 @@ class InputContainer(object):
         while True:
             try:
                 images, targets = next(self.generator)
+                images = images.cuda()                                                                                  # JK
+                targets = targets.cuda()
             except StopIteration:
                 self.epoch_done = True
                 break
@@ -306,7 +309,7 @@ def pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runti
             input, target, runtime_helper.batch_cluster = container.get_batch()
             runtime_helper.qat_batch_cluster = torch.tensor(
                 runtime_helper.batch_cluster, dtype=torch.int64, device='cuda', requires_grad=False)
-            input, target = input.cuda(), target.cuda()
+            # input, target = input.cuda(), target.cuda()
             output = model(input)
 
             loss = criterion(output, target)
