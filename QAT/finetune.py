@@ -170,12 +170,8 @@ def validate_setting_bits(model, loader, criterion):
                 # prec = accuracy(output, target)[0]
 
 
-def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
-    # import csv
+def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
     import math
-    # for p in percentile:
-    # four_group = []
-    # eight_group = []
     quantile_tensor = torch.tensor(percentile)
     low_counter = 0
     eight_counter = 0
@@ -193,16 +189,8 @@ def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=
             weight_per_filter_group = pre.weight.transpose(1, 0)
 
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
-            # weight_min_max_per_group = torch.zeros((2, in_channel))
-            # weight_min_max_per_group[0], weight_min_max_per_group[1] = ,
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             input_range = pre.input_range[1] - pre.input_range[0]
-
-            # # quantile
-            # input_quantile = torch.where(input_range <= torch.quantile(input_range, quantile_tensor), 1, 0)
-            # weight_quantile = torch.where(weight_range <= torch.quantile(weight_range, quantile_tensor), 1, 0)
-            # fused.w_bit.data = torch.where(torch.logical_and(input_quantile, weight_quantile) > 0, 6, 8).type(
-            #     torch.int8)
 
             # distance 4 times
             input_max, weight_max = input_range.max(), weight_range.max()
@@ -224,6 +212,49 @@ def set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=
             # four_group.append(len(fused.low_group))
 
     print("Total low bit ratio : {:.2f}% ".format(low_counter / total_counter * 100))
+
+        # with open(identifier + '_mixed_ratio.csv', 'a') as csvfile:
+        #     writer = csv.writer(csvfile)
+        #     # writer.writerow(['percentile', str(p)])
+        #     # writer.writerow([four_group[i] for i in range(len(four_group))])
+        #     # writer.writerow([eight_group[i] for i in range(len(eight_group))])
+        #     writer.writerow(['{:2f}%'.format(four_group[i] / (four_group[i] + eight_group[i]) * 100) for i in range(len(eight_group))])
+
+
+def set_mixed_bits_per_input_channels(model, percentile, epoch, identifier=None):
+    import math
+    quantile_tensor = torch.tensor(percentile)
+    low_counter = 0
+    eight_counter = 0
+    total_counter = 0
+    for fused in model.modules():
+        if isinstance(fused, FusedConv2d):
+            in_channel = fused.in_channels
+            total_counter += in_channel
+            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
+
+            weight_group = weight_per_filter_group.reshape(in_channel, -1)
+            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+            input_range = fused.input_range[1] - fused.input_range[0]
+
+            # distance 4 times
+            input_max, weight_max = input_range.max(), weight_range.max()
+            input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
+            weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
+            low_bit = 8 - round(math.log(percentile, 2))
+            fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8).type(
+                torch.int8)
+            # # weight only
+            # fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8).type(torch.int8)
+
+            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0].cuda()
+            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
+            fused.low_bit = torch.tensor(low_bit, dtype=torch.int8)
+
+            low_counter += len(fused.low_group)
+            eight_counter += len(fused.high_group)
+
+    print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, low_counter / total_counter * 100))
 
         # with open(identifier + '_mixed_ratio.csv', 'a') as csvfile:
         #     writer = csv.writer(csvfile)
@@ -257,17 +288,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         # try inference once to record input precisions
-        # validate(pretrained_model, val_loader, criterion)
         validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
-        # visualize(args, pretrained_model, 0)
-
-        set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, args.arch + '_' + args.dataset)
-
-        ## ratio
-        # percentile = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
-        # set_mixed_bits_per_input_channels(pretrained_model, model, percentile, args.arch + '_' + args.dataset)
-        # exit()
+        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, args.arch + '_' + args.dataset)
 
     if pretrained_model:
         del pretrained_model
@@ -296,10 +319,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
-        if args.cluster > 1:
-            pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, e, logger)
-        else:
-            train_epoch(model, train_loader, criterion, optimizer, e, logger)
+        train_epoch(model, train_loader, criterion, optimizer, e, logger)
+        if args.mixed_precision:
+            set_mixed_bits_per_input_channels(model, args.percentile, e, identifier=None)
         opt_scheduler.step()
 
         if args.fold_convbn:
@@ -336,14 +358,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
             quantized_model = tools.quantizer(model, quantized_model)
             quantized_model.cuda()
 
-            if args.cluster > 1:
-                #int_score = pcq_validate(quantized_model, clustering_model, val_loader, criterion, runtime_helper,
-                #                         logger)
-                int_score = pcq_validate(quantized_model, clustering_model, test_loader, criterion, runtime_helper,
-                                         logger)
-            else:
-                #int_score = validate(quantized_model, val_loader, criterion, logger)
-                int_score = validate(quantized_model, test_loader, criterion, logger)
+            #int_score = validate(quantized_model, val_loader, criterion, logger)
+            int_score = validate(quantized_model, test_loader, criterion, logger)
 
             if int_score > best_int_val_score:
                 best_epoch = e
