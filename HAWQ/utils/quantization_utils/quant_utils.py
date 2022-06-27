@@ -115,16 +115,16 @@ def linear_quantize(input, scale, zero_point, inplace=False):
     zero_pint: shift for quantization
     """
     # reshape scale and zeropoint for convolutional weights and activations
-    if len(input.shape) == 4:
-        scale = scale.view(-1, 1, 1, 1)
-        zero_point = zero_point.view(-1, 1, 1, 1)
-    # reshape scale and zeropoint for linear weights
-    elif len(input.shape) == 2:
-        scale = scale.view(-1, 1)
-        zero_point = zero_point.view(-1, 1)
-    else:
-        scale = scale.view(-1)
-        zero_point = zero_point.view(-1)
+    # if len(input.shape) == 4:
+    #     scale = scale.view(-1, 1, 1, 1)
+    #     zero_point = zero_point.view(-1, 1, 1, 1)
+    # # reshape scale and zeropoint for linear weights
+    # elif len(input.shape) == 2:
+    #     scale = scale.view(-1, 1)
+    #     zero_point = zero_point.view(-1, 1)
+    # else:
+    #     scale = scale.view(-1)
+    #     zero_point = zero_point.view(-1)
     if inplace:
         input.mul_(1. / scale).add_(zero_point).round_()
         return input
@@ -142,16 +142,16 @@ def linear_dequantize(input_q, scale, zero_point, inplace=False):
     zero_pint: shift for quantization
     """
     # reshape scale and zeropoint for convolutional weights and activations
-    if len(input_q.shape) == 4:
-        scale = scale.view(-1, 1, 1, 1)
-        zero_point = zero_point.view(-1, 1, 1, 1)
-    # reshape scale and zeropoint for linear weights
-    elif len(input_q.shape) == 2:
-        scale = scale.view(-1, 1)
-        zero_point = zero_point.view(-1, 1)
-    else:
-        scale = scale.view(-1)
-        zero_point = zero_point.view(-1)
+    # if len(input_q.shape) == 4:
+    #     scale = scale.view(-1, 1, 1, 1)
+    #     zero_point = zero_point.view(-1, 1, 1, 1)
+    # # reshape scale and zeropoint for linear weights
+    # elif len(input_q.shape) == 2:
+    #     scale = scale.view(-1, 1)
+    #     zero_point = zero_point.view(-1, 1)
+    # else:
+    #     scale = scale.view(-1)
+    #     zero_point = zero_point.view(-1)
     # mapping integer input_q to fixed-point floating point value with given scaling factor and zeropoint
     if inplace:
         input_q.sub_(zero_point).mul_(scale)
@@ -275,7 +275,7 @@ class SymmetricQuantFunction(Function):
         else:
             raise ValueError("The SymmetricQuantFunction requires a pre-calculated scaling factor")
 
-        zero_point = torch.tensor(0.).cuda()
+        zero_point = torch.zeros_like(scale).cuda()
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
@@ -288,13 +288,13 @@ class SymmetricQuantFunction(Function):
     def backward(ctx, grad_output):
 
         scale = ctx.scale
-        if len(grad_output.shape) == 4:
-            scale = scale.view(-1, 1, 1, 1)
-        # reshape scale and zeropoint for linear weights
-        elif len(grad_output.shape) == 2:
-            scale = scale.view(-1, 1)
-        else:
-            scale = scale.view(-1)
+        # if len(grad_output.shape) == 4:
+        #     scale = scale.view(-1, 1, 1, 1)
+        # # reshape scale and zeropoint for linear weights
+        # elif len(grad_output.shape) == 2:
+        #     scale = scale.view(-1, 1)
+        # else:
+        #     scale = scale.view(-1)
 
         return grad_output.clone() / scale, None, None, None
 
@@ -323,7 +323,7 @@ class AsymmetricQuantFunction(Function):
         if specified_zero_point is not None:
             zero_point = specified_zero_point
         else:
-            zero_point = torch.tensor(0).cuda()
+            zero_point = torch.zeros_like(scale).cuda()
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
         n = 2 ** k - 1
@@ -338,13 +338,13 @@ class AsymmetricQuantFunction(Function):
     def backward(ctx, grad_output):
 
         scale = ctx.scale
-        if len(grad_output.shape) == 4:
-            scale = scale.view(-1, 1, 1, 1)
-        # reshape scale and zeropoint for linear weights
-        elif len(grad_output.shape) == 2:
-            scale = scale.view(-1, 1)
-        else:
-            scale = scale.view(-1)
+        # if len(grad_output.shape) == 4:
+        #     scale = scale.view(-1, 1, 1, 1)
+        # # reshape scale and zeropoint for linear weights
+        # elif len(grad_output.shape) == 2:
+        #     scale = scale.view(-1, 1)
+        # else:
+        #     scale = scale.view(-1)
         return grad_output.clone() / scale, None, None, None
 
 
@@ -398,30 +398,31 @@ class fixedpoint_fn(Function):
         with torch.no_grad():
             # reshape all the tensors to have correct sizes.
             if len(z.shape) == 4:
-                z_scaling_factor = transfer_conv_size(z_scaling_factor)
-                pre_act_scaling_factor = transfer_conv_size(pre_act_scaling_factor)
+                z_scaling_factor = z_scaling_factor.view(-1, 1, 1, 1)
+                pre_act_scaling_factor = pre_act_scaling_factor.view(-1, 1, 1, 1)
                 pre_weight_scaling_factor = transfer_conv_size(pre_weight_scaling_factor)
             elif len(z.shape) == 2:
-                z_scaling_factor = transfer_fc_size(z_scaling_factor)
-                pre_act_scaling_factor = transfer_fc_size(pre_act_scaling_factor)
+                z_scaling_factor = z_scaling_factor.view(-1, 1, 1, 1)
+                pre_act_scaling_factor = pre_act_scaling_factor.view(-1, 1)
                 pre_weight_scaling_factor = transfer_fc_size(pre_weight_scaling_factor)
             ctx.z_scaling_factor = z_scaling_factor
-            if case == 2:
-                if len(z.shape) == 4:
-                    concat_scaling_factor = transfer_conv_size(identity_scaling_factor)
-                    concat_weight_scaling_factor = transfer_conv_size(identity_weight_scaling_factor)
-                elif len(z.shape) == 2:
-                    concat_scaling_factor = transfer_fc_size(identity_scaling_factor)
-                    concat_weight_scaling_factor = transfer_fc_size(identity_weight_scaling_factor)
 
             if case == 1:
                 if len(z.shape) == 4:
-                    identity_scaling_factor = transfer_conv_size(identity_scaling_factor)
+                    identity_scaling_factor = identity_scaling_factor.view(-1, 1, 1, 1)
                     identity_weight_scaling_factor = transfer_conv_size(identity_weight_scaling_factor)
                 elif len(z.shape) == 2:
-                    identity_scaling_factor = transfer_fc_size(identity_scaling_factor)
+                    identity_scaling_factor = identity_scaling_factor.view(-1, 1)
                     identity_weight_scaling_factor = transfer_fc_size(identity_weight_scaling_factor)
 
+            if case == 2:
+                if len(z.shape) == 4:
+                    concat_scaling_factor = identity_scaling_factor.view(-1, 1, 1, 1)
+                    concat_weight_scaling_factor = transfer_conv_size(identity_weight_scaling_factor)
+                elif len(z.shape) == 2:
+                    concat_scaling_factor = identity_scaling_factor.view(-1, 1)
+                    concat_weight_scaling_factor = transfer_fc_size(identity_weight_scaling_factor)
+                    
             if case == 0:
                 # convert z from floating point to integer first
                 z_int = torch.round(z / pre_act_scaling_factor / pre_weight_scaling_factor)
@@ -431,10 +432,10 @@ class fixedpoint_fn(Function):
                 _C = (z_scaling_factor.type(torch.float)).type(torch.double)
                 new_scale = _B / _C
 
-                if len(z.shape) == 4:
-                    new_scale = transfer_conv_size(new_scale)
-                elif len(z.shape) == 2:
-                    new_scale = transfer_fc_size(new_scale)
+                # if len(z.shape) == 4:
+                #     new_scale = transfer_conv_size(new_scale)
+                # elif len(z.shape) == 2:
+                #     new_scale = transfer_fc_size(new_scale)
 
                 m, e = batch_frexp(new_scale)
 
@@ -456,10 +457,10 @@ class fixedpoint_fn(Function):
                 _C = (z_scaling_factor.type(torch.float)).type(torch.double)
                 new_scale = _B / _C
 
-                if len(z.shape) == 4:
-                    new_scale = transfer_conv_size(new_scale)
-                elif len(z.shape) == 2:
-                    new_scale = transfer_fc_size(new_scale)
+                # if len(z.shape) == 4:
+                #     new_scale = transfer_conv_size(new_scale)
+                # elif len(z.shape) == 2:
+                #     new_scale = transfer_fc_size(new_scale)
 
                 m1, e1 = batch_frexp(new_scale)
 
@@ -476,10 +477,10 @@ class fixedpoint_fn(Function):
                 _C = (z_scaling_factor.type(torch.float)).type(torch.double)
                 new_scale = _B / _C
 
-                if len(z.shape) == 4:
-                    new_scale = transfer_conv_size(new_scale)
-                elif len(z.shape) == 2:
-                    new_scale = transfer_fc_size(new_scale)
+                # if len(z.shape) == 4:
+                #     new_scale = transfer_conv_size(new_scale)
+                # elif len(z.shape) == 2:
+                #     new_scale = transfer_fc_size(new_scale)
 
                 m2, e2 = batch_frexp(new_scale)
 
@@ -499,10 +500,10 @@ class fixedpoint_fn(Function):
                 _C = (z_scaling_factor.type(torch.float)).type(torch.double)
                 new_scale = _B / _C
 
-                if len(z.shape) == 4:
-                    new_scale = transfer_conv_size(new_scale)
-                elif len(z.shape) == 2:
-                    new_scale = transfer_fc_size(new_scale)
+                # if len(z.shape) == 4:
+                #     new_scale = transfer_conv_size(new_scale)
+                # elif len(z.shape) == 2:
+                #     new_scale = transfer_fc_size(new_scale)
 
                 m1, e1 = batch_frexp(new_scale)
 
@@ -518,10 +519,10 @@ class fixedpoint_fn(Function):
                 _C = (z_scaling_factor.type(torch.float)).type(torch.double)
                 new_scale = _B / _C
 
-                if len(z.shape) == 4:
-                    new_scale = transfer_conv_size(new_scale)
-                elif len(z.shape) == 2:
-                    new_scale = transfer_fc_size(new_scale)
+                # if len(z.shape) == 4:
+                #     new_scale = transfer_conv_size(new_scale)
+                # elif len(z.shape) == 2:
+                #     new_scale = transfer_fc_size(new_scale)
 
                 m2, e2 = batch_frexp(new_scale)
 
