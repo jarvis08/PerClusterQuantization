@@ -402,7 +402,7 @@ class fixedpoint_fn(Function):
                 pre_act_scaling_factor = pre_act_scaling_factor.view(-1, 1, 1, 1)
                 pre_weight_scaling_factor = transfer_conv_size(pre_weight_scaling_factor)
             elif len(z.shape) == 2:
-                z_scaling_factor = z_scaling_factor.view(-1, 1, 1, 1)
+                z_scaling_factor = z_scaling_factor.view(-1, 1)
                 pre_act_scaling_factor = pre_act_scaling_factor.view(-1, 1)
                 pre_weight_scaling_factor = transfer_fc_size(pre_weight_scaling_factor)
             ctx.z_scaling_factor = z_scaling_factor

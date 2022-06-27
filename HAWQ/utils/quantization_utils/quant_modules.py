@@ -567,7 +567,7 @@ class QuantAct_New(Module):
         # self.register_buffer('x_max', torch.zeros(self.runtime_helper.num_clusters))
         # self.register_buffer('act_scaling_factor', torch.zeros(self.runtime_helper.num_clusters))
         
-        self.register_buffer('sum', torch.zeros(1, dtype=torch.int))
+        self.register_buffer('tmp', torch.zeros(num_clusters))
         self.register_buffer('min', torch.zeros(num_clusters))
         self.register_buffer('max', torch.zeros(num_clusters))
         self.register_buffer('x_min', torch.zeros(num_clusters))
@@ -631,31 +631,13 @@ class QuantAct_New(Module):
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
-            uniques, indices, counts = torch.unique(cluster, return_inverse=True, return_counts=True)
+            uniques = torch.unique(cluster)
             # calculate the quantization range of the activations
             if self.running_stat:
                 if self.act_percentile == 0:
                     data = x.view(x.size(0), -1).clone().detach()
-                    
-                    #####
-                    # max = data.amax(dim=1)
-                    # min = data.amin(dim=1)
-                    
-                    # self.sum.zero_()
-                    # for unique, count in zip(uniques, counts):
-                    #     # TODO
-                    #     if self.is_classifier:
-                    #         self.min[unique] = min[self.sum:self.sum+count].min()
-                    #         self.max[unique] = max[self.sum:self.sum+count].max()
-                    #     else:
-                    #         self.min[unique] = min[self.sum:self.sum+count].min()
-                    #         self.max[unique] = max[self.sum:self.sum+count].max()
-                    #         # x_min[unique] = min[self.sum:self.sum+count].mean()
-                    #         # x_max[unique] = max[self.sum:self.sum+count].mean()
-                    #     self.sum += count
-                    #####        
-                    self.max = torch.scatter_reduce(self.max, 0, indices, src=data.amax(dim=1), reduce="amax")
-                    self.min = torch.scatter_reduce(self.min, 0, indices, src=data.amin(dim=1), reduce="amin")
+                    self.min = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amin(dim=1), reduce="amin")
+                    self.max = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amax(dim=1), reduce="amax")
                         
                 elif self.quant_mode == 'symmetric':        # TODO
                     x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
@@ -676,13 +658,20 @@ class QuantAct_New(Module):
                     self.initialize.index_fill_(0, non_initialized, False)
                 
                 if self.act_range_momentum == -1:
+                    # self.x_min = torch.scatter_reduce(self.x_min, 0, uniques, src=self.min, reduce="amin")
+                    # self.x_max = torch.scatter_reduce(self.x_max, 0, uniques, src=self.max, reduce="amax")
                     self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
                     self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
                 else:
+                    # tmp_min = self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum)
+                    # tmp_max = self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum)
+                    # self.x_min = torch.scatter_reduce(self.tmp, 0, uniques, src=tmp_min, reduce="sum")
+                    # self.x_max = torch.scatter_reduce(self.tmp, 0, uniques, src=tmp_max, reduce="sum")
                     tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
                     tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
                     self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
                     self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
+
 
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
@@ -694,7 +683,7 @@ class QuantAct_New(Module):
                 self.act_scaling_factor, self.act_zero_point = asymmetric_linear_quantization_params(
                     self.activation_bit, self.x_min, self.x_max, True)
                 
-            act_scaling_factor = self.act_scaling_factor[indices]
+            act_scaling_factor = self.act_scaling_factor[cluster]
             if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
                 # this is for the case of input quantization,
                 # or the case using fixed-point rather than integer-only quantization
