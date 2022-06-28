@@ -677,7 +677,7 @@ def validate(val_loader, model, clustering_model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        with tqdm(val_loader, desc="Epoch {}".format(epoch), ncols=105) as t:
+        with tqdm(val_loader, ncols=105) as t:
             for i, (images, target) in enumerate(t):
                 if args.gpu is not None:
                     images = images.cuda(args.gpu, non_blocking=True)
