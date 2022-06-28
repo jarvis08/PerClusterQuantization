@@ -534,7 +534,7 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, lo
         model.train()
 
     end = time.time()
-    with tqdm(train_loader, desc="Epoch {}".format(epoch), ncols=105) as t:
+    with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=105) as t:
         for i, (images, target) in enumerate(t):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -677,7 +677,7 @@ def validate(val_loader, model, clustering_model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        with tqdm(val_loader, ncols=105) as t:
+        with tqdm(val_loader, desc="Validate", ncols=105) as t:
             for i, (images, target) in enumerate(t):
                 if args.gpu is not None:
                     images = images.cuda(args.gpu, non_blocking=True)
@@ -694,8 +694,8 @@ def validate(val_loader, model, clustering_model, criterion, args):
                 # measure accuracy and record loss
                 acc1, acc5 = accuracy(output, target, topk=(1, 5))
                 losses.update(loss.item(), images.size(0))
-                top1.update(acc1[0], images.size(0))
-                top5.update(acc5[0], images.size(0))
+                top1.update(acc1[0].item(), images.size(0))
+                top5.update(acc5[0].item(), images.size(0))
 
                 # measure elapsed time
                 batch_time.update(time.time() - end)

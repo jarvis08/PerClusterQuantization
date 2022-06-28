@@ -180,7 +180,7 @@ def symmetric_linear_quantization_params(num_bits,
             scale, _ = torch.max(torch.stack([saturation_min.abs(), saturation_max.abs()], dim=1), dim=1)
             scale = torch.clamp(scale, min=1e-8) / n
         else:
-            scale, _ = max(saturation_min.abs(), saturation_max.abs())         #
+            scale = torch.max(saturation_min.abs(), saturation_max.abs())         #
             scale = torch.clamp(scale, min=1e-8) / n
 
     return scale
