@@ -357,17 +357,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     "=> no checkpoint found at '{}'".format(args.resume))
         return optimizer
 
-    def set_runtime_helper(args):
-        if args.cluster > 1:
-            runtime_helper = RuntimeHelper()
-            runtime_helper.set_pcq_arguments(args)
-            return runtime_helper
-        return None
-
-    def get_quantize_model(args, model, model_dict, quantize_arch, runtime_helper):
+    def get_quantize_model(args, model, model_dict, quantize_arch, num_clusters):
         if args.arch.lower() == 'alexnet':
-            return quantize_arch(model, model_dict, runtime_helper)
-        return quantize_arch(model, runtime_helper)
+            return quantize_arch(model, model_dict, num_clusters)
+        return quantize_arch(model, num_clusters)
 
     def set_quantize_param(args, model, bit_config):
         name_counter = 0
@@ -429,19 +422,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     args.arch = reset_args_arch(args)
     model_dict = transfer_param(args, model) if args.transfer_param else None
     model = eval_resume(args, model)
-    runtime_helper = set_runtime_helper(args)
 
     quantize_arch = quantize_arch_dict[args.arch]
     model = get_quantize_model(
-        args, model, model_dict, quantize_arch, runtime_helper)
+        args, model, model_dict, quantize_arch, args.cluster)
 
-    if "resnet20" in args.arch and runtime_helper is not None:
-        bit_config = bit_config_dict["bit_config_" +
-                                     args.arch + "_" + "daq" + "_" + args.quant_scheme]
-
-    else:
-        bit_config = bit_config_dict["bit_config_" +
-                                     args.arch + "_" + args.quant_scheme]
+    bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
 
     model = set_quantize_param(args, model, bit_config)
 
@@ -478,7 +464,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             clustering_model.zero_max_nn_aware_clustering(
                 model, train_loader, args.arch)
         model.toggle_full_precision()
-        runtime_helper.set_num_clusters(args.cluster)
     if args.evaluate:
         validate(test_loader, model, criterion, args)
         return
@@ -496,22 +481,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
-        if args.cluster > 1:
-            pcq_epoch(model, clustering_model, train_loader, criterion, optimizer, runtime_helper, epoch, logging,
-                      fix_BN=args.fix_BN)
-            tuning_fin_time = time.time()
-            one_epoch_time = get_time_cost_in_string(
-                tuning_fin_time - tuning_start_time)
-            acc1 = pcq_validate(model, clustering_model,
-                                test_loader, criterion, runtime_helper, logging)
-
-        else:
-            train(train_loader, model, criterion,
-                  optimizer, epoch, logging, args)
-            tuning_fin_time = time.time()
-            one_epoch_time = get_time_cost_in_string(
-                tuning_fin_time - tuning_start_time)
-            acc1 = validate(test_loader, model, criterion, args)
+        train(train_loader, model, clustering_model, criterion,
+                optimizer, epoch, logging, args)
+        tuning_fin_time = time.time()
+        one_epoch_time = get_time_cost_in_string(
+            tuning_fin_time - tuning_start_time)
+        acc1 = validate(test_loader, model, clustering_model, criterion, args)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -545,7 +520,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
-def train(train_loader, model, criterion, optimizer, epoch, logger, args):
+def train(train_loader, model, clustering_model, criterion, optimizer, epoch, logger, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -567,9 +542,13 @@ def train(train_loader, model, criterion, optimizer, epoch, logger, args):
             if args.gpu is not None:
                 images = images.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
+            if clustering_model is None:
+                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
+            else:
+                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
 
             # compute output
-            output = model(images)
+            output = model(images, cluster)
             loss = criterion(output, target)
 
             # measure accuracy and record loss
@@ -587,8 +566,6 @@ def train(train_loader, model, criterion, optimizer, epoch, logger, args):
             batch_time.update(time.time() - end)
             end = time.time()
 
-            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} ({:.5f}) [Acc@1] {:.3f} ({:.3f}) [Acc@5] {:3f} ({:.3f})"
-                         .format(epoch, i + 1, len(train_loader), loss.item(), losses.avg, acc1.item(), top1.avg, acc5.item(), top5.avg))
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
 
@@ -684,7 +661,7 @@ def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_load
                 }, is_best, args.save_path)
 
 
-def validate(val_loader, model, criterion, args):
+def validate(val_loader, model, clustering_model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -700,30 +677,31 @@ def validate(val_loader, model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        for i, (images, target) in enumerate(val_loader):
-            if args.gpu is not None:
-                images = images.cuda(args.gpu, non_blocking=True)
-            target = target.cuda(args.gpu, non_blocking=True)
+        with tqdm(val_loader, desc="Epoch {}".format(epoch), ncols=105) as t:
+            for i, (images, target) in enumerate(t):
+                if args.gpu is not None:
+                    images = images.cuda(args.gpu, non_blocking=True)
+                target = target.cuda(args.gpu, non_blocking=True)
+                if clustering_model is None:
+                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
+                else:
+                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
 
-            # compute output
-            output = model(images)
-            loss = criterion(output, target)
+                # compute output
+                output = model(images, cluster)
+                loss = criterion(output, target)
 
-            # measure accuracy and record loss
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
-            losses.update(loss.item(), images.size(0))
-            top1.update(acc1[0], images.size(0))
-            top5.update(acc5[0], images.size(0))
+                # measure accuracy and record loss
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                losses.update(loss.item(), images.size(0))
+                top1.update(acc1[0], images.size(0))
+                top5.update(acc5[0], images.size(0))
 
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
 
-            if i % args.print_freq == 0:
-                progress.display(i)
-
-        logging.info(
-            ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
+                t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
     torch.save({'convbn_scaling_factor': {k: v for k, v in model.state_dict().items() if 'convbn_scaling_factor' in k},
                 'fc_scaling_factor': {k: v for k, v in model.state_dict().items() if 'fc_scaling_factor' in k},
