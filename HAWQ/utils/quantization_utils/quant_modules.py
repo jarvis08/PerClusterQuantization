@@ -910,7 +910,7 @@ class QuantBnConv2d(Module):
                     self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
                                                             self.convbn_scaling_factor.view(-1, 1, 1, 1))
                     if self.quantize_bias:
-                        bias_scaling_factor = pre_act_scaling_factor.view(-1, 1, 1, 1) * self.convbn_scaling_factor.view(1, -1, 1, 1)
+                        bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.convbn_scaling_factor.view(1, -1)
                         self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
                         self.bias_integer = self.bias_integer.view(self.bias_integer.size(0), self.bias_integer.size(1), 1, 1)
                     self.convbn_scaled_bias = scaled_bias
@@ -918,9 +918,10 @@ class QuantBnConv2d(Module):
                     raise Exception('For weight, we only support symmetric quantization.')
 
                 x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
+                correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 
                 return ((F.conv2d(x_int, self.weight_integer, None, self.conv.stride, self.conv.padding,
-                                self.conv.dilation, self.conv.groups) + self.bias_integer) * bias_scaling_factor, self.convbn_scaling_factor)
+                                self.conv.dilation, self.conv.groups) + self.bias_integer) * correct_output_scale, self.convbn_scaling_factor)
         else:
             conv_output = F.conv2d(x, self.conv.weight, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, 
                                    self.conv.groups)
