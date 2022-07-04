@@ -110,74 +110,34 @@ class KMeansClustering(object):
     def train_clustering_model(self, nonaug_loader, aug_loader):
         print('Train K-means clustering model..')
         best_model = None
-        if self.args.dataset == 'imagenet':
-            def check_convergence(prev, cur, tol):
-                """
-                    Relative tolerance with regards to Frobenius norm of the difference in the cluster centers
-                    of two consecutive iterations to declare convergence.
-                """
-                diff = np.subtract(prev, cur)
-                normed = np.linalg.norm(diff)
-                if normed > tol:
-                    return False
-                return True
+        x = None
+        print(">> Load Non-augmented dataset & get representations for clustering..")
+        with tqdm(nonaug_loader, unit="batch", ncols=90) as t:
+            for image, _ in t:
+                # batch = torch.tensor(self.get_partitioned_batch(image))                                                # JK
+                batch = self.get_partitioned_batch(image).clone()
+                if x is None:
+                    x = batch
+                else:
+                    x = torch.cat((x, batch))
 
-            print(">> Use Mini-batch K-means Clustering for ImageNet dataset")
-            prev_centers = None
-            is_converged = False
-            best_model_inertia = 9999999999999999
-            print("Train K-means model 3 times, and choose the best model")
-            for trial in range(3):
-                n_clusters = self.args.cluster if not self.args.nnac else self.args.sub_cluster
-                model = MiniBatchKMeans(n_clusters=n_clusters, batch_size=self.args.batch,
-                                        tol=self.args.kmeans_tol, random_state=0)
-                for epoch in range(self.args.kmeans_epoch):
-                    with tqdm(nonaug_loader, desc="Trial-{} Epoch {}".format(trial, epoch), position=0, ncols=90) as t:
-                        for image, _ in t:
-                            train_data = torch.tensor(
-                                self.get_partitioned_batch(image))
-                            model = model.partial_fit(train_data)
-
-                            if prev_centers is not None:
-                                is_converged = check_convergence(
-                                    prev_centers, model.cluster_centers_, model.tol)
-                                if is_converged:
-                                    break
-                            prev_centers = deepcopy(model.cluster_centers_)
-                        if is_converged:
-                            break
-                if model.inertia_ < best_model_inertia:
-                    best_model = model
-                    best_model_inertia = model.inertia_
-        else:
-            x = None
-            print(">> Load Non-augmented dataset & get representations for clustering..")
-            with tqdm(nonaug_loader, unit="batch", ncols=90) as t:
+        print(">> Load augmented datasets & mix dataset..")
+        for _ in range(self.args.mixrate):
+            with tqdm(aug_loader, unit="batch", ncols=90) as t:
                 for image, _ in t:
-                    # batch = torch.tensor(self.get_partitioned_batch(image))                                                # JK
+                    # batch = torch.tensor(self.get_partitioned_batch(image))                                            # JK
                     batch = self.get_partitioned_batch(image).clone()
-                    if x is None:
-                        x = batch
-                    else:
-                        x = torch.cat((x, batch))
-
-            print(">> Load augmented datasets & mix dataset..")
-            for _ in range(self.args.mixrate):
-                with tqdm(aug_loader, unit="batch", ncols=90) as t:
-                    for image, _ in t:
-                        # batch = torch.tensor(self.get_partitioned_batch(image))                                            # JK
-                        batch = self.get_partitioned_batch(image).clone()
-                        x = torch.cat((x, batch))
-            n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
-            best_model_inertia = 9999999999999999
-            x = x.cuda()
-            print("Train K-means model 5 times, and choose the best model")
-            for trial in range(5):
-                model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
-                if model.inertia_ < best_model_inertia:
-                    best_model = model
-                    best_model_inertia = model.inertia_
-                print("Trial-{} done".format(trial))
+                    x = torch.cat((x, batch))
+        n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
+        best_model_inertia = 9999999999999999
+        x = x.cuda()
+        print("Train K-means model 5 times, and choose the best model")
+        for trial in range(5):
+            model = KMeans(n_clusters=n_prediction_cluster, random_state=0).fit(x)
+            if model.inertia_ < best_model_inertia:
+                best_model = model
+                best_model_inertia = model.inertia_
+            print("Trial-{} done".format(trial))
 
         path = self.args.clustering_path
         joblib.dump(best_model, os.path.join(path + '/checkpoint.pkl'))
