@@ -147,196 +147,6 @@ class QuantLinear(Module):
         else:
             return (F.linear(x, weight=self.weight, bias=self.bias), None)
 
-'''
-class QuantAct(Module):
-    """
-    Class to quantize given activations
-
-    Parameters:
-    ----------
-    activation_bit : int, default 4
-        Bitwidth for quantized activations.
-    act_range_momentum : float, default 0.95
-        Momentum for updating the activation quantization range.
-    full_precision_flag : bool, default False
-        If True, use fp32 and skip quantization
-    running_stat : bool, default True
-        Whether to use running statistics for activation quantization range.
-    quant_mode : 'symmetric' or 'asymmetric', default 'symmetric'
-        The mode for quantization.
-    fix_flag : bool, default False
-        Whether the module is in fixed mode or not.
-    act_percentile : float, default 0
-        The percentile to setup quantization range, 0 means no use of percentile, 99.9 means to cut off 0.1%.
-    fixed_point_quantization : bool, default False
-        Whether to skip deployment-oriented operations and use fixed-point rather than integer-only quantization.
-    """
-
-    def __init__(self,
-                 activation_bit=4,
-                 act_range_momentum=0.95,
-                 full_precision_flag=False,
-                 running_stat=True,
-                 quant_mode="symmetric",
-                 fix_flag=False,
-                 act_percentile=0,
-                 fixed_point_quantization=False):
-        super(QuantAct, self).__init__()
-
-        self.activation_bit = activation_bit
-        self.act_range_momentum = act_range_momentum
-        self.full_precision_flag = full_precision_flag
-        self.running_stat = running_stat
-        self.quant_mode = quant_mode
-        self.fix_flag = fix_flag
-        self.act_percentile = act_percentile
-        self.fixed_point_quantization = fixed_point_quantization
-
-        self.register_buffer('x_min', torch.zeros(1))
-        self.register_buffer('x_max', torch.zeros(1))
-        self.register_buffer('act_scaling_factor', torch.zeros(1))
-
-        self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
-        # self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
-
-    def __repr__(self):
-        return "{0}(activation_bit={1}, full_precision_flag={2}, " \
-               "quant_mode={3}".format(self.__class__.__name__, self.activation_bit,
-                                       self.full_precision_flag, self.quant_mode)
-
-    def fix(self):
-        """
-        fix the activation range by setting running stat to False
-        """
-        self.running_stat = False
-        self.fix_flag = True
-
-    def unfix(self):
-        """
-        unfix the activation range by setting running stat to True
-        """
-        self.running_stat = True
-        self.fix_flag = False
-
-    def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
-                identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
-                concat_scaling_factor=None, concat_weight_scaling_factor=None, cluster=None):
-        """
-        x: the activation that we need to quantize
-        pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
-        pre_weight_scaling_factor: the scaling factor of the previous weight quantization layer
-        identity: if True, we need to consider the identity branch
-        identity_scaling_factor: the scaling factor of the previous activation quantization of identity
-        identity_weight_scaling_factor: the scaling factor of the weight quantization layer in the identity branch
-
-        Note that there are two cases for identity branch:
-        (1) identity branch directly connect to the input featuremap
-        (2) identity branch contains convolutional layers that operate on the input featuremap
-        """
-        if type(x) is tuple:
-            if len(x) == 3:
-                channel_num = x[2]
-            pre_act_scaling_factor = x[1]
-            x = x[0]
-
-        # perform the quantization
-        if not self.full_precision_flag:
-            if self.quant_mode == "symmetric":
-                self.act_function = SymmetricQuantFunction.apply
-            elif self.quant_mode == "asymmetric":
-                self.act_function = AsymmetricQuantFunction.apply
-            else:
-                raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-
-            # calculate the quantization range of the activations
-            if self.running_stat:
-                if self.act_percentile == 0:
-                    x_min = x.data.min()
-                    x_max = x.data.max()
-                elif self.quant_mode == 'symmetric':
-                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
-                                                    self.act_percentile, output_tensor=True)
-                # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
-                # that is to say our asymmetric quantization should always be after ReLU, which makes
-                # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
-                # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
-                elif self.quant_mode == 'asymmetric':
-                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)
-
-                # Initialization
-                if self.x_min == self.x_max:
-                    self.x_min += x_min
-                    self.x_max += x_max
-
-                # use momentum to update the quantization range
-                elif self.act_range_momentum == -1:
-                    self.x_min = min(self.x_min, x_min)
-                    self.x_max = max(self.x_max, x_max)
-                else:
-                    self.x_min = self.x_min * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
-                    self.x_max = self.x_max * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
-
-            if self.quant_mode == 'symmetric':
-                self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
-                                                                           self.x_min, self.x_max, False)
-            # Note that our asymmetric quantization is implemented using scaled unsigned integers
-            # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
-            # and the self.act_zero_point should be 0.
-            else:
-                self.act_scaling_factor, self.act_zero_point = asymmetric_linear_quantization_params(
-                    self.activation_bit, self.x_min, self.x_max, True)
-            if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
-                # this is for the case of input quantization,
-                # or the case using fixed-point rather than integer-only quantization
-                if len(x.shape) == 4:
-                    act_scaling_factor = self.act_scaling_factor.view(-1, 1, 1, 1)
-                else:
-                    act_scaling_factor = self.act_scaling_factor.view(-1, 1)
-                quant_act_int = self.act_function(x, self.activation_bit, act_scaling_factor)
-                # quant_act_int = self.act_function(x, self.activation_bit, self.act_scaling_factor.view(-1, 1, 1, 1)) # TODO
-            elif type(pre_act_scaling_factor) is list:
-                # this is for the case of multi-branch quantization
-                branch_num = len(pre_act_scaling_factor)
-                quant_act_int = x
-                start_channel_index = 0
-                for i in range(branch_num):
-                    quant_act_int[:, start_channel_index: start_channel_index + channel_num[i], :, :] \
-                        = fixedpoint_fn.apply(x[:, start_channel_index: start_channel_index + channel_num[i], :, :],
-                                              self.activation_bit, self.quant_mode, self.act_scaling_factor, 0,
-                                              pre_act_scaling_factor[i],
-                                              pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
-                    start_channel_index += channel_num[i]
-            else:
-                if identity is None and concat is None:
-                    if pre_weight_scaling_factor is None:
-                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor)
-                elif identity is not None:
-                    if identity_weight_scaling_factor is None:
-                        identity_weight_scaling_factor = self.identity_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 1, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor,
-                                                        identity, identity_scaling_factor,
-                                                        identity_weight_scaling_factor)
-                else:
-                    if concat_weight_scaling_factor is None:
-                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
-                                                         pre_weight_scaling_factor,
-                                                         concat, concat_scaling_factor,
-                                                         concat_weight_scaling_factor)
-            correct_output_scale = self.act_scaling_factor.view(-1)
-            return (quant_act_int * correct_output_scale, self.act_scaling_factor)
-        else:
-            return x, None
-'''
-
 
 class QuantAct(Module):
     """
@@ -383,11 +193,6 @@ class QuantAct(Module):
         self.act_percentile = act_percentile
         self.fixed_point_quantization = fixed_point_quantization
         self.num_clusters = num_clusters
-        # self.register_buffer('min', torch.zeros(self.runtime_helper.num_clusters))
-        # self.register_buffer('max', torch.zeros(self.runtime_helper.num_clusters))
-        # self.register_buffer('x_min', torch.zeros(self.runtime_helper.num_clusters))
-        # self.register_buffer('x_max', torch.zeros(self.runtime_helper.num_clusters))
-        # self.register_buffer('act_scaling_factor', torch.zeros(self.runtime_helper.num_clusters))
         
         self.register_buffer('tmp', torch.zeros(self.num_clusters))
         self.register_buffer('min', torch.zeros(self.num_clusters))
@@ -502,11 +307,6 @@ class QuantAct(Module):
             if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
                 # this is for the case of input quantization,
                 # or the case using fixed-point rather than integer-only quantization
-                # if len(x.shape) == 4:
-                #     tmp_act_scaling_factor = act_scaling_factor.view(-1, 1, 1, 1)
-                # else:
-                #     tmp_act_scaling_factor = act_scaling_factor.view(-1, 1)
-                # quant_act_int = self.act_function(x, self.activation_bit, tmp_act_scaling_factor)
                 quant_act_int = self.act_function(x, self.activation_bit, act_scaling_factor.view(-1, 1, 1, 1)) # TODO
             elif type(pre_act_scaling_factor) is list:       # TODO
                 # this is for the case of multi-branch quantization
@@ -549,185 +349,6 @@ class QuantAct(Module):
             else:
                 correct_output_scale = act_scaling_factor.view(-1, 1)
             return (quant_act_int * correct_output_scale, act_scaling_factor)
-        else:
-            return x, None
-
-
-class QuantAct_Daq(QuantAct):
-
-    def __init__(self,
-                 activation_bit=4,
-                 act_range_momentum=0.95,
-                 full_precision_flag=False,
-                 running_stat=True,
-                 quant_mode="symmetric",
-                 fix_flag=False,
-                 act_percentile=0,
-                 fixed_point_quantization=False,
-                 runtime_helper=None):
-        super(QuantAct_Daq, self).__init__()
-
-        self.activation_bit = activation_bit
-        self.act_range_momentum = act_range_momentum
-        self.full_precision_flag = full_precision_flag
-        self.running_stat = running_stat
-        self.quant_mode = quant_mode
-        self.fix_flag = fix_flag
-        self.act_percentile = act_percentile
-        self.fixed_point_quantization = fixed_point_quantization
-        
-        self.runtime_helper = runtime_helper
-
-        self.register_buffer('x_min', torch.zeros(self.runtime_helper.num_clusters))
-        self.register_buffer('x_max', torch.zeros(self.runtime_helper.num_clusters))
-        self.register_buffer('act_scaling_factor', torch.zeros(1))
-        self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('isDaq', torch.ones(1, dtype=torch.bool))
-
-        self.is_classifier = False
-
-    def __repr__(self):
-        return "{0}(activation_bit={1}, " \
-               "full_precision_flag={2}, quant_mode={3}".format(
-                    self.__class__.__name__, self.activation_bit,
-                    self.full_precision_flag, self.quant_mode)
-
-    def fix(self):
-        """
-        fix the activation range by setting running stat to False
-        """
-        self.running_stat = False
-        self.fix_flag = True
-
-    def unfix(self):
-        """
-        unfix the activation range by setting running stat to True
-        """
-        self.running_stat = True
-        self.fix_flag = False
-
-    def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
-                identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
-                concat_scaling_factor=None, concat_weight_scaling_factor=None, cluster=None):
-        """
-        x: the activation that we need to quantize
-        pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
-        pre_weight_scaling_factor: the scaling factor of the previous weight quantization layer
-        identity: if True, we need to consider the identity branch
-        identity_scaling_factor: the scaling factor of the previous activation quantization of identity
-        identity_weight_scaling_factor: the scaling factor of the weight quantization layer in the identity branch
-
-        Note that there are two cases for identity branch:
-        (1) identity branch directly connect to the input featuremap
-        (2) identity branch contains convolutional layers that operate on the input featuremap
-        """
-        if type(x) is tuple:
-            if len(x) == 3:
-                channel_num = x[2]
-            pre_act_scaling_factor = x[1]
-            x = x[0]
-
-        cluster = self.runtime_helper.batch_cluster
-        # calculate the quantization range of the activations
-        if not self.full_precision_flag:
-            if self.quant_mode == "symmetric":
-                self.act_function = SymmetricQuantFunction.apply
-            elif self.quant_mode == "asymmetric":
-                self.act_function = AsymmetricQuantFunction.apply
-            else:
-                raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-        
-            if self.running_stat:
-                if self.act_percentile == 0:
-                    if self.is_classifier:
-                        x_min = x.data.min()
-                        x_max = x.data.max()
-                    else:
-                        x_min = x.data.min()
-                        x_max = x.data.max()
-                        # data = x.view(x.size(0), -1).clone().detach()
-                        # _max = data.max(dim=1).values.mean()
-                        # _min = data.min(dim=1).values.mean()    # for not 4 bit quantization
-                        # x_max = _max
-                        # x_min = _min
-                elif self.quant_mode == 'symmetric':
-                    x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
-                                                        self.act_percentile, output_tensor=True, num_cluster=self.runtime_helper.num_clusters)
-                # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
-                # that is to say our asymmetric quantization should always be after ReLU, which makes
-                # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
-                # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
-                elif self.quant_mode == 'asymmetric':
-                    x_min, x_max = get_percentile_min_max_pcq(x.detach(), 100 - self.act_percentile,
-                                                            self.act_percentile, output_tensor=True,
-                                                            num_cluster=self.runtime_helper.num_clusters)
-                try:
-                    if self.x_min[cluster] == self.x_max[cluster]:
-                        self.x_min[cluster] += x_min
-                        self.x_max[cluster] += x_max
-                    elif self.act_range_momentum == -1:
-                        self.x_min[cluster] = min(self.x_min[cluster], x_min)
-                        self.x_max[cluster] = max(self.x_max[cluster], x_max)
-                    else:
-                        self.x_min[cluster] = self.x_min[cluster] * self.act_range_momentum + x_min * (1 - self.act_range_momentum)
-                        self.x_max[cluster] = self.x_max[cluster] * self.act_range_momentum + x_max * (1 - self.act_range_momentum)
-                except:
-                    print('fixed_point_fn / self.x_min :', self.x_min)
-                    print('fixed_point_fn / self.x_max :', self.x_max)
-
-            if self.quant_mode == 'symmetric':
-                self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
-                                                                               self.x_min[cluster], self.x_max[cluster],
-                                                                               False)
-            # Note that our asymmetric quantization is implemented using scaled unsigned integers
-            # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
-            # and the self.act_zero_point should be 0.
-            else:
-                self.act_scaling_factor, self.act_zero_point = asymmetric_linear_quantization_params(
-                    self.activation_bit, self.x_min[cluster], self.x_max[cluster], True)
-            if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
-                # this is for the case of input quantization,
-                # or the case using fixed-point rather than integer-only quantization
-                quant_act_int = self.act_function(x, self.activation_bit, self.act_scaling_factor.view(-1, 1, 1, 1))
-            elif type(pre_act_scaling_factor) is list:
-                # this is for the case of multi-branch quantization
-                branch_num = len(pre_act_scaling_factor)
-                quant_act_int = x
-                start_channel_index = 0
-                for i in range(branch_num):
-                    quant_act_int[:, start_channel_index: start_channel_index + channel_num[i], :, :] \
-                        = fixedpoint_fn.apply(x[:, start_channel_index: start_channel_index + channel_num[i], :, :],
-                                              self.activation_bit, self.quant_mode, self.act_scaling_factor, 0,
-                                              pre_act_scaling_factor[i],
-                                              pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
-                    start_channel_index += channel_num[i]
-            else:
-                if concat is not None :
-                    if concat_weight_scaling_factor is None:
-                        concat_weight_scaling_factor = self.concat_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
-                                                         pre_weight_scaling_factor,
-                                                         concat, concat_scaling_factor,
-                                                         concat_weight_scaling_factor)
-                elif identity is not None:
-                    if identity_weight_scaling_factor is None:
-                        identity_weight_scaling_factor = self.identity_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 1, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor,
-                                                        identity, identity_scaling_factor,
-                                                        identity_weight_scaling_factor)
-                else:
-                    if pre_weight_scaling_factor is None:
-                        pre_weight_scaling_factor = self.pre_weight_scaling_factor
-                    quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                        self.act_scaling_factor, 0, pre_act_scaling_factor,
-                                                        pre_weight_scaling_factor)
-            correct_output_scale = self.act_scaling_factor.view(-1)
-            return (quant_act_int * correct_output_scale, self.act_scaling_factor)
         else:
             return x, None
 
@@ -909,11 +530,10 @@ class QuantBnConv2d(Module):
                                                                                     w_min, w_max, self.per_channel)
                     self.weight_integer = self.weight_function(scaled_weight, self.weight_bit,
                                                             self.convbn_scaling_factor.view(-1, 1, 1, 1))
+                    bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.convbn_scaling_factor.view(1, -1)
                     if self.quantize_bias:
-                        bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.convbn_scaling_factor.view(1, -1)
                         self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
                         self.bias_integer = self.bias_integer.view(self.bias_integer.size(0), self.bias_integer.size(1), 1, 1)
-                    self.convbn_scaled_bias = scaled_bias
                 else:
                     raise Exception('For weight, we only support symmetric quantization.')
 
@@ -965,8 +585,7 @@ class QuantBn(Module):
         self.bias_bit = bias_bit
         self.quantize_bias = False if bias_bit is None else True
         self.fix_BN = fix_BN
-        self.training_BN_mode = fix_BNc
-        self.training_BN_mode = fix_BNc
+        self.training_BN_mode = fix_BN
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
         self.runtime_helper = runtime_helper
@@ -1052,17 +671,19 @@ class QuantBn(Module):
                 self.weight_integer = self.weight_function(scaled_weight, self.weight_bit, 
                                                         self.bn_scaling_factor.view(-1, 1, 1, 1))
                 
-                bias_scaling_factor = pre_act_scaling_factor.view(-1, 1, 1, 1) * self.bn_scaling_factor.view(1, -1, 1, 1)
+                bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.bn_scaling_factor.view(1, -1)
                 if self.quantize_bias and scaled_bias is not None:
                     self.bias_integer = self.weight_function(scaled_bias, self.bias_bit, bias_scaling_factor)
+                    self.bias_integer = self.bias_integer.view(self.bias_integer.size(0), self.bias_integer.size(1), 1, 1)
             else:
                 raise Exception('For weight, we only support symmetric quantization.')
 
             x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
+            correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 
-            output = self.weight_integer.view(1, -1, 1, 1) * x_int + self.bias_integer.view(1, -1, 1, 1)
+            output = self.weight_integer.view(1, -1, 1, 1) * x_int + self.bias_integer
 
-            return (output * bias_scaling_factor, self.bn_scaling_factor)
+            return (output * correct_output_scale, self.bn_scaling_factor)
         else :
             if self.fix_BN == False:
                 batch_mean = torch.mean(x, dim=(0, 2, 3))

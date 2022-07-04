@@ -28,7 +28,25 @@ REPR_METHOD="max"       # FIXED TO MAX
 
 
 if [ -z ${CLUSTER} ]; then
-    if [ "$MODEL" = resnet20 ]; then
+    if [ "$DATASET" = imagenet ]; then
+        CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+            --mode fine \
+            --epochs 100 \
+            --batch $BATCH \
+            --quant_base hawq \
+            --arch $MODEL \
+            --dataset $DATASET \
+            --lr $LEARNING_RATE \
+            --act-range-momentum 0.99 \
+            --wd 1e-4 \
+            --fix-BN \
+            --pretrained \
+            --channel-wise true \
+            --quant-scheme uniform4 \
+            --gpu 0 \
+            --data $DATASET \
+            --imagenet /workspace/dataset
+    elif [ "$MODEL" = resnet20 ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
             --epochs 100 \
@@ -70,7 +88,28 @@ if [ -z ${CLUSTER} ]; then
 else
     if [ -z ${SUB_CLUSTER} ]; then
         if [ "$FIRST_RUN" = true ]; then            
-            if [ "$MODEL" = resnet20 ]; then
+            if [ "$DATASET" = imagenet ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base hawq \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --fix-BN \
+                    --pretrained \
+                    --channel-wise true \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --imagenet /workspace/dataset
+            elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
                     --epochs 100 \
@@ -115,7 +154,29 @@ else
             fi
         else
             CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
-            if [ "$MODEL" = resnet20 ]; then
+            if [ "$DATASET" = imagenet ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base hawq \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --fix-BN \
+                    --pretrained \
+                    --channel-wise true \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --clustering_path ${CLUSTERING_MODEL_PATH} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --imagenet /workspace/dataset
+            elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
                     --epochs 100 \
@@ -162,8 +223,33 @@ else
             fi
         fi
     else
-        if [ "$FIRST_RUN" = true ]; then            
-            if [ "$MODEL" = resnet20 ]; then
+        if [ "$FIRST_RUN" = true ]; then
+            if [ "$DATASET" = imagenet ]; then  
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base hawq \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --fix-BN \
+                    --pretrained \
+                    --channel-wise true \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+		            --max_method median \
+                    --sub_cluster ${SUB_CLUSTER} \
+                    --nnac true \
+                    --similarity_method ${SIM_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --imagenet /workspace/dataset     
+            elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
                     --epochs 100 \
@@ -216,7 +302,33 @@ else
             fi
         else
             CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
-            if [ "$MODEL" = resnet20 ]; then
+            if [ "$DATASET" = imagenet ]; then
+                CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
+                    --mode fine \
+                    --epochs 100 \
+                    --batch $BATCH \
+                    --quant_base hawq \
+                    --arch $MODEL \
+                    --dataset $DATASET \
+                    --lr $LEARNING_RATE \
+                    --act-range-momentum 0.99 \
+                    --wd 1e-4 \
+                    --fix-BN \
+                    --pretrained \
+                    --channel-wise true \
+                    --quant-scheme uniform4 \
+                    --gpu 0 \
+                    --cluster ${CLUSTER} \
+                    --repr_method ${REPR_METHOD} \
+                    --clustering_path ${CLUSTERING_MODEL_PATH} \
+                    --sub_cluster ${SUB_CLUSTER} \
+		            --max_method median \
+                    --nnac true \
+                    --similarity_method ${SIM_METHOD} \
+                    --data $DATASET \
+                    --batch-size $BATCH \
+                    --imagenet /workspace/dataset
+            elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
                     --epochs 100 \

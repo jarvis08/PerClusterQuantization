@@ -431,7 +431,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     model = set_quantize_param(args, model, bit_config)
 
-    logging.info(model)
+    # logging.info(model)
 
     model = quant_resume(args, model)
 
