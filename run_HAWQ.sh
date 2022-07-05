@@ -13,25 +13,33 @@ GPU_NUM=${1}
 MODEL=${2}
 # svhn / cifar10 / cifar100 / imagenet           
 DATASET=${3}
-
-BATCH=${4}               # 128 / 64 / 32
+BATCH=${4}             # 128 / 64 / 32
 LEARNING_RATE=${5}     # 0.001 / 0.0001      
 
-FIRST_RUN=${6}          # true / false
+FIRST_RUN=${6}         # true / false
+CLUSTER=${7}           # 16 / 8 / 4 / 2
 
-CLUSTER=${7}                # 16 / 8 / 4 / 2
-SUB_CLUSTER=${8}            # 32 / 16 / 8 / 4
-SIM_METHOD=${9}           # and / jaccard
-REPR_METHOD="max"       # FIXED TO MAX
+SUB_CLUSTER=${8}       # 32 / 16 / 8 / 4
+SIM_METHOD=${9}        # and / jaccard
+REPR_METHOD="max"      # FIXED TO MAX
+MERGED=${10}           # true / false
+
 
 #####################################################
 
+if [ -z ${FIRST_RUN} ]; then        
+    if [ "$MERGED" = false ]; then
+        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
+    else
+        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+    fi
+fi
 
 if [ -z ${CLUSTER} ]; then
     if [ "$DATASET" = imagenet ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
-            --epochs 100 \
+            --epochs 50 \
             --batch $BATCH \
             --quant_base hawq \
             --arch $MODEL \
@@ -91,7 +99,7 @@ else
             if [ "$DATASET" = imagenet ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 100 \
+                    --epochs 50 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -153,11 +161,10 @@ else
                     --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
             fi
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
             if [ "$DATASET" = imagenet ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 100 \
+                    --epochs 50 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -227,7 +234,7 @@ else
             if [ "$DATASET" = imagenet ]; then  
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 100 \
+                    --epochs 50 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -242,7 +249,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		            --max_method median \
+                    --max_method median \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -267,7 +274,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		            --max_method median \
+                    --max_method median \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -291,7 +298,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-		            --max_method median \
+                    --max_method median \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -301,11 +308,10 @@ else
                     --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
             fi
         else
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
             if [ "$DATASET" = imagenet ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 100 \
+                    --epochs 50 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -322,7 +328,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
-		            --max_method median \
+                    --max_method median \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
@@ -348,7 +354,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
-		            --max_method median \
+                    --max_method median \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
@@ -373,7 +379,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
-		            --max_method median \
+                    --max_method median \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \

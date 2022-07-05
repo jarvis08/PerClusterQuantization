@@ -101,7 +101,6 @@ class KMeansClustering(object):
 
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
-        # cluster_info = self.model.predict(np.float64(kmeans_input))
         cluster_info = self.model.predict(kmeans_input)
         if self.final_cluster is not None:  # make output as merged cluster form
             return torch.index_select(self.final_cluster, 0, torch.LongTensor(cluster_info))
@@ -114,8 +113,7 @@ class KMeansClustering(object):
         print(">> Load Non-augmented dataset & get representations for clustering..")
         with tqdm(nonaug_loader, unit="batch", ncols=90) as t:
             for image, _ in t:
-                # batch = torch.tensor(self.get_partitioned_batch(image))                                                # JK
-                batch = self.get_partitioned_batch(image).clone()
+                batch = self.get_partitioned_batch(image.cuda()).clone()
                 if x is None:
                     x = batch
                 else:
@@ -125,8 +123,7 @@ class KMeansClustering(object):
         for _ in range(self.args.mixrate):
             with tqdm(aug_loader, unit="batch", ncols=90) as t:
                 for image, _ in t:
-                    # batch = torch.tensor(self.get_partitioned_batch(image))                                            # JK
-                    batch = self.get_partitioned_batch(image).clone()
+                    batch = self.get_partitioned_batch(image.cuda()).clone()
                     x = torch.cat((x, batch))
         n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
         best_model_inertia = 9999999999999999
