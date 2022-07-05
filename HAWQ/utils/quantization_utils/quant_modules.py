@@ -963,8 +963,6 @@ def freeze_model(model):
     """
     if type(model) == QuantAct:
         model.fix()
-    elif type(model) == QuantAct_Daq:
-        model.fix()
     elif type(model) == QuantConv2d:
         model.fix()
     elif type(model) == QuantLinear:
@@ -986,8 +984,6 @@ def unfreeze_model(model):
     unfreeze the activation range
     """
     if type(model) == QuantAct:
-        model.unfix()
-    elif type(model) == QuantAct_Daq:
         model.unfix()
     elif type(model) == QuantConv2d:
         model.unfix()
