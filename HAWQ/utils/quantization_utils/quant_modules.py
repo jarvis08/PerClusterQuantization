@@ -466,15 +466,45 @@ class QuantBnConv2d(Module):
 
             # run the forward without folding BN
             if self.fix_BN == False:
-                # THIS IS NOT COMPLETED YET
-                w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
-                w_min = w_transform.min(dim=1).values
-                w_max = w_transform.max(dim=1).values
+                if self.per_channel:
+                    w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
 
-                conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
-                weight_integer = self.weight_function(self.conv.weight, self.weight_bit, conv_scaling_factor)
-                conv_output = F.conv2d(x, weight_integer, self.conv.bias, self.conv.stride, self.conv.padding,
-                                    self.conv.dilation, self.conv.groups) * conv_scaling_factor.view(1, -1, 1, 1)
+                    if self.weight_percentile == 0:
+                        w_min = w_transform.min(dim=1).values
+                        w_max = w_transform.max(dim=1).values
+                    else:
+                        lower_percentile = 100 - self.weight_percentile
+                        upper_percentile = self.weight_percentile
+                        input_length = w_transform.shape[1]
+
+                        lower_index = math.ceil(input_length * lower_percentile * 0.01)
+                        upper_index = math.ceil(input_length * upper_percentile * 0.01)
+
+                        w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
+                        w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
+                else:
+                    if self.weight_percentile == 0:
+                        w_min = w.data.min()
+                        w_max = w.data.max()
+                    else:
+                        w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
+                                                            self.weight_percentile, output_tensor=True)
+
+                conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+                                                                            self.per_channel)
+                weight_integer = self.weight_function(self.conv.weight, self.weight_bit, conv_scaling_factor.view(-1, 1, 1, 1))
+                bias_scaling_factor = prev_act_scaling_factor.view(-1, 1) * conv_scaling_factor.view(1, -1)
+                if self.quantize_bias and (self.conv.bias is not None):
+                    bias_integer = self.weight_function(self.conv.bias, self.bias_bit, bias_scaling_factor)
+                    bias_integer = bias_integer.view(bias_integer.size(0), bias_integer.size(1), 1, 1)
+                else:
+                    bias_integer = None
+
+                x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
+                correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
+
+                conv_output = (F.conv2d(x, weight_integer, None, self.conv.stride, self.conv.padding,
+                                    self.conv.dilation, self.conv.groups) + bias_integer) * correct_output_scale
 
                 batch_mean = torch.mean(conv_output, dim=(0, 2, 3))
                 batch_var = torch.var(conv_output, dim=(0, 2, 3))
@@ -485,10 +515,12 @@ class QuantBnConv2d(Module):
                         1 - self.bn.momentum) * batch_mean
                 self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
+                output_int = conv_output / correct_output_scale
+
                 output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)   
                 output = output_factor * (conv_output - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1)
 
-                return (output, conv_scaling_factor.view(-1) * output_factor.view(-1))
+                return (output * correct_output_scale, conv_scaling_factor * output_factor)
             # fold BN and fix running statistics
             else:
                 running_std = torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
@@ -634,15 +666,15 @@ class QuantBn(Module):
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
             
             # determine whether to fold BN or not
-            # if self.fix_flag == False:
-            #     self.counter += 1
-            #     if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
-            #         self.fix_BN = self.training_BN_mode
-            #     else:
-            #         if self.counter == self.fix_BN_threshold:
-            #             print("Start Training with Folded BN")
-            #         self.fix_BN = True
-            #         self.training_BN_mode = True
+            if self.fix_flag == False:
+                self.counter += 1
+                if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+                    self.fix_BN = self.training_BN_mode
+                else:
+                    if self.counter == self.fix_BN_threshold:
+                        print("Start Training with Folded BN")
+                    self.fix_BN = True
+                    self.training_BN_mode = True
 
             if self.fix_BN is False:
                 batch_mean = torch.mean(x, dim=(0, 2, 3))
