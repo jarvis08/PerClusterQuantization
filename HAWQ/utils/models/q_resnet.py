@@ -307,11 +307,13 @@ class Q_ResUnitBn(nn.Module):
         convbn1 = unit.body.conv1
         self.quant_convbn1 = QuantBnConv2d()
         self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
+        self.act1 = nn.ReLU()
         self.quant_act1 = QuantAct(num_clusters=num_clusters)
 
         convbn2 = unit.body.conv2
         self.quant_convbn2 = QuantBnConv2d()
         self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
+        self.act2 = nn.ReLU()
         self.quant_act2 = QuantAct(num_clusters=num_clusters)
 
         convbn3 = unit.body.conv3
@@ -323,6 +325,7 @@ class Q_ResUnitBn(nn.Module):
             self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
 
         self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
+        self.act3 = nn.ReLU()
 
 
     def forward(self, x, scaling_factor_int32=None, cluster=None):
@@ -336,11 +339,11 @@ class Q_ResUnitBn(nn.Module):
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-        x = nn.ReLU()(x)
+        x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
-        x = nn.ReLU()(x)
+        x = self.act2(x)
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
@@ -354,7 +357,7 @@ class Q_ResUnitBn(nn.Module):
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
                                                          identity, scaling_factor_int32, None, cluster=cluster)
 
-        x = nn.ReLU()(x)
+        x = self.act3(x)
 
         return x, act_scaling_factor
 
@@ -510,6 +513,7 @@ class Q_ResBlockBn(nn.Module):
         convbn1 = unit.body.conv1
         self.quant_convbn1 = QuantBnConv2d()
         self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
+        self.act1 = nn.ReLU()
 
         self.quant_act1 = QuantAct(num_clusters=num_clusters)
 
@@ -522,6 +526,7 @@ class Q_ResBlockBn(nn.Module):
             self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
 
         self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
+        self.act2 = nn.ReLU()
 
 
     def forward(self, x, scaling_factor_int32=None, cluster=None):
@@ -535,7 +540,7 @@ class Q_ResBlockBn(nn.Module):
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-        x = nn.ReLU()(x)
+        x = self.act1(x)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
@@ -549,7 +554,7 @@ class Q_ResBlockBn(nn.Module):
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
                                                          identity, scaling_factor_int32, None, cluster=cluster)
 
-        x = nn.ReLU()(x)
+        x = self.act2(x)
 
         return x, act_scaling_factor
 

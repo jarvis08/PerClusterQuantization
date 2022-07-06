@@ -11,7 +11,6 @@ import json
 import os
 import csv
 
-
 class KMeansClustering(object):
     def __init__(self, args):
         self.args = args
@@ -305,10 +304,12 @@ class KMeansClustering(object):
                     for c in range(n_sub_clusters):
                         max_ratio[l][c] = torch.quantile(
                             cur_max_counter[l][c], percentile_tensor)
-            else:
+            elif self.args.max_method == 'mean':
                 for l in range(n_layers):
                     for c in range(n_sub_clusters):
                         max_ratio[l][c] = cur_max_counter[l][c].mean()
+            else:
+                raise Exception('max method not implemented')
 
             max_ratio = torch.transpose(max_ratio, 0, 1)
 
