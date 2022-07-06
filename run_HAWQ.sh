@@ -27,14 +27,6 @@ MERGED=${10}           # true / false
 
 #####################################################
 
-if [ -z ${FIRST_RUN} ]; then        
-    if [ "$MERGED" = false ]; then
-        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
-    else
-        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
-    fi
-fi
-
 if [ -z ${CLUSTER} ]; then
     if [ "$DATASET" = imagenet ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
@@ -94,6 +86,12 @@ if [ -z ${CLUSTER} ]; then
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
     fi
 else
+    if [ "$MERGED" = false ]; then
+        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
+    else
+        CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+    fi
+
     if [ -z ${SUB_CLUSTER} ]; then
         if [ "$FIRST_RUN" = true ]; then            
             if [ "$DATASET" = imagenet ]; then
