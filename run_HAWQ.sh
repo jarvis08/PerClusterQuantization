@@ -86,7 +86,7 @@ if [ -z ${CLUSTER} ]; then
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
     fi
 else
-    if [ "$FIRST_RUN" = true ]; then   
+    if [ "$FIRST_RUN" = false ]; then   
         if [ "$MERGED" = true ]; then
             CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
         else
