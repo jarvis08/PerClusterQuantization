@@ -405,13 +405,13 @@ class QuantBnConv2d(Module):
 
     def set_param(self, conv, bn):
         self.out_channels = conv.out_channels
+        self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
         self.register_buffer('convbn_scaling_factor', torch.zeros(self.out_channels))
         self.register_buffer('weight_integer', torch.zeros_like(conv.weight.data))
         self.register_buffer('bias_integer', torch.zeros_like(bn.bias))
 
         self.conv = conv
         self.bn = bn
-
         self.bn.momentum = 0.99
 
     def __repr__(self):
@@ -462,7 +462,6 @@ class QuantBnConv2d(Module):
                     if self.counter == self.fix_BN_threshold:
                         print("Start Training with Folded BN")
                     self.fix_BN = True
-                    self.training_BN_mode = True
 
             # run the forward without folding BN
             if self.fix_BN == False:
@@ -484,43 +483,46 @@ class QuantBnConv2d(Module):
                         w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
                 else:
                     if self.weight_percentile == 0:
-                        w_min = w.data.min()
-                        w_max = w.data.max()
+                        w_min = self.conv.weight.data.min()
+                        w_max = self.conv.weight.data.max()
                     else:
-                        w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
+                        w_min, w_max = get_percentile_min_max(self.conv.weight.view(-1), 100 - self.weight_percentile,
                                                             self.weight_percentile, output_tensor=True)
 
-                conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-                                                                            self.per_channel)
-                weight_integer = self.weight_function(self.conv.weight, self.weight_bit, conv_scaling_factor.view(-1, 1, 1, 1))
-                bias_scaling_factor = prev_act_scaling_factor.view(-1, 1) * conv_scaling_factor.view(1, -1)
+                self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
+                self.weight_integer = self.weight_function(self.conv.weight, self.weight_bit, self.conv_scaling_factor.view(-1, 1, 1, 1))
+                bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.conv_scaling_factor.view(1, -1)
                 if self.quantize_bias and (self.conv.bias is not None):
-                    bias_integer = self.weight_function(self.conv.bias, self.bias_bit, bias_scaling_factor)
-                    bias_integer = bias_integer.view(bias_integer.size(0), bias_integer.size(1), 1, 1)
+                    self.bias_integer = self.weight_function(self.conv.bias, self.bias_bit, bias_scaling_factor)
+                    self.bias_integer = self.bias_integer.view(self.bias_integer.size(0), self.bias_integer.size(1), 1, 1)
                 else:
-                    bias_integer = None
+                    self.bias_integer = None
 
                 x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
                 correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 
-                conv_output = (F.conv2d(x, weight_integer, None, self.conv.stride, self.conv.padding,
-                                    self.conv.dilation, self.conv.groups) + bias_integer) * correct_output_scale
+                if self.bias_integer is not None:
+                    conv_output = (F.conv2d(x_int, self.weight_integer, None, self.conv.stride, self.conv.padding,
+                                        self.conv.dilation, self.conv.groups) + self.bias_integer) * correct_output_scale
+                else:
+                    conv_output = F.conv2d(x_int, self.weight_integer, None, self.conv.stride, self.conv.padding,
+                                        self.conv.dilation, self.conv.groups) * correct_output_scale
 
                 batch_mean = torch.mean(conv_output, dim=(0, 2, 3))
                 batch_var = torch.var(conv_output, dim=(0, 2, 3))
 
                 # update mean and variance in running stats
-
                 self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                        1 - self.bn.momentum) * batch_mean
+                            1 - self.bn.momentum) * batch_mean
                 self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
-                output_int = conv_output / correct_output_scale
+                scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
+                scaled_bias = self.bn.bias - batch_mean * scaled_weight
+                
 
-                output_factor = self.bn.weight.view(1, -1, 1, 1) / torch.sqrt(batch_var + self.bn.eps).view(1, -1, 1, 1)   
-                output = output_factor * (conv_output - batch_mean.view(1, -1, 1, 1)) + self.bn.bias.view(1, -1, 1, 1)
+                output = scaled_weight.view(1, -1, 1, 1) * conv_output + scaled_bias.view(1, -1, 1, 1)
 
-                return (output * correct_output_scale, conv_scaling_factor * output_factor)
+                return (output, self.conv_scaling_factor * scaled_weight)
             # fold BN and fix running statistics
             else:
                 running_std = torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
@@ -686,7 +688,7 @@ class QuantBn(Module):
                 self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
                 scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
-                scaled_bias = self.bn.bias - self.bn.running_mean * scaled_weight
+                scaled_bias = self.bn.bias - batch_mean * scaled_weight
             else :
                 scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
                 scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scaled_weight
@@ -997,6 +999,8 @@ def freeze_model(model):
         model.fix()
     elif type(model) == QuantConv2d:
         model.fix()
+    elif type(model) == QuantBn:
+        model.fix()
     elif type(model) == QuantLinear:
         model.fix()
     elif type(model) == QuantBnConv2d:
@@ -1018,6 +1022,8 @@ def unfreeze_model(model):
     if type(model) == QuantAct:
         model.unfix()
     elif type(model) == QuantConv2d:
+        model.unfix()
+    elif type(model) == QuantBn:
         model.unfix()
     elif type(model) == QuantLinear:
         model.unfix()

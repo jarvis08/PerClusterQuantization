@@ -172,7 +172,7 @@ parser.add_argument('--dnn_path', default='', type=str,
                     help="Pretrained model's path")
 
 best_acc1 = 0
-quantize_arch_dict = {'resnet50': q_resnet50, 'resnet50b': q_resnet50,
+quantize_arch_dict = {'resnet50': q_resnet50, 
                       'resnet20': q_resnet20,
                       'alexnet': q_alexnet,
                       'densenet121': q_densenet}
@@ -541,7 +541,7 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, lo
 
             if args.gpu is not None:
                 images = images.cuda(args.gpu, non_blocking=True)
-            target = target.cuda(args.gpu, non_blocking=True)
+                target = target.cuda(args.gpu, non_blocking=True)
             if clustering_model is None:
                 cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
             else:
