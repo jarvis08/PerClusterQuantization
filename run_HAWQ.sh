@@ -22,7 +22,7 @@ CLUSTER=${7}           # 16 / 8 / 4 / 2
 SUB_CLUSTER=${8}       # 32 / 16 / 8 / 4
 SIM_METHOD=${9}        # and / jaccard
 REPR_METHOD="max"      # FIXED TO MAX
-MERGE_METHOD="mean"
+MERGE_METHOD="median"
 MERGED=${10}           # true / false
 
 
