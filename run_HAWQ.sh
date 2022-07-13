@@ -22,6 +22,7 @@ CLUSTER=${7}           # 16 / 8 / 4 / 2
 SUB_CLUSTER=${8}       # 32 / 16 / 8 / 4
 SIM_METHOD=${9}        # and / jaccard
 REPR_METHOD="max"      # FIXED TO MAX
+MERGE_METHOD="mean"
 MERGED=${10}           # true / false
 
 
@@ -243,7 +244,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-                    --max_method median \
+                    --max_method ${MERGE_METHOD} \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -267,7 +268,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-                    --max_method mean \
+                    --max_method ${MERGE_METHOD} \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -290,7 +291,7 @@ else
                     --gpu 0 \
                     --cluster ${CLUSTER} \
                     --repr_method ${REPR_METHOD} \
-                    --max_method mean \
+                    --max_method ${MERGE_METHOD} \
                     --sub_cluster ${SUB_CLUSTER} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
@@ -319,7 +320,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
-                    --max_method mean \
+                    --max_method ${MERGE_METHOD} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
@@ -344,7 +345,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
-                    --max_method mean \
+                    --max_method ${MERGE_METHOD} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
@@ -368,7 +369,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --sub_cluster ${SUB_CLUSTER} \
-                    --max_method mean \
+                    --max_method ${MERGE_METHOD} \
                     --nnac true \
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
