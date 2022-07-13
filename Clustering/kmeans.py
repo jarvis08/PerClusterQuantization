@@ -124,6 +124,7 @@ class KMeansClustering(object):
                 for image, _ in t:
                     batch = self.get_partitioned_batch(image.cuda()).clone()
                     x = torch.cat((x, batch))
+                    
         n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
         best_model_inertia = 9999999999999999
         x = x.cuda()
@@ -192,6 +193,12 @@ class KMeansClustering(object):
                         input, cluster, n_sub_clusters)
                     dnn_model.count_zeros_per_index(
                         input, cluster, n_sub_clusters)
+
+        # Handle Empty Clusters
+        for c in range(n_sub_clusters):
+            if dnn_model.max_counter[0][c] == []:
+                for l in range(len(dnn_model.max_counter)):
+                    dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):
