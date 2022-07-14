@@ -332,7 +332,8 @@ class KMeansClustering(object):
             # choose pair of clusters with smallest L2 distance
             pair = (cross_similarity == (torch.min(cross_similarity))
                     ).nonzero(as_tuple=True)
-            pair = [cluster.item() for cluster in pair]
+
+            pair = [cluster[0].item() for cluster in pair]
 
             # merge clusters
             print(f'Merge', end='')
