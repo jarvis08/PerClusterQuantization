@@ -39,27 +39,30 @@ class Q_InceptConv(nn.Module):
                  out_channels,
                  kernel_size,
                  stride,
-                 padding):
+                 padding,
+                 num_clusters=1):
         super(Q_InceptConv, self).__init__()
 
         self.q_convbn = QuantBnConv2d()
         self.q_convbn.set_param(model.conv, model.bn)
 
         self.relu = nn.ReLU(inplace=True)
-        self.q_activ = QuantAct()
+        self.q_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
         assert (type(x) is tuple)
+        cluster = x[2]
         a_sf = x[1]
         (x, w_sf) = self.q_convbn(x)
         x = self.relu(x)
-        (x, a_sf) = self.q_activ(x, a_sf, w_sf, None, None)
-        return (x, a_sf)
+        (x, a_sf) = self.q_activ(x, a_sf, w_sf, cluster=cluster)
+        return (x, a_sf, cluster)
 
 
 def q_incept_conv1x1(model,
                      in_channels,
-                     out_channels):
+                     out_channels,
+                     num_clusters=1):
     """
     1x1 version of the quantized InceptionV3 specific convolution block.
 
@@ -78,7 +81,8 @@ def q_incept_conv1x1(model,
         out_channels=out_channels,
         kernel_size=1,
         stride=1,
-        padding=0)
+        padding=0,
+        num_clusters=num_clusters)
 
 
 class Q_Concurrent(nn.Sequential):
@@ -109,6 +113,7 @@ class Q_Concurrent(nn.Sequential):
                 out.append(branch_out[0])
                 scaling_factor.append(branch_out[1])
                 channel_num.append(branch_out[0].shape[1])
+                cluster.append(branch_out[2])
             else:
                 out.append(branch_out)
         if self.stack:
@@ -117,25 +122,26 @@ class Q_Concurrent(nn.Sequential):
             out = torch.cat(tuple(out), dim=self.axis)
 
         assert (type(out) is not tuple)
-        return (out, scaling_factor, channel_num)
+        return (out, scaling_factor, cluster, channel_num)
 
 
 class Q_MaxPoolBranch(nn.Module):
     """
     Quantized InceptionV3 specific max pooling branch block.
     """
-    def __init__(self):
+    def __init__(self, num_clusters=1):
         super(Q_MaxPoolBranch, self).__init__()
-        self.q_input_act = QuantAct()
+        self.q_input_act = QuantAct(num_clusters=num_clusters)
         self.q_pool = QuantMaxPool2d(
             kernel_size=3,
             stride=2,
             padding=0)
 
     def forward(self, x):
+        cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
         (x, a_sf) = self.q_pool((x, a_sf))
-        return (x, a_sf)
+        return (x, a_sf, cluster)
 
 
 class Q_AvgPoolBranch(nn.Module):
@@ -154,26 +160,29 @@ class Q_AvgPoolBranch(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_AvgPoolBranch, self).__init__()
-        self.q_input_act = QuantAct()
+        self.q_input_act = QuantAct(num_clusters=num_clusters)
         self.q_pool = QuantAveragePool2d(
             kernel_size=3,
             stride=1,
             padding=1)
-        self.q_pool_act = QuantAct()
+        self.q_pool_act = QuantAct(num_clusters=num_clusters)
         self.q_conv = q_incept_conv1x1(
             model=model.conv,
             in_channels=in_channels,
-            out_channels=out_channels)
+            out_channels=out_channels,
+            num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
         (x, a_sf) = self.q_pool((x, a_sf))
-        (x, a_sf) = self.q_pool_act((x, a_sf))
-        (x, a_sf) = self.q_conv((x, a_sf))
+        (x, a_sf) = self.q_pool_act((x, a_sf, cluster))
+        (x, a_sf) = self.q_conv((x, a_sf, cluster))
 
-        return (x, a_sf)
+        return (x, a_sf, cluster)
 
 
 class Q_Conv1x1Branch(nn.Module):
@@ -192,18 +201,21 @@ class Q_Conv1x1Branch(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_Conv1x1Branch, self).__init__()
-        self.q_input_act = QuantAct()
+        self.q_input_act = QuantAct(num_clusters=num_clusters)
         self.q_conv = q_incept_conv1x1(
             model=model.conv,
             in_channels=in_channels,
-            out_channels=out_channels)
+            out_channels=out_channels,
+            num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_conv((x, a_sf))
-        return (x, a_sf)
+        (x, a_sf) = self.q_conv((x, a_sf, cluster))
+        return (x, a_sf, cluster)
 
 
 class Q_ConvSeqBranch(nn.Module):
@@ -231,13 +243,14 @@ class Q_ConvSeqBranch(nn.Module):
                  out_channels_list,
                  kernel_size_list,
                  strides_list,
-                 padding_list):
+                 padding_list,
+                 num_clusters=1):
         super(Q_ConvSeqBranch, self).__init__()
         assert (len(out_channels_list) == len(kernel_size_list))
         assert (len(out_channels_list) == len(strides_list))
         assert (len(out_channels_list) == len(padding_list))
 
-        self.q_input_act = QuantAct()
+        self.q_input_act = QuantAct(num_clusters=num_clusters)
         self.q_conv_list = nn.Sequential()
         for i, (out_channels, kernel_size, strides, padding) in enumerate(zip(
                 out_channels_list, kernel_size_list, strides_list, padding_list)):
@@ -247,14 +260,16 @@ class Q_ConvSeqBranch(nn.Module):
                 out_channels=out_channels,
                 kernel_size=kernel_size,
                 stride=strides,
-                padding=padding))
+                padding=padding,
+                num_clusters=num_clusters))
             in_channels = out_channels
 
     def forward(self, x):
+        cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_conv_list((x, a_sf))
+        (x, a_sf) = self.q_conv_list((x, a_sf, cluster))
 
-        return (x, a_sf)
+        return (x, a_sf, cluster)
 
 
 class Q_ConvSeq3x3Branch(nn.Module):
@@ -282,10 +297,11 @@ class Q_ConvSeq3x3Branch(nn.Module):
                  out_channels_list,
                  kernel_size_list,
                  strides_list,
-                 padding_list):
+                 padding_list,
+                 num_clusters=1):
         super(Q_ConvSeq3x3Branch, self).__init__()
 
-        self.q_input_act = QuantAct()
+        self.q_input_act = QuantAct(num_clusters=num_clusters)
         self.q_conv_list = nn.Sequential()
         for i, (out_channels, kernel_size, strides, padding) in enumerate(zip(
                 out_channels_list, kernel_size_list, strides_list, padding_list)):
@@ -295,7 +311,8 @@ class Q_ConvSeq3x3Branch(nn.Module):
                 out_channels=out_channels,
                 kernel_size=kernel_size,
                 stride=strides,
-                padding=padding))
+                padding=padding,
+                num_clusters=num_clusters))
             in_channels = out_channels
         self.q_conv1x3 = Q_InceptConv(
             model=model.conv1x3,
@@ -303,25 +320,28 @@ class Q_ConvSeq3x3Branch(nn.Module):
             out_channels=in_channels,
             kernel_size=(1, 3),
             stride=1,
-            padding=(0, 1))
+            padding=(0, 1),
+            num_clusters=num_clusters)
         self.q_conv3x1 = Q_InceptConv(
             model=model.conv3x1,
             in_channels=in_channels,
             out_channels=in_channels,
             kernel_size=(3, 1),
             stride=1,
-            padding=(1, 0))
-        self.q_rescaling_activ = QuantAct()
+            padding=(1, 0),
+            num_clusters=num_clusters)
+        self.q_rescaling_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_conv_list((x, a_sf))
-        y1, scaling_factor1 = self.q_conv1x3((x, a_sf))
-        y2, scaling_factor2 = self.q_conv3x1((x, a_sf))
+        (x, a_sf) = self.q_conv_list((x, a_sf, cluster))
+        y1, scaling_factor1 = self.q_conv1x3((x, a_sf, cluster))
+        y2, scaling_factor2 = self.q_conv3x1((x, a_sf, cluster))
         channel_num = [y1.shape[1], y2.shape[1]]
         x = torch.cat((y1, y2), dim=1)
-        x = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], channel_num))
-        return x
+        x, a_sf = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], cluster, channel_num))
+        return (x, a_sf, cluster)
 
 
 class Q_InceptionAUnit(nn.Module):
@@ -340,7 +360,8 @@ class Q_InceptionAUnit(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_InceptionAUnit, self).__init__()
         assert (out_channels > 224)
         pool_out_channels = out_channels - 224
@@ -349,31 +370,36 @@ class Q_InceptionAUnit(nn.Module):
         self.branches.add_module("branch1", Q_Conv1x1Branch(
             model=model.branches.branch1,
             in_channels=in_channels,
-            out_channels=64))
+            out_channels=64,
+            num_clusters=num_clusters))
         self.branches.add_module("branch2", Q_ConvSeqBranch(
             model=model.branches.branch2,
             in_channels=in_channels,
             out_channels_list=(48, 64),
             kernel_size_list=(1, 5),
             strides_list=(1, 1),
-            padding_list=(0, 2)))
+            padding_list=(0, 2),
+            num_clusters=num_clusters))
         self.branches.add_module("branch3", Q_ConvSeqBranch(
             model=model.branches.branch3,
             in_channels=in_channels,
             out_channels_list=(64, 96, 96),
             kernel_size_list=(1, 3, 3),
             strides_list=(1, 1, 1),
-            padding_list=(0, 1, 1)))
+            padding_list=(0, 1, 1),
+            num_clusters=num_clusters))
         self.branches.add_module("branch4", Q_AvgPoolBranch(
             model=model.branches.branch4,
             in_channels=in_channels,
-            out_channels=pool_out_channels))
-        self.q_rescaling_activ = QuantAct()
+            out_channels=pool_out_channels,
+            num_clusters=num_clusters))
+        self.q_rescaling_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         x = self.branches(x)
-        x = self.q_rescaling_activ(x)
-        return x
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, asf, cluster)
 
 
 class Q_ReductionAUnit(nn.Module):
@@ -392,7 +418,8 @@ class Q_ReductionAUnit(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_ReductionAUnit, self).__init__()
         assert (in_channels == 288)
         assert (out_channels == 768)
@@ -404,21 +431,25 @@ class Q_ReductionAUnit(nn.Module):
             out_channels_list=(384,),
             kernel_size_list=(3,),
             strides_list=(2,),
-            padding_list=(0,)))
+            padding_list=(0,),
+            num_clusters=num_clusters))
         self.branches.add_module("branch2", Q_ConvSeqBranch(
             model=model.branches.branch2,
             in_channels=in_channels,
             out_channels_list=(64, 96, 96),
             kernel_size_list=(1, 3, 3),
             strides_list=(1, 1, 2),
-            padding_list=(0, 1, 0)))
-        self.branches.add_module("branch3", Q_MaxPoolBranch())
-        self.q_rescaling_activ = QuantAct()
+            padding_list=(0, 1, 0),
+            num_clusters=num_clusters))
+        self.branches.add_module("branch3", Q_MaxPoolBranch(
+            num_clusters=num_clusters))
+        self.q_rescaling_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         x = self.branches(x)
-        x = self.q_rescaling_activ(x)
-        return x
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, asf, cluster)
 
 
 class Q_InceptionBUnit(nn.Module):
@@ -440,7 +471,8 @@ class Q_InceptionBUnit(nn.Module):
                  model,
                  in_channels,
                  out_channels,
-                 mid_channels):
+                 mid_channels,
+                 num_clusters=1):
         super(Q_InceptionBUnit, self).__init__()
         assert (in_channels == 768)
         assert (out_channels == 768)
@@ -449,31 +481,36 @@ class Q_InceptionBUnit(nn.Module):
         self.branches.add_module("branch1", Q_Conv1x1Branch(
             model=model.branches.branch1,
             in_channels=in_channels,
-            out_channels=192))
+            out_channels=192,
+            num_clusters=num_clusters))
         self.branches.add_module("branch2", Q_ConvSeqBranch(
             model=model.branches.branch2,
             in_channels=in_channels,
             out_channels_list=(mid_channels, mid_channels, 192),
             kernel_size_list=(1, (1, 7), (7, 1)),
             strides_list=(1, 1, 1),
-            padding_list=(0, (0, 3), (3, 0))))
+            padding_list=(0, (0, 3), (3, 0)),
+            num_clusters=num_clusters))
         self.branches.add_module("branch3", Q_ConvSeqBranch(
             model=model.branches.branch3,
             in_channels=in_channels,
             out_channels_list=(mid_channels, mid_channels, mid_channels, mid_channels, 192),
             kernel_size_list=(1, (7, 1), (1, 7), (7, 1), (1, 7)),
             strides_list=(1, 1, 1, 1, 1),
-            padding_list=(0, (3, 0), (0, 3), (3, 0), (0, 3))))
+            padding_list=(0, (3, 0), (0, 3), (3, 0), (0, 3)),
+            num_clusters=num_clusters))
         self.branches.add_module("branch4", Q_AvgPoolBranch(
             model=model.branches.branch4,
             in_channels=in_channels,
-            out_channels=192))
-        self.q_rescaling_activ = QuantAct()
+            out_channels=192,
+            num_clusters=num_clusters))
+        self.q_rescaling_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         x = self.branches(x)
-        x = self.q_rescaling_activ(x)
-        return x
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, asf, cluster)
 
 
 class Q_ReductionBUnit(nn.Module):
@@ -492,7 +529,8 @@ class Q_ReductionBUnit(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_ReductionBUnit, self).__init__()
         assert (in_channels == 768)
         assert (out_channels == 1280)
@@ -504,21 +542,25 @@ class Q_ReductionBUnit(nn.Module):
             out_channels_list=(192, 320),
             kernel_size_list=(1, 3),
             strides_list=(1, 2),
-            padding_list=(0, 0)))
+            padding_list=(0, 0),
+            num_clusters=num_clusters))
         self.branches.add_module("branch2", Q_ConvSeqBranch(
             model=model.branches.branch2,
             in_channels=in_channels,
             out_channels_list=(192, 192, 192, 192),
             kernel_size_list=(1, (1, 7), (7, 1), 3),
             strides_list=(1, 1, 1, 2),
-            padding_list=(0, (0, 3), (3, 0), 0)))
-        self.branches.add_module("branch3", Q_MaxPoolBranch())
-        self.q_rescaling_activ = QuantAct()
+            padding_list=(0, (0, 3), (3, 0), 0),
+            num_clusters=num_clusters))
+        self.branches.add_module("branch3", Q_MaxPoolBranch(
+            num_clusters=num_clusters))
+        self.q_rescaling_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         x = self.branches(x)
-        x = self.q_rescaling_activ(x)
-        return x
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, asf, cluster)
 
 
 class Q_InceptionCUnit(nn.Module):
@@ -537,7 +579,8 @@ class Q_InceptionCUnit(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_InceptionCUnit, self).__init__()
         assert (out_channels == 2048)
 
@@ -545,31 +588,36 @@ class Q_InceptionCUnit(nn.Module):
         self.branches.add_module("branch1", Q_Conv1x1Branch(
             model=model.branches.branch1,
             in_channels=in_channels,
-            out_channels=320))
+            out_channels=320,
+            num_clusters=num_clusters))
         self.branches.add_module("branch2", Q_ConvSeq3x3Branch(
             model=model.branches.branch2,
             in_channels=in_channels,
             out_channels_list=(384,),
             kernel_size_list=(1,),
             strides_list=(1,),
-            padding_list=(0,)))
+            padding_list=(0,),
+            num_clusters=num_clusters))
         self.branches.add_module("branch3", Q_ConvSeq3x3Branch(
             model=model.branches.branch3,
             in_channels=in_channels,
             out_channels_list=(448, 384),
             kernel_size_list=(1, 3),
             strides_list=(1, 1),
-            padding_list=(0, 1)))
+            padding_list=(0, 1),
+            num_clusters=num_clusters))
         self.branches.add_module("branch4", Q_AvgPoolBranch(
             model=model.branches.branch4,
             in_channels=in_channels,
-            out_channels=192))
-        self.q_rescaling_activ = QuantAct()
+            out_channels=192,
+            num_clusters=num_clusters))
+        self.q_rescaling_activ = QuantAct(num_clusters=num_clusters)
 
     def forward(self, x):
+        cluster = x[2]
         x = self.branches(x)
-        x = self.q_rescaling_activ(x)
-        return x
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, asf, cluster)
 
 
 class Q_InceptInitBlock(nn.Module):
@@ -588,32 +636,36 @@ class Q_InceptInitBlock(nn.Module):
     def __init__(self,
                  model,
                  in_channels,
-                 out_channels):
+                 out_channels,
+                 num_clusters=1):
         super(Q_InceptInitBlock, self).__init__()
         assert (out_channels == 192)
 
-        self.q_input_activ = QuantAct()
+        self.q_input_activ = QuantAct(num_clusters=num_clusters)
         self.q_conv1 = Q_InceptConv(
             model=model.conv1,
             in_channels=in_channels,
             out_channels=32,
             kernel_size=3,
             stride=2,
-            padding=0)
+            padding=0,
+            num_clusters=num_clusters)
         self.q_conv2 = Q_InceptConv(
             model=model.conv2,
             in_channels=32,
             out_channels=32,
             kernel_size=3,
             stride=1,
-            padding=0)
+            padding=0,
+            num_clusters=num_clusters)
         self.q_conv3 = Q_InceptConv(
             model=model.conv3,
             in_channels=32,
             out_channels=64,
             kernel_size=3,
             stride=1,
-            padding=1)
+            padding=1,
+            num_clusters=num_clusters)
         self.q_pool1 = QuantMaxPool2d(
             kernel_size=3,
             stride=2,
@@ -624,29 +676,32 @@ class Q_InceptInitBlock(nn.Module):
             out_channels=80,
             kernel_size=1,
             stride=1,
-            padding=0)
+            padding=0,
+            num_clusters=num_clusters)
         self.q_conv5 = Q_InceptConv(
             model=model.conv5,
             in_channels=80,
             out_channels=192,
             kernel_size=3,
             stride=1,
-            padding=0)
+            padding=0,
+            num_clusters=num_clusters)
         self.q_pool2 = QuantMaxPool2d(
             kernel_size=3,
             stride=2,
             padding=0)
 
     def forward(self, x):
-        x = self.q_input_activ(x)
+        cluster = x[1]
+        x = self.q_input_activ(x, cluster=cluster)
         x = self.q_conv1(x)
         x = self.q_conv2(x)
         x = self.q_conv3(x)
-        x = self.q_pool1(x)
-        x = self.q_conv4(x)
+        (x, a_sf) = self.q_pool1(x)
+        x = self.q_conv4((x, a_sf, cluster=cluster))
         x = self.q_conv5(x)
-        x = self.q_pool2(x)
-        return x
+        (x, a_sf) = self.q_pool2(x)
+        return (x, a_sf, cluster)
 
 
 class Q_InceptionV3(nn.Module):
@@ -681,7 +736,8 @@ class Q_InceptionV3(nn.Module):
                  dropout_rate=0.5,
                  in_channels=3,
                  in_size=(299, 299),
-                 num_classes=1000):
+                 num_classes=1000,
+                 num_clusters=1):
         super(Q_InceptionV3, self).__init__()
         self.in_size = in_size
         self.num_classes = num_classes
@@ -692,7 +748,8 @@ class Q_InceptionV3(nn.Module):
         self.features.add_module("q_init_block", Q_InceptInitBlock(
             model=model.features.init_block,
             in_channels=in_channels,
-            out_channels=init_block_channels))
+            out_channels=init_block_channels,
+            num_clusters=num_clusters))
         in_channels = init_block_channels
 
         for i, channels_per_stage in enumerate(channels):
@@ -710,23 +767,26 @@ class Q_InceptionV3(nn.Module):
                         model=getattr(model_stage, "unit{}".format(j + 1)),
                         in_channels=in_channels,
                         out_channels=out_channels,
-                        mid_channels=b_mid_channels[j - 1]))
+                        mid_channels=b_mid_channels[j - 1],
+                        num_clusters=num_clusters))
                 else:
                     stage.add_module("unit{}".format(j + 1), unit(
                         model=getattr(model_stage, "unit{}".format(j + 1)),
                         in_channels=in_channels,
-                        out_channels=out_channels))
+                        out_channels=out_channels,
+                        num_clusters=num_clusters))
                 in_channels = out_channels
             self.features.add_module("stage{}".format(i + 1), stage)
 
         self.features.add_module("q_final_pool", QuantAveragePool2d(kernel_size=8, stride=1))
 
-        self.features.add_module("q_concat_activ", QuantAct())
+        self.features.add_module("q_concat_activ", QuantAct(num_clusters=num_clusters))
 
         self.output = nn.Sequential()
         self.output.add_module("q_dropout", QuantDropout(p=dropout_rate))
 
         q_fc = QuantLinear()
+        q_fc.is_classifier = True
         q_fc.set_param(model.output.fc)
         self.output.add_module("q_fc", q_fc)
 
@@ -737,30 +797,14 @@ class Q_InceptionV3(nn.Module):
                 if module.bias is not None:
                     init.constant_(module.bias, 0)
 
-    def forward(self, x):
-        (x, a_sf) = self.features(x)
+    def forward(self, x, cluster):
+        (x, a_sf) = self.features((x, cluster))
         x = x.view(x.size(0), -1)
         x = self.output((x, a_sf))
         return x
 
 
-def q_inceptionv3(model_name="inceptionv3",
-                  model=None,
-                  pretrained=False,
-                  root=os.path.join("~", ".torch", "models")):
-    """
-    Create quantizated InceptionV3 model with specific parameters.
-
-    Parameters:
-    ----------
-    model_name : str or None, default None
-        Model name for loading pretrained model.
-    model : the pretrained floating-point InceptionV3.
-    pretrained : bool, default False
-        Whether to load the pretrained weights for model.
-    root : str, default '~/.torch/models'
-        Location for keeping the model parameters.
-    """
+def q_inceptionv3(model=None, num_clusters=None):
 
     init_block_channels = 192
     channels = [[256, 288, 288],
@@ -772,16 +816,8 @@ def q_inceptionv3(model_name="inceptionv3",
         channels=channels,
         init_block_channels=init_block_channels,
         b_mid_channels=b_mid_channels,
-        model=model)
-
-    if pretrained:
-        if (model_name is None) or (not model_name):
-            raise ValueError("Parameter `model_name` should be properly initialized for loading pretrained model.")
-        from .model_store import download_model
-        download_model(
-            net=net,
-            model_name=model_name,
-            local_model_store_dir_path=root)
+        model=model,
+        num_clusters=num_clusters)
 
     return net
 

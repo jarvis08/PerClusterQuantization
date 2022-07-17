@@ -172,10 +172,12 @@ parser.add_argument('--dnn_path', default='', type=str,
                     help="Pretrained model's path")
 
 best_acc1 = 0
-quantize_arch_dict = {'resnet50': q_resnet50, 
+quantize_arch_dict = {'resnet18': q_resnet18,
                       'resnet20': q_resnet20,
+                      'resnet50': q_resnet50,
                       'alexnet': q_alexnet,
-                      'densenet121': q_densenet}
+                      'densenet121': q_densenet,
+                      'inceptionv3': q_inceptionv3}
 
 args_hawq, _ = parser.parse_known_args()
 args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(

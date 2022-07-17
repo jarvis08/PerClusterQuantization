@@ -244,8 +244,11 @@ class QuantAct(Module):
         (2) identity branch contains convolutional layers that operate on the input featuremap
         """
         if type(x) is tuple:
-            if len(x) == 3:
-                channel_num = x[2]
+            if len(x) == 4:
+                cluster = x[2]
+                channel_num = x[3]
+            elif len(x) == 3:
+                cluster = x[2]
             pre_act_scaling_factor = x[1]
             x = x[0]
 
@@ -307,7 +310,7 @@ class QuantAct(Module):
             if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
                 # this is for the case of input quantization,
                 # or the case using fixed-point rather than integer-only quantization
-                quant_act_int = self.act_function(x, self.activation_bit, act_scaling_factor.view(-1, 1, 1, 1)) # TODO
+                quant_act_int = self.act_function(x, self.activation_bit, act_scaling_factor.view(-1, 1, 1, 1))
             elif type(pre_act_scaling_factor) is list:       # TODO
                 # this is for the case of multi-branch quantization
                 branch_num = len(pre_act_scaling_factor)
@@ -316,7 +319,7 @@ class QuantAct(Module):
                 for i in range(branch_num):
                     quant_act_int[:, start_channel_index: start_channel_index + channel_num[i], :, :] \
                         = fixedpoint_fn.apply(x[:, start_channel_index: start_channel_index + channel_num[i], :, :],
-                                              self.activation_bit, self.quant_mode, self.act_scaling_factor, 0,
+                                              self.activation_bit, self.quant_mode, act_scaling_factor, 0,
                                               pre_act_scaling_factor[i],
                                               pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
                     start_channel_index += channel_num[i]
@@ -350,7 +353,7 @@ class QuantAct(Module):
                 correct_output_scale = act_scaling_factor.view(-1, 1)
             return (quant_act_int * correct_output_scale, act_scaling_factor)
         else:
-            return x, None
+            return (x, None)
 
 
 class QuantBnConv2d(Module):
@@ -835,7 +838,7 @@ class QuantAveragePool2d(Module):
             x = x[0]
 
         if x_scaling_factor is None:
-            return self.final_pool(x), None
+            return (self.final_pool(x), None)
 
         correct_scaling_factor = x_scaling_factor.view(-1, 1, 1, 1)
 
