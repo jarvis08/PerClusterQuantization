@@ -13,6 +13,7 @@ import logging
 import random
 
 from HAWQ.utils.quantization_utils.quant_modules import freeze_model , unfreeze_model
+from QAT.models.layers.conv2d import FusedConv2d
 
 class RuntimeHelper(object):
     """
@@ -217,6 +218,12 @@ def save_checkpoint(state, is_best, path):
         shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
 
 
+def freeze_channels_already_allocated_to_low_bit(model):
+    for fused in model.modules():
+        if isinstance(fused, FusedConv2d) and len(fused.low_group):
+            fused.conv.weight.grad[:, fused.low_group] = 0
+
+
 def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -243,6 +250,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
 
             optimizer.zero_grad()
             loss.backward()
+            freeze_channels_already_allocated_to_low_bit(model)
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)

@@ -100,6 +100,12 @@ class FusedAlexNetSmall(nn.Module):
         self.fc3 = FusedLinear(4096, num_classes, bias=True, is_classifier=True,
                                w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
+        if self.mixed_precision:
+            for module in self.modules():
+                if isinstance(module, FusedConv2d):
+                    module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
+                    module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             self._update_input_ranges(x)
@@ -181,6 +187,40 @@ class FusedAlexNetSmall(nn.Module):
         else:
             assert 'method {} is not implemented'.format(method)
         return scale[idx], zero_point[idx]
+
+
+    def set_mixed_bits(self, x: torch.Tensor) -> torch.Tensor:
+        def record_input_range(x, module):
+            data = x.transpose(1, 0).reshape(x.size(1), -1)
+            _max = data.max(dim=1).values
+            _min = data.min(dim=1).values
+
+            if module.mixed_ema:
+                updated_min = module.input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = module.input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+                module.input_range[0], module.input_range[1] = updated_min, updated_max
+            else:
+                module.input_range[0], module.input_range[1] = _min, _max
+                module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
+            return module(x)
+
+        x = record_input_range(x, self.conv1)
+        x = self.maxpool(x)
+        x = record_input_range(x, self.conv2)
+        x = self.maxpool(x)
+        x = record_input_range(x, self.conv3)
+        x = record_input_range(x, self.conv4)
+        x = record_input_range(x, self.conv5)
+        x = self.maxpool(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
+
+        return x
+
 
     def set_mixed_quantization_params(self, method):
         zero = self.runtime_helper.fzero

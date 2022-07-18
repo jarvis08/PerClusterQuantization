@@ -8,6 +8,8 @@ from .models import *
 from tqdm import tqdm
 from time import time
 # import matplotlib.pyplot as plt
+import math
+import csv
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -165,13 +167,12 @@ def validate_setting_bits(model, loader, criterion):
             for i, (input, target) in enumerate(t):
                 t.set_description("Validate")
                 input, target = input.cuda(), target.cuda()
-                output = model.set_mixed_bits(input)
+                model.set_mixed_bits(input)
                 # loss = criterion(output, target)
                 # prec = accuracy(output, target)[0]
 
 
-def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
-    import math
+def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, weight_only=False, identifier=None):
     quantile_tensor = torch.tensor(percentile)
     low_counter = 0
     eight_counter = 0
@@ -185,22 +186,22 @@ def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, ide
 
             in_channel = pre.in_channels
             total_counter += in_channel
-            # [16. 3. 4.4] -> [3, 16, 4, 4]
-            weight_per_filter_group = pre.weight.transpose(1, 0)
 
+            weight_per_filter_group = pre.weight.transpose(1, 0)
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-            input_range = pre.input_range[1] - pre.input_range[0]
-
-            # distance 4 times
-            input_max, weight_max = input_range.max(), weight_range.max()
-            input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
+            weight_max = weight_range.max()
             weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
             low_bit = 8 - round(math.log(percentile, 2))
-            fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8).type(
-                torch.int8)
-            # # weight only
-            # fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8).type(torch.int8)
+
+            if not weight_only:
+                input_range = pre.input_range[1] - pre.input_range[0]
+                input_max = input_range.max()
+                input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
+                fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8).type(
+                    torch.int8)
+            else:
+                fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8).type(torch.int8)
 
             fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0].cuda()
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
@@ -211,19 +212,16 @@ def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, ide
 
             # four_group.append(len(fused.low_group))
 
-    print("Total low bit ratio : {:.2f}% ".format(low_counter / total_counter * 100))
+    ratio = low_counter / total_counter * 100
+    print("Total low bit ratio : {:.2f}% ".format(ratio))
 
-        # with open(identifier + '_mixed_ratio.csv', 'a') as csvfile:
-        #     writer = csv.writer(csvfile)
-        #     # writer.writerow(['percentile', str(p)])
-        #     # writer.writerow([four_group[i] for i in range(len(four_group))])
-        #     # writer.writerow([eight_group[i] for i in range(len(eight_group))])
-        #     writer.writerow(['{:2f}%'.format(four_group[i] / (four_group[i] + eight_group[i]) * 100) for i in range(len(eight_group))])
+    with open(identifier + '.csv', 'a') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow((['0', '{:2f}%'.format(ratio)]))
 
 
-def set_mixed_bits_per_input_channels(model, percentile, epoch, identifier=None):
+def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=False, identifier=None):
     import math
-    quantile_tensor = torch.tensor(percentile)
     low_counter = 0
     eight_counter = 0
     total_counter = 0
@@ -237,15 +235,17 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, identifier=None)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             input_range = fused.input_range[1] - fused.input_range[0]
 
-            # distance 4 times
-            input_max, weight_max = input_range.max(), weight_range.max()
-            input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
-            weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
             low_bit = 8 - round(math.log(percentile, 2))
-            fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8).type(
-                torch.int8)
-            # # weight only
-            # fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8).type(torch.int8)
+            prev_bit = torch.where(fused.w_bit.data == 8, 0, 1)
+            input_max, weight_max = input_range.max(), weight_range.max()
+            weight_bits = torch.bitwise_or(torch.where(percentile <= (weight_max / weight_range), 1, 0), prev_bit)
+
+            # weight only
+            if not weight_only:
+                input_bits = torch.where(percentile <= (input_max / input_range), 1, 0)
+                fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
+            else:
+                fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8)
 
             fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0].cuda()
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
@@ -254,15 +254,11 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, identifier=None)
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
 
-    print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, low_counter / total_counter * 100))
-
-        # with open(identifier + '_mixed_ratio.csv', 'a') as csvfile:
-        #     writer = csv.writer(csvfile)
-        #     # writer.writerow(['percentile', str(p)])
-        #     # writer.writerow([four_group[i] for i in range(len(four_group))])
-        #     # writer.writerow([eight_group[i] for i in range(len(eight_group))])
-        #     writer.writerow(['{:2f}%'.format(four_group[i] / (four_group[i] + eight_group[i]) * 100) for i in range(len(eight_group))])
-
+    ratio = low_counter / total_counter * 100
+    print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
+    with open(identifier + '.csv', 'a') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(([epoch, '{:2f}%'.format(ratio)]))
 
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
@@ -288,9 +284,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         # try inference once to record input precisions
-        validate_setting_bits(pretrained_model, val_loader, criterion)
+        if not args.weight_only:
+            validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
-        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, args.arch + '_' + args.dataset)
+        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, weight_only=args.weight_only, identifier=f'decay_{args.weight_decay}_weight_only_{args.weight_only}')
 
     if pretrained_model:
         del pretrained_model
@@ -315,13 +312,16 @@ def _finetune(args, tools, data_loaders, clustering_model):
     logger = set_logger(save_path_fp)
 
     quantized_model = None
+    quantile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
         train_epoch(model, train_loader, criterion, optimizer, e, logger)
         if args.mixed_precision:
-            set_mixed_bits_per_input_channels(model, args.percentile, e, identifier=None)
+            if not args.weight_only:
+                validate_setting_bits(model, val_loader, criterion)
+            set_mixed_bits_per_input_channels(model, quantile_tensor, e, weight_only=args.weight_only, identifier=f'decay_{args.weight_decay}_weight_only_{args.weight_only}')
         opt_scheduler.step()
 
         if args.fold_convbn:
