@@ -242,7 +242,7 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=Fals
 
             # weight only
             if not weight_only:
-                input_bits = torch.where(percentile <= (input_max / input_range), 1, 0)
+                input_bits = torch.bitwise_or(torch.where(percentile <= (input_max / input_range), 1, 0), prev_bit)
                 fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
             else:
                 fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8)
