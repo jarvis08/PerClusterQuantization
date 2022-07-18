@@ -32,7 +32,7 @@ if [ -z ${CLUSTER} ]; then
     if [ "$DATASET" = imagenet ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
-            --epochs 50 \
+            --epochs 40 \
             --batch $BATCH \
             --quant_base hawq \
             --arch $MODEL \
@@ -101,7 +101,7 @@ else
             if [ "$DATASET" = imagenet ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 50 \
+                    --epochs 40 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -163,7 +163,7 @@ else
             if [ "$DATASET" = imagenet ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 50 \
+                    --epochs 40 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -230,7 +230,7 @@ else
             if [ "$DATASET" = imagenet ]; then  
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 50 \
+                    --epochs 40 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \
@@ -304,7 +304,7 @@ else
             if [ "$DATASET" = imagenet ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
-                    --epochs 50 \
+                    --epochs 40 \
                     --batch $BATCH \
                     --quant_base hawq \
                     --arch $MODEL \

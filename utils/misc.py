@@ -55,8 +55,9 @@ class RuntimeHelper(object):
 
 
 class InputContainer(object):
-    def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, batch_size):
+    def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, model_name, batch_size):
         img_size = 224 if dataset_name == 'imagenet' else 32
+        img_size = 299 if model_name == 'inceptionv3' else img_size
         self.num_clusters = num_clusters
         self.batch_size = batch_size
         # self.container = [[torch.zeros((0, 3, img_size, img_size)), torch.zeros(0, dtype=torch.long)]                 # JK

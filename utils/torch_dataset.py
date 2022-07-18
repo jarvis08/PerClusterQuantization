@@ -33,8 +33,11 @@ def split_dataset_into_train_and_val(full_dataset, dataset_name):
 
 
 def get_augmented_train_dataset(args, normalizer):
+    train_resolution = 224
+    if args.arch == "inceptionv3":
+        train_resolution = 299
     if args.dataset == 'imagenet':
-        transformer = transforms.Compose([transforms.RandomResizedCrop(224),
+        transformer = transforms.Compose([transforms.RandomResizedCrop(train_resolution),
                                          transforms.RandomHorizontalFlip(),
                                          transforms.ToTensor(),
                                          normalizer])
@@ -54,9 +57,12 @@ def get_augmented_train_dataset(args, normalizer):
 
 
 def get_non_augmented_train_dataset(args, normalizer):
+    train_resolution, test_resolution = 224, 256
+    if args.arch == "inceptionv3":
+        train_resolution, test_resolution = 299, 342
     if args.dataset == 'imagenet':
-        transformer = transforms.Compose([transforms.Resize(256),
-                                          transforms.CenterCrop(224),
+        transformer = transforms.Compose([transforms.Resize(test_resolution),
+                                          transforms.CenterCrop(train_resolution),
                                           transforms.ToTensor(),
                                           normalizer])
         return datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'), transform=transformer)
@@ -72,9 +78,12 @@ def get_non_augmented_train_dataset(args, normalizer):
 
 
 def get_test_dataset(args, normalizer):
+    train_resolution, test_resolution = 224, 256
+    if args.arch == "inceptionv3":
+        train_resolution, test_resolution = 299, 342
     if args.dataset == 'imagenet':
-        transformer = transforms.Compose([transforms.Resize(256),
-                                          transforms.CenterCrop(224),
+        transformer = transforms.Compose([transforms.Resize(test_resolution),
+                                          transforms.CenterCrop(train_resolution),
                                           transforms.ToTensor(),
                                           normalizer])
         test_dataset = datasets.ImageFolder(root=os.path.join(args.imagenet, 'val'), transform=transformer)
