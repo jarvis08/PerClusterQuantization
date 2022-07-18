@@ -287,7 +287,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if not args.weight_only:
             validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
-        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, weight_only=args.weight_only, identifier=f'decay_{args.weight_decay}_weight_only_{args.weight_only}')
+        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, weight_only=args.weight_only, identifier=f'percentile_{args.percentile}_decay_{args.weight_decay}_weight_only_{args.weight_only}')
 
     if pretrained_model:
         del pretrained_model
@@ -321,7 +321,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if args.mixed_precision:
             if not args.weight_only:
                 validate_setting_bits(model, val_loader, criterion)
-            set_mixed_bits_per_input_channels(model, quantile_tensor, e, weight_only=args.weight_only, identifier=f'decay_{args.weight_decay}_weight_only_{args.weight_only}')
+            set_mixed_bits_per_input_channels(model, quantile_tensor, e, weight_only=args.weight_only, identifier=f'percentile_{args.percentile}_decay_{args.weight_decay}_weight_only_{args.weight_only}')
         opt_scheduler.step()
 
         if args.fold_convbn:
@@ -419,9 +419,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.symmetric:
         pc += 'Symmetric, '
 
-    with open(f'./qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
+    with open(f'./SKT_qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
         f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch,
+                .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 
