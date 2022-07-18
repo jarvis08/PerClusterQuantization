@@ -29,6 +29,67 @@ bit_config_dict = {
 },
 
 
+"bit_config_resnet18_uniform4" : {
+'quant_input': 8,
+'quant_init_block_convbn': 8,
+'quant_act_int32': 16,
+
+'stage1.unit1.quant_act': 4,
+'stage1.unit1.quant_convbn1': 4,
+'stage1.unit1.quant_act1': 4,
+'stage1.unit1.quant_convbn2': 4,
+'stage1.unit1.quant_act_int32': 16,
+
+'stage1.unit2.quant_act': 4,
+'stage1.unit2.quant_convbn1': 4,
+'stage1.unit2.quant_act1': 4,
+'stage1.unit2.quant_convbn2': 4,
+'stage1.unit2.quant_act_int32': 16,
+
+'stage2.unit1.quant_act': 4,
+'stage2.unit1.quant_convbn1': 4,
+'stage2.unit1.quant_act1': 4,
+'stage2.unit1.quant_convbn2': 4,
+'stage2.unit1.quant_identity_convbn': 4,
+'stage2.unit1.quant_act_int32': 16,
+
+'stage2.unit2.quant_act': 4,
+'stage2.unit2.quant_convbn1': 4,
+'stage2.unit2.quant_act1': 4,
+'stage2.unit2.quant_convbn2': 4,
+'stage2.unit2.quant_act_int32': 16,
+
+'stage3.unit1.quant_act': 4,
+'stage3.unit1.quant_convbn1': 4,
+'stage3.unit1.quant_act1': 4,
+'stage3.unit1.quant_convbn2': 4,
+'stage3.unit1.quant_identity_convbn': 4,
+'stage3.unit1.quant_act_int32': 16,
+
+'stage3.unit2.quant_act': 4,
+'stage3.unit2.quant_convbn1': 4,
+'stage3.unit2.quant_act1': 4,
+'stage3.unit2.quant_convbn2': 4,
+'stage3.unit2.quant_act_int32': 16,
+
+'stage4.unit1.quant_act': 4,
+'stage4.unit1.quant_convbn1': 4,
+'stage4.unit1.quant_act1': 4,
+'stage4.unit1.quant_convbn2': 4,
+'stage4.unit1.quant_identity_convbn': 4,
+'stage4.unit1.quant_act_int32': 16,
+
+'stage4.unit2.quant_act': 4,
+'stage4.unit2.quant_convbn1': 4,
+'stage4.unit2.quant_act1': 4,
+'stage4.unit2.quant_convbn2': 4,
+'stage4.unit2.quant_act_int32': 16,
+
+'quant_act_output': 8,
+'quant_output': 8
+},
+
+
 "bit_config_densenet121_uniform4" : {
     'quant_input': 8,
     'quant_init_convbn': 8,
@@ -1447,5 +1508,7 @@ bit_config_dict = {
 "quant_act_output" : 8,
 "output" : 8,
 },
+
+
 
 }

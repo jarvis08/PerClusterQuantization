@@ -44,8 +44,8 @@ def _pretrain(args, tools):
         best_prec = checkpoint['best_prec']
 
     normalizer = get_normalizer(args.dataset)
-    augmented_train_dataset = get_augmented_train_dataset(args, normalizer)
-    non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+    augmented_train_dataset = get_augmented_train_dataset(args, normalizer, args.arch)
+    non_augmented_train_dataset = get_non_augmented_train_dataset(args, normalizer, args.arch)
     train_dataset, _ = split_dataset_into_train_and_val(augmented_train_dataset, args.dataset)
     non_augmented_train_dataset, val_dataset = split_dataset_into_train_and_val(non_augmented_train_dataset, args.dataset)
 

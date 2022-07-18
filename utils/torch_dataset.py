@@ -32,9 +32,9 @@ def split_dataset_into_train_and_val(full_dataset, dataset_name):
     return train_dataset, val_dataset
 
 
-def get_augmented_train_dataset(args, normalizer):
+def get_augmented_train_dataset(args, normalizer, model):
     train_resolution = 224
-    if args.arch == "inceptionv3":
+    if model == "inceptionv3":
         train_resolution = 299
     if args.dataset == 'imagenet':
         transformer = transforms.Compose([transforms.RandomResizedCrop(train_resolution),
@@ -56,9 +56,9 @@ def get_augmented_train_dataset(args, normalizer):
     return dataset
 
 
-def get_non_augmented_train_dataset(args, normalizer):
+def get_non_augmented_train_dataset(args, normalizer, model):
     train_resolution, test_resolution = 224, 256
-    if args.arch == "inceptionv3":
+    if model == "inceptionv3":
         train_resolution, test_resolution = 299, 342
     if args.dataset == 'imagenet':
         transformer = transforms.Compose([transforms.Resize(test_resolution),
@@ -77,9 +77,9 @@ def get_non_augmented_train_dataset(args, normalizer):
     return dataset
 
 
-def get_test_dataset(args, normalizer):
+def get_test_dataset(args, normalizer, model):
     train_resolution, test_resolution = 224, 256
-    if args.arch == "inceptionv3":
+    if model == "inceptionv3":
         train_resolution, test_resolution = 299, 342
     if args.dataset == 'imagenet':
         transformer = transforms.Compose([transforms.Resize(test_resolution),
@@ -102,17 +102,17 @@ def get_data_loader(dataset, batch_size=128, shuffle=False, workers=4):
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers, pin_memory=True)
 
 
-def get_data_loaders(args):
+def get_data_loaders(args, model):
     normalizer = get_normalizer(args.dataset)
 
-    test_dataset = get_test_dataset(args, normalizer)
+    test_dataset = get_test_dataset(args, normalizer, model)
     test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
     if args.mode == 'eval':
         return test_loader
 
     clustering_train_loader = None
-    aug_train_dataset = get_augmented_train_dataset(args, normalizer)
-    non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer)
+    aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
+    non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
 
     if args.cluster > 1 and not args.clustering_path:
         clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=256, shuffle=True,

@@ -60,7 +60,7 @@ if args_daq.cluster > 1 and args_daq.sub_cluster:
 
 
 if __name__ == '__main__':
-    data_loaders = get_data_loaders(args_daq)
+    data_loaders = get_data_loaders(args_daq, arch)
     clustering_model = None
     if args_daq.cluster > 1:
         from Clustering import get_clustering_model
