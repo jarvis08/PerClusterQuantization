@@ -107,6 +107,7 @@ class Q_Concurrent(nn.Sequential):
         out = []
         scaling_factor = []
         channel_num = []
+        cluster = []
         for module in self._modules.values():
             branch_out = module(x)
             if type(branch_out) is tuple:
