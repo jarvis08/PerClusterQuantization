@@ -23,13 +23,17 @@ class KMeansClustering(object):
         batch = data.size(0)
         channel = data.size(1)
         _size = data.size(2)
+        if _size % 2:
+            m = torch.nn.ZeroPad2d((0, 1, 0, 1))
+            data = m(data)
+            _size = data.size(2)
         if self.args.partition_method == 'square':
             n_part = self.args.partition
             n_data = int(_size / n_part)  # Per part
 
             data = data.view(batch, channel, n_part,
-                             n_data, _size).transpose(3, 4)
-            data = data.reshape(batch, channel, n_part * n_part, -1)
+                             n_data, _size).transpose(3, 4).contiguous()
+            data = data.view(batch, channel, n_part * n_part, -1)
 
             if self.args.repr_method == 'max':
                 rst, _ = data.topk(k=3, dim=-1)
@@ -98,6 +102,7 @@ class KMeansClustering(object):
         self.model = joblib.load(os.path.join(
             self.args.clustering_path, 'checkpoint.pkl'))
 
+    @torch.no_grad()
     def predict_cluster_of_batch(self, input):
         kmeans_input = self.get_partitioned_batch(input)
         cluster_info = self.model.predict(kmeans_input)
