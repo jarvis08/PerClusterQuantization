@@ -780,7 +780,7 @@ class Q_InceptionV3(nn.Module):
 
         self.features.add_module("q_final_pool", QuantAveragePool2d(kernel_size=8, stride=1))
 
-        self.quantize.add_module("q_concat_activ", QuantAct(num_clusters=num_clusters))
+        self.q_concat_activ = QuantAct(num_clusters=num_clusters)
 
         self.output = nn.Sequential()
         self.output.add_module("q_dropout", QuantDropout(p=dropout_rate))
@@ -799,7 +799,7 @@ class Q_InceptionV3(nn.Module):
 
     def forward(self, x, cluster):
         (x, a_sf) = self.features((x, cluster))
-        (x, a_sf) = self.quantize((x, a_sf, cluster))
+        (x, a_sf) = self.q_concat_activ((x, a_sf, cluster))
         x = x.view(x.size(0), -1)
         x = self.output((x, a_sf))
         return x
