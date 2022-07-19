@@ -399,7 +399,7 @@ class Q_InceptionAUnit(nn.Module):
         cluster = x[2]
         x = self.branches(x)
         x, a_sf = self.q_rescaling_activ(x)
-        return (x, asf, cluster)
+        return (x, a_sf, cluster)
 
 
 class Q_ReductionAUnit(nn.Module):
@@ -449,7 +449,7 @@ class Q_ReductionAUnit(nn.Module):
         cluster = x[2]
         x = self.branches(x)
         x, a_sf = self.q_rescaling_activ(x)
-        return (x, asf, cluster)
+        return (x, a_sf, cluster)
 
 
 class Q_InceptionBUnit(nn.Module):
@@ -510,7 +510,7 @@ class Q_InceptionBUnit(nn.Module):
         cluster = x[2]
         x = self.branches(x)
         x, a_sf = self.q_rescaling_activ(x)
-        return (x, asf, cluster)
+        return (x, a_sf, cluster)
 
 
 class Q_ReductionBUnit(nn.Module):
@@ -560,7 +560,7 @@ class Q_ReductionBUnit(nn.Module):
         cluster = x[2]
         x = self.branches(x)
         x, a_sf = self.q_rescaling_activ(x)
-        return (x, asf, cluster)
+        return (x, a_sf, cluster)
 
 
 class Q_InceptionCUnit(nn.Module):
@@ -617,7 +617,7 @@ class Q_InceptionCUnit(nn.Module):
         cluster = x[2]
         x = self.branches(x)
         x, a_sf = self.q_rescaling_activ(x)
-        return (x, asf, cluster)
+        return (x, a_sf, cluster)
 
 
 class Q_InceptInitBlock(nn.Module):

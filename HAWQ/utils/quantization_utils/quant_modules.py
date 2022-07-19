@@ -321,7 +321,7 @@ class QuantAct(Module):
                         = fixedpoint_fn.apply(x[:, start_channel_index: start_channel_index + channel_num[i], :, :],
                                               self.activation_bit, self.quant_mode, act_scaling_factor, 0,
                                               pre_act_scaling_factor[i],
-                                              pre_act_scaling_factor[i] / pre_act_scaling_factor[i])
+                                              self.pre_weight_scaling_factor)
                     start_channel_index += channel_num[i]
             else:
                 if identity is None and concat is None:
