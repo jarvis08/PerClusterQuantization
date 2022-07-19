@@ -142,7 +142,7 @@ class Q_MaxPoolBranch(nn.Module):
         cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
         x = self.q_pool((x, a_sf, cluster))
-        return (x, a_sf, cluster)
+        return x
 
 
 class Q_AvgPoolBranch(nn.Module):
