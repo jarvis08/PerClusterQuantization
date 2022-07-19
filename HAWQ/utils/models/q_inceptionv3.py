@@ -107,14 +107,13 @@ class Q_Concurrent(nn.Sequential):
         out = []
         scaling_factor = []
         channel_num = []
-        cluster = []
+        cluster = x[2]
         for module in self._modules.values():
             branch_out = module(x)
             if type(branch_out) is tuple:
                 out.append(branch_out[0])
                 scaling_factor.append(branch_out[1])
                 channel_num.append(branch_out[0].shape[1])
-                cluster.append(branch_out[2])
             else:
                 out.append(branch_out)
         if self.stack:
