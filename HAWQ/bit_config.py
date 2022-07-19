@@ -1353,7 +1353,7 @@ bit_config_dict = {
 'features.stage3.unit3.branches.branch4.q_pool_act' : 4,
 'features.stage3.unit3.branches.branch4.q_conv.q_activ' : 16,
 'features.stage3.unit3.q_rescaling_activ' : 16,
-'features.q_concat_activ' : 8,
+'q_concat_activ' : 8,
 'output.q_fc' : 8
 },
 
