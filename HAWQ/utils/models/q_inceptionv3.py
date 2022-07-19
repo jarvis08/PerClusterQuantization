@@ -180,7 +180,7 @@ class Q_AvgPoolBranch(nn.Module):
         (x, a_sf) = self.q_input_act(x)
         (x, a_sf) = self.q_pool((x, a_sf))
         (x, a_sf) = self.q_pool_act((x, a_sf, cluster))
-        (x, a_sf) = self.q_conv((x, a_sf, cluster))
+        (x, a_sf, _) = self.q_conv((x, a_sf, cluster))
 
         return (x, a_sf, cluster)
 
@@ -214,7 +214,7 @@ class Q_Conv1x1Branch(nn.Module):
     def forward(self, x):
         cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_conv((x, a_sf, cluster))
+        (x, a_sf, _) = self.q_conv((x, a_sf, cluster))
         return (x, a_sf, cluster)
 
 
@@ -267,7 +267,7 @@ class Q_ConvSeqBranch(nn.Module):
     def forward(self, x):
         cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_conv_list((x, a_sf, cluster))
+        (x, a_sf, _) = self.q_conv_list((x, a_sf, cluster))
 
         return (x, a_sf, cluster)
 
@@ -335,9 +335,9 @@ class Q_ConvSeq3x3Branch(nn.Module):
     def forward(self, x):
         cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_conv_list((x, a_sf, cluster))
-        y1, scaling_factor1 = self.q_conv1x3((x, a_sf, cluster))
-        y2, scaling_factor2 = self.q_conv3x1((x, a_sf, cluster))
+        (x, a_sf, _) = self.q_conv_list((x, a_sf, cluster))
+        y1, scaling_factor1, _ = self.q_conv1x3((x, a_sf, cluster))
+        y2, scaling_factor2, _ = self.q_conv3x1((x, a_sf, cluster))
         channel_num = [y1.shape[1], y2.shape[1]]
         x = torch.cat((y1, y2), dim=1)
         x, a_sf = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], cluster, channel_num))
