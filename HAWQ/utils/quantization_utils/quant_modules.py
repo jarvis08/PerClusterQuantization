@@ -767,12 +767,13 @@ class QuantMaxPool2d(Module):
 
     def forward(self, x, x_scaling_factor=None):
         if type(x) is tuple:
+            cluster = x[2]
             x_scaling_factor = x[1]
             x = x[0]
 
         x = self.pool(x)
 
-        return (x, x_scaling_factor)
+        return (x, x_scaling_factor, cluster)
 
 
 class QuantDropout(Module):

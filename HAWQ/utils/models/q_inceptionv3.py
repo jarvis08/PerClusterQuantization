@@ -53,9 +53,10 @@ class Q_InceptConv(nn.Module):
         assert (type(x) is tuple)
         cluster = x[2]
         a_sf = x[1]
+
         (x, w_sf) = self.q_convbn(x)
         x = self.relu(x)
-        (x, a_sf) = self.q_activ(x, a_sf, w_sf, cluster=cluster)
+        (x, a_sf) = self.q_activ(x, a_sf, w_sf, None, None, cluster=cluster)
         return (x, a_sf, cluster)
 
 
@@ -140,7 +141,7 @@ class Q_MaxPoolBranch(nn.Module):
     def forward(self, x):
         cluster = x[2]
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf) = self.q_pool((x, a_sf))
+        x = self.q_pool((x, a_sf, cluster))
         return (x, a_sf, cluster)
 
 
@@ -693,15 +694,15 @@ class Q_InceptInitBlock(nn.Module):
 
     def forward(self, x):
         cluster = x[1]
-        (x, a_sf) = self.q_input_activ(x, cluster=cluster)
+        (x, a_sf) = self.q_input_activ(x[0], cluster=cluster)
         x = self.q_conv1((x, a_sf, cluster))
         x = self.q_conv2(x)
         x = self.q_conv3(x)
-        (x, a_sf) = self.q_pool1(x)
-        x = self.q_conv4((x, a_sf, cluster))
+        x = self.q_pool1(x)
+        x = self.q_conv4(x)
         x = self.q_conv5(x)
-        (x, a_sf) = self.q_pool2(x)
-        return (x, a_sf, cluster)
+        x = self.q_pool2(x)
+        return x
 
 
 class Q_InceptionV3(nn.Module):
@@ -806,7 +807,14 @@ class Q_InceptionV3(nn.Module):
 
 
 def q_inceptionv3(model=None, num_clusters=None):
-
+    """
+    Create quantizated InceptionV3 model with specific parameters.
+    
+    Parameters:
+    ----------
+    model : the pretrained floating-point InceptionV3.
+    num_clusters : 
+    """
     init_block_channels = 192
     channels = [[256, 288, 288],
                 [768, 768, 768, 768, 768],
