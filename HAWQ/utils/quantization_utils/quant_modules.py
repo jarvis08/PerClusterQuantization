@@ -457,14 +457,14 @@ class QuantBnConv2d(Module):
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
             # determine whether to fold BN or not
-            if self.fix_flag == False:
-                self.counter += 1
-                if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
-                    self.fix_BN = self.training_BN_mode
-                else:
-                    if self.counter == self.fix_BN_threshold:
-                        print("Start Training with Folded BN")
-                    self.fix_BN = True
+            # if self.fix_flag == False:
+            #     self.counter += 1
+            #     if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+            #         self.fix_BN = self.training_BN_mode
+            #     else:
+            #         if self.counter == self.fix_BN_threshold:
+            #             print("Start Training with Folded BN")
+            #         self.fix_BN = True
 
             # run the forward without folding BN
             if self.fix_BN == False:
@@ -617,6 +617,7 @@ class QuantBn(Module):
         self.weight_bit = weight_bit
         self.quant_mode = quant_mode
         self.full_precision_flag = full_precision_flag
+        self.per_channel = per_channel
         self.fix_flag = fix_flag
         self.weight_percentile = weight_percentile
         self.bias_bit = bias_bit
@@ -671,15 +672,15 @@ class QuantBn(Module):
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
             
             # determine whether to fold BN or not
-            if self.fix_flag == False:
-                self.counter += 1
-                if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
-                    self.fix_BN = self.training_BN_mode
-                else:
-                    if self.counter == self.fix_BN_threshold:
-                        print("Start Training with Folded BN")
-                    self.fix_BN = True
-                    self.training_BN_mode = True
+            # if self.fix_flag == False:
+            #     self.counter += 1
+            #     if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
+            #         self.fix_BN = self.training_BN_mode
+            #     else:
+            #         if self.counter == self.fix_BN_threshold:
+            #             print("Start Training with Folded BN")
+            #         self.fix_BN = True
+            #         self.training_BN_mode = True
 
             if self.fix_BN is False:
                 batch_mean = torch.mean(x, dim=(0, 2, 3))
@@ -696,11 +697,28 @@ class QuantBn(Module):
                 scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var.detach() + self.bn.eps)
                 scaled_bias = self.bn.bias - self.bn.running_mean.detach() * scaled_weight
 
-            if self.weight_percentile == 0:
-                w_min = scaled_weight.data.min()
-                w_max = scaled_weight.data.max()
+            if self.per_channel:
+                w_transform = scaled_weight.data.contiguous().view(self.bn.num_features, -1)
+
+                if self.weight_percentile == 0:
+                    w_min = w_transform.min(dim=1).values
+                    w_max = w_transform.max(dim=1).values
+                else:
+                    lower_percentile = 100 - self.weight_percentile
+                    upper_percentile = self.weight_percentile
+                    input_length = w_transform.shape[1]
+
+                    lower_index = math.ceil(input_length * lower_percentile * 0.01)
+                    upper_index = math.ceil(input_length * upper_percentile * 0.01)
+
+                    w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
+                    w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
             else:
-                w_min, w_max = get_percentile_min_max(scaled_weight.view(-1), 100 - self.weight_percentile,
+                if self.weight_percentile == 0:
+                    w_min = scaled_weight.data.min()
+                    w_max = scaled_weight.data.max()
+                else:
+                    w_min, w_max = get_percentile_min_max(scaled_weight.view(-1), 100 - self.weight_percentile,
                                                     self.weight_percentile, output_tensor=True)
 
             if self.quant_mode == 'symmetric':
@@ -946,11 +964,8 @@ class QuantConv2d(Module):
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
-            w = self.weight
-
             if self.per_channel:
-                # w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
-                w_transform = w.data.contiguous().view(self.out_channels, -1)
+                w_transform = self.weight.data.contiguous().view(self.out_channels, -1)
 
                 if self.weight_percentile == 0:
                     w_min = w_transform.min(dim=1).values
@@ -967,14 +982,13 @@ class QuantConv2d(Module):
                     w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
             else:
                 if self.weight_percentile == 0:
-                    w_min = w.data.min()
-                    w_max = w.data.max()
+                    w_min = self.weight.data.min()
+                    w_max = self.weight.data.max()
                 else:
-                    w_min, w_max = get_percentile_min_max(w.view(-1), 100 - self.weight_percentile,
+                    w_min, w_max = get_percentile_min_max(self.weight.view(-1), 100 - self.weight_percentile,
                                                         self.weight_percentile, output_tensor=True)
 
-            self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
-                                                                            self.per_channel)
+            self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
             self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor.view(-1, 1, 1, 1))
             bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.conv_scaling_factor.view(1, -1)
             if self.quantize_bias and (self.bias is not None):
