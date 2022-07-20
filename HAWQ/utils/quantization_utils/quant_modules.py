@@ -724,7 +724,7 @@ class QuantBn(Module):
             if self.quant_mode == 'symmetric':
                 self.bn_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max)
                 self.weight_integer = self.weight_function(scaled_weight, self.weight_bit, 
-                                                        self.bn_scaling_factor.view(-1, 1, 1, 1))
+                                                        self.bn_scaling_factor)
                 
                 bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.bn_scaling_factor.view(1, -1)
                 if self.quantize_bias and scaled_bias is not None:
