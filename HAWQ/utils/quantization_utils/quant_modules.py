@@ -790,10 +790,10 @@ class QuantMaxPool2d(Module):
             x_scaling_factor = x[1]
             x = x[0]
 
-        x = self.pool(x)
-
-        if type(x) is tuple:
+            x = self.pool(x)
             return (x, x_scaling_factor, cluster)
+
+        x = self.pool(x)
         return (x, x_scaling_factor)
 
 
