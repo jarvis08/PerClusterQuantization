@@ -687,8 +687,7 @@ class QuantBn(Module):
                 batch_var = torch.var(x, dim=(0, 2, 3))
 
                 # update mean and variance in running stats
-                self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                            1 - self.bn.momentum) * batch_mean
+                self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_mean
                 self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
 
                 scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)

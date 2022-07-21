@@ -168,7 +168,7 @@ class KMeansClustering(object):
 
         n_sub_clusters = self.args.sub_cluster
         container = InputContainer(
-            train_loader, self, n_sub_clusters, self.args.dataset, self.args.arch, self.args.batch)
+            train_loader, self, n_sub_clusters, self.args.dataset, arch, self.args.batch)
         container.initialize_generator()
         container.set_next_batch()
 
