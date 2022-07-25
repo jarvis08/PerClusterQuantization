@@ -1299,7 +1299,7 @@ bit_config_dict = {
 "init_block" : 8,
 "quant_act_int32" : 16,
 
-"features.stage1.unit1.quant_act" : 4,
+"features.stage1.unit1.quant_act" : (4, True),
 "features.stage1.unit1.conv1" : 4,
 "features.stage1.unit1.quant_act1" : 4,
 "features.stage1.unit1.conv2" : 4,
@@ -1307,7 +1307,7 @@ bit_config_dict = {
 "features.stage1.unit1.conv3" : 4,
 "features.stage1.unit1.quant_act_int32" : 16,
 
-"features.stage2.unit1.quant_act" : 4,
+"features.stage2.unit1.quant_act" : (4, True),
 "features.stage2.unit1.conv1" : 4,
 "features.stage2.unit1.quant_act1" : 4,
 "features.stage2.unit1.conv2" : 4,
@@ -1315,7 +1315,7 @@ bit_config_dict = {
 "features.stage2.unit1.conv3" : 4,
 "features.stage2.unit1.quant_act_int32" : 16,
 
-"features.stage2.unit2.quant_act" : 4,
+"features.stage2.unit2.quant_act" : (4, True),
 "features.stage2.unit2.conv1" : 4,
 "features.stage2.unit2.quant_act1" : 4,
 "features.stage2.unit2.conv2" : 4,
@@ -1323,7 +1323,7 @@ bit_config_dict = {
 "features.stage2.unit2.conv3" : 4,
 "features.stage2.unit2.quant_act_int32" : 16,
 
-"features.stage3.unit1.quant_act" : 4,
+"features.stage3.unit1.quant_act" : (4, True),
 "features.stage3.unit1.conv1" : 4,
 "features.stage3.unit1.quant_act1" : 4,
 "features.stage3.unit1.conv2" : 4,
@@ -1331,7 +1331,7 @@ bit_config_dict = {
 "features.stage3.unit1.conv3" : 4,
 "features.stage3.unit1.quant_act_int32" : 16,
 
-"features.stage3.unit2.quant_act" : 4,
+"features.stage3.unit2.quant_act" : (4, True),
 "features.stage3.unit2.conv1" : 4,
 "features.stage3.unit2.quant_act1" : 4,
 "features.stage3.unit2.conv2" : 4,
@@ -1339,7 +1339,7 @@ bit_config_dict = {
 "features.stage3.unit2.conv3" : 4,
 "features.stage3.unit2.quant_act_int32" : 16,
 
-"features.stage3.unit3.quant_act" : 4,
+"features.stage3.unit3.quant_act" : (4, True),
 "features.stage3.unit3.conv1" : 4,
 "features.stage3.unit3.quant_act1" : 4,
 "features.stage3.unit3.conv2" : 4,
@@ -1347,7 +1347,7 @@ bit_config_dict = {
 "features.stage3.unit3.conv3" : 4,
 "features.stage3.unit3.quant_act_int32" : 16,
 
-"features.stage4.unit1.quant_act" : 4,
+"features.stage4.unit1.quant_act" : (4, True),
 "features.stage4.unit1.conv1" : 4,
 "features.stage4.unit1.quant_act1" : 4,
 "features.stage4.unit1.conv2" : 4,
@@ -1355,7 +1355,7 @@ bit_config_dict = {
 "features.stage4.unit1.conv3" : 4,
 "features.stage4.unit1.quant_act_int32" : 16,
 
-"features.stage4.unit2.quant_act" : 4,
+"features.stage4.unit2.quant_act" : (4, True),
 "features.stage4.unit2.conv1" : 4,
 "features.stage4.unit2.quant_act1" : 4,
 "features.stage4.unit2.conv2" : 4,
@@ -1363,7 +1363,7 @@ bit_config_dict = {
 "features.stage4.unit2.conv3" : 4,
 "features.stage4.unit2.quant_act_int32" : 16,
 
-"features.stage4.unit3.quant_act" : 4,
+"features.stage4.unit3.quant_act" : (4, True),
 "features.stage4.unit3.conv1" : 4,
 "features.stage4.unit3.quant_act1" : 4,
 "features.stage4.unit3.conv2" : 4,
@@ -1371,7 +1371,7 @@ bit_config_dict = {
 "features.stage4.unit3.conv3" : 4,
 "features.stage4.unit3.quant_act_int32" : 16,
 
-"features.stage4.unit4.quant_act" : 4,
+"features.stage4.unit4.quant_act" : (4, True),
 "features.stage4.unit4.conv1" : 4,
 "features.stage4.unit4.quant_act1" : 4,
 "features.stage4.unit4.conv2" : 4,
@@ -1379,7 +1379,7 @@ bit_config_dict = {
 "features.stage4.unit4.conv3" : 4,
 "features.stage4.unit4.quant_act_int32" : 16,
 
-"features.stage4.unit5.quant_act" : 4,
+"features.stage4.unit5.quant_act" : (4, True),
 "features.stage4.unit5.conv1" : 4,
 "features.stage4.unit5.quant_act1" : 4,
 "features.stage4.unit5.conv2" : 4,
@@ -1387,7 +1387,7 @@ bit_config_dict = {
 "features.stage4.unit5.conv3" : 4,
 "features.stage4.unit5.quant_act_int32" : 16,
 
-"features.stage4.unit6.quant_act" : 4,
+"features.stage4.unit6.quant_act" : (4, True),
 "features.stage4.unit6.conv1" : 4,
 "features.stage4.unit6.quant_act1" : 4,
 "features.stage4.unit6.conv2" : 4,
@@ -1395,7 +1395,7 @@ bit_config_dict = {
 "features.stage4.unit6.conv3" : 4,
 "features.stage4.unit6.quant_act_int32" : 16,
 
-"features.stage4.unit7.quant_act" : 4,
+"features.stage4.unit7.quant_act" : (4, True),
 "features.stage4.unit7.conv1" : 4,
 "features.stage4.unit7.quant_act1" : 4,
 "features.stage4.unit7.conv2" : 4,
@@ -1403,7 +1403,7 @@ bit_config_dict = {
 "features.stage4.unit7.conv3" : 4,
 "features.stage4.unit7.quant_act_int32" : 16,
 
-"features.stage5.unit1.quant_act" : 4,
+"features.stage5.unit1.quant_act" : (4, True),
 "features.stage5.unit1.conv1" : 4,
 "features.stage5.unit1.quant_act1" : 4,
 "features.stage5.unit1.conv2" : 4,
@@ -1411,7 +1411,7 @@ bit_config_dict = {
 "features.stage5.unit1.conv3" : 4,
 "features.stage5.unit1.quant_act_int32" : 16,
 
-"features.stage5.unit2.quant_act" : 4,
+"features.stage5.unit2.quant_act" : (4, True),
 "features.stage5.unit2.conv1" : 4,
 "features.stage5.unit2.quant_act1" : 4,
 "features.stage5.unit2.conv2" : 4,
@@ -1419,7 +1419,7 @@ bit_config_dict = {
 "features.stage5.unit2.conv3" : 4,
 "features.stage5.unit2.quant_act_int32" : 16,
 
-"features.stage5.unit3.quant_act" : 4,
+"features.stage5.unit3.quant_act" : (4, True),
 "features.stage5.unit3.conv1" : 4,
 "features.stage5.unit3.quant_act1" : 4,
 "features.stage5.unit3.conv2" : 4,
@@ -1427,7 +1427,7 @@ bit_config_dict = {
 "features.stage5.unit3.conv3" : 4,
 "features.stage5.unit3.quant_act_int32" : 16,
 
-"features.stage5.unit4.quant_act" : 4,
+"features.stage5.unit4.quant_act" : (4, True),
 "features.stage5.unit4.conv1" : 4,
 "features.stage5.unit4.quant_act1" : 4,
 "features.stage5.unit4.conv2" : 4,

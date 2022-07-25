@@ -388,13 +388,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                         args.fixed_point_quantization)
 
                 if type(bit_config[name]) is tuple:
-                    bitwidth = bit_config[name][0]
+                    bitwidth, symmetric = bit_config[name]
                 else:
-                    bitwidth = bit_config[name]
+                    bitwidth, symmetric = bit_config[name], False
 
                 if hasattr(m, 'activation_bit'):
                     setattr(m, 'activation_bit', bitwidth)
-                    if bitwidth == 4:
+                    if bitwidth == 4 and not symmetric:
                         setattr(m, 'quant_mode', 'asymmetric')
                 else:
                     setattr(m, 'weight_bit', bitwidth)

@@ -32,21 +32,17 @@ class Q_LinearBottleneck(nn.Module):
             Strides of the second convolution layer.
         expansion : bool
             Whether do expansion of channels.
-        remove_exp_conv : bool
-            Whether to remove expansion convolution.
         """
         super(Q_LinearBottleneck, self).__init__()
         self.residual = (in_channels == out_channels) and (stride == 1)
         mid_channels = in_channels * 6 if expansion else in_channels
-        self.use_exp_conv = (expansion or (not remove_exp_conv))
         self.activatition_func = nn.ReLU6()
 
         self.quant_act = QuantAct(num_clusters=num_clusters)
 
-        if self.use_exp_conv:
-            self.conv1 = QuantBnConv2d()
-            self.conv1.set_param(model.conv1.conv, model.conv1.bn)
-            self.quant_act1 = QuantAct(num_clusters=num_clusters)
+        self.conv1 = QuantBnConv2d()
+        self.conv1.set_param(model.conv1.conv, model.conv1.bn)
+        self.quant_act1 = QuantAct(num_clusters=num_clusters)
 
         self.conv2 = QuantBnConv2d()
         self.conv2.set_param(model.conv2.conv, model.conv2.bn)
@@ -61,27 +57,17 @@ class Q_LinearBottleneck(nn.Module):
         if self.residual:
             identity = x
 
-        # x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
-        act_scaling_factor = scaling_factor_int32.clone() if scaling_factor_int32 is not None else None
+        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
 
-        if self.use_exp_conv:
-            x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
-            x = self.activatition_func(x)
-            x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+        x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
+        x = self.activatition_func(x)
+        x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
 
-            x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
-            x = self.activatition_func(x)
-            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+        x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
+        x = self.activatition_func(x)
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
 
-            # note that, there is no activation for the last conv
-            x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
-        else:
-            x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
-            x = self.activatition_func(x)
-            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-
-            # note that, there is no activation for the last conv
-            x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
+        x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
 
         if self.residual:
             x = x + identity
@@ -105,8 +91,6 @@ class Q_MobileNetV2(nn.Module):
         Number of output channels for the initial unit.
     final_block_channels : int
         Number of output channels for the final block of the feature extractor.
-    remove_exp_conv : bool
-        Whether to remove expansion convolution.
     in_channels : int, default 3
         Number of input channels.
     in_size : tuple of two ints, default (224, 224)
@@ -119,7 +103,6 @@ class Q_MobileNetV2(nn.Module):
                  channels,
                  init_block_channels,
                  final_block_channels,
-                 remove_exp_conv,
                  in_channels=3,
                  in_size=(224, 224),
                  num_classes=1000,
@@ -158,7 +141,6 @@ class Q_MobileNetV2(nn.Module):
                     out_channels=out_channels,
                     stride=stride,
                     expansion=expansion,
-                    remove_exp_conv=remove_exp_conv,
                     num_clusters=num_clusters
                     ))
 
@@ -214,7 +196,7 @@ class Q_MobileNetV2(nn.Module):
         return x
 
 
-def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False, num_clusters=None):
+def q_get_mobilenetv2(model, width_scale, num_clusters=None):
     """
     Create quantized MobileNetV2 model with specific parameters.
     Parameters:
@@ -223,8 +205,6 @@ def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False, num_clusters=No
         The pretrained floating-point MobileNetV2.
     width_scale : float
         Scale factor for width of layers.
-    remove_exp_conv : bool, default False
-        Whether to remove expansion convolution.
     """
 
     init_block_channels = 32
@@ -250,7 +230,6 @@ def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False, num_clusters=No
         channels=channels,
         init_block_channels=init_block_channels,
         final_block_channels=final_block_channels,
-        remove_exp_conv=remove_exp_conv,
         num_clusters=num_clusters)
 
     return net
