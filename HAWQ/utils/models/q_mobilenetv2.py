@@ -16,7 +16,8 @@ class Q_LinearBottleneck(nn.Module):
                 out_channels,
                 stride,
                 expansion,
-                remove_exp_conv):
+                remove_exp_conv,
+                num_clusters=1):
         """
         So-called 'Linear Bottleneck' layer. It is used as a quantized MobileNetV2 unit.
         Parameters:
@@ -40,52 +41,53 @@ class Q_LinearBottleneck(nn.Module):
         self.use_exp_conv = (expansion or (not remove_exp_conv))
         self.activatition_func = nn.ReLU6()
 
-        self.quant_act = QuantAct()
+        self.quant_act = QuantAct(num_clusters=num_clusters)
 
         if self.use_exp_conv:
             self.conv1 = QuantBnConv2d()
             self.conv1.set_param(model.conv1.conv, model.conv1.bn)
-            self.quant_act1 = QuantAct()
+            self.quant_act1 = QuantAct(num_clusters=num_clusters)
 
         self.conv2 = QuantBnConv2d()
         self.conv2.set_param(model.conv2.conv, model.conv2.bn)
-        self.quant_act2 = QuantAct()
+        self.quant_act2 = QuantAct(num_clusters=num_clusters)
 
         self.conv3 = QuantBnConv2d()
         self.conv3.set_param(model.conv3.conv, model.conv3.bn)
 
-        self.quant_act_int32 = QuantAct()
+        self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
 
-    def forward(self, x, scaling_factor_int32=None):
+    def forward(self, x, scaling_factor_int32=None, cluster=None):
         if self.residual:
             identity = x
 
-        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None)
+        # x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
+        act_scaling_factor = scaling_factor_int32.clone() if scaling_factor_int32 is not None else None
 
         if self.use_exp_conv:
             x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
             x = self.activatition_func(x)
-            x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None)
+            x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
 
             x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
             x = self.activatition_func(x)
-            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None)
+            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
 
             # note that, there is no activation for the last conv
             x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
         else:
             x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
             x = self.activatition_func(x)
-            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None)
+            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
 
             # note that, there is no activation for the last conv
             x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
 
         if self.residual:
             x = x + identity
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None, cluster=cluster)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
 
         return x, act_scaling_factor
 
@@ -120,7 +122,8 @@ class Q_MobileNetV2(nn.Module):
                  remove_exp_conv,
                  in_channels=3,
                  in_size=(224, 224),
-                 num_classes=1000):
+                 num_classes=1000,
+                 num_clusters=1):
         super(Q_MobileNetV2, self).__init__()
         self.in_size = in_size
         self.num_classes = num_classes
@@ -128,14 +131,14 @@ class Q_MobileNetV2(nn.Module):
         self.activatition_func = nn.ReLU6()
 
         # add input quantization
-        self.quant_input = QuantAct()
+        self.quant_input = QuantAct(num_clusters=num_clusters)
 
         # change the inital block
         self.add_module("init_block", QuantBnConv2d())
 
         self.init_block.set_param(model.features.init_block.conv, model.features.init_block.bn)
 
-        self.quant_act_int32 = QuantAct()
+        self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
 
         self.features = nn.Sequential()
         # change the middle blocks
@@ -156,61 +159,62 @@ class Q_MobileNetV2(nn.Module):
                     stride=stride,
                     expansion=expansion,
                     remove_exp_conv=remove_exp_conv,
+                    num_clusters=num_clusters
                     ))
 
                 in_channels = out_channels
             self.features.add_module("stage{}".format(i + 1), stage)
 
         # change the final block
-        self.quant_act_before_final_block = QuantAct()
+        self.quant_act_before_final_block = QuantAct(num_clusters=num_clusters)
         self.features.add_module("final_block", QuantBnConv2d())
 
         self.features.final_block.set_param(model.features.final_block.conv, model.features.final_block.bn)
-        self.quant_act_int32_final = QuantAct()
+        self.quant_act_int32_final = QuantAct(num_clusters=num_clusters)
 
         in_channels = final_block_channels
 
         self.features.add_module("final_pool", QuantAveragePool2d())
         self.features.final_pool.set_param(model.features.final_pool)
-        self.quant_act_output = QuantAct()
+        self.quant_act_output = QuantAct(num_clusters=num_clusters)
 
         self.output = QuantConv2d()
         self.output.set_param(model.output)
 
-    def forward(self, x):
+    def forward(self, x, cluster):
         # quantize input
-        x, act_scaling_factor = self.quant_input(x)
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
         # the init block
         x, weight_scaling_factor = self.init_block(x, act_scaling_factor)
         x = self.activatition_func(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
 
         # the feature block
         for i, channels_per_stage in enumerate(self.channels):
             cur_stage = getattr(self.features, f'stage{i+1}')
             for j, out_channels in enumerate(channels_per_stage):
                 cur_unit = getattr(cur_stage, f'unit{j+1}')
+                x, act_scaling_factor = cur_unit(x, act_scaling_factor, cluster=cluster)
 
-                x, act_scaling_factor = cur_unit(x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None)
+        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None, cluster=cluster)
         x, weight_scaling_factor = self.features.final_block(x, act_scaling_factor)
         x = self.activatition_func(x)
-        x, act_scaling_factor = self.quant_act_int32_final(x, act_scaling_factor, weight_scaling_factor, None, None, None)
+        x, act_scaling_factor = self.quant_act_int32_final(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
 
         # the final pooling
         x = self.features.final_pool(x, act_scaling_factor)
 
         # the output
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, None, None, None, None)
-        x, act_scaling_factor = self.output(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, None, None, None, None, cluster=cluster)
+        x, _ = self.output(x, act_scaling_factor)
 
         x = x.view(x.size(0), -1)
 
         return x
 
 
-def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False):
+def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False, num_clusters=None):
     """
     Create quantized MobileNetV2 model with specific parameters.
     Parameters:
@@ -246,12 +250,13 @@ def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False):
         channels=channels,
         init_block_channels=init_block_channels,
         final_block_channels=final_block_channels,
-        remove_exp_conv=remove_exp_conv)
+        remove_exp_conv=remove_exp_conv,
+        num_clusters=num_clusters)
 
     return net
 
 
-def q_mobilenetv2_w1(model):
+def q_mobilenetv2_w1(model, num_clusters=None):
     """
     Quantized 1.0 MobileNetV2-224 model from 'MobileNetV2: Inverted Residuals and Linear Bottlenecks,'
     https://arxiv.org/abs/1801.04381.
@@ -259,4 +264,4 @@ def q_mobilenetv2_w1(model):
     model : nn.Module
         The pretrained floating-point MobileNetV2.
     """
-    return q_get_mobilenetv2(model, width_scale=1.0)
+    return q_get_mobilenetv2(model, width_scale=1.0, num_clusters=num_clusters)

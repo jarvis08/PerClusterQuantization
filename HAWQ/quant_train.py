@@ -177,7 +177,8 @@ quantize_arch_dict = {'resnet18': q_resnet18,
                       'resnet50': q_resnet50,
                       'alexnet': q_alexnet,
                       'densenet121': q_densenet,
-                      'inceptionv3': q_inceptionv3}
+                      'inceptionv3': q_inceptionv3,
+                      'mobilenetv2_w1': q_mobilenetv2_w1}
 
 args_hawq, _ = parser.parse_known_args()
 args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(
