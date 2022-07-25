@@ -1022,7 +1022,7 @@ bit_config_dict = {
 
 "bit_config_inceptionv3_uniform4" : {
 
-'features.q_init_block.q_input_activ' : (8, 'hook'),
+'features.q_init_block.q_input_activ' : 8,
 'features.q_init_block.q_conv1.q_convbn' : 8,
 'features.q_init_block.q_conv1.q_activ' : 4,
 'features.q_init_block.q_conv2.q_convbn' : 4,
@@ -1295,7 +1295,7 @@ bit_config_dict = {
 
 "bit_config_mobilenetv2_w1_uniform4" : {
 
-"quant_input" : (8, 'hook'),
+"quant_input" : 8,
 "init_block" : 8,
 "quant_act_int32" : 16,
 

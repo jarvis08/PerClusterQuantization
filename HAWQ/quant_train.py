@@ -186,9 +186,6 @@ args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
-hook_counter = args_hawq.checkpoint_iter
-hook_keys = []
-hook_keys_counter = 0
 
 logging.basicConfig(format='%(asctime)s - %(message)s',
                     datefmt='%d-%b-%y %H:%M:%S', filename=args_hawq.save_path + 'log{}.log'.format(os.getpid()))
