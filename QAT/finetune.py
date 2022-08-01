@@ -264,7 +264,6 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=Fals
 
             renewal_bits = torch.logical_or(torch.logical_and(input_bits, weight_bits), prev_bit).nonzero(as_tuple=True)[0]
             fused.w_bit.data[renewal_bits] = low_bit
-            final = len(torch.logical_or(torch.logical_and(input_bits, weight_bits), prev_bit).nonzero(as_tuple=True)[0])
 
             # fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
 
@@ -281,6 +280,8 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=Fals
     with open(identifier + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(([epoch, '{:2f}%'.format(ratio)]))
+
+    return ratio
 
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
@@ -307,8 +308,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         # try inference once to record input precisions
-        identifier = f'[Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
-        loss_identifier = f'[Loss]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}'
+        identifier = f'[TRAIN / Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
+        loss_identifier = f'[TRAIN / Loss]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}'
         if not args.weight_only:
             validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
@@ -347,8 +348,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
             with open(loss_identifier + '.csv', 'a') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(([e, '{:2f}'.format(losses)]))
-            if not args.weight_only:
-                validate_setting_bits(model, val_loader, criterion)
+            # if not args.weight_only:
+            #     validate_setting_bits(model, val_loader, criterion)
             set_mixed_bits_per_input_channels(model, quantile_tensor, e, weight_only=args.weight_only, weight_scailing=args.weight_scailing, identifier=identifier)
         opt_scheduler.step()
 

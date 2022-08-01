@@ -569,6 +569,7 @@ class FusedConv2d(nn.Module):
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
             self.low_bit = torch.zeros(1, dtype=torch.int8)
             self.index_list = torch.arange(in_channels, device='cuda')
+            self.input_range = nn.Parameter(torch.zeros(2), requires_grad=False)
             # self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
         else:
             w_bit = w_bit if w_bit is not None else arg_dict['bit']
@@ -600,12 +601,28 @@ class FusedConv2d(nn.Module):
         else:
             return self._general(x, external_range)
 
+    @torch.no_grad()
+    def _update_input_ranges(self, x):
+        data = x.transpose(1, 0).reshape(x.size(1), -1)
+        _max = data.max(dim=1).values
+        _min = data.min(dim=1).values
+
+        if self.apply_ema:
+            updated_min = self.input_range[0] * self.smooth + _min * (1 - self.smooth)
+            updated_max = self.input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+            self.input_range[0], self.input_range[1] = updated_min, updated_max
+        else:
+            self.input_range[0], self.input_range[1] = _min, _max
+            # self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
     def _general(self, x, external_range=None):
         zero = self.runtime_helper.fzero
         if self.per_channel:
             w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
         elif self.mixed_precision:
+            self._update_input_ranges(x)
             w = fake_quantize_per_input_channel(self.conv.weight, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
         else:
             w = self.conv.weight.detach()

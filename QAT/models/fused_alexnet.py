@@ -108,6 +108,7 @@ class FusedAlexNetSmall(nn.Module):
                     module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
                     in_channel_sum += module.in_channels
             self.total_ch_sum = in_channel_sum
+            self.prev_ratio = 0
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
