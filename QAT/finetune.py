@@ -308,8 +308,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         # try inference once to record input precisions
-        identifier = f'[TRAIN / Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
-        loss_identifier = f'[TRAIN / Loss]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}'
+        identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
+        loss_identifier = f'[TRAIN_Loss]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}'
         if not args.weight_only:
             validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
