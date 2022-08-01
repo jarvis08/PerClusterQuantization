@@ -564,6 +564,7 @@ class FusedConv2d(nn.Module):
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
 
         if self.mixed_precision:
+            self.is_first = False
             self.w_bit = torch.nn.Parameter(torch.zeros(in_channels, dtype=torch.int8), requires_grad=False)
             self.low_group = torch.zeros(in_channels, dtype=torch.int8)
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
