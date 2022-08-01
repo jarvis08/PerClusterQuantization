@@ -113,6 +113,7 @@ def get_data_loaders(args):
             clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=256, shuffle=True,
                                                       workers=args.worker)
         val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+        # val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=True, workers=args.worker)
     train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
 
     return {'aug_train': train_loader, 'val': val_loader, 'test': test_loader,

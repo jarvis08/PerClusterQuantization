@@ -568,6 +568,7 @@ class FusedConv2d(nn.Module):
             self.low_group = torch.zeros(in_channels, dtype=torch.int8)
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
             self.low_bit = torch.zeros(1, dtype=torch.int8)
+            self.index_list = torch.arange(in_channels, device='cuda')
             # self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
         else:
             w_bit = w_bit if w_bit is not None else arg_dict['bit']

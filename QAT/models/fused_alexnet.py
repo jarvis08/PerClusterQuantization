@@ -100,11 +100,14 @@ class FusedAlexNetSmall(nn.Module):
         self.fc3 = FusedLinear(4096, num_classes, bias=True, is_classifier=True,
                                w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
+        in_channel_sum = 0
         if self.mixed_precision:
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
                     module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
                     module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
+                    in_channel_sum += module.in_channels
+            self.total_ch_sum = in_channel_sum
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

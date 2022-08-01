@@ -50,6 +50,7 @@ parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply
 
 parser.add_argument('--mixed_precision', action='store_true', help='For SKT')
 parser.add_argument('--weight_only', action='store_true', help='For SKT, set bits considering only weight range')
+parser.add_argument('--weight_scailing', action='store_true', help='For SKT, set bits considering only weight range')
 parser.add_argument('--percentile', default=1.0, type=float, help="threshold to split weight groups into two")
 parser.add_argument('--method', default='max', type=str, help="how to choose one of scales")
 

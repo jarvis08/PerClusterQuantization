@@ -254,7 +254,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=No
             optimizer.step()
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-
+    return losses.avg
 
 def validate(model, test_loader, criterion, logger=None, hvd=None):
     losses = AverageMeter()
