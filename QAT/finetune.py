@@ -191,6 +191,12 @@ def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, wei
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             weight_max = weight_range.max()
+            # exclude argmax index
+            max_weight_idx = torch.argmax(weight_range)
+            index_list = torch.arange(in_channel, device='cuda')
+            index_list = index_list[index_list != max_weight_idx]
+            fused.conv.weight.data[:, index_list].mul_(0.9)
+            weight_range[index_list].mul_(0.9)
             weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
             low_bit = 8 - round(math.log(percentile, 2))
 
@@ -215,9 +221,9 @@ def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, wei
     ratio = low_counter / total_counter * 100
     print("Total low bit ratio : {:.2f}% ".format(ratio))
 
-    with open(identifier + '.csv', 'a') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow((['0', '{:2f}%'.format(ratio)]))
+    # with open(identifier + '.csv', 'a') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     writer.writerow((['0', '{:2f}%'.format(ratio)]))
 
 
 def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=False, identifier=None):
@@ -238,6 +244,12 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=Fals
             low_bit = 8 - round(math.log(percentile, 2))
             prev_bit = torch.where(fused.w_bit.data == 8, 0, 1)
             input_max, weight_max = input_range.max(), weight_range.max()
+            max_weight_idx = torch.argmax(weight_range)
+            index_list = torch.arange(in_channel, device='cuda')
+            index_list = index_list[index_list != max_weight_idx]
+            fused.conv.weight.data[:, index_list].mul_(0.9)
+            weight_range[index_list].mul_(0.9)
+
             weight_bits = torch.where(percentile <= (weight_max / weight_range), 1, 0)
 
             # weight only
@@ -257,9 +269,9 @@ def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=Fals
 
     ratio = low_counter / total_counter * 100
     print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
-    with open(identifier + '.csv', 'a') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(([epoch, '{:2f}%'.format(ratio)]))
+    # with open(identifier + '.csv', 'a') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     writer.writerow(([epoch, '{:2f}%'.format(ratio)]))
 
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
