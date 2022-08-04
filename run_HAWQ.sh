@@ -22,7 +22,7 @@ CLUSTER=${7}           # 16 / 8 / 4 / 2
 SUB_CLUSTER=${8}       # 32 / 16 / 8 / 4
 SIM_METHOD=${9}        # and / jaccard
 REPR_METHOD="max"      # FIXED TO MAX
-MERGE_METHOD="median"
+MERGE_METHOD="mean"
 MERGED=${10}           # true / false
 
 
@@ -86,7 +86,7 @@ if [ -z ${CLUSTER} ]; then
 else
     if [ "$FIRST_RUN" = false ]; then   
         if [ "$MERGED" = true ]; then
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${SUB_CLUSTER}.part2.${REPR_METHOD}/__.k${Cluster}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
         else
             if [ -z ${SUB_CLUSTER} ]; then
                 CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
