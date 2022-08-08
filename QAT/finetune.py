@@ -89,43 +89,83 @@ def draw_violin_graph(data, max_, identifier, arch, epoch):
     plt.close(fig)
 
 
-def visualize(args, model, epoch):
-    path = os.path.join('', 'skt_range_yongjoo')
-    if not os.path.exists(path):
-        os.makedirs(path)
-    # path = os.path.join(path, args.arch + args.dataset)
-    # if not os.path.exists(path):
-    #     os.makedirs(path)
-    violin_path  = os.path.join(path, 'violin_output')
-    if not os.path.exists(violin_path):
-        os.makedirs(violin_path)
-    # naming = args.arch + '_' + args.dataset + '_' + str(epoch)
-    naming = args.arch + '_' + args.dataset
+# def visualize(args, model, epoch):
+#     path = os.path.join('', 'skt_range_yongjoo')
+#     if not os.path.exists(path):
+#         os.makedirs(path)
+#     # path = os.path.join(path, args.arch + args.dataset)
+#     # if not os.path.exists(path):
+#     #     os.makedirs(path)
+#     violin_path  = os.path.join(path, 'violin_output')
+#     if not os.path.exists(violin_path):
+#         os.makedirs(violin_path)
+#     # naming = args.arch + '_' + args.dataset + '_' + str(epoch)
+#     naming = args.arch + '_' + args.dataset
+#
+#     print("Save range output")
+#     print("Save dir: ", violin_path)
+#
+#     conv_cnt = 0
+#     model.cpu()
+#     range_per_group = []
+#     # weight, layer input group
+#     input_group = []
+#     weight_group = []
+#     max_ = 0
+#
+#     # get input, weight distribution per input channel
+#     for m in model.modules():
+#     #         # out_channel = m.out_channels
+#     #         # input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
+#     #         # weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
+#     #         # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
+#     #
+#     #         # input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
+#     #         # range_per_group.append(min_max_per_group)
+#     #         # if min_max_per_group.max() > max_:
+#     #         #     max_ = min_max_per_group.max()
+#
+#     # violin
+#     # range_per_group_sorted = sorted(list(range_per_group))
+#     # draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
 
-    print("Save range output")
-    print("Save dir: ", violin_path)
 
-    conv_cnt = 0
-    model.cpu()
-    range_per_group = []
-    # weight, layer input group
-    input_group = []
-    weight_group = []
-    max_ = 0
+def validate_setting_bits(model, loader, criterion):
+    print('\n>>> Setting bits..')
+    # from .utils.misc import accuracy
 
-    # get input, weight distribution per input channel
-    for m in model.modules():
-        if isinstance(m, nn.Conv2d):
-            conv_cnt += 1
-            in_channel = m.in_channels
-            weight_per_filter_group = m.weight.transpose(1, 0).detach().numpy()
-            weight_per_filter_group = weight_per_filter_group.reshape(in_channel, -1)
-            weight_min_max_per_group = np.zeros((2, in_channel))
-            weight_min_max_per_group[0], weight_min_max_per_group[1] = weight_per_filter_group.min(axis=1), weight_per_filter_group.max(axis=1)
-            weight_group.append(weight_min_max_per_group[1] - weight_min_max_per_group[0])
-            input_group.append((m.input_range[1] - m.input_range[0]).numpy())
+    model.eval()
+    with torch.no_grad():
+        with tqdm(loader, unit="batch", ncols=90) as t:
+            for i, (input, target) in enumerate(t):
+                t.set_description("Validate")
+                input, target = input.cuda(), target.cuda()
+                model.set_mixed_bits(input)
+                # loss = criterion(output, target)
+                # prec = accuracy(output, target)[0]
 
-    draw_weight_out_violin_graph(input_group, weight_group, violin_path + f'/{naming}.png', args.arch)
+
+# def set_lower_weights(model):
+#     for fused in model.modules():
+#         if isinstance(fused, FusedConv2d):
+#             in_channel = fused.in_channels
+#             weight_per_filter_group = fused.conv.weight.transpose(1, 0)
+#
+#             weight_group = weight_per_filter_group.reshape(in_channel, -1)
+#             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+#
+#            weight_max = input_range.max(), weight_range.max
+#         if isinstance(m, nn.Conv2d):
+#             conv_cnt += 1
+#             in_channel = m.in_channels
+#             weight_per_filter_group = m.weight.transpose(1, 0).detach().numpy()
+#             weight_per_filter_group = weight_per_filter_group.reshape(in_channel, -1)
+#             weight_min_max_per_group = np.zeros((2, in_channel))
+#             weight_min_max_per_group[0], weight_min_max_per_group[1] = weight_per_filter_group.min(axis=1), weight_per_filter_group.max(axis=1)
+#             weight_group.append(weight_min_max_per_group[1] - weight_min_max_per_group[0])
+#             input_group.append((m.input_range[1] - m.input_range[0]).numpy())
+#
+#     draw_weight_out_violin_graph(input_group, weight_group, violin_path + f'/{naming}.png', args.arch)
 
 
     # # get output distribution after fine-tuning
@@ -172,11 +212,25 @@ def validate_setting_bits(model, loader, criterion):
                 # prec = accuracy(output, target)[0]
 
 
-def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, weight_only=False, weight_scailing=False, identifier=None):
-    quantile_tensor = torch.tensor(percentile)
+def set_lower_weights(model):
+    total_channel = 0
+    for fused in model.modules():
+        if isinstance(fused, FusedConv2d):
+            in_channel = fused.in_channels
+            total_channel += in_channel
+            num_lower_channels = math.ceil(in_channel / 2)
+            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
+
+            weight_group = weight_per_filter_group.reshape(in_channel, -1)
+            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+
+            fused.fixed_indices = torch.topk(weight_range, num_lower_channels, largest=False, sorted=False)[1].cuda()
+    model.total_ch_sum = total_channel
+
+
+def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
     low_counter = 0
     eight_counter = 0
-    total_counter = 0
     fused_iter = iter(model.modules())
     for pre in pretrained.modules():
         if isinstance(pre, nn.Conv2d):
@@ -185,96 +239,71 @@ def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, wei
                 fused = next(fused_iter)
 
             in_channel = pre.in_channels
-            total_counter += in_channel
 
             weight_per_filter_group = pre.weight.transpose(1, 0)
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             weight_max = weight_range.max()
 
-            # exclude argmax index
-            if weight_scailing:
-                max_weight_idx = torch.argmax(weight_range)
-                idx_list = fused.index_list[fused.index_list != max_weight_idx]
-                fused.conv.weight.data[:, idx_list].mul_(0.9)
-                weight_range[idx_list].mul_(0.9)
-
-            weight_bits = torch.where(quantile_tensor <= (weight_max / weight_range), 1, 0)
+            weight_bits = torch.where(model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]), 1, 0)
             low_bit = 8 - round(math.log(percentile, 2))
 
-            if not weight_only:
-                input_range = pre.input_range[1] - pre.input_range[0]
-                input_max = input_range.max()
-                input_bits = torch.where(quantile_tensor <= (input_max / input_range), 1, 0)
-                fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8).type(
-                    torch.int8)
-            else:
-                fused.w_bit.data = torch.where(weight_bits > 0, low_bit, 8).type(torch.int8)
+            input_range = pre.input_range[1] - pre.input_range[0]
+            input_max = input_range.max()
+            input_bits = torch.where(model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]), 1, 0)
+            fused.w_bit.data[fused.fixed_indices] = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
 
-            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0].cuda()
-            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
-            fused.low_bit = torch.tensor(low_bit, dtype=torch.int8)
+            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0]
+            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
+            fused.low_bit = torch.tensor(low_bit, dtype=torch.int64)
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
 
             # four_group.append(len(fused.low_group))
 
-    ratio = low_counter / total_counter * 100
+    ratio = low_counter / model.total_ch_sum * 100
     print("Total low bit ratio : {:.2f}% ".format(ratio))
 
     with open(identifier + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow((['0', '{:2f}%'.format(ratio)]))
+        writer.writerow((['0', 'initial', '{:2f}%'.format(ratio)]))
 
 
-def set_mixed_bits_per_input_channels(model, percentile, epoch, weight_only=False, weight_scailing=False, identifier=None):
+def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
     import math
     low_counter = 0
     eight_counter = 0
-    total_counter = 0
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
-            total_counter += in_channel
             weight_per_filter_group = fused.conv.weight.transpose(1, 0)
 
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             input_range = fused.input_range[1] - fused.input_range[0]
 
-            low_bit = 8 - round(math.log(percentile, 2))
+            # low_bit = 8 - round(math.log(model.percentile_tensor, 2))
             prev_bit = (fused.w_bit.data != 8)
             input_max, weight_max = input_range.max(), weight_range.max()
 
-            if weight_scailing:
-                max_weight_idx = torch.argmax(weight_range)
-                idx_list = fused.index_list[fused.index_list != max_weight_idx]
-                fused.conv.weight.data[:, idx_list].mul_(0.9)
-                weight_range[idx_list].mul_(0.9)
+            weight_bits = torch.logical_or(model.percentile_tensor <= (weight_max / weight_range), fused.prev_bit)
 
-            weight_bits = torch.logical_or(percentile <= (weight_max / weight_range), prev_bit)
-
-            # weight only
-            if not weight_only:
-                input_bits = (percentile <= (input_max / input_range))
-                # fused.w_bit.data = torch.logical_and(input_bits, weight_bits)
-            else:
-                fused.w_bit.data = weight_bits
+            input_bits = (model.percentile_tensor <= (input_max / input_range))
 
             renewal_bits = torch.logical_or(torch.logical_and(input_bits, weight_bits), prev_bit).nonzero(as_tuple=True)[0]
-            fused.w_bit.data[renewal_bits] = low_bit
+            fused.w_bit.data[renewal_bits] = fused.low_bit
 
             # fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
 
-            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0].cuda()
+            fused.low_group = (fused.w_bit.data == fused.low_bit).nonzero(as_tuple=True)[0].cuda()
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
-            fused.low_bit = torch.tensor(low_bit, dtype=torch.int8)
+            # fused.low_bit = torch.tensor(fused.low_bit, dtype=torch.int8)
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
 
-    ratio = low_counter / total_counter * 100
+    ratio = low_counter / model.total_ch_sum * 100
 
     print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
     with open(identifier + '.csv', 'a') as csvfile:
@@ -307,13 +336,14 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
 
     if args.mixed_precision:
-        # try inference once to record input precisions
-        identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
-        loss_identifier = f'[TRAIN_Loss]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}'
-        if not args.weight_only:
-            validate_setting_bits(pretrained_model, val_loader, criterion)
+        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float)
+        # # try inference once to record input precisions
+        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
+        identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_reduced_ratio_{args.reduce_ratio}'
+        set_lower_weights(model)
+        validate_setting_bits(pretrained_model, val_loader, criterion)
         pretrained_model.cpu()
-        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, weight_only=args.weight_only, weight_scailing=args.weight_scailing, identifier=identifier)
+        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, identifier=identifier)
 
     if pretrained_model:
         del pretrained_model
@@ -338,19 +368,19 @@ def _finetune(args, tools, data_loaders, clustering_model):
     logger = set_logger(save_path_fp)
 
     quantized_model = None
-    quantile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
-        losses = train_epoch(model, train_loader, criterion, optimizer, e, logger)
+        losses, ratio = train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
         if args.mixed_precision:
-            with open(loss_identifier + '.csv', 'a') as csvfile:
+            print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
+            with open(identifier + '.csv', 'a') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(([e, '{:2f}'.format(losses)]))
+                writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
             # if not args.weight_only:
             #     validate_setting_bits(model, val_loader, criterion)
-            set_mixed_bits_per_input_channels(model, quantile_tensor, e, weight_only=args.weight_only, weight_scailing=args.weight_scailing, identifier=identifier)
+            # set_mixed_bits_per_input_channels(model, e, identifier=identifier)
         opt_scheduler.step()
 
         if args.fold_convbn:
@@ -449,9 +479,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.symmetric:
         pc += 'Symmetric, '
 
-    with open(f'./SKT_weight_only_{args.weight_only}_qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+    with open(f'./qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
+        f.write('{:.2f} # {} {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(test_score, args.reduce_ratio, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 
