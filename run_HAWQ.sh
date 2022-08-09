@@ -1,7 +1,8 @@
 #! /bin/bash
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
-
+IMAGENET_PATH="/home/work/.Datasets/Imagenet2012"
+# IMAGENET_PATH="/workspace/dataset"
 
 
 
@@ -45,7 +46,7 @@ if [ -z ${CLUSTER} ]; then
             --quant-scheme uniform4 \
             --gpu 0 \
             --data $DATASET \
-            --imagenet /workspace/dataset
+            --imagenet $IMAGENET_PATH
     elif [ "$MODEL" = resnet20 ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
@@ -117,7 +118,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
@@ -180,7 +181,7 @@ else
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
@@ -250,7 +251,7 @@ else
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset     
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
@@ -325,7 +326,7 @@ else
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
