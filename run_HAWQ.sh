@@ -1,7 +1,8 @@
 #! /bin/bash
 
 PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
-
+IMAGENET_PATH="/home/work/.Datasets/Imagenet2012"
+# IMAGENET_PATH="/workspace/dataset"
 
 
 
@@ -22,7 +23,7 @@ CLUSTER=${7}           # 16 / 8 / 4 / 2
 SUB_CLUSTER=${8}       # 32 / 16 / 8 / 4
 SIM_METHOD=${9}        # and / jaccard
 REPR_METHOD="max"      # FIXED TO MAX
-MERGE_METHOD="median"
+MERGE_METHOD="mean"
 MERGED=${10}           # true / false
 
 
@@ -45,7 +46,7 @@ if [ -z ${CLUSTER} ]; then
             --quant-scheme uniform4 \
             --gpu 0 \
             --data $DATASET \
-            --imagenet /workspace/dataset
+            --imagenet $IMAGENET_PATH
     elif [ "$MODEL" = resnet20 ]; then
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
             --mode fine \
@@ -86,7 +87,7 @@ if [ -z ${CLUSTER} ]; then
 else
     if [ "$FIRST_RUN" = false ]; then   
         if [ "$MERGED" = true ]; then
-            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
+            CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${SUB_CLUSTER}.part2.${REPR_METHOD}/__.k${Cluster}.sub${SUB_CLUSTER}.topk_3.sim_0.7.${SIM_METHOD}/"
         else
             if [ -z ${SUB_CLUSTER} ]; then
                 CLUSTERING_MODEL_PATH="/workspace/PerClusterQuantization/result/kmeans/$MODEL/$DATASET/k${CLUSTER}.part2.${REPR_METHOD}/"
@@ -117,7 +118,7 @@ else
                     --repr_method ${REPR_METHOD} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
@@ -180,7 +181,7 @@ else
                     --clustering_path ${CLUSTERING_MODEL_PATH} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
@@ -250,7 +251,7 @@ else
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset     
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \
@@ -325,7 +326,7 @@ else
                     --similarity_method ${SIM_METHOD} \
                     --data $DATASET \
                     --batch-size $BATCH \
-                    --imagenet /workspace/dataset
+                    --imagenet $IMAGENET_PATH
             elif [ "$MODEL" = resnet20 ]; then
                 CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
                     --mode fine \

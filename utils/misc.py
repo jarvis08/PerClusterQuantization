@@ -537,7 +537,7 @@ def set_clustering_dir(args, arch_for_nnac=None):
     path = add_path(path, args.dataset)
 
     if args.nnac:
-        name = f'k{args.cluster}.part{args.partition}.{args.repr_method}.sub{args.sub_cluster}.topk_{args.topk}.sim_{args.sim_threshold}.{args.similarity_method}'
+        name = f'k{args.sub_cluster}.part{args.partition}.{args.repr_method}/__.k{args.cluster}.sub{args.sub_cluster}.topk_{args.topk}.sim_{args.sim_threshold}.{args.similarity_method}'
     else:
         name = f'k{args.cluster}.part{args.partition}.{args.repr_method}'
     path = add_path(path, name, allow_existence=False)
