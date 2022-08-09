@@ -1,4 +1,4 @@
-result/*
+result/hawq/*
 data/*
 runs/*
 exp_results.txt
