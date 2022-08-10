@@ -386,19 +386,19 @@ class KMeansClustering(object):
                     if group_id != -1:
                         del merged_clusters[group_id]
                     break
-                else:
-                    print(f' {c1}&{c2}')
-                    merged_clusters.append([{c1, c2}, summed])
-                    n_per_sub[[c1, c2]] = summed
-                    for l in range(n_layers):
-                        max_merged_count = torch.cat(
-                            [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-                        dnn_model.max_counter[l][c1] = max_merged_count
-                        dnn_model.max_counter[l][c2] = max_merged_count
+            else:
+                print(f' {c1}&{c2}')
+                merged_clusters.append([{c1, c2}, summed])
+                n_per_sub[[c1, c2]] = summed
+                for l in range(n_layers):
+                    max_merged_count = torch.cat(
+                        [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+                    dnn_model.max_counter[l][c1] = max_merged_count
+                    dnn_model.max_counter[l][c2] = max_merged_count
 
-                    zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-                    dnn_model.zero_counter[c1] = zero_merged_count
-                    dnn_model.zero_counter[c2] = zero_merged_count
+                zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+                dnn_model.zero_counter[c1] = zero_merged_count
+                dnn_model.zero_counter[c2] = zero_merged_count
 
             n_merged = 0
             for group in merged_clusters:
