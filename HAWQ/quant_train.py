@@ -1,7 +1,7 @@
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from .utils import *
 from .bit_config import *
-from utils.misc import RuntimeHelper, pcq_epoch, pcq_validate, get_time_cost_in_string, load_dnn_model, set_save_dir
+from utils.misc import RuntimeHelper, get_time_cost_in_string, load_dnn_model, set_save_dir, set_kt_save_dir
 from HAWQ.utils.models.q_densenet import q_densenet
 from HAWQ.utils.models.q_alexnet import q_alexnet
 import torchvision.models as models
@@ -181,8 +181,8 @@ quantize_arch_dict = {'resnet18': q_resnet18,
                       'mobilenetv2_w1': q_mobilenetv2_w1}
 
 args_hawq, _ = parser.parse_known_args()
-args_hawq.save_path = os.path.join("checkpoints/{}/{}_{}_{}/".format(
-    args_hawq.arch, args_hawq.data, args_hawq.batch_size, os.getpid()))
+args_hawq.save_path = os.path.join("/home/work/JK-Data/checkpoint/{}/{}/{}/".format(
+    args_hawq.arch, args_hawq.data, os.getpid()))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
 
@@ -476,7 +476,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_fin_time = None
     one_epoch_time = None
 
-    finetune_path = set_save_dir(args)
+    #finetune_path = set_save_dir(args)
+    finetune_path = set_kt_save_dir(args)
     if not os.path.exists(finetune_path):
         os.mkdir(finetune_path)
 
@@ -513,11 +514,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
-        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.cluster}.txt', 'a') as f:
+        with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
     else:
-        with open(f'hawq_{args.arch}_{args.data}_cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
+        with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
