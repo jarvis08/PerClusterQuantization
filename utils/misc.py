@@ -545,7 +545,7 @@ def set_clustering_dir(args, arch_for_nnac=None):
 
 
 def set_kt_save_dir(args, allow_existence=True):
-    path = add_path(('/home/work/JK-Data', 'result')
+    path = add_path('/home/work/JK-Data', 'result')
     path = add_path(path, args.quant_base)
     path = add_path(path, args.mode)
     path = add_path(path, args.dataset)
