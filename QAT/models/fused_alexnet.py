@@ -200,12 +200,12 @@ class FusedAlexNetSmall(nn.Module):
             _min = data.min(dim=1).values
 
             if module.mixed_ema:
-                updated_min = module.input_range[0] * self.smooth + _min * (1 - self.smooth)
-                updated_max = module.input_range[1] * self.smooth + _max * (1 - self.smooth)
+                updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
 
-                module.input_range[0], module.input_range[1] = updated_min, updated_max
+                module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
             else:
-                module.input_range[0], module.input_range[1] = _min, _max
+                module.val_input_range[0], module.val_input_range[1] = _min, _max
                 module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
             return module(x)
 

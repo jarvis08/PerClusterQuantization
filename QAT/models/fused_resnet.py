@@ -51,6 +51,41 @@ class FusedBasicBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
 
+    def set_mixed_bits_block(self, x):
+        def record_input_range(x, module):
+            data = x.transpose(1, 0).reshape(x.size(1), -1)
+            _max = data.max(dim=1).values
+            _min = data.min(dim=1).values
+
+            if module.apply_ema:
+                updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+                module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
+            else:
+                module.val_input_range[0], module.val_input_range[1] = _min, _max
+                module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+        identity = x
+
+        record_input_range(x, self.conv1)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        record_input_range(out, self.conv2)
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            record_input_range(x, self.downsample)
+            identity = self.downsample(x)
+            identity = self.bn_down(identity)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+
     def forward(self, x):
         identity = x
 
@@ -340,8 +375,8 @@ class FusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(FusedResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, self.bit_conv_act, bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper, self.mixed_precision \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster', 'runtime_helper', 'mixed_precision')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -369,6 +404,16 @@ class FusedResNet20(nn.Module):
         if bit_first > target_bit:
             self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
 
+        if self.mixed_precision:
+            for module in self.modules():
+                if isinstance(module, FusedConv2d):
+                    module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
+                    module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
+                    module.fixed_indices = None
+            self.prev_ratio = 0
+            self.percentile_tensor = None
+            self.total_ch_sum = 0
+
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
@@ -381,6 +426,36 @@ class FusedResNet20(nn.Module):
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, norm_layer=self._norm_layer, arg_dict=self.arg_dict))
         return nn.Sequential(*layers)
+
+    def set_mixed_bits(self, x: torch.Tensor) -> torch.Tensor:
+        def record_input_range(x, module):
+            data = x.transpose(1, 0).reshape(x.size(1), -1)
+            _max = data.max(dim=1).values
+            _min = data.min(dim=1).values
+
+            if module.apply_ema:
+                updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
+
+                module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
+            else:
+                module.val_input_range[0], module.val_input_range[1] = _min, _max
+                module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+        record_input_range(x, self.first_conv)
+        x = self.first_conv(x)
+        x = self.bn1(x)
+
+        blocks = [self.layer1, self.layer2, self.layer3]
+        for block in blocks:
+            for b in range(len(block)):
+                x = block[b].set_mixed_bits_block(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+
 
     def forward(self, x):
         if self.training:

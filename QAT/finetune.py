@@ -228,19 +228,14 @@ def set_lower_weights(model):
     model.total_ch_sum = total_channel
 
 
-def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, identifier=None):
+def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None):
     low_counter = 0
     eight_counter = 0
-    fused_iter = iter(model.modules())
-    for pre in pretrained.modules():
-        if isinstance(pre, nn.Conv2d):
-            fused = next(fused_iter)
-            while not isinstance(fused, FusedConv2d):
-                fused = next(fused_iter)
+    for fused in model.modules():
+        if isinstance(fused, FusedConv2d):
+            in_channel = fused.in_channels
 
-            in_channel = pre.in_channels
-
-            weight_per_filter_group = pre.weight.transpose(1, 0)
+            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             weight_max = weight_range.max()
@@ -248,14 +243,14 @@ def initial_set_mixed_bits_per_input_channels(pretrained, model, percentile, ide
             weight_bits = torch.where(model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]), 1, 0)
             low_bit = 8 - round(math.log(percentile, 2))
 
-            input_range = pre.input_range[1] - pre.input_range[0]
+            input_range = fused.val_input_range[1] - fused.val_input_range[0]
             input_max = input_range.max()
             input_bits = torch.where(model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]), 1, 0)
             fused.w_bit.data[fused.fixed_indices] = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
 
             fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0]
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
-            fused.low_bit = torch.tensor(low_bit, dtype=torch.int64)
+            fused.low_bit = torch.tensor(low_bit, dtype=torch.int64, device='cuda')
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
@@ -333,21 +328,19 @@ def _finetune(args, tools, data_loaders, clustering_model):
         clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
 
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
-
-
-    if args.mixed_precision:
-        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float)
-        # # try inference once to record input precisions
-        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
-        identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_reduced_ratio_{args.reduce_ratio}'
-        set_lower_weights(model)
-        validate_setting_bits(pretrained_model, val_loader, criterion)
-        pretrained_model.cpu()
-        initial_set_mixed_bits_per_input_channels(pretrained_model, model, args.percentile, identifier=identifier)
-
     if pretrained_model:
         del pretrained_model
     model.cuda()
+
+    if args.mixed_precision:
+        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
+        # # try inference once to record input precisions
+        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
+        identifier = f'[TRAIN]{args.arch}_{args.dataset}_percentile_{args.percentile}_reduced_ratio_{args.reduce_ratio}'
+        set_lower_weights(model)
+        validate_setting_bits(model, val_loader, criterion)
+        # pretrained_model.cpu()
+        initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -479,9 +472,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.symmetric:
         pc += 'Symmetric, '
 
-    with open(f'./qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('{:.2f} # {} {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(test_score, args.reduce_ratio, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+    with open(f'./[RATIO]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
+        f.write('reduce {} {:.2f} # {} {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.reduce_ratio, test_score, args.reduce_ratio, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 
