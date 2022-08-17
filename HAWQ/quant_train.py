@@ -476,8 +476,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_fin_time = None
     one_epoch_time = None
 
-    finetune_path = set_save_dir(args)
-    #finetune_path = set_kt_save_dir(args)
+    #finetune_path = set_save_dir(args)
+    finetune_path = set_kt_save_dir(args)
     if not os.path.exists(finetune_path):
         os.mkdir(finetune_path)
 
@@ -514,13 +514,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
     if not args.nnac:
-        #with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
-        with open(f'/workspace/PerClusterQuantization/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
+        with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
+        #with open(f'/workspace/PerClusterQuantization/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
     else:
-        #with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
-        with open(f'/workspace/PerClusterQuantization/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
+        with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
+        #with open(f'/workspace/PerClusterQuantization/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
