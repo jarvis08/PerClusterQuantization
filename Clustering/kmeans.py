@@ -123,12 +123,12 @@ class KMeansClustering(object):
                 else:
                     x = torch.cat((x, batch))
 
-        print(">> Load augmented datasets & mix dataset..")
-        for _ in range(self.args.mixrate):
-            with tqdm(aug_loader, unit="batch", ncols=90) as t:
-                for image, _ in t:
-                    batch = self.get_partitioned_batch(image.cuda()).clone()
-                    x = torch.cat((x, batch))
+        # print(">> Load augmented datasets & mix dataset..")
+        # for _ in range(self.args.mixrate):
+        #     with tqdm(aug_loader, unit="batch", ncols=90) as t:
+        #         for image, _ in t:
+        #             batch = self.get_partitioned_batch(image.cuda()).clone()
+        #             x = torch.cat((x, batch))
                     
         n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
         best_model_inertia = 9999999999999999

@@ -454,6 +454,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     train_loader = data_loaders['aug_train']
     test_loader = data_loaders['test']
+    cluster_train_loader = data_loaders['non_aug_train']
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
@@ -463,7 +464,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 model, train_loader, prev_arch)
         else:
             clustering_model.zero_max_nn_aware_clustering(
-                model, train_loader, args.arch)
+                # model, train_loader, args.arch)
+                model, cluster_train_loader, args.arch)
         model.toggle_full_precision()
         unfreeze_model(model)
     if args.evaluate:
@@ -522,12 +524,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if not args.nnac:
         #with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
         #with open(f'/workspace/PerClusterQuantization/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
-        with open(f'{log_path}/{args.arch}/{args.data}/cluster_{args.cluster}.txt', 'a') as f:
+        with open(f'{log_path}/cluster_{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
     else:
         #with open(f'/home/work/JK-Data/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
-        with open(f'{log_path}/{args.arch}/{args.data}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
+        with open(f'{log_path}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
             f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
