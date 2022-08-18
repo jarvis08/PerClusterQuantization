@@ -582,6 +582,18 @@ def set_save_dir(args, allow_existence=True):
     return path
 
 
+def set_log_dir(args):
+    path = add_path('/workspace/PerClusterQuantization', args.arch)
+    path = add_path(path, args.data)
+    return path
+
+
+def set_kt_log_dir(args):
+    path = add_path('/home/work/JK-Data/', args.arch)
+    path = add_path(path, args.data)
+    return path
+
+
 def set_logger(path):
     logging.basicConfig(filename=os.path.join(
         path, "train.log"), level=logging.DEBUG)
