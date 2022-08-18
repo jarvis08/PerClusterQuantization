@@ -1,7 +1,7 @@
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from .utils import *
 from .bit_config import *
-#from utils.misc import RuntimeHelper, get_time_cost_in_string, load_dnn_model, set_save_dir, set_kt_save_dir
+from utils.misc import RuntimeHelper, get_time_cost_in_string, load_dnn_model, set_save_dir, set_kt_save_dir, set_log_dir, set_kt_log_dir
 from HAWQ.utils.models.q_densenet import q_densenet
 from HAWQ.utils.models.q_alexnet import q_alexnet
 import torchvision.models as models
