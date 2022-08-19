@@ -365,8 +365,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
-        losses, ratio = train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
-        if args.mixed_precision:
+        if not args.mixed_precision:
+            train_epoch(model, train_loader, criterion, optimizer, e, logger)
+
+        else:
+            losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
             with open(identifier + '.csv', 'a') as csvfile:
                 writer = csv.writer(csvfile)
