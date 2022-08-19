@@ -478,6 +478,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     tuning_fin_time = None
     one_epoch_time = None
 
+
+    ### LOG DIRECTORY ###
     finetune_path = set_save_dir(args)
     log_path = set_log_dir(args)
 
