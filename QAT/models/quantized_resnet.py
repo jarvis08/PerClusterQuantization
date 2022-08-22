@@ -230,7 +230,7 @@ class QuantizedResNet(nn.Module):
 class QuantizedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(QuantizedResNet20, self).__init__()
-        self.num_clusters, self.bit_first, self.runtime_helper = itemgetter('cluster', 'bit_first', 'runtime_helper')(arg_dict)
+        self.num_clusters, self.bit_first, self.runtime_helper, self.mixed_precision = itemgetter('cluster', 'bit_first', 'runtime_helper', 'mixed_precision')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(0, dtype=torch.int8), requires_grad=False)
@@ -247,6 +247,10 @@ class QuantizedResNet20(nn.Module):
         self.z_target = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
         self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
+
+        if self.mixed_precision:
+            self.s_input = nn.Parameter(torch.zeros(3, dtype=torch.float32), requires_grad=False)
+            self.z_input = nn.Parameter(torch.zeros(3, dtype=torch.int32), requires_grad=False)
 
         self.inplanes = 16
         self.dilation = 1
@@ -276,7 +280,11 @@ class QuantizedResNet20(nn.Module):
         if self.runtime_helper.qat_batch_cluster is not None:
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
+            if self.mixed_precision:
+                x = quantize_matrix_per_in_channel(x, self.scale, self.zero_point, self.first_conv.low_bit,
+                                                   self.first_conv.low_group, self.first_conv.high_group)
+            else:
+                x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.first_conv(x.type(torch.cuda.FloatTensor))
         x = self.bn1(x)

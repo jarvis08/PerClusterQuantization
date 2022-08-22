@@ -197,21 +197,6 @@ def validate_setting_bits(model, loader, criterion):
     # draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
 
 
-def validate_setting_bits(model, loader, criterion):
-    print('\n>>> Setting bits..')
-    # from .utils.misc import accuracy
-
-    model.eval()
-    with torch.no_grad():
-        with tqdm(loader, unit="batch", ncols=90) as t:
-            for i, (input, target) in enumerate(t):
-                t.set_description("Validate")
-                input, target = input.cuda(), target.cuda()
-                model.set_mixed_bits(input)
-                # loss = criterion(output, target)
-                # prec = accuracy(output, target)[0]
-
-
 def set_lower_weights(model):
     total_channel = 0
     for fused in model.modules():
@@ -231,6 +216,10 @@ def set_lower_weights(model):
 def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None):
     low_counter = 0
     eight_counter = 0
+
+    #l_cnt = 0
+    #with open(identifier + '.csv', 'a') as csvfile:
+    #writer = csv.writer(csvfile)
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
@@ -245,6 +234,10 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
 
             input_range = fused.val_input_range[1] - fused.val_input_range[0]
             input_max = input_range.max()
+            
+            #writer.writerow(([l_cnt, (input_max / input_range[fused.fixed_indices]).mean().item(), (input_max / input_range).mean().item()]))
+            #l_cnt += 1
+
             input_bits = torch.where(model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]), 1, 0)
             fused.w_bit.data[fused.fixed_indices] = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
 

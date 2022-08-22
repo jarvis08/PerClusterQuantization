@@ -492,7 +492,11 @@ class FusedResNet20(nn.Module):
 
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        return fake_quantize(x, s, z, self.in_bit)
+        if self.mixed_precision:
+            return fake_quantize_per_input_channel(x, self.first_conv.low_bit, self.first_conv.low_group, self.first_conv.high_group,
+                                                   scale=s, zero_point=z)
+        else:
+            return fake_quantize(x, s, z, self.in_bit)
 
     def set_quantization_params(self):
         self.scale, self.zero_point = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
