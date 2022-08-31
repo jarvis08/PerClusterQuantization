@@ -57,14 +57,14 @@ class FusedBasicBlock(nn.Module):
             _max = data.max(dim=1).values
             _min = data.min(dim=1).values
 
-            if module.apply_ema:
+            if module.mixed_ema:
                 updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
                 updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
 
                 module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
             else:
                 module.val_input_range[0], module.val_input_range[1] = _min, _max
-                module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+                module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
 
         identity = x
 
@@ -433,14 +433,14 @@ class FusedResNet20(nn.Module):
             _max = data.max(dim=1).values
             _min = data.min(dim=1).values
 
-            if module.apply_ema:
+            if module.mixed_ema:
                 updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
                 updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
 
                 module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
             else:
                 module.val_input_range[0], module.val_input_range[1] = _min, _max
-                module.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+                module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
 
         record_input_range(x, self.first_conv)
         x = self.first_conv(x)
@@ -475,20 +475,29 @@ class FusedResNet20(nn.Module):
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _min = x.min().item()
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _min = data.min(dim=1).values.mean()
-            _max = data.max(dim=1).values.mean()
-
+        _min = x.min().item()
+        _max = x.max().item()
         if self.apply_ema:
             self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
             self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
         else:
             self.in_range[0], self.in_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+        # if self.runtime_helper.undo_gema:
+        #     _min = x.min().item()
+        #     _max = x.max().item()
+        # else:
+        #     data = x.view(x.size(0), -1)
+        #     _min = data.min(dim=1).values.mean()
+        #     _max = data.max(dim=1).values.mean()
+        #
+        # if self.apply_ema:
+        #     self.in_range[0] = self.in_range[0] * self.smooth + _min * (1 - self.smooth)
+        #     self.in_range[1] = self.in_range[1] * self.smooth + _max * (1 - self.smooth)
+        # else:
+        #     self.in_range[0], self.in_range[1] = _min, _max
+        #     self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _fake_quantize_input(self, x):
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)

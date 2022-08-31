@@ -358,9 +358,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
 
-        if not args.mixed_precision:
+        if not args.mixed_precision or e > args.channel_epoch:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
-
         else:
             losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
@@ -370,6 +369,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             # if not args.weight_only:
             #     validate_setting_bits(model, val_loader, criterion)
             # set_mixed_bits_per_input_channels(model, e, identifier=identifier)
+
         opt_scheduler.step()
 
         if args.fold_convbn:

@@ -568,7 +568,6 @@ class FusedConv2d(nn.Module):
             self.low_group = torch.zeros(in_channels, dtype=torch.int64)
             self.high_group = torch.zeros(in_channels, dtype=torch.int64)
             self.low_bit = torch.zeros(1, dtype=torch.int64)
-            self.index_list = torch.arange(in_channels, device='cuda')
             self.input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
             self.val_input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
             self.allowed_channels = None
