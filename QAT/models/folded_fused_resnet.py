@@ -68,11 +68,12 @@ class FoldedFusedBasicBlock(nn.Module):
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _max = data.max(dim=1).values.mean()
+        # if self.runtime_helper.undo_gema:
+        #     _max = x.max().item()
+        # else:
+        #     data = x.view(x.size(0), -1)
+        #     _max = data.max(dim=1).values.mean()
+        _max = x.max().item()
 
         if self.apply_ema:
             self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)

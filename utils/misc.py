@@ -233,6 +233,8 @@ def set_mixed_bits_per_iter(model, e, reduce_ratio):
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
             fused.conv.weight.data[:, fused.allowed_channels].mul_(reduce_ratio)
+            # fused.input_range.data[:, fused.allowed_channels].mul_(reduce_ratio)
+
             weight_per_filter_group = fused.conv.weight.view(in_channel, -1)
 
             weight_group = weight_per_filter_group.reshape(in_channel, -1)

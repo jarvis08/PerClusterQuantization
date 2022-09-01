@@ -24,7 +24,7 @@ class FusedBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1, base_width=64, dilation=1,
-                 norm_layer=None, arg_dict=None):
+                 norm_layer=None, arg_dict=None, is_last=False):
         super(FusedBasicBlock, self).__init__()
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
@@ -33,6 +33,7 @@ class FusedBasicBlock(nn.Module):
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.downsample = downsample
         self.stride = stride
+        self.is_last = is_last
 
         target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
@@ -103,24 +104,24 @@ class FusedBasicBlock(nn.Module):
 
         if self.training:
             self._update_activation_ranges(out)
-            if self.runtime_helper.apply_fake_quantization:
+            if self.runtime_helper.apply_fake_quantization and self.is_last:
                 out = self._fake_quantize_activation(out)
         return out
 
     @torch.no_grad()
     def _update_activation_ranges(self, x):
-        if self.runtime_helper.undo_gema:
-            _max = x.max().item()
-        else:
-            data = x.view(x.size(0), -1)
-            _max = data.max(dim=1).values.mean()
+        # if self.runtime_helper.undo_gema:
+        #     _max = x.max().item()
+        # else:
+        #     data = x.view(x.size(0), -1)
+        #     _max = data.max(dim=1).values.mean()
+        _max = x.max().item()
 
         if self.apply_ema:
             self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
         else:
             self.act_range[1] = _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-
 
     def _fake_quantize_activation(self, x):
         s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
@@ -403,6 +404,7 @@ class FusedResNet20(nn.Module):
 
         if bit_first > target_bit:
             self.layer3[layers[2] - 1].bn2.change_a_bit(bit_first)
+        self.layer3[-1].is_last = True
 
         if self.mixed_precision:
             for module in self.modules():

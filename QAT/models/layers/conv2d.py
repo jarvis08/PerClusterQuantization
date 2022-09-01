@@ -622,16 +622,21 @@ class FusedConv2d(nn.Module):
         if self.per_channel:
             w = fake_quantize_per_output_channel(self.conv.weight, self.w_bit, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
+            out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation,
+                           self.conv.groups)
         elif self.mixed_precision:
             self._update_input_ranges(x)
+            fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
             w = fake_quantize_per_input_channel(self.conv.weight, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
+            out = F.conv2d(fq_input, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation,
+                           self.conv.groups)
         else:
             w = self.conv.weight.detach()
             s, z = calc_qparams(w.min(), w.max(), self.w_bit, symmetric=self.symmetric)
             w = fake_quantize(self.conv.weight, s, z, self.w_bit,
                               symmetric=self.symmetric, use_ste=self.use_ste)
 
-        out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
+            out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation, self.conv.groups)
         if self._activation:
             out = self._activation(out)
 
@@ -649,22 +654,6 @@ class FusedConv2d(nn.Module):
                 self.act_range[0], self.act_range[1] = get_range(out)
                 self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
-            # if self.mixed_precision:
-            #     data = out.transpose(1, 0).reshape(out.size(1), -1)
-            #     _min = data.min(dim=1).values
-            #     _max = data.max(dim=1).values
-            #     # if self.runtime_helper.apply_fake_quantization:
-            #     #     zero = self.runtime_helper.fzero
-            #     #     s, z = calc_qparams_per_input_channel_with_range(self.mixed_act_range[0], self.mixed_act_range[1],
-            #     #                                                      self.low_group, self.high_group,
-            #     #                                                      zero=zero)
-            #     #     out = fake_quantize_per_input_channel(out, self.low_group, self.high_group, zero, use_ste=self.use_ste,
-            #     #                                            scale=s, zero_point=z)
-            #     if self.apply_ema:
-            #         self.mixed_act_range[0] = self.mixed_act_range[0] * self.smooth + _min * (1 - self.smooth)
-            #         self.mixed_act_range[1] = self.mixed_act_range[1] * self.smooth + _max * (1 - self.smooth)
-            #     else:
-            #         self.mixed_act_range[0], self.mixed_act_range[1] = _min, _max
         return out
 
     def _norm_folded(self, x, external_range=None):
