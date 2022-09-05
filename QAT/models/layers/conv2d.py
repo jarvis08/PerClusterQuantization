@@ -70,6 +70,7 @@ class QuantizedConv2d(nn.Conv2d):
     def forward(self, x):
         if self.mixed_precision:
             # drop 2 lower bits
+            self.record_total_val(x)
             if self.low_group.view(-1).size(0):
                 x = truncate_lower_bits(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric)
                 # x[:, self.low_group] = truncate_lower_bits(x[:, self.low_group], self.low_bit, symmetric=self.symmetric)
@@ -78,13 +79,12 @@ class QuantizedConv2d(nn.Conv2d):
         out = self._subsum(x, out)
         if self.multiplication:
             out = self._totalsum(out)
-        self.record_total_val(out)
         return out
 
     def record_total_val(self, x):
         _x = x.view(-1)
         self.total_size += list(_x.shape)[0]
-        self.low_size += (x <- 64).bitwise_or(x > 64).nonzero(as_tuple=True)[0].size(0)
+        self.low_size += (x[:, self.low_group] < 64).bitwise_or(x[:, self.low_group] > 63).nonzero(as_tuple=True)[0].size(0)
 
     def _conv_impl(self, x):
         padded = x
