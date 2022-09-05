@@ -106,7 +106,6 @@ class FusedAlexNetSmall(nn.Module):
                     module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
                     module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
                     module.fixed_indices = None
-            self.prev_ratio = 0
             self.percentile_tensor = None
             self.total_ch_sum = 0
 

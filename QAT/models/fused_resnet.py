@@ -35,8 +35,8 @@ class FusedBasicBlock(nn.Module):
         self.stride = stride
         self.is_last = is_last
 
-        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper, self.mixed_precision \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper', 'mixed_precision')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
@@ -51,7 +51,7 @@ class FusedBasicBlock(nn.Module):
         self.bn2 = FusedBnReLU(planes, a_bit=bit_addcat, arg_dict=arg_dict)
         self.relu = nn.ReLU(inplace=True)
 
-
+    @torch.no_grad()
     def set_mixed_bits_block(self, x):
         def record_input_range(x, module):
             data = x.transpose(1, 0).reshape(x.size(1), -1)
@@ -104,8 +104,11 @@ class FusedBasicBlock(nn.Module):
 
         if self.training:
             self._update_activation_ranges(out)
-            if self.runtime_helper.apply_fake_quantization and self.is_last:
-                out = self._fake_quantize_activation(out)
+            if self.runtime_helper.apply_fake_quantization:
+                if self.mixed_precision and not self.is_last:
+                    pass
+                else:
+                    out = self._fake_quantize_activation(out)
         return out
 
     @torch.no_grad()
@@ -412,7 +415,6 @@ class FusedResNet20(nn.Module):
                     module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
                     module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
                     module.fixed_indices = None
-            self.prev_ratio = 0
             self.percentile_tensor = None
             self.total_ch_sum = 0
 

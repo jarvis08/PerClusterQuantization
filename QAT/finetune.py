@@ -431,7 +431,19 @@ def _finetune(args, tools, data_loaders, clustering_model):
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
+
     test_score = best_int_val_score
+
+    if args.record_val:
+        with open(identifier + '_output_clipping.csv', 'a') as csvfile:
+            writer = csv.writer(csvfile)
+            for m in quantized_model.modules():
+                i = 0
+                if isinstance(m, QuantizedConv2d):
+                    ratio = m.low_size / m.total_size * 100
+                    writer.writerow(([i, '{:2f}%'.format(ratio)]))
+                    i += 1
+
     '''
     # Test quantized model which scored the best with validation dataset
     if test_loader is None:

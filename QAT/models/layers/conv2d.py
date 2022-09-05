@@ -13,8 +13,8 @@ class QuantizedConv2d(nn.Conv2d):
         super(QuantizedConv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
                                               padding, dilation, groups, bias)
         self.layer_type = 'QuantizedConv2d'
-        bit, self.per_channel, self.mixed_precision, self.fold_convbn, self.symmetric, self.num_clusters, self.multi_norm, self.runtime_helper, self.default_batch = \
-            itemgetter('bit', 'per_channel', 'mixed_precision', 'fold_convbn', 'symmetric', 'cluster', 'multi_norm', 'runtime_helper', 'val_batch')(arg_dict)
+        bit, self.per_channel, self.mixed_precision, self.fold_convbn, self.symmetric, self.num_clusters, self.multi_norm, self.runtime_helper, self.default_batch, self.record_val = \
+            itemgetter('bit', 'per_channel', 'mixed_precision', 'fold_convbn', 'symmetric', 'cluster', 'multi_norm', 'runtime_helper', 'val_batch', 'record_val')(arg_dict)
         self.w_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.is_bias = nn.Parameter(torch.tensor(False, dtype=torch.bool), requires_grad=False)
@@ -52,6 +52,9 @@ class QuantizedConv2d(nn.Conv2d):
             self.low_bit = torch.zeros(1, dtype=torch.int8)
             self.s1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.float32), requires_grad=False)
             self.z1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.int32), requires_grad=False)
+            if self.record_val:
+                self.total_size = 0
+                self.low_size = 0
 
         if self.fold_convbn:
             if self.num_clusters > 1:
@@ -75,7 +78,13 @@ class QuantizedConv2d(nn.Conv2d):
         out = self._subsum(x, out)
         if self.multiplication:
             out = self._totalsum(out)
+        self.record_total_val(out)
         return out
+
+    def record_total_val(self, x):
+        _x = x.view(-1)
+        self.total_size += list(_x.shape)[0]
+        self.low_size += (x <- 64).bitwise_or(x > 64).nonzero(as_tuple=True)[0].size(0)
 
     def _conv_impl(self, x):
         padded = x
@@ -627,6 +636,7 @@ class FusedConv2d(nn.Module):
         elif self.mixed_precision:
             self._update_input_ranges(x)
             fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
+            self._update_input_ranges(fq_input)
             w = fake_quantize_per_input_channel(self.conv.weight, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
             out = F.conv2d(fq_input, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation,
                            self.conv.groups)
@@ -673,27 +683,49 @@ class FusedConv2d(nn.Module):
             for c in range(n_channel):
                 folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
                 folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
-            
-            if not self.per_channel:
-                s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit, symmetric=self.symmetric)
-                fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
-            else:
-                fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit, self.runtime_helper.fzero,
-                                            symmetric=self.symmetric, use_ste=False)
 
-            folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-                                  self.conv.dilation, self.conv.groups)
+            if self.per_channel:
+                fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit,
+                                                                    self.runtime_helper.fzero,
+                                                                    symmetric=self.symmetric, use_ste=False)
+                folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+                                      self.conv.dilation, self.conv.groups)
+            elif self.mixed_precision:
+                self._update_input_ranges(x)
+                fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group,
+                                                           symmetric=self.symmetric, use_ste=self.use_ste)
+                fq_folded_weight = fake_quantize_per_input_channel(folded_weight, self.low_bit, self.low_group, self.high_group,
+                                                    symmetric=self.symmetric, use_ste=self.use_ste)
+
+                folded_out = F.conv2d(fq_input, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+                                      self.conv.dilation, self.conv.groups)
+
+            else:
+                s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit,
+                                    symmetric=self.symmetric)
+                fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
+                folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+                                      self.conv.dilation, self.conv.groups)
+
+            # folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+            #                       self.conv.dilation, self.conv.groups)
+
             if self._activation:
                 folded_out = self._activation(folded_out)
 
             if external_range is None:
-                if self.runtime_helper.undo_gema:
-                    _min = folded_out.min().item()
-                    _max = folded_out.max().item()
-                else:
-                    data = folded_out.view(x.size(0), -1)
-                    _min = data.min(dim=1).values.mean()
-                    _max = data.max(dim=1).values.mean()
+                _min = folded_out.min().item()
+
+
+                _max = folded_out.max().item()
+
+                # if self.runtime_helper.undo_gema:
+                #     _min = folded_out.min().item()
+                #     _max = folded_out.max().item()
+                # else:
+                #     data = folded_out.view(x.size(0), -1)
+                #     _min = data.min(dim=1).values.mean()
+                #     _max = data.max(dim=1).values.mean()
 
                 if self._activation:
                     if self.apply_ema:
