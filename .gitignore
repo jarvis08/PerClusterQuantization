@@ -4,6 +4,7 @@ runs/*
 exp_results.txt
 test.txt
 tmp*.sh
+result_backup/*
 
 tags
 .idea

@@ -23,20 +23,23 @@ class KMeansClustering(object):
         batch = data.size(0)
         channel = data.size(1)
         _size = data.size(2)
-        if _size % 2:
-            m = torch.nn.ZeroPad2d((0, 1, 0, 1))
+        # n_part = self.args.partition
+        n_part = 4
+        if _buffer := ((n_part - _size % n_part) % n_part):
+            m = torch.nn.ZeroPad2d((0, _buffer, 0, _buffer))
             data = m(data)
             _size = data.size(2)
         if self.args.partition_method == 'square':
-            n_part = self.args.partition
             n_data = int(_size / n_part)  # Per part
 
+            data = data.amax(dim=1, keepdim=True)
+            channel = 1
             data = data.view(batch, channel, n_part,
                              n_data, _size).transpose(3, 4).contiguous()
             data = data.view(batch, channel, n_part * n_part, -1)
 
             if self.args.repr_method == 'max':
-                rst, _ = data.topk(k=3, dim=-1)
+                rst, _ = data.topk(k=9, dim=-1)
                 rst = rst.mean(-1, keepdim=True)
             elif self.args.repr_method == 'mean':
                 rst = data.mean(-1, keepdim=True)
@@ -44,8 +47,8 @@ class KMeansClustering(object):
                 _min = data.min(-1, keepdim=True).values
                 _max = data.max(-1, keepdim=True).values
                 rst = torch.cat((_min, _max), dim=-1)
-            # return rst.view(rst.size(0), -1).numpy()
             return rst.view(rst.size(0), -1)
+
         else:
             # To make clustering model more robust about augmentation's horizontal flip
             n_part = 4
@@ -199,11 +202,28 @@ class KMeansClustering(object):
                     dnn_model.count_zeros_per_index(
                         input, cluster, n_sub_clusters)
 
-        # Handle Empty Clusters
-        for c in range(n_sub_clusters):
-            if dnn_model.max_counter[0][c] == []:
-                for l in range(len(dnn_model.max_counter)):
-                    dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
+        # for i, max_counters in enumerate(dnn_model.max_counter):
+        #     size_counter = []
+        #     for max in max_counters:
+        #         size_counter.append(len(max))
+        #     total_max_per_layer = torch.cat(max_counters)
+            
+        #     # Normalize
+        #     # normalized_max_per_layer = torch.nn.functional.normalize(total_max_per_layer, p=torch.inf, dim=0)
+
+        #     # Standardize
+        #     std, mean = torch.std_mean(total_max_per_layer, dim=0, unbiased=False)
+        #     normalized_max_per_layer = (total_max_per_layer - mean) / std
+
+        #     dnn_model.max_counter[i] = list(torch.split(normalized_max_per_layer, size_counter))
+
+        # # Handle Empty Clusters
+        # for c in range(n_sub_clusters):
+        #     if dnn_model.max_counter[0][c] == []:
+        #         for l in range(len(dnn_model.max_counter)):
+        #             dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
+
+
 
         print("\n>>> [Original] Number of data per cluster")
         for c in range(n_sub_clusters):
@@ -296,18 +316,25 @@ class KMeansClustering(object):
             cur_max_counter = deepcopy(dnn_model.max_counter)
             max_ratio = torch.zeros((n_layers, n_sub_clusters), device='cuda')
 
-            if self.args.max_method == 'median':
-                percentile_tensor = torch.tensor([0.5], device='cuda')
-                for l in range(n_layers):
-                    for c in range(n_sub_clusters):
-                        max_ratio[l][c] = torch.quantile(
-                            cur_max_counter[l][c], percentile_tensor)
-            elif self.args.max_method == 'mean':
-                for l in range(n_layers):
-                    for c in range(n_sub_clusters):
-                        max_ratio[l][c] = cur_max_counter[l][c].mean()
-            else:
-                raise Exception('max method not implemented')
+
+            # Clipping value approximation
+            for l in range(n_layers):
+                for c in range(n_sub_clusters):
+                    max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.997)
+
+
+            # if self.args.max_method == 'median':
+            #     percentile_tensor = torch.tensor([0.5], device='cuda')
+            #     for l in range(n_layers):
+            #         for c in range(n_sub_clusters):
+            #             max_ratio[l][c] = torch.quantile(
+            #                 cur_max_counter[l][c], percentile_tensor)
+            # elif self.args.max_method == 'mean':
+            #     for l in range(n_layers):
+            #         for c in range(n_sub_clusters):
+            #             max_ratio[l][c] = cur_max_counter[l][c].mean()
+            # else:
+            #     raise Exception('max method not implemented')
 
             max_ratio = torch.transpose(max_ratio, 0, 1)
 
@@ -315,13 +342,16 @@ class KMeansClustering(object):
             cross_similarity = torch.full(
                 (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
 
-            l2_dist = torch.nn.PairwiseDistance(p=2)
+
+            # Distance Metric
+            # dist = torch.nn.PairwiseDistance(p=2)
+            dist = torch.nn.PairwiseDistance(p=0.5)
+
 
             for candidate in candidates:
-                # with torch.cuda.stream(streams[torch.randint(num_streams, (1,))]):
                 _from = int(candidate // n_sub_clusters)
                 _to = int(candidate % n_sub_clusters)
-                cross_similarity[_from][_to] = l2_dist(
+                cross_similarity[_from][_to] = dist(
                     max_ratio[_from], max_ratio[_to])
 
             # choose pair of clusters with smallest L2 distance
