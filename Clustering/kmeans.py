@@ -24,7 +24,7 @@ class KMeansClustering(object):
         channel = data.size(1)
         _size = data.size(2)
         # n_part = self.args.partition
-        n_part = 4
+        n_part = 2
         if _buffer := ((n_part - _size % n_part) % n_part):
             m = torch.nn.ZeroPad2d((0, _buffer, 0, _buffer))
             data = m(data)
@@ -39,7 +39,7 @@ class KMeansClustering(object):
             data = data.view(batch, channel, n_part * n_part, -1)
 
             if self.args.repr_method == 'max':
-                rst, _ = data.topk(k=9, dim=-1)
+                rst, _ = data.topk(k=4, dim=-1)
                 rst = rst.mean(-1, keepdim=True)
             elif self.args.repr_method == 'mean':
                 rst = data.mean(-1, keepdim=True)
