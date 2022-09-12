@@ -15,6 +15,33 @@ class STE(torch.autograd.Function):
         return grad, None
 
 
+class SKT_MIX(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input_, indices):
+        data = input_.transpose(1, 0).reshape(input_.size(1), -1)
+        _max = data.max(dim=1).values
+        _min = data.min(dim=1).values
+        ctx.save_for_backward(_max - _min, indices)
+        # ctx.save_for_backward(input_.sign())
+        return input_
+
+    @staticmethod
+    def backward(ctx, grad):
+        sign_tensor, indices = ctx.saved_tensors
+        # grad[-1 * grad[:, indices] * sign_tensor[:, indices] * 0.9 > 0] = 0
+
+        max_range = sign_tensor.max()
+        # tmp = ((max_range / sign_tensor[indices]) < 2.0)
+        max_indices = ((max_range / sign_tensor[indices]) < 2.0).nonzero(as_tuple=True)[0]
+        grad[:, max_indices] = 0
+
+        # ## channel wise version
+        # grad_sum = (-1 * sign_tensor[:, indices] * 0.9 * grad[:, indices]).sum(dim=(0,2,3))
+        # indices_ = torch.where(grad_sum > 0, 1, 0).nonzero(as_tuple=True)[0]
+        # grad[:, indices_] = 0
+        return grad, None
+
+
 class QuantizationTool(object):
     def __init__(self):
         self.fuser = None

@@ -6,6 +6,22 @@ from .layers.linear import *
 from .quant_noise import _quant_noise
 from .quantization_utils import *
 
+# def mixed_hook(module, grad_in, grad_out):
+#     # print(module)
+#     import pdb
+#     pdb.set_trace()
+#     grad_out[0][grad_out[0] > 0] = 0
+#     # print(grad_in[0].shape)
+#     # print(grad_out[0].shape)
+#     # grad_sum = (-1 * fused.conv.weight[:, fused.fixed_indices].sign() * reduce_ratio * fused.conv.weight[:,fused.fixed_indices].abs() * fused.conv.weight.grad[
+#     #                                                                                                                 :,
+#     #                                                                                                                 fused.fixed_indices]).sum(
+#     #     dim=(0, 2, 3))
+#     # indices = torch.where(grad_sum < 0, 1, 0).nonzero(as_tuple=True)[0]
+#     # fused.allowed_channels = fused.fixed_indices[indices]
+#
+#     # grad_out[0].zero_()
+#     # print(grad_in, grad_out)
 
 class FusedAlexNet(nn.Module):
     def __init__(self, arg_dict: dict, num_classes: int = 1000) -> None:
@@ -106,6 +122,8 @@ class FusedAlexNetSmall(nn.Module):
                     module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
                     module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
                     module.fixed_indices = None
+                    # module.register_full_backward_hook()
+                    # module.register_full_backward_hook(mixed_hook)
             self.percentile_tensor = None
             self.total_ch_sum = 0
 

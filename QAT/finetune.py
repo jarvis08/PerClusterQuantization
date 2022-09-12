@@ -253,9 +253,9 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
     ratio = low_counter / model.total_ch_sum * 100
     print("Total low bit ratio : {:.2f}% ".format(ratio))
 
-    with open(identifier + '.csv', 'a') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow((['0', 'initial', '{:2f}%'.format(ratio)]))
+    # with open(identifier + '.csv', 'a') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     writer.writerow((['0', 'initial', '{:2f}%'.format(ratio)]))
 
 
 def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
@@ -328,8 +328,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.mixed_precision:
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
         # # try inference once to record input precisions
-        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}'
-        identifier = f'[TRAIN]{args.arch}_{args.dataset}_percentile_{args.percentile}_reduced_ratio_{args.reduce_ratio}'
+        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
+        identifier = f'[TRAIN]{args.arch}_{args.dataset}_percentile_{args.percentile}_reduced_ratio_{args.reduce_ratio}_'
         set_lower_weights(model)
         validate_setting_bits(model, val_loader, criterion)
         # pretrained_model.cpu()
@@ -357,15 +357,19 @@ def _finetune(args, tools, data_loaders, clustering_model):
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
+        if e <= args.channel_epoch:
+            runtime_helper.conv_mixed_grad = True
+        else:
+            runtime_helper.conv_mixed_grad = False
 
-        if not args.mixed_precision or e > args.channel_epoch:
+        if not args.mixed_precision or not runtime_helper.conv_mixed_grad:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         else:
             losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
-            with open(identifier + '.csv', 'a') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
+            # with open(identifier + '.csv', 'a') as csvfile:
+            #     writer = csv.writer(csvfile)
+            #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
             # if not args.weight_only:
             #     validate_setting_bits(model, val_loader, criterion)
             # set_mixed_bits_per_input_channels(model, e, identifier=identifier)

@@ -31,6 +31,7 @@ class RuntimeHelper(object):
         self.num_clusters = None
         self.val_batch = None
         self.undo_gema = False
+        self.conv_mixed_grad = False
 
         self.mask_4d = None ###
         self.mask_2d = None ###

@@ -70,7 +70,8 @@ class QuantizedConv2d(nn.Conv2d):
     def forward(self, x):
         if self.mixed_precision:
             # drop 2 lower bits
-            self.record_total_val(x)
+            if self.record_val:
+                self.record_total_val(x)
             if self.low_group.view(-1).size(0):
                 x = truncate_lower_bits(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric)
                 # x[:, self.low_group] = truncate_lower_bits(x[:, self.low_group], self.low_bit, symmetric=self.symmetric)
@@ -634,6 +635,8 @@ class FusedConv2d(nn.Module):
             out = F.conv2d(x, w, self.conv.bias, self.conv.stride, self.conv.padding, self.conv.dilation,
                            self.conv.groups)
         elif self.mixed_precision:
+            if self.runtime_helper.conv_mixed_grad:
+                x = SKT_MIX.apply(x, self.fixed_indices)
             self._update_input_ranges(x)
             fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
             self._update_input_ranges(fq_input)
