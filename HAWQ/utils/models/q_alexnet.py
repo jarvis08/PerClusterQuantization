@@ -172,6 +172,59 @@ class Q_AlexNet(nn.Module):
 
         return x
 
+
+    def get_max_activations(self, x):
+        x, act_scaling_factor = self.quant_input(x)
+
+        x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
+        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)                                      #####
+        x = self.act1(x)
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor)
+
+        x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
+
+        x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act2(x)
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
+
+        x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
+
+        x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act3(x)
+        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor)
+
+        x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act4(x)
+        x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor)
+        
+        x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act5(x)
+        x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor)
+
+        x, act_scaling_factor = self.maxpool3(x, act_scaling_factor)
+        x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
+
+        x = x.view(x.size(0), -1)
+
+        x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act6(x)
+        x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor)
+
+        x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act7(x)
+        x, act_scaling_factor = self.quant_act7(x, act_scaling_factor, fc_scaling_factor)
+
+        x = self.fc3(x, act_scaling_factor)
+        maxs = torch.cat((maxs, torch.amax(x[0].view(x[0].size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+
+        return maxs
+
     def initialize_counter(self, x, n_clusters):
         self.zero_counter = []
 
@@ -340,7 +393,6 @@ class Q_AlexNet(nn.Module):
             self.max_counter[l_idx][cluster] = _max
         else:
             self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-
 
 def q_alexnet(model, model_dict=None, num_clusters=None):
     return Q_AlexNet(model, model_dict, num_clusters)
