@@ -329,7 +329,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
         # # try inference once to record input precisions
         # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
-        identifier = f'[TRAIN]{args.arch}_{args.dataset}_percentile_{args.percentile}_reduced_ratio_{args.reduce_ratio}_'
+        identifier = f'GRAD_{args.arch}_{args.dataset}_ratio_{args.reduce_ratio}'
         set_lower_weights(model)
         validate_setting_bits(model, val_loader, criterion)
         # pretrained_model.cpu()
@@ -357,7 +357,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
-        if e <= args.channel_epoch:
+        if e <= args.channel_epoch and args.input_grad:
             runtime_helper.conv_mixed_grad = True
         else:
             runtime_helper.conv_mixed_grad = False
@@ -367,11 +367,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
         else:
             losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
-            # with open(identifier + '.csv', 'a') as csvfile:
-            #     writer = csv.writer(csvfile)
-            #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
-            # if not args.weight_only:
-            #     validate_setting_bits(model, val_loader, criterion)
+            with open(identifier + '.csv', 'a') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
+                validate_setting_bits(model, val_loader, criterion)
             # set_mixed_bits_per_input_channels(model, e, identifier=identifier)
 
         opt_scheduler.step()
@@ -439,7 +438,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     test_score = best_int_val_score
 
     if args.record_val:
-        with open(identifier + '_output_clipping.csv', 'a') as csvfile:
+        with open(identifier + '_clipping.csv', 'a') as csvfile:
             writer = csv.writer(csvfile)
             for m in quantized_model.modules():
                 i = 0

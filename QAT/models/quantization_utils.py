@@ -18,32 +18,28 @@ class STE(torch.autograd.Function):
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, indices):
-        # data = input_.transpose(1, 0).reshape(input_.size(1), -1)
-        # _max = data.max(dim=1).values
-        # _min = data.min(dim=1).values
-        # ctx.save_for_backward(_max - _min, indices)
         ctx.save_for_backward(input_, indices)
         return input_
 
     @staticmethod
     def backward(ctx, grad):
         input_tensor, indices = ctx.saved_tensors
-        # grad[-1 * grad[:, indices] * sign_tensor[:, indices] * 0.9 > 0] = 0
 
         data = input_tensor.transpose(1, 0).reshape(input_tensor.size(1), -1)
         _max = data.max(dim=1).values
         _min = data.min(dim=1).values
         range_ = _max - _min
-
         max_range = range_.max()
-        # tmp = ((max_range / sign_tensor[indices]) < 2.0)
         max_indices = ((max_range / range_[indices]) < 2.0).nonzero(as_tuple=True)[0]
-        # grad[:, max_indices] = 0
 
-        # ## channel wise version
-        grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0,2,3))
+        # without considering loss
+        grad[:, max_indices] = 0
+
+        ## channel wise version
+        grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0, 2, 3))
         indices_ = torch.where(grad_sum > 0, 1, 0).nonzero(as_tuple=True)[0]
         grad[:, indices_] = 0
+
         return grad, None
 
 

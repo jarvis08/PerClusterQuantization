@@ -50,10 +50,10 @@ parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply
 
 parser.add_argument('--mixed_precision', action='store_true', help='For SKT')
 parser.add_argument('--record_val', action='store_true', help='For SKT, record num of outputs out of clipping range')
-# parser.add_argument('--weight_only', action='store_true', help='For SKT, set bits considering only weight range')
+parser.add_argument('--input_grad', action='store_true', help='For SKT, make gradient of input zero')
 # parser.add_argument('--weight_scailing', action='store_true', help='For SKT, set bits considering only weight range')
 parser.add_argument('--percentile', default=1.0, type=float, help="threshold to split weight groups into two")
-parser.add_argument('--reduce_ratio', default=1.0, type=float, help="weight reduce")
+parser.add_argument('--reduce_ratio', default=1.0, type=float, help="weight reduce").type
 parser.add_argument('--channel_epoch', default=30, type=int, help='Number of epochs to set low bits')
 parser.add_argument('--method', default='max', type=str, help="how to choose one of scales")
 
