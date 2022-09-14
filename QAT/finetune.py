@@ -329,7 +329,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
         # # try inference once to record input precisions
         # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
-        identifier = f'GRAD_{args.arch}_{args.dataset}_ratio_{args.reduce_ratio}'
+        identifier = f'GRAD_{args.arch}_{args.dataset}_ratio_{args.reduce_ratio}_grad_{args.input_grad}'
         set_lower_weights(model)
         validate_setting_bits(model, val_loader, criterion)
         # pretrained_model.cpu()
