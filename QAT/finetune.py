@@ -370,8 +370,6 @@ def _finetune(args, tools, data_loaders, clustering_model):
             with open(identifier + '.csv', 'a') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
-                validate_setting_bits(model, val_loader, criterion)
-            # set_mixed_bits_per_input_channels(model, e, identifier=identifier)
 
         opt_scheduler.step()
 
