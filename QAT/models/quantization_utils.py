@@ -32,8 +32,8 @@ class SKT_MIX(torch.autograd.Function):
         max_range = range_.max()
         max_indices = ((max_range / range_[indices]) < 2.0).nonzero(as_tuple=True)[0]
 
-        # without considering loss
-        grad[:, max_indices] = 0
+        # # without considering loss
+        # grad[:, max_indices] = 0
 
         ## channel wise version
         grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0, 2, 3))
