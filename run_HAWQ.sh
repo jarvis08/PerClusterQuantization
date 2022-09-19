@@ -14,13 +14,13 @@ GPU_NUM=${1}
 MODEL=${2}
 # svhn / cifar10 / cifar100 / imagenet           
 DATASET=${3}
-BATCH=${4}             # 128 / 64 / 32
+BATCH=${4}             # 256 / 128 / 64 / 32
 LEARNING_RATE=${5}     # 0.001 / 0.0001      
 
 FIRST_RUN=${6}         # true / false
-CLUSTER=${7}           # 16 / 8 / 4 / 2
+CLUSTER=${7}           # Final Clusters : 1024 / 512 / 256 / 128 / 64 / 32 / 16 / 8 / 4 / 2
 
-SUB_CLUSTER=${8}       # 32 / 16 / 8 / 4
+SUB_CLUSTER=${8}       # Initial Clusters : 1024 / 512 / 256 / 128 / 64 / 32 / 16 / 8 / 4 / 2
 SIM_METHOD=${9}        # and / jaccard
 REPR_METHOD="max"      # FIXED TO MAX
 MERGE_METHOD="mean"
