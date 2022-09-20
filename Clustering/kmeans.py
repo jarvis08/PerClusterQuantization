@@ -256,11 +256,11 @@ class KMeansClustering(object):
 
         #     dnn_model.max_counter[i] = list(torch.split(normalized_max_per_layer, size_counter))
 
-        # # Handle Empty Clusters
-        # for c in range(n_sub_clusters):
-        #     if dnn_model.max_counter[0][c] == []:
-        #         for l in range(len(dnn_model.max_counter)):
-        #             dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
+        # Handle Empty Clusters
+        for c in range(n_sub_clusters):
+            if dnn_model.max_counter[0][c] == []:
+                for l in range(len(dnn_model.max_counter)):
+                    dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
 
 
 
