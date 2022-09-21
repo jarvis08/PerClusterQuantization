@@ -4,6 +4,7 @@ from cuml.cluster import KMeans
 from sklearn.cluster import MiniBatchKMeans
 from audtorch.metrics.functional import pearsonr as pearson_correlation
 import numpy as np
+import networkx as nx
 
 from tqdm import tqdm
 import joblib
@@ -217,7 +218,7 @@ class KMeansClustering(object):
         print('Count Max Values and Zero Counter per cluster about dataset..')
         n_per_sub = [0 for _ in range(n_sub_clusters)]
         dnn_model.eval()
-        with tqdm(range(len(train_loader)), desc="Merge Clusters", ncols=90) as t:
+        with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
 
@@ -276,6 +277,10 @@ class KMeansClustering(object):
         # [cluster_idx, layer_idx, neurons] .. zero count
         dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
 
+
+        ##############################################################
+
+
         def check_merged_groups(merged_groups, cluster_id, cur_idx):
             for idx in range(len(merged_groups)):
                 if idx == cur_idx:
@@ -286,21 +291,107 @@ class KMeansClustering(object):
             return -1
 
         def calc_cross_similarity(zero_ratio, _from, _to, sim_method):
-            # if sim_method == 'and':
-            #     similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
-            #             n_features
-            # else:
-            #     similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
-            #             torch.logical_or(zero_ratio[_from], zero_ratio[_to]).sum(dim=1)
-            similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
-                    torch.logical_or(zero_ratio[_from], zero_ratio[_to]).sum(dim=1)
+            if sim_method == 'and':
+                similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
+                        n_features
+            else:
+                similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
+                        torch.logical_or(zero_ratio[_from], zero_ratio[_to]).sum(dim=1)
             return torch.nan_to_num(similarity)
+
+        def get_candidates_from_lipschitz_bound(args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude):
+            n_candidates_per_layer = int(
+                ((n_sub_clusters - n_merged) * (n_sub_clusters - n_merged - 1))/2 * 0.8)  # discard low 20%
+            zero_ratio = deepcopy(dnn_model.zero_counter)
+            n_layers = len(zero_ratio[2])
+
+            # Set True / False by Zero Count Threshold
+            zero_ratio = torch.div(zero_ratio, n_per_sub.view(-1, 1, 1))
+            zero_ratio = torch.where(zero_ratio > args.sim_threshold, True, False)
+
+            # record cross_similarity
+            cross_similarity = torch.zeros(n_sub_clusters, n_sub_clusters, n_layers, device='cuda')
+            for _from in [index for index in range(n_sub_clusters) if index not in exclude]:
+                for _to in [index for index in range(_from + 1, n_sub_clusters) if index not in exclude]:
+                    cross_similarity[_from][_to] = calc_cross_similarity(zero_ratio, _from, _to, args.similarity_method)
+
+            # [cluster_idx, cluster_idx, layer_idx] -> [layer_idx, cluster_idx, cluster_idx] .. similarity
+            cross_similarity = torch.transpose(torch.transpose(cross_similarity, 0, 2), 1, 2)
+
+            dist = cross_similarity.view(cross_similarity.size(0), -1)
+            _similarity, _cluster_idx = torch.topk(dist, n_candidates_per_layer)
+
+            zero_sim_layer = torch.count_nonzero(_similarity.size(1) - torch.count_nonzero(_similarity, dim=1))
+            candidates, counts = torch.unique(_cluster_idx, return_counts=True)
+            candidates = torch.where(counts >= (n_layers-zero_sim_layer), candidates, 0)
+            candidates = candidates[candidates.nonzero()]
+
+            print("number of candidates : ", candidates.size(0))
+            return candidates
+
+        def get_pairwise_distance(dnn_model, n_sub_clusters, mask=True):
+            # finding best pair from choosen candidates
+            cur_max_counter = deepcopy(dnn_model.max_counter)
+            n_layers = len(cur_max_counter)
+            max_ratio = torch.zeros((n_layers, n_sub_clusters), device='cuda')
+
+            # Clipping value approximation
+            for l in range(n_layers):
+                for c in range(n_sub_clusters):
+                    max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.9986)
+
+            max_ratio = torch.transpose(max_ratio, 0, 1)
+
+            if mask:
+                distance = torch.triu(torch.cdist(max_ratio, max_ratio, p=2), diagonal=1)
+            else:
+                distance = torch.cdist(max_ratio, max_ratio, p=2)
+            return distance
+
+        def get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude):
+            # measure L2 distance between clusters
+            cross_similarity = torch.full(
+                (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
+            cross_similarity_candidate = torch.full(
+                (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
+
+            # Set distance 0 to infinity to represent their distance is far enough to not get considered
+            cross_similarity = torch.where(distance != 0., distance, cross_similarity)
+
+            for index in exclude:
+                cross_similarity[:, index] = torch.inf
+                cross_similarity[index, :] = torch.inf
+
+            for candidate in candidates:
+                _from = int(candidate // n_sub_clusters)
+                _to = int(candidate % n_sub_clusters)
+                cross_similarity_candidate[_from][_to] = cross_similarity[_from][_to]
+
+            # choose pair of clusters with smallest L2 distance
+            pair = (cross_similarity_candidate == (torch.min(cross_similarity_candidate))
+                    ).nonzero(as_tuple=True)
+
+            return [cluster[0].item() for cluster in pair], cross_similarity_candidate
+
+        def get_merge_cluster_sets(distance, target_cluster):
+            THRESHOLD = torch.quantile(distance, 0.0228)
+            while True:
+                merge_clusters = [c for c in nx.connected_components(nx.from_numpy_array(torch.where(distance > THRESHOLD, torch.zeros(1).cuda(), distance).cpu().numpy()))]
+                if (loss := len(merge_clusters) - target_cluster):
+                    THRESHOLD = THRESHOLD + 0.001 * loss
+                    print("loss : ", loss, " threshold :", THRESHOLD)
+                else:
+                    break
+            return merge_clusters
+
+        
+        ##############################################################
+
 
         merged_clusters = []
 
         to_merge = n_sub_clusters - self.args.cluster
         n_merged = 0
-        similarity_threshold = self.args.sim_threshold
 
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
@@ -312,69 +403,12 @@ class KMeansClustering(object):
             for group in merged_clusters:
                 exclude.update(group[0] - {min(group[0])})
 
-
-            # n_candidates_per_layer = int(
-            #     ((n_sub_clusters - n_merged) * (n_sub_clusters - n_merged - 1))/2 * 0.8)  # discard low 20%
-            # zero_ratio = deepcopy(dnn_model.zero_counter)
-
-            # # Set True / False by Zero Count Threshold
-            # zero_ratio = torch.div(zero_ratio, n_per_sub.view(-1, 1, 1))
-            # zero_ratio = torch.where(zero_ratio > similarity_threshold, True, False)
-
-            # # record cross_similarity
-            # cross_similarity = torch.zeros(n_sub_clusters, n_sub_clusters, n_layers, device='cuda')
-            # for _from in [index for index in range(n_sub_clusters) if index not in exclude]:
-            #     for _to in [index for index in range(_from + 1, n_sub_clusters) if index not in exclude]:
-            #         cross_similarity[_from][_to] = calc_cross_similarity(zero_ratio, _from, _to, self.args.similarity_method)
-
-            # # [cluster_idx, cluster_idx, layer_idx] -> [layer_idx, cluster_idx, cluster_idx] .. similarity
-            # cross_similarity = torch.transpose(torch.transpose(cross_similarity, 0, 2), 1, 2)
-
-            # count_duplicated_candidates = dict()
-            # dist = cross_similarity.view(cross_similarity.size(0), -1)
-            # _similarity, _cluster_idx = torch.topk(dist, n_candidates_per_layer)
-
-            # zero_sim_layer = torch.count_nonzero(_similarity.size(1) - torch.count_nonzero(_similarity, dim=1))
-            # candidates, counts = torch.unique(_cluster_idx, return_counts=True)
-            # candidates = torch.where(counts >= (n_layers-zero_sim_layer), candidates, 0)
-            # candidates = candidates[candidates.nonzero()]
-
-            # print("number of candidates : ", candidates.size(0))
-
-
-            # finding best pair from choosen candidates
-            # measure median or mean of individual cluster's max values
-            n_layers = len(dnn_model.max_counter)
-            cur_max_counter = deepcopy(dnn_model.max_counter)
-            max_ratio = torch.zeros((n_layers, n_sub_clusters), device='cuda')
-
-            # Clipping value approximation
-            for l in range(n_layers):
-                for c in range(n_sub_clusters):
-                    max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.997)
-
-            max_ratio = torch.transpose(max_ratio, 0, 1)
-
-            # measure L2 distance between clusters
-            cross_similarity = torch.full(
-                (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
-
-            distance = torch.triu(torch.cdist(max_ratio, max_ratio, p=2), diagonal=1)
-            # for candidate in candidates:
-            #     _from = int(candidate // n_sub_clusters)
-            #     _to = int(candidate % n_sub_clusters)
-            #     cross_similarity_candidate[_from][_to] = cross_similarity[_from][_to]
-
-            cross_similarity = torch.where(distance != 0., distance, cross_similarity)
-            for index in exclude:
-                cross_similarity[:, index] = torch.inf
-                cross_similarity[index, :] = torch.inf
-
-            # choose pair of clusters with smallest L2 distance
-            pair = (cross_similarity == (torch.min(cross_similarity))
-                    ).nonzero(as_tuple=True)
-
-            pair = [cluster[0].item() for cluster in pair]
+            # get candidates using zero count matrix which consider lipschitz boundary of layers
+            candidates = get_candidates_from_lipschitz_bound(self.args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude)
+            # get pairwise distance using approximated clipping values from each clusters
+            distance = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True)
+            # get a most appropriate merging pairs from candidates using distance metric
+            pair, cross_similarity = get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude)
 
             # merge clusters
             print(f'Merge', end='')
