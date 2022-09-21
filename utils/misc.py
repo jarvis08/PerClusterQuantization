@@ -32,6 +32,7 @@ class RuntimeHelper(object):
         self.val_batch = None
         self.undo_gema = False
         self.conv_mixed_grad = False
+        self.const_portion = 0.0
 
         self.mask_4d = None ###
         self.mask_2d = None ###

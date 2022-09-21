@@ -141,69 +141,15 @@ def validate_setting_bits(model, loader, criterion):
                 t.set_description("Validate")
                 input, target = input.cuda(), target.cuda()
                 model.set_mixed_bits(input)
-                # loss = criterion(output, target)
-                # prec = accuracy(output, target)[0]
 
 
-# def set_lower_weights(model):
-#     for fused in model.modules():
-#         if isinstance(fused, FusedConv2d):
-#             in_channel = fused.in_channels
-#             weight_per_filter_group = fused.conv.weight.transpose(1, 0)
-#
-#             weight_group = weight_per_filter_group.reshape(in_channel, -1)
-#             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-#
-#            weight_max = input_range.max(), weight_range.max
-#         if isinstance(m, nn.Conv2d):
-#             conv_cnt += 1
-#             in_channel = m.in_channels
-#             weight_per_filter_group = m.weight.transpose(1, 0).detach().numpy()
-#             weight_per_filter_group = weight_per_filter_group.reshape(in_channel, -1)
-#             weight_min_max_per_group = np.zeros((2, in_channel))
-#             weight_min_max_per_group[0], weight_min_max_per_group[1] = weight_per_filter_group.min(axis=1), weight_per_filter_group.max(axis=1)
-#             weight_group.append(weight_min_max_per_group[1] - weight_min_max_per_group[0])
-#             input_group.append((m.input_range[1] - m.input_range[0]).numpy())
-#
-#     draw_weight_out_violin_graph(input_group, weight_group, violin_path + f'/{naming}.png', args.arch)
-
-
-    # # get output distribution after fine-tuning
-    # for m in model.modules():
-    #     if isinstance(m, FusedConv2d):
-    #         conv_cnt += 1
-    #         # out_channel = m.out_channels
-    #         # (2, 96) -> (96, 2)
-    #         output_per_out_filter_group = m.act_violin_range.transpose(1,0).numpy()
-    #         # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
-    #
-    #         min_max_per_group = output_per_out_filter_group.max(axis=1) - output_per_out_filter_group.min(axis=1)
-    #         range_per_group.append(min_max_per_group)
-    #         if min_max_per_group.max() > max_:
-    #             max_ = min_max_per_group.max()
-    #
-    #         # out_channel = m.out_channels
-    #         # input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
-    #         # weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
-    #         # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
-    #
-    #         # input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
-    #         # range_per_group.append(min_max_per_group)
-    #         # if min_max_per_group.max() > max_:
-    #         #     max_ = min_max_per_group.max()
-
-    # violin
-    # range_per_group_sorted = sorted(list(range_per_group))
-    # draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
-
-
-def set_lower_weights(model):
+def set_lower_weights(model, pre_fixed_channel_ratio):
     total_channel = 0
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
             total_channel += in_channel
-            num_lower_channels = math.ceil(in_channel / 2)
+            num_lower_channels = math.ceil(in_channel * pre_fixed_channel_ratio)
             weight_per_filter_group = fused.conv.weight.transpose(1, 0)
 
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
@@ -217,9 +163,6 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
     low_counter = 0
     eight_counter = 0
 
-    #l_cnt = 0
-    #with open(identifier + '.csv', 'a') as csvfile:
-    #writer = csv.writer(csvfile)
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
@@ -232,11 +175,13 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
             weight_bits = torch.where(model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]), 1, 0)
             low_bit = 8 - round(math.log(percentile, 2))
 
+            # input asymmetric version
             input_range = fused.val_input_range[1] - fused.val_input_range[0]
             input_max = input_range.max()
-            
-            #writer.writerow(([l_cnt, (input_max / input_range[fused.fixed_indices]).mean().item(), (input_max / input_range).mean().item()]))
-            #l_cnt += 1
+
+            # # input asymmetric version
+            # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
+            # input_max = input_range.max()
 
             input_bits = torch.where(model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]), 1, 0)
             fused.w_bit.data[fused.fixed_indices] = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
@@ -259,7 +204,6 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
 
 
 def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
-    import math
     low_counter = 0
     eight_counter = 0
     for fused in model.modules():
@@ -269,7 +213,11 @@ def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
 
             weight_group = weight_per_filter_group.reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+
+            # input asymmetric
             input_range = fused.input_range[1] - fused.input_range[0]
+
+            # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
 
             # low_bit = 8 - round(math.log(model.percentile_tensor, 2))
             prev_bit = (fused.w_bit.data != 8)
@@ -326,11 +274,12 @@ def _finetune(args, tools, data_loaders, clustering_model):
     model.cuda()
 
     if args.mixed_precision:
+        runtime_helper.const_portion = args.const_portion
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
         # # try inference once to record input precisions
         # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
         identifier = f'GRAD_{args.arch}_{args.dataset}_ratio_{args.reduce_ratio}_grad_{args.input_grad}'
-        set_lower_weights(model)
+        set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
         # pretrained_model.cpu()
         initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)

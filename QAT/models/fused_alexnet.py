@@ -160,24 +160,8 @@ class FusedAlexNetSmall(nn.Module):
             self.in_range[0], self.in_range[1] = _min, _max
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
-        # if self.mixed_precision:
-        #     data = x.transpose(1, 0).reshape(x.size(1), -1)
-        #     _min = data.min(dim=1).values
-        #     _max = data.max(dim=1).values
-        #     if self.apply_ema:
-        #         self.mixed_range[0] = self.mixed_range[0] * self.smooth + _min * (1 - self.smooth)
-        #         self.mixed_range[1] = self.mixed_range[1] * self.smooth + _max * (1 - self.smooth)
-        #     else:
-        #         self.mixed_range[0], self.mixed_range[1] = _min, _max
 
     def _fake_quantize_input(self, x):
-        # if self.mixed_precision:
-        #     zero = self.runtime_helper.fzero
-        #     s, z = calc_qparams_per_input_channel_with_range(self.mixed_range[0], self.mixed_range[1], self.conv1.low_group, self.conv1.high_group, zero=zero)
-        #     return fake_quantize_per_input_channel(x, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group, zero=zero, scale=s, zero_point=z)
-        # else:
-        #     s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        #     return fake_quantize(x, s, z, self.in_bit)
         s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
         if self.mixed_precision:
             return fake_quantize_per_input_channel(x, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group,
@@ -198,16 +182,6 @@ class FusedAlexNetSmall(nn.Module):
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
         _, _ = self.fc3.set_qparams(prev_s, prev_z)
-
-    def choose_scale(self, scale, zero_point, method):
-        if method == 'min':
-            idx = torch.argmin(scale)
-        elif method == 'max':
-            idx = torch.argmax(scale)
-        # elif method == 'mean':
-        else:
-            assert 'method {} is not implemented'.format(method)
-        return scale[idx], zero_point[idx]
 
 
     def set_mixed_bits(self, x: torch.Tensor) -> torch.Tensor:
@@ -241,29 +215,6 @@ class FusedAlexNetSmall(nn.Module):
         x = self.fc3(x)
 
         return x
-
-
-    def set_mixed_quantization_params(self, method):
-        zero = self.runtime_helper.fzero
-        scale_mixed, zero_point_mixed = calc_qparams_per_input_channel_with_range(self.mixed_range[0],
-                                                                               self.mixed_range[1],
-                                                                               self.conv1.low_group,
-                                                                               self.conv1.high_group, zero=zero)
-        self.scale, self.zero_point = self.choose_scale(scale_mixed, zero_point_mixed, method)
-
-        prev_s, prev_z = self.conv1.set_mixed_qparams(scale_mixed, zero_point_mixed, method, next_low_group=self.conv2.low_group,
-                                                next_high_group=self.conv2.high_group)
-        prev_s, prev_z = self.conv2.set_mixed_qparams(prev_s, prev_z, method, next_low_group=self.conv3.low_group,
-                                                next_high_group=self.conv3.high_group)
-        prev_s, prev_z = self.conv3.set_mixed_qparams(prev_s, prev_z, method, next_low_group=self.conv4.low_group,
-                                                next_high_group=self.conv4.high_group)
-        prev_s, prev_z = self.conv4.set_mixed_qparams(prev_s, prev_z, method, next_low_group=self.conv5.low_group,
-                                                next_high_group=self.conv5.high_group)
-        prev_s, prev_z = self.conv5.set_mixed_qparams(prev_s, prev_z, method)
-
-        prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
-        prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
-        _, _ = self.fc3.set_qparams(prev_s, prev_z)
 
 
 def fused_alexnet(arg_dict: dict, **kwargs: Any) -> FusedAlexNet:

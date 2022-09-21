@@ -17,30 +17,43 @@ class STE(torch.autograd.Function):
 
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input_, indices):
-        ctx.save_for_backward(input_, indices)
+    def forward(ctx, input_, fixed_indices, const_portion):
+        max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
+        mask = input_[:, fixed_indices] > (max_per_ch / 2)[None, :, None, None]
+        ctx.save_for_backward(fixed_indices, mask,  max_per_ch)
+        # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
+        # ctx.save_for_backward(input_, indices, mask)
         return input_
 
     @staticmethod
     def backward(ctx, grad):
-        input_tensor, indices = ctx.saved_tensors
+        fixed_indices, mask, const_max = ctx.saved_tensors
 
-        data = input_tensor.transpose(1, 0).reshape(input_tensor.size(1), -1)
-        _max = data.max(dim=1).values
-        _min = data.min(dim=1).values
-        range_ = _max - _min
-        max_range = range_.max()
-        max_indices = ((max_range / range_[indices]) < 2.0).nonzero(as_tuple=True)[0]
+        # import pdb
+        # pdb.set_trace()
+        # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean()
 
-        # # without considering loss
-        # grad[:, max_indices] = 0
+        grad[:, fixed_indices] = torch.where((mask > 0), grad[:, fixed_indices].abs() / 2, grad[:, fixed_indices])
 
-        ## channel wise version
-        grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0, 2, 3))
-        indices_ = torch.where(grad_sum > 0, 1, 0).nonzero(as_tuple=True)[0]
-        grad[:, indices_] = 0
-
-        return grad, None
+        # # consider loss like weight
+        # input_tensor, indices, mask = ctx.saved_tensors
+        # data = input_tensor.transpose(1, 0).reshape(input_tensor.size(1), -1)
+        # _max = data.max(dim=1).values
+        # _min = data.min(dim=1).values
+        # range_ = _max - _min
+        # max_range = range_.max()
+        # max_indices = ((max_range / range_[indices]) < 2.0).nonzero(as_tuple=True)[0]
+        #
+        # # # without considering loss
+        # # grad[:, max_indices] = 0
+        #
+        # ## channel wise version
+        # grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0, 2, 3))
+        # indices_ = torch.where(grad_sum > 0, 1, 0).nonzero(as_tuple=True)[0]
+        # grad[:, indices_] = 0
+        # import pdb
+        # pdb.set_trace()
+        return grad, None, None
 
 
 class QuantizationTool(object):
@@ -553,6 +566,11 @@ def clamp_matrix(x, bit=None, symmetric=False):
             qmin, qmax = -32, 31
         else:
             qmin, qmax = 0, 63
+    elif bit == 7:
+        if symmetric:
+            qmin, qmax = -64, 63
+        else:
+            qmin, qmax = 0, 127
     elif bit == 8:
         if symmetric:
             qmin, qmax = -128, 127

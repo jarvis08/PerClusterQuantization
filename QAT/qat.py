@@ -49,6 +49,8 @@ parser.add_argument('--qn_increment_epoch', default=9999, type=int, help='quant 
 parser.add_argument('--qn_each_channel', default=True, type=bool, help='qn apply conv each channel')
 
 parser.add_argument('--mixed_precision', action='store_true', help='For SKT')
+parser.add_argument('--pre_fixed_channel', default=0.5, type=float, help='For SKT, set pre-fixed channel ratio before finetuning')
+parser.add_argument('--const_portion', default=0.5, type=float, help='For SKT, set portion of max value to reduce input gradient')
 parser.add_argument('--record_val', action='store_true', help='For SKT, record num of outputs out of clipping range')
 parser.add_argument('--input_grad', action='store_true', help='For SKT, make gradient of input zero')
 # parser.add_argument('--weight_scailing', action='store_true', help='For SKT, set bits considering only weight range')
