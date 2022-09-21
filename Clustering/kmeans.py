@@ -362,10 +362,13 @@ class KMeansClustering(object):
                 cross_similarity[:, index] = torch.inf
                 cross_similarity[index, :] = torch.inf
 
-            for candidate in candidates:
-                _from = int(candidate // n_sub_clusters)
-                _to = int(candidate % n_sub_clusters)
-                cross_similarity_candidate[_from][_to] = cross_similarity[_from][_to]
+            if candidates is not None:
+                for candidate in candidates:
+                    _from = int(candidate // n_sub_clusters)
+                    _to = int(candidate % n_sub_clusters)
+                    cross_similarity_candidate[_from][_to] = cross_similarity[_from][_to]
+            else:
+                cross_similarity_candidate = cross_similarity.clone()
 
             # choose pair of clusters with smallest L2 distance
             pair = (cross_similarity_candidate == (torch.min(cross_similarity_candidate))
@@ -404,7 +407,8 @@ class KMeansClustering(object):
                 exclude.update(group[0] - {min(group[0])})
 
             # get candidates using zero count matrix which consider lipschitz boundary of layers
-            candidates = get_candidates_from_lipschitz_bound(self.args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude)
+            # candidates = get_candidates_from_lipschitz_bound(self.args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude)
+            candidates = None
             # get pairwise distance using approximated clipping values from each clusters
             distance = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True)
             # get a most appropriate merging pairs from candidates using distance metric
