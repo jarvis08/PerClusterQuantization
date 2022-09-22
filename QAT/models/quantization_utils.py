@@ -18,7 +18,8 @@ class STE(torch.autograd.Function):
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_, fixed_indices, const_portion):
-        max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
+        # max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
+        max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()
         mask = input_[:, fixed_indices] > (max_per_ch / 2)[None, :, None, None]
         ctx.save_for_backward(fixed_indices, mask,  max_per_ch)
         # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
@@ -31,9 +32,10 @@ class SKT_MIX(torch.autograd.Function):
 
         # import pdb
         # pdb.set_trace()
-        # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean()
+        # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean() / 2
 
         grad[:, fixed_indices] = torch.where((mask > 0), grad[:, fixed_indices].abs() / 2, grad[:, fixed_indices])
+        # grad[:, fixed_indices] = torch.where((mask > 0), grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
 
         # # consider loss like weight
         # input_tensor, indices, mask = ctx.saved_tensors
