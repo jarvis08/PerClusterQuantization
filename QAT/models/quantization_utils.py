@@ -17,25 +17,32 @@ class STE(torch.autograd.Function):
 
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input_, fixed_indices, const_portion):
+    def forward(ctx, input_, fixed_indices, grad_method, const_portion):
         # max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
-        max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()
-        mask = input_[:, fixed_indices] > (max_per_ch / 2)[None, :, None, None]
-        ctx.save_for_backward(fixed_indices, mask,  max_per_ch)
+        max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
+        mask = input_[:, fixed_indices] > (max_per_ch / 2)
+
+        # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
+        dist_ratio = (max_per_ch - input_[:, fixed_indices].abs()) / max_per_ch
+        dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
+        # dist_ratio = max_per_ch / (max_per_ch - input_[:, fixed_indices])
+        ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method)
+
         # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
         # ctx.save_for_backward(input_, indices, mask)
         return input_
 
     @staticmethod
     def backward(ctx, grad):
-        fixed_indices, mask, const_max = ctx.saved_tensors
+        fixed_indices, mask, max_per_ch, const_portion, grad_method = ctx.saved_tensors
 
         # import pdb
         # pdb.set_trace()
-        # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean() / 2
-
-        grad[:, fixed_indices] = torch.where((mask > 0), grad[:, fixed_indices].abs() / 2, grad[:, fixed_indices])
-        # grad[:, fixed_indices] = torch.where((mask > 0), grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
+        if grad_method:
+            grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion[:, fixed_indices], grad[:, fixed_indices])
+        else:
+            tmp = torch.masked_select(grad[:, fixed_indices], mask).mean().abs() * const_portion
+            grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
 
         # # consider loss like weight
         # input_tensor, indices, mask = ctx.saved_tensors
@@ -55,7 +62,7 @@ class SKT_MIX(torch.autograd.Function):
         # grad[:, indices_] = 0
         # import pdb
         # pdb.set_trace()
-        return grad, None, None
+        return grad, None, None, None
 
 
 class QuantizationTool(object):

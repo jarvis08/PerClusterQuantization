@@ -33,6 +33,7 @@ class RuntimeHelper(object):
         self.undo_gema = False
         self.conv_mixed_grad = False
         self.const_portion = 0.0
+        self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
         self.mask_4d = None ###
         self.mask_2d = None ###

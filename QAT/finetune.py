@@ -275,10 +275,12 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         runtime_helper.const_portion = args.const_portion
+        if not args.grad_method:
+            runtime_helper.grad_method = ~runtime_helper.grad_method
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
         # # try inference once to record input precisions
         # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
-        identifier = f'GRAD_{args.arch}_{args.dataset}_ratio_{args.reduce_ratio}_grad_{args.input_grad}'
+        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_METH_{args.grad_method}_CON_{args.const_portion}'
         set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
         # pretrained_model.cpu()
@@ -386,7 +388,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     test_score = best_int_val_score
 
     if args.record_val:
-        with open(identifier + '_clipping.csv', 'a') as csvfile:
+        with open('SATUR_' + identifier + '.csv', 'a') as csvfile:
             writer = csv.writer(csvfile)
             for m in quantized_model.modules():
                 i = 0
@@ -432,8 +434,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
         pc += 'Symmetric, '
 
     with open(f'./[EXP]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('reduce {} channel {:.2f}% {:.2f} # {} {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.reduce_ratio, ratio, test_score, args.reduce_ratio, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+        f.write('reduce {} /channel {:.2f}% / const {} / grad {} / {:.2f} # {} {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.reduce_ratio, ratio, args.const_portion, args.grad_method, test_score, args.reduce_ratio, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 
