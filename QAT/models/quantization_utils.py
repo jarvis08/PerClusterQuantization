@@ -36,10 +36,8 @@ class SKT_MIX(torch.autograd.Function):
     def backward(ctx, grad):
         fixed_indices, mask, max_per_ch, const_portion, grad_method = ctx.saved_tensors
 
-        # import pdb
-        # pdb.set_trace()
         if grad_method:
-            grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion[:, fixed_indices], grad[:, fixed_indices])
+            grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion, grad[:, fixed_indices])
         else:
             tmp = torch.masked_select(grad[:, fixed_indices], mask).mean().abs() * const_portion
             grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
