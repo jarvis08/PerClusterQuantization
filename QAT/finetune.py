@@ -319,9 +319,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
         else:
             losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
-            with open(identifier + '.csv', 'a') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
+            # with open(identifier + '.csv', 'a') as csvfile:
+            #     writer = csv.writer(csvfile)
+            #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
 
         opt_scheduler.step()
 
@@ -393,8 +393,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
             for m in quantized_model.modules():
                 i = 0
                 if isinstance(m, QuantizedConv2d):
-                    ratio = m.low_size / m.total_size * 100
-                    writer.writerow(([i, '{:2f}%'.format(ratio)]))
+                    ch_ratio = m.low_size / m.total_size * 100
+                    writer.writerow(([i, '{:2f}%'.format(ch_ratio)]))
                     i += 1
 
     '''
@@ -434,8 +434,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
         pc += 'Symmetric, '
 
     with open(f'./[EXP]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('reduce {} /channel {:.2f}% / const {} / grad {} / {:.2f} # {} {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.reduce_ratio, ratio, args.const_portion, args.grad_method, test_score, args.reduce_ratio, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+        f.write('reduce {} /channel {:.2f}% / const {} / grad {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.reduce_ratio, ratio, args.const_portion, args.grad_method, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 
