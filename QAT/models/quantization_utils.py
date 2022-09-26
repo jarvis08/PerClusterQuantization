@@ -22,10 +22,12 @@ class SKT_MIX(torch.autograd.Function):
         max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
         mask = input_[:, fixed_indices] > (max_per_ch / 2)
 
-        # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
-        dist_ratio = (max_per_ch - input_[:, fixed_indices].abs()) / max_per_ch
-        dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
-        # dist_ratio = max_per_ch / (max_per_ch - input_[:, fixed_indices])
+        # # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
+        # dist_ratio = (max_per_ch - input_[:, fixed_indices].abs()) / max_per_ch
+        # dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
+
+        dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
+
         ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method)
 
         # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
@@ -36,14 +38,19 @@ class SKT_MIX(torch.autograd.Function):
     def backward(ctx, grad):
         fixed_indices, mask, max_per_ch, const_portion, grad_method = ctx.saved_tensors
 
-        if grad_method:
-            grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion, grad[:, fixed_indices])
-        else:
-            # # prev
-            # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean().abs() * const_portion
-            # 절대값의 평균
-            tmp = torch.masked_select(grad[:, fixed_indices], mask).abs().mean() * const_portion
-            grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
+        grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
+
+        # import pdb
+        # pdb.set_trace()
+        #
+        # if grad_method:
+        #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion, grad[:, fixed_indices])
+        # else:
+        #     # # prev
+        #     # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean().abs() * const_portion
+        #     # 절대값의 평균
+        #     tmp = torch.masked_select(grad[:, fixed_indices], mask).abs().mean() * const_portion
+        #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
 
         # # consider loss like weight
         # input_tensor, indices, mask = ctx.saved_tensors
