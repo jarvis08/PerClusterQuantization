@@ -338,7 +338,8 @@ class KMeansClustering(object):
             # Clipping value approximation
             for l in range(n_layers):
                 for c in range(n_sub_clusters):
-                    max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.9986)
+                    # max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.9986)
+                    max_ratio[l][c] = torch.amax(cur_max_counter[l][c])
 
             max_ratio = torch.transpose(max_ratio, 0, 1)
 
