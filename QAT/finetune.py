@@ -274,9 +274,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     model.cuda()
 
     if args.mixed_precision:
-        runtime_helper.const_portion = args.const_portion
-        if not args.grad_method:
-            runtime_helper.grad_method = ~runtime_helper.grad_method
+        runtime_helper.set_skt_arguments(args)
+        # if not args.grad_method:
+        #     runtime_helper.grad_method = ~runtime_helper.grad_method
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
         # # try inference once to record input precisions
         # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'

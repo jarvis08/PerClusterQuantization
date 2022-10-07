@@ -17,8 +17,13 @@ class STE(torch.autograd.Function):
 
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input_, fixed_indices, grad_method, const_portion):
+    # def forward(ctx, input_, fixed_indices, grad_method, const_portion, reduce_ratio, quantile_tensor):
+    def forward(ctx, input_, fixed_indices, runtime_helper):
         # max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
+        const_portion = runtime_helper.const_portion
+        reduce_ratio = runtime_helper.reduce_ratio
+        quantile_tensor = runtime_helper.quantile_tensor
+
         max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
         mask = input_[:, fixed_indices] > (max_per_ch / 2)
 
@@ -27,8 +32,10 @@ class SKT_MIX(torch.autograd.Function):
         # dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
 
         dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
+        grad_direction = -1 * input_[:, fixed_indices] * reduce_ratio
 
-        ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method)
+        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor)
+        # ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method, quantile_tensor)
 
         # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
         # ctx.save_for_backward(input_, indices, mask)
@@ -36,13 +43,22 @@ class SKT_MIX(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad):
-        fixed_indices, mask, max_per_ch, const_portion, grad_method = ctx.saved_tensors
+        fixed_indices, mask, grad_direction, const_portion, quantile_tensor = ctx.saved_tensors
+        # fixed_indices, mask, max_per_ch, const_portion, grad_method, quantile_tensor = ctx.saved_tensors
 
-        grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
+        abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
+        f = lambda x: (x > abs_val) & ((grad_direction * x) > 0)
 
-        # import pdb
-        # pdb.set_trace()
-        #
+        # abs val
+        # lower
+        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices] <= abs_val), const_portion, grad[:, fixed_indices])
+        # else
+
+        grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), quantile_tensor * 0, grad[:, fixed_indices])
+
+        # # naive fixed gradient method
+        # grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
+
         # if grad_method:
         #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion, grad[:, fixed_indices])
         # else:

@@ -33,7 +33,9 @@ class RuntimeHelper(object):
         self.undo_gema = False
         self.conv_mixed_grad = False
         self.const_portion = 0.0
+        self.reduce_ratio = 1.0
         self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
+        self.quantile_tensor = torch.tensor(1, dtype=torch.float, device='cuda')
 
         self.mask_4d = None ###
         self.mask_2d = None ###
@@ -53,6 +55,11 @@ class RuntimeHelper(object):
         self.mask_2d = mask.view(-1, 1)
         self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
         self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
+
+    def set_skt_arguments(self, args):
+        self.const_portion = args.const_portion
+        self.quantile_tensor *= args.quantile
+        # self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
 
 class InputContainer(object):
