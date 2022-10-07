@@ -434,8 +434,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
         pc += 'Symmetric, '
 
     with open(f'./[EXP]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('reduce {} /channel {:.2f}% / const {} / grad {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.reduce_ratio, ratio, args.const_portion, args.grad_method, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+        f.write('reduce {} /channel {:.2f}% / const {} / quantile {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.reduce_ratio, ratio, args.const_portion, args.quantile, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 
