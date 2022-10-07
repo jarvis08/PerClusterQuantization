@@ -40,8 +40,8 @@ if [ "$MODEL" = alexnet ]; then
     --reduce_ratio $REDUCE_RATIO \
     --const_portion $CONST_PORTION \
     --quantile $QUANTILE \
-    --RECORD_VAL $RECORD_VAL \
-    --GPU $GPU_NUM
+    --record_val $RECORD_VAL \
+    --gpu $GPU_NUM
 else
     python main.py \
     --arch $MODEL \
@@ -61,8 +61,8 @@ else
     --reduce_ratio $REDUCE_RATIO \
     --const_portion $CONST_PORTION \
     --quantile $QUANTILE \
-    --RECORD_VAL $RECORD_VAL \
-    --GPU $GPU_NUM
+    --record_val $RECORD_VAL \
+    --gpu $GPU_NUM
 fi
 
 
