@@ -387,15 +387,15 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     test_score = best_int_val_score
 
-    if args.record_val:
-        with open('SATUR_' + identifier + '.csv', 'a') as csvfile:
-            writer = csv.writer(csvfile)
-            for m in quantized_model.modules():
-                i = 0
-                if isinstance(m, QuantizedConv2d):
-                    ch_ratio = m.low_size / m.total_size * 100
-                    writer.writerow(([i, '{:2f}%'.format(ch_ratio)]))
-                    i += 1
+    # if args.record_val:
+    #     with open('SATUR_' + identifier + '.csv', 'a') as csvfile:
+    #         writer = csv.writer(csvfile)
+    #         for m in quantized_model.modules():
+    #             i = 0
+    #             if isinstance(m, QuantizedConv2d):
+    #                 ch_ratio = m.low_size / m.total_size * 100
+    #                 writer.writerow(([i, '{:2f}%'.format(ch_ratio)]))
+    #                 i += 1
 
     '''
     # Test quantized model which scored the best with validation dataset
