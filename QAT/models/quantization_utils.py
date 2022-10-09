@@ -47,14 +47,14 @@ class SKT_MIX(torch.autograd.Function):
         # fixed_indices, mask, max_per_ch, const_portion, grad_method, quantile_tensor = ctx.saved_tensors
 
         abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
-        f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
+        # f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
 
         # abs val
         # lower
         grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() <= abs_val), const_portion, grad[:, fixed_indices])
-        # else
 
-        grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), quantile_tensor * 0, grad[:, fixed_indices])
+        # # else
+        # grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), quantile_tensor * 0, grad[:, fixed_indices])
 
         # # naive fixed gradient method
         # grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
