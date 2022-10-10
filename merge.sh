@@ -5,9 +5,9 @@ SCRIPT_PATH="/workspace/PerClusterQuantization/run_HAWQ.sh"
 GPU=${1}
 
 MERGE_TYPES=(jaccard)
-MODELS=(alexnet resnet20)
+MODELS=(alexnet)
 DATAS=(cifar10 cifar100 svhn)
-SUB_CLUSTERS=(64 128 256 512)
+SUB_CLUSTERS=(64 128 256 512 1024)
 FIN_CLUSTERS=(7 6 5 4 3 2)
 LEARNING_RATES=(0.0001)
 BATCH_SIZES=(128)
