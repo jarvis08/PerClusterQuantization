@@ -493,10 +493,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
-    for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch, args)
+    # for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(args.start_epoch, 5):
+        # adjust_learning_rate(optimizer, epoch, args)
 
-        train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
+        # train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
+        train_ema(train_loader, model, clustering_model, criterion, epoch, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
@@ -535,6 +537,53 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
+def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
+    batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+
+    # switch to train mode
+    if args.fix_BN == True:
+        model.eval()
+    else:
+        model.train()
+
+    end = time.time()
+    with torch.no_grad():
+        with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
+            for i, (images, target) in enumerate(t):
+                # measure data loading time
+                data_time.update(time.time() - end)
+
+                if args.gpu is not None:
+                    images = images.cuda(args.gpu, non_blocking=True)
+                    target = target.cuda(args.gpu, non_blocking=True)
+
+                if clustering_model is None:
+                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
+                else:
+                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
+
+                # compute output
+                output = model(images, cluster)
+                loss = criterion(output, target)
+
+                # measure accuracy and record loss
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                losses.update(loss.item(), images.size(0))
+                top1.update(acc1[0].item(), images.size(0))
+                top5.update(acc5[0].item(), images.size(0))
+
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
+
+                t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
+
+
+
 def train(train_loader, model, clustering_model, criterion, optimizer, epoch, logger, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
@@ -549,7 +598,7 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, lo
         model.train()
 
     end = time.time()
-    with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=105) as t:
+    with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
         for i, (images, target) in enumerate(t):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -682,10 +731,6 @@ def validate(val_loader, model, clustering_model, criterion, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
-    progress = ProgressMeter(
-        len(val_loader),
-        [batch_time, losses, top1, top5],
-        prefix='Test: ')
 
     # switch to evaluate mode
     freeze_model(model)
@@ -693,11 +738,12 @@ def validate(val_loader, model, clustering_model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        with tqdm(val_loader, desc="Validate", ncols=105) as t:
+        with tqdm(val_loader, desc="Validate", ncols=95) as t:
             for i, (images, target) in enumerate(t):
                 if args.gpu is not None:
                     images = images.cuda(args.gpu, non_blocking=True)
-                target = target.cuda(args.gpu, non_blocking=True)
+                    target = target.cuda(args.gpu, non_blocking=True)
+                    
                 if clustering_model is None:
                     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
                 else:

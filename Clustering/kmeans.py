@@ -275,7 +275,7 @@ class KMeansClustering(object):
         # merged_clusters, n_per_sub = merge_stepwise(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
 
         final_clusters = print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, self.args.cluster)
-        save_cluster_info(self.args, final_clusters)
+        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
 
 
 
@@ -547,33 +547,35 @@ def print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, n_fin_clus
 
     return final_clusters
 
-def save_cluster_info(args, final_clusters):
-    with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
+def save_cluster_info(args, feature_index, final_clusters):
+    with open(os.path.join(args.clustering_path, 'params.json'), 'r') as f:
         args_without_nnac = json.load(f)
-        if args_without_nnac['k'] != self.args.cluster:
-            path = self.args.clustering_path + \
-                f'__.k{self.args.cluster}.sub{self.args.sub_cluster}.topk_{self.args.topk}.sim_{self.args.sim_threshold}.{self.args.similarity_method}'
+        if args_without_nnac['k'] != args.cluster:
+            path = args.clustering_path + \
+                f'__.k{args.cluster}.sub{args.sub_cluster}.topk_{args.topk}.sim_{args.sim_threshold}.{args.similarity_method}'
             print(
-                f"Copy json and pkl file from {self.args.clustering_path} to {path}")
+                f"Copy json and pkl file from {args.clustering_path} to {path}")
             if not os.path.exists(path):
                 os.makedirs(path)
             import shutil
-            shutil.copyfile(os.path.join(self.args.clustering_path, 'checkpoint.pkl'),
+            shutil.copyfile(os.path.join(args.clustering_path, 'checkpoint.pkl'),
                             os.path.join(path, 'checkpoint.pkl'))
-            self.args.clustering_path = path
-            args_without_nnac['k'] = self.args.cluster
+            args.clustering_path = path
+            args_without_nnac['k'] = args.cluster
 
-    with open(os.path.join(self.args.clustering_path, "params.json"), 'w') as f:
-        args_without_nnac['sub_k'] = self.args.sub_cluster
+    with open(os.path.join(args.clustering_path, "params.json"), 'w') as f:
+        args_without_nnac['sub_k'] = args.sub_cluster
         args_without_nnac['nnac'] = final_clusters
         json.dump(args_without_nnac, f, indent=4)
 
-    torch.save(self.feature_index, os.path.join(self.args.clustering_path, "index.pth"))
+    torch.save(feature_index, os.path.join(args.clustering_path, "index.pth"))
 
-    self.final_cluster = torch.zeros(
-        self.args.sub_cluster, dtype=torch.int64)
+    final_cluster = torch.zeros(
+        args.sub_cluster, dtype=torch.int64)
     for sub, final in final_clusters.items():
-        self.final_cluster[int(sub)] = final
+        final_cluster[int(sub)] = final
+        
+    return args, final_cluster
 
 
 
