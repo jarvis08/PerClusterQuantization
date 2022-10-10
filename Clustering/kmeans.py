@@ -205,7 +205,7 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def zero_max_nn_aware_clustering(self, dnn_model, train_loader, arch):
+    def zero_max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
         print('\n>>> zero-max NN-aware Clustering..')
         from utils.misc import InputContainer
 
@@ -242,301 +242,464 @@ class KMeansClustering(object):
                     dnn_model.count_zeros_per_index(
                         input, cluster, n_sub_clusters)
 
-        # for i, max_counters in enumerate(dnn_model.max_counter):
-        #     size_counter = []
-        #     for max in max_counters:
-        #         size_counter.append(len(max))
-        #     total_max_per_layer = torch.cat(max_counters)
-            
-        #     # Normalize
-        #     # normalized_max_per_layer = torch.nn.functional.normalize(total_max_per_layer, p=torch.inf, dim=0)
-
-        #     # Standardize
-        #     std, mean = torch.std_mean(total_max_per_layer, dim=0, unbiased=False)
-        #     normalized_max_per_layer = (total_max_per_layer - mean) / std
-
-        #     dnn_model.max_counter[i] = list(torch.split(normalized_max_per_layer, size_counter))
-
-        # Handle Empty Clusters
-        for c in range(n_sub_clusters):
-            if dnn_model.max_counter[0][c] == []:
-                for l in range(len(dnn_model.max_counter)):
-                    dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
+        # # Handle Empty Clusters
+        # for c in range(n_sub_clusters):
+        #     if dnn_model.max_counter[0][c] == []:
+        #         for l in range(len(dnn_model.max_counter)):
+        #             dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
 
 
-
-        print("\n>>> [Original] Number of data per cluster")
-        for c in range(n_sub_clusters):
-            print(f"C{c}: {n_per_sub[c]}")
+        if print_log:
+            print("\n>>> [Original] Number of data per cluster")
+            for c in range(n_sub_clusters):
+                print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
+            print()
 
         n_layers = len(dnn_model.zero_counter)
         n_per_sub = torch.tensor(n_per_sub).cuda()
+        tmp = n_per_sub.clone()
 
-        # [layer_idx] .. cluster size
+        # shape(n_features) = [layer_idx]
         n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
-        # [cluster_idx, layer_idx, neurons] .. zero count
+        # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
         dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
 
+        # distance_score, num_clusters = test_cases(dnn_model, 
+        #                                           n_sub_clusters, 
+        #                                           task=1,   # 0 : quantile / 1 : max / 2 : mean / 3 : median
+        #                                           from_=0.,
+        #                                           to_=4.01,
+        #                                           gap=0.01)
 
-        ##############################################################
 
-        def get_group_id(index, clusters_group):
-            group = [index in clusters for clusters in clusters_group]
-            return group.index(True) if sum(group) != 0 else None
+        merged_clusters, n_per_sub = merge_at_once(self.args, dnn_model, n_per_sub, print_log) # NEW WAY
+        # merged_clusters, n_per_sub = merge_stepwise(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
 
-        def calc_cross_similarity(zero_ratio, _from, _to, sim_method):
-            if sim_method == 'and':
-                similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
-                        n_features
+        final_clusters = print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, self.args.cluster)
+        save_cluster_info(self.args, final_clusters)
+
+
+
+##############################################################
+
+def get_group_id(index, clusters_group):
+    group = [index in clusters for clusters in clusters_group]
+    return group.index(True) if sum(group) != 0 else None
+
+def calc_cross_similarity(zero_ratio, _from, _to, sim_method):
+    if sim_method == 'and':
+        similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
+                n_features
+    else:
+        similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
+                torch.logical_or(zero_ratio[_from], zero_ratio[_to]).sum(dim=1)
+    return torch.nan_to_num(similarity)
+
+# get_candidates_from_
+def get_candidates_from_lipschitz_bound(args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude):
+    n_candidates_per_layer = int(
+        ((n_sub_clusters - n_merged) * (n_sub_clusters - n_merged - 1))/2 * 0.8)  # discard low 20%
+    zero_ratio = deepcopy(dnn_model.zero_counter)
+    n_layers = len(zero_ratio[2])
+
+    # Set True / False by Zero Count Threshold
+    zero_ratio = torch.div(zero_ratio, n_per_sub.view(-1, 1, 1))
+    zero_ratio = torch.where(zero_ratio > args.sim_threshold, True, False)
+
+    # record cross_similarity
+    # predict lipschitz 
+    cross_similarity = torch.zeros(n_sub_clusters, n_sub_clusters, n_layers, device='cuda')
+    for _from in [index for index in range(n_sub_clusters) if index not in exclude]:
+        for _to in [index for index in range(_from + 1, n_sub_clusters) if index not in exclude]:
+            cross_similarity[_from][_to] = calc_cross_similarity(zero_ratio, _from, _to, args.similarity_method)
+
+    # [cluster_idx, cluster_idx, layer_idx] -> [layer_idx, cluster_idx, cluster_idx] .. similarity
+    cross_similarity = torch.transpose(torch.transpose(cross_similarity, 0, 2), 1, 2)
+
+    dist = cross_similarity.view(cross_similarity.size(0), -1)
+    _similarity, _cluster_idx = torch.topk(dist, n_candidates_per_layer)
+
+    zero_sim_layer = torch.count_nonzero(_similarity.size(1) - torch.count_nonzero(_similarity, dim=1))
+    candidates, counts = torch.unique(_cluster_idx, return_counts=True)
+    candidates = torch.where(counts >= (n_layers-zero_sim_layer), candidates, 0)
+    candidates = candidates[candidates.nonzero()]
+
+    print("number of candidates : ", candidates.size(0))
+    return candidates
+
+def get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=None):
+    # finding best pair from choosen candidates
+    cur_max_counter = deepcopy(dnn_model.max_counter)
+    n_layers = len(cur_max_counter)
+    max_ratio = torch.zeros((n_layers, n_sub_clusters), device='cuda')
+
+    # Clipping value approximation
+    for l in range(n_layers):
+        for c in range(n_sub_clusters):
+            if task == 0:
+                max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.9986)
+            elif task == 1:
+                max_ratio[l][c] = torch.amax(cur_max_counter[l][c])
+            elif task == 2:
+                max_ratio[l][c] = torch.mean(cur_max_counter[l][c])
             else:
-                similarity = torch.logical_and(zero_ratio[_from], zero_ratio[_to]).sum(dim=1) / \
-                        torch.logical_or(zero_ratio[_from], zero_ratio[_to]).sum(dim=1)
-            return torch.nan_to_num(similarity)
+                max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.5)
 
-        def get_candidates_from_lipschitz_bound(args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude):
-            n_candidates_per_layer = int(
-                ((n_sub_clusters - n_merged) * (n_sub_clusters - n_merged - 1))/2 * 0.8)  # discard low 20%
-            zero_ratio = deepcopy(dnn_model.zero_counter)
-            n_layers = len(zero_ratio[2])
+    max_ratio = torch.transpose(max_ratio, 0, 1)
 
-            # Set True / False by Zero Count Threshold
-            zero_ratio = torch.div(zero_ratio, n_per_sub.view(-1, 1, 1))
-            zero_ratio = torch.where(zero_ratio > args.sim_threshold, True, False)
+    distance = torch.cdist(max_ratio, max_ratio, p=2)
+    if mask:
+        distance = torch.triu(distance, diagonal=1)
+    return distance, max_ratio
 
-            # record cross_similarity
-            cross_similarity = torch.zeros(n_sub_clusters, n_sub_clusters, n_layers, device='cuda')
-            for _from in [index for index in range(n_sub_clusters) if index not in exclude]:
-                for _to in [index for index in range(_from + 1, n_sub_clusters) if index not in exclude]:
-                    cross_similarity[_from][_to] = calc_cross_similarity(zero_ratio, _from, _to, args.similarity_method)
+def get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude):
+    # measure L2 distance between clusters
+    cross_similarity = torch.full(
+        (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
+    cross_similarity_candidate = torch.full(
+        (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
 
-            # [cluster_idx, cluster_idx, layer_idx] -> [layer_idx, cluster_idx, cluster_idx] .. similarity
-            cross_similarity = torch.transpose(torch.transpose(cross_similarity, 0, 2), 1, 2)
+    # Set distance 0 to infinity to represent their distance is far enough to not get considered
+    cross_similarity = torch.where(distance != 0., distance, cross_similarity)
 
-            dist = cross_similarity.view(cross_similarity.size(0), -1)
-            _similarity, _cluster_idx = torch.topk(dist, n_candidates_per_layer)
+    for index in exclude:
+        cross_similarity[:, index] = torch.inf
+        cross_similarity[index, :] = torch.inf
 
-            zero_sim_layer = torch.count_nonzero(_similarity.size(1) - torch.count_nonzero(_similarity, dim=1))
-            candidates, counts = torch.unique(_cluster_idx, return_counts=True)
-            candidates = torch.where(counts >= (n_layers-zero_sim_layer), candidates, 0)
-            candidates = candidates[candidates.nonzero()]
+    if candidates is not None:
+        for candidate in candidates:
+            _from = int(candidate // n_sub_clusters)
+            _to = int(candidate % n_sub_clusters)
+            cross_similarity_candidate[_from][_to] = cross_similarity[_from][_to]
+    else:
+        cross_similarity_candidate = cross_similarity.clone()
 
-            print("number of candidates : ", candidates.size(0))
-            return candidates
+    # choose pair of clusters with smallest L2 distance
+    pair = (cross_similarity_candidate == (torch.min(cross_similarity_candidate))
+            ).nonzero(as_tuple=True)
 
-        def get_pairwise_distance(dnn_model, n_sub_clusters, mask=True):
-            # finding best pair from choosen candidates
-            cur_max_counter = deepcopy(dnn_model.max_counter)
-            n_layers = len(cur_max_counter)
-            max_ratio = torch.zeros((n_layers, n_sub_clusters), device='cuda')
-
-            # Clipping value approximation
-            for l in range(n_layers):
-                for c in range(n_sub_clusters):
-                    max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.9986)
-
-            max_ratio = torch.transpose(max_ratio, 0, 1)
-
-            if mask:
-                distance = torch.triu(torch.cdist(max_ratio, max_ratio, p=2), diagonal=1)
-            else:
-                distance = torch.cdist(max_ratio, max_ratio, p=2)
-            return distance
-
-        def get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude):
-            # measure L2 distance between clusters
-            cross_similarity = torch.full(
-                (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
-            cross_similarity_candidate = torch.full(
-                (n_sub_clusters, n_sub_clusters), float('inf'), device='cuda')
-
-            # Set distance 0 to infinity to represent their distance is far enough to not get considered
-            cross_similarity = torch.where(distance != 0., distance, cross_similarity)
-
-            for index in exclude:
-                cross_similarity[:, index] = torch.inf
-                cross_similarity[index, :] = torch.inf
-
-            if candidates is not None:
-                for candidate in candidates:
-                    _from = int(candidate // n_sub_clusters)
-                    _to = int(candidate % n_sub_clusters)
-                    cross_similarity_candidate[_from][_to] = cross_similarity[_from][_to]
-            else:
-                cross_similarity_candidate = cross_similarity.clone()
-
-            # choose pair of clusters with smallest L2 distance
-            pair = (cross_similarity_candidate == (torch.min(cross_similarity_candidate))
-                    ).nonzero(as_tuple=True)
-
-            return [cluster[0].item() for cluster in pair], cross_similarity_candidate
-
-        def merge(dnn_model, pair, n_per_sub, merged_clusters):
-            c1, c2 = pair[0], pair[1]
-            n_c1, n_c2 = n_per_sub[c1].item(), n_per_sub[c2].item()
-
-            group_id_c1 = get_group_id(c1, merged_clusters)
-            group_id_c2 = get_group_id(c2, merged_clusters)
-
-            if group_id_c1 is None and group_id_c2 is None:
-                # c1 and c2 have never been merged
-                print(f'Merge {c1}&{c2}')
-                merged_clusters.append(sorted([c1, c2]))
-                n_per_sub[[c1, c2]] = n_c1 + n_c2
-                for l in range(n_layers):
-                    max_merged_count = torch.cat(
-                        [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-                    dnn_model.max_counter[l][c1] = max_merged_count
-                    dnn_model.max_counter[l][c2] = max_merged_count
-
-                zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-                dnn_model.zero_counter[c1] = zero_merged_count
-                dnn_model.zero_counter[c2] = zero_merged_count
-            elif group_id_c1 == group_id_c2:
-                # Shouldn't be here
-                print("????")
-            else:
-                if group_id_c1 is not None:
-                    print(f'Merge {c1}&{c2}')
-                    if group_id_c2 is None:
-                        merged_clusters[group_id_c1].append(c2)
-                    else:
-                        merged_clusters[group_id_c1] = sorted(list(set(merged_clusters[group_id_c1]) | set(merged_clusters[group_id_c2])))
-                        del merged_clusters[group_id_c2]
-                        group_id_c1 = get_group_id(c1, merged_clusters)
-
-                    n_per_sub[merged_clusters[group_id_c1]] = n_c1 + n_c2
-                    zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-                    dnn_model.zero_counter[c1] = zero_merged_count.clone()
-                    dnn_model.zero_counter[c2] = zero_merged_count.clone()
-
-                    for l in range(n_layers):
-                        max_merged_count = torch.cat(
-                            [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-                        dnn_model.max_counter[l][c1] = max_merged_count.clone()
-                        dnn_model.max_counter[l][c2] = max_merged_count.clone()
-
-                else:
-                    print(f'Merge {c1}&{c2}')
-                    if group_id_c1 is None:
-                        merged_clusters[group_id_c2].append(c1)
-                    else:
-                        merged_clusters[group_id_c2] = sorted(list(set(merged_clusters[group_id_c1]) | set(merged_clusters[group_id_c2])))
-                        del merged_clusters[group_id_c1]
-                        group_id_c2 = get_group_id(c2, merged_clusters)
-
-                    n_per_sub[merged_clusters[group_id_c2]] = n_c1 + n_c2
-                    zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-                    dnn_model.zero_counter[c1] = zero_merged_count.clone()
-                    dnn_model.zero_counter[c2] = zero_merged_count.clone()
-
-                    for l in range(n_layers):
-                        max_merged_count = torch.cat(
-                            [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-                        dnn_model.max_counter[l][c1] = max_merged_count.clone()
-                        dnn_model.max_counter[l][c2] = max_merged_count.clone()
-
-            return n_per_sub, merged_clusters
+    return [cluster[0].item() for cluster in pair], cross_similarity_candidate
 
 
-        def get_merge_cluster_sets(distance, target_cluster):
-            THRESHOLD = torch.quantile(distance, 0.0228)
-            while True:
-                merge_clusters = [c for c in nx.connected_components(nx.from_numpy_array(torch.where(distance > THRESHOLD, torch.zeros(1).cuda(), distance).cpu().numpy()))]
-                if (loss := len(merge_clusters) - target_cluster):
-                    THRESHOLD = THRESHOLD + 0.001 * loss
-                    print("loss : ", loss, " threshold :", THRESHOLD)
-                else:
-                    break
-            return merge_clusters
 
-        # TODO
-        # use torch.fx.experimental.optimization.UnionFold instead of connected_components
 
+############# NEW WAY #############
+def merge_at_once(args, dnn_model, n_per_sub, print_log):
+    n_sub_clusters = args.sub_cluster
+    distance, _ = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=1)
+    clusters = get_splitted_cluster_sets(distance, target_cluster=args.cluster)
+    return merge_clustered_pairs(dnn_model, clusters, n_per_sub, print_log)
+
+############# OLD WAY #############
+def merge_stepwise(args, dnn_model, n_per_sub, print_log):
+    n_sub_clusters = args.sub_cluster
+    merged_clusters = []
+
+    to_merge = n_sub_clusters - args.cluster
+    n_merged = 0
+
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    while n_merged < to_merge:
+        print(f'\n>>> Number of clusters to be merged: {to_merge - n_merged}')
+
+        # Exclude merged clusters except 1 left
+        exclude = set()
+        for group in merged_clusters:
+            exclude.update(set(group) - {min(group)})
+
+        # get candidates using zero count matrix which consider lipschitz boundary of layers
+        # candidates = get_candidates_from_lipschitz_bound(self.args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude)
+        candidates = None
         
-        ##############################################################
+        # get pairwise distance using approximated clipping values from each clusters
+        distance, max_ratio = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True)
+        
+        # get a most appropriate merging pair from candidates using distance metric
+        # if no candidates are given, choose a most appropriate merging pair from all sets
+        pair, cross_similarity = get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude)
+
+        # Merge pairs
+        merged_clusters, n_per_sub = merge(dnn_model, pair, merged_clusters, n_per_sub, print_log)
+        
+        n_merged += 1
+
+        check = sum([len(group) - 1 for group in merged_clusters])
+        assert check == n_merged, "WTF??"
+        print("distance : ", torch.min(cross_similarity).item())
+    return merged_clusters, n_per_sub
 
 
-        merged_clusters = []
-        # merged_clusters = []
-
-        to_merge = n_sub_clusters - self.args.cluster
-        n_merged = 0
-
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        while n_merged < to_merge:
-            print(f'\n>>> Number of clusters to be merged: {to_merge - n_merged}')
-
-            # Exclude merged clusters except 1 left
-            exclude = set()
-            for group in merged_clusters:
-                exclude.update(set(group) - {min(group)})
-
-            # get candidates using zero count matrix which consider lipschitz boundary of layers
-            # candidates = get_candidates_from_lipschitz_bound(self.args, dnn_model, n_sub_clusters, n_merged, n_per_sub, exclude)
-            candidates = None
-            # get pairwise distance using approximated clipping values from each clusters
-            distance = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True)
-            # get a most appropriate merging pairs from candidates using distance metric
-            pair, cross_similarity = get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude)
-
-            # Merge pairs
-            n_per_sub, merged_clusters = merge(dnn_model, pair, n_per_sub, merged_clusters)
-            
-            n_merged += 1
-            check = sum([len(group) - 1 for group in merged_clusters])
-
-            assert check == n_merged, "WTF??"
-            print("distance : ", torch.min(cross_similarity).item())
 
 
-        final_clusters = dict()
-        n_per_final = [0 for _ in range(self.args.cluster)]
+##############################################################
+def merge_clustered_pairs(dnn_model, clusters, n_per_sub=None, print_log=True):
+    merged_clusters = []
+    for cluster in clusters:
+        cluster = list(cluster)
+        pair1 = cluster[0]
+        for pair2 in cluster[1:]:
+            pair = [pair1, pair2]
+            merged_clusters, n_per_sub = merge(dnn_model, pair, merged_clusters, n_per_sub, print_log)
+    return merged_clusters, n_per_sub
 
-        k = 0  # Final cluster ID
-        leftover_clusters = set(range(n_sub_clusters))
-        print("\n>>> Merged clusters")
-        for i, merged_single_cluster in enumerate(merged_clusters):
-            print(f"C{k}: {tuple(merged_single_cluster)}")
+def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
+    n_layers = len(dnn_model.max_counter)
+    c1, c2 = pair[0], pair[1]
+    if n_per_sub is None:
+        n_per_sub = torch.zeros([dnn_model.zero_counter.size(0)]).cuda()
+    n_c1, n_c2 = n_per_sub[c1].item(), n_per_sub[c2].item()
 
-            leftover_clusters = leftover_clusters.difference(merged_single_cluster)
-            for cluster in merged_single_cluster:
-                final_clusters[str(cluster)] = k
-            n_per_final[k] = n_per_sub[i]
-            k += 1
+    group_id_c1 = get_group_id(c1, merged_clusters)
+    group_id_c2 = get_group_id(c2, merged_clusters)
 
-        for cluster in leftover_clusters:
+    if group_id_c1 is None and group_id_c2 is None:
+        # c1 and c2 have never been merged
+        if print_log:
+            print(f'Merge {c1}&{c2}')
+        merged_clusters.append(sorted([c1, c2]))
+        n_per_sub[[c1, c2]] = n_c1 + n_c2
+        for l in range(n_layers):
+            max_merged_count = torch.cat(
+                [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+            dnn_model.max_counter[l][c1] = max_merged_count
+            dnn_model.max_counter[l][c2] = max_merged_count
+
+        zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+        dnn_model.zero_counter[c1] = zero_merged_count
+        dnn_model.zero_counter[c2] = zero_merged_count
+    elif group_id_c1 == group_id_c2:
+        # Shouldn't be here
+        print("????")
+    else:
+        if group_id_c1 is not None:
+            if print_log:
+                print(f'Merge {c1}&{c2}')
+            if group_id_c2 is None:
+                merged_clusters[group_id_c1].append(c2)
+            else:
+                merged_clusters[group_id_c1] = sorted(list(set(merged_clusters[group_id_c1]) | set(merged_clusters[group_id_c2])))
+                del merged_clusters[group_id_c2]
+                group_id_c1 = get_group_id(c1, merged_clusters)
+
+            n_per_sub[merged_clusters[group_id_c1]] = n_c1 + n_c2
+            zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+            dnn_model.zero_counter[c1] = zero_merged_count.clone()
+            dnn_model.zero_counter[c2] = zero_merged_count.clone()
+
+            for l in range(n_layers):
+                max_merged_count = torch.cat(
+                    [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+                dnn_model.max_counter[l][c1] = max_merged_count.clone()
+                dnn_model.max_counter[l][c2] = max_merged_count.clone()
+
+        else:
+            if print_log:  
+                print(f'Merge {c1}&{c2}')
+            if group_id_c1 is None:
+                merged_clusters[group_id_c2].append(c1)
+            else:
+                merged_clusters[group_id_c2] = sorted(list(set(merged_clusters[group_id_c1]) | set(merged_clusters[group_id_c2])))
+                del merged_clusters[group_id_c1]
+                group_id_c2 = get_group_id(c2, merged_clusters)
+
+            n_per_sub[merged_clusters[group_id_c2]] = n_c1 + n_c2
+            # zero_count_per_layer
+            zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+            dnn_model.zero_counter[c1] = zero_merged_count.clone()
+            dnn_model.zero_counter[c2] = zero_merged_count.clone()
+
+            for l in range(n_layers):
+                # max_per_layer_per_datapoint
+                max_merged_count = torch.cat(
+                    [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+                dnn_model.max_counter[l][c1] = max_merged_count.clone()
+                dnn_model.max_counter[l][c2] = max_merged_count.clone()
+
+    return merged_clusters, n_per_sub
+
+
+
+##############################################################
+
+def print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, n_fin_clusters):
+    final_clusters = dict()
+    n_per_final = [0 for _ in range(n_fin_clusters)]
+    k = 0  # Final cluster ID
+    leftover_clusters = set(range(n_sub_clusters))
+    print("\n>>> Merged clusters")
+    for i, merged_single_cluster in enumerate(merged_clusters):
+        print(f"C{k}: {tuple(merged_single_cluster)}")
+
+        leftover_clusters = leftover_clusters.difference(merged_single_cluster)
+        for cluster in merged_single_cluster:
             final_clusters[str(cluster)] = k
-            n_per_final[k] = n_per_sub[cluster]
-            k += 1
+        n_per_final[k] = n_per_sub[merged_single_cluster[0]]
+        k += 1
 
-        print(f"\n>>> [Final] Number of data per cluster")
-        for c in range(self.args.cluster):
-            print(f"C{c}: {n_per_final[c]}")
+    for cluster in leftover_clusters:
+        final_clusters[str(cluster)] = k
+        n_per_final[k] = n_per_sub[cluster]
+        k += 1
 
-        with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
-            args_without_nnac = json.load(f)
-            if args_without_nnac['k'] != self.args.cluster:
-                path = self.args.clustering_path + \
-                    f'__.k{self.args.cluster}.sub{self.args.sub_cluster}.topk_{self.args.topk}.sim_{self.args.sim_threshold}.{self.args.similarity_method}'
-                print(
-                    f"Copy json and pkl file from {self.args.clustering_path} to {path}")
-                if not os.path.exists(path):
-                    os.makedirs(path)
-                import shutil
-                shutil.copyfile(os.path.join(self.args.clustering_path, 'checkpoint.pkl'),
-                                os.path.join(path, 'checkpoint.pkl'))
-                self.args.clustering_path = path
-                args_without_nnac['k'] = self.args.cluster
+    print(f"\n>>> [Final] Number of data per cluster")
+    for c in range(n_fin_clusters):
+        print(f"C{c}: {n_per_final[c]}")
 
-        with open(os.path.join(self.args.clustering_path, "params.json"), 'w') as f:
-            args_without_nnac['sub_k'] = self.args.sub_cluster
-            args_without_nnac['nnac'] = final_clusters
-            json.dump(args_without_nnac, f, indent=4)
+    return final_clusters
 
-        torch.save(self.feature_index, os.path.join(self.args.clustering_path, "index.pth"))
+def save_cluster_info(args, final_clusters):
+    with open(os.path.join(self.args.clustering_path, 'params.json'), 'r') as f:
+        args_without_nnac = json.load(f)
+        if args_without_nnac['k'] != self.args.cluster:
+            path = self.args.clustering_path + \
+                f'__.k{self.args.cluster}.sub{self.args.sub_cluster}.topk_{self.args.topk}.sim_{self.args.sim_threshold}.{self.args.similarity_method}'
+            print(
+                f"Copy json and pkl file from {self.args.clustering_path} to {path}")
+            if not os.path.exists(path):
+                os.makedirs(path)
+            import shutil
+            shutil.copyfile(os.path.join(self.args.clustering_path, 'checkpoint.pkl'),
+                            os.path.join(path, 'checkpoint.pkl'))
+            self.args.clustering_path = path
+            args_without_nnac['k'] = self.args.cluster
 
-        self.final_cluster = torch.zeros(
-            self.args.sub_cluster, dtype=torch.int64)
-        for sub, final in final_clusters.items():
-            self.final_cluster[int(sub)] = final
+    with open(os.path.join(self.args.clustering_path, "params.json"), 'w') as f:
+        args_without_nnac['sub_k'] = self.args.sub_cluster
+        args_without_nnac['nnac'] = final_clusters
+        json.dump(args_without_nnac, f, indent=4)
+
+    torch.save(self.feature_index, os.path.join(self.args.clustering_path, "index.pth"))
+
+    self.final_cluster = torch.zeros(
+        self.args.sub_cluster, dtype=torch.int64)
+    for sub, final in final_clusters.items():
+        self.final_cluster[int(sub)] = final
+
+
+
+def count_num_clusters(distance, THRESHOLD):
+    graph = nx.from_numpy_array(torch.where(distance > THRESHOLD, torch.zeros(1).cuda(), distance).cpu().numpy())
+    return len(list(nx.connected_components(graph)))
+
+def count_num_edges(A, THRESHOLD):
+    A = torch.triu(A, diagonal=1)
+    A = torch.where(A > THRESHOLD, torch.zeros(1).cuda(), A)
+    dist = A[A.nonzero(as_tuple=True)]
+
+    bucket = torch.tensor([x for x in np.arange(0, torch.amax(A).item(), 0.01)]).cuda()
+    num_edges = torch.bincount(torch.squeeze(torch.bucketize(dist, bucket)))
+    return num_edges
+
+def measure_weighted_edges(distance, max_ratio, THRESHOLD):
+    graph = nx.from_numpy_array(torch.where(distance > THRESHOLD, torch.zeros(1).cuda(), distance).cpu().numpy())
+    merge_clusters = list(nx.connected_components(graph))
+    attributes = torch.zeros([len(merge_clusters), max_ratio.size(1)]).cuda()
+    for i, cluster in enumerate(merge_clusters):
+        index = list(cluster)
+        attributes[i] = torch.mean(max_ratio[index], dim=0)
+    distance = torch.triu(torch.cdist(attributes, attributes, p=2), diagonal=1)
+    return distance[distance.nonzero(as_tuple=True)].mean()
+
+def measure_average_distance_from_candidates(dnn_model, distance, THRESHOLD):
+    cur_dnn_model = deepcopy(dnn_model)
+    graph = nx.from_numpy_array(torch.where(distance > THRESHOLD, torch.zeros(1).cuda(), distance).cpu().numpy())
+    merge_clusters = list(nx.connected_components(graph))
+    merged_clusters = []
+    for i, clusters in enumerate(merge_clusters):
+        indices = list(clusters)
+        merge_clusters[i] = indices
+        for index in indices[1:]:
+            pair = [indices[0], index]
+            merged_clusters, _ = merge(cur_dnn_model, pair, merged_clusters, print_log=False)
+
+    attributes = torch.zeros([len(merge_clusters), len(cur_dnn_model.max_counter)]).cuda()
+    for l in range(len(cur_dnn_model.max_counter)):
+        for i, c in enumerate(merge_clusters):
+            attributes[i][l] = torch.quantile(cur_dnn_model.max_counter[l][c[0]], 0.9986)
+    distance = torch.triu(torch.cdist(attributes, attributes, p=2), diagonal=1)
+    return distance[distance.nonzero(as_tuple=True)].mean().item()
+    # return distance[distance.nonzero(as_tuple=True)].amax().item()
+
+    
+
+    
+
+def get_splitted_cluster_sets(distance, threshold=None, target_cluster=None):
+    if threshold is None:
+        threshold = torch.quantile(distance[torch.nonzero(distance, as_tuple=True)], 0.02275).item() # 2 sigma : 0.02275 / 1.5 sigma : 0.0668 / 1 sigma : 0.158655
+    if target_cluster is None:
+        graph = nx.from_numpy_array(torch.where(distance > threshold, torch.zeros(1).cuda(), distance).cpu().numpy())
+        merge_clusters = list(nx.connected_components(graph))
+    else:
+        while True:
+            graph = nx.from_numpy_array(torch.where(distance > threshold, torch.zeros(1).cuda(), distance).cpu().numpy())
+            merge_clusters = list(nx.connected_components(graph))
+            
+            if (delta := target_cluster - len(merge_clusters)):
+                threshold -= 0.0001 * delta
+            else:
+                break
+    # print("applying threshold : ", threshold)
+    return merge_clusters
+
+def test_cases(dnn_model, n_sub_clusters, task=1, from_=0., to_=4.01, gap=0.01):
+    print('start')
+    distance, max_ratio = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=task)
+    test = []
+    test_num_clusters = []
+    for threshold in np.arange(from_, to_, gap):
+        test.append(measure_average_distance_from_candidates(dnn_model, distance, threshold))
+        test_num_clusters.append(count_num_clusters(distance, threshold))
+    print('done')
+    return test, test_num_clusters
+
+
+
+
+
+# TODO
+# def get_splitted_cluster_sets(distance, target_cluster):
+#     THRESHOLD = torch.quantile(distance, 0.0228)
+#     while True:
+#         graph = nx.from_numpy_array(torch.where(distance > THRESHOLD, torch.zeros(1).cuda(), distance).cpu().numpy())
+#         merge_clusters = list(nx.connected_components(graph))
+        
+#         if (delta := torch.mean(distance) * 0.0001):
+#             THRESHOLD = THRESHOLD - delta
+#             print("diff : ", diff, " threshold :", THRESHOLD)
+#         else:
+#             break
+
+#         if break_condition:
+#             break
+
+#         if (delta := target_cluster - len(merge_clusters)):
+#             THRESHOLD = THRESHOLD - delta
+#             print("diff : ", diff, " threshold :", THRESHOLD)
+#         else:
+#             break
+#     return merge_clusters
+
+    # TODO
+    # use torch.fx.experimental.optimization.UnionFold instead of networkx connected_components
+    # 
+    # too slow since it does not support adjacency matrix
+    # x = UnionFind(512)
+    # A = torch.triu(A, diagonal=1)
+    # for i in range(512):
+    #     x.make_set(i)
+    # for pair in A.nonzero():
+    #     tmp = x.join(pair[0], pair[1])
+    # (unique in x.size) - 1
+    
+    # TODO
+    # use scipy.sparce.csgraph.connected_components
+    # 
+    # you don't get the indexes of each clustered group, though it is still fast
+
+    # import scipy
+    # from scipy.sparse import csr_matrix
+    # from scipy.sparse.csgraph import connected_components
+
+##############################################################
