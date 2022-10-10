@@ -257,8 +257,7 @@ class KMeansClustering(object):
 
         n_layers = len(dnn_model.zero_counter)
         n_per_sub = torch.tensor(n_per_sub).cuda()
-        tmp = n_per_sub.clone()
-
+        
         # shape(n_features) = [layer_idx]
         n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
         # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
