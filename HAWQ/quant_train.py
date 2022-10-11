@@ -494,7 +494,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         os.mkdir(log_path)
 
     # for epoch in range(args.start_epoch, args.epochs):
-    for epoch in range(args.start_epoch, 5):
+    for epoch in range(args.start_epoch, 10):
         # adjust_learning_rate(optimizer, epoch, args)
 
         # train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)

@@ -638,7 +638,7 @@ def get_splitted_cluster_sets(distance, threshold=None, target_cluster=None):
             merge_clusters = list(nx.connected_components(graph))
             
             if (delta := target_cluster - len(merge_clusters)):
-                threshold -= 0.0001 * delta
+                threshold -= 0.00001 * delta
             else:
                 break
     # print("applying threshold : ", threshold)
