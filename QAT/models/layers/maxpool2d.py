@@ -26,7 +26,7 @@ class QuantizedMaxPool2d(nn.MaxPool2d):
             return self.maxpool(x)
 
         # Pad with 0
-        if self.bit == 4 or self.bit == 32:
+        if self.symmetric or self.bit == 32:
             x = F.pad(x, (self.padding, self.padding, self.padding, self.padding), mode='constant', value=0)
             return self.maxpool(x)
 

@@ -15,31 +15,90 @@ class STE(torch.autograd.Function):
         return grad, None
 
 
-class SKT_MIX(torch.autograd.Function):
+class CHANNEL_MIX(torch.autograd.Function):
     @staticmethod
-    # def forward(ctx, input_, fixed_indices, grad_method, const_portion, reduce_ratio, quantile_tensor):
-    def forward(ctx, input_, fixed_indices, runtime_helper):
-        # max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
-        const_portion = runtime_helper.const_portion
-        reduce_ratio = runtime_helper.reduce_ratio
-        quantile_tensor = runtime_helper.quantile_tensor
+    def forward(ctx, w, runtime_helper):
+        _w = w.detach()
+        _w.view(_w.size(0), -1)
+        _min = _w.min(dim=1).values
+        _max = _w.max(dim=1).values
 
-        max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
-        mask = input_[:, fixed_indices] > (max_per_ch / 2)
+        weight_range = torch.max(_min.abs(), _max.abs())
+        mask_range = (runtime_helper.percentile_tensor > weight_range.max() / weight_range)
+        ctx.save_for_backward(mask_range, runtime_helper.percentile_tensor)
+        return w
 
-        # # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
-        # dist_ratio = (max_per_ch - input_[:, fixed_indices].abs()) / max_per_ch
-        # dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
+    @staticmethod
+    def backward(ctx, grad):
+        mask_range, percentile_tensor = ctx.saved_tensors
+        mask_
 
-        dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
-        grad_direction = -1 * input_[:, fixed_indices] * reduce_ratio
+        abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
+        # f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
 
-        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor)
-        # ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method, quantile_tensor)
+        # abs val
+        # lower
+        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() <= abs_val), const_portion,
+                                             grad[:, fixed_indices])
 
-        # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
-        # ctx.save_for_backward(input_, indices, mask)
-        return input_
+        # # else
+        # grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), quantile_tensor * 0, grad[:, fixed_indices])
+
+        # # naive fixed gradient method
+        # grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
+
+        # if grad_method:
+        #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion, grad[:, fixed_indices])
+        # else:
+        #     # # prev
+        #     # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean().abs() * const_portion
+        #     # 절대값의 평균
+        #     tmp = torch.masked_select(grad[:, fixed_indices], mask).abs().mean() * const_portion
+        #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
+
+        # # consider loss like weight
+        # input_tensor, indices, mask = ctx.saved_tensors
+        # data = input_tensor.transpose(1, 0).reshape(input_tensor.size(1), -1)
+        # _max = data.max(dim=1).values
+        # _min = data.min(dim=1).values
+        # range_ = _max - _min
+        # max_range = range_.max()
+        # max_indices = ((max_range / range_[indices]) < 2.0).nonzero(as_tuple=True)[0]
+        #
+        # # # without considering loss
+        # # grad[:, max_indices] = 0
+        #
+        # ## channel wise version
+        # grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0, 2, 3))
+        # indices_ = torch.where(grad_sum > 0, 1, 0).nonzero(as_tuple=True)[0]
+        # grad[:, indices_] = 0
+        # import pdb
+        # pdb.set_trace()
+        return grad, None, None, None
+
+
+
+        # # max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
+        # const_portion = runtime_helper.const_portion
+        # reduce_ratio = runtime_helper.reduce_ratio
+        # quantile_tensor = runtime_helper.quantile_tensor
+        #
+        # max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
+        # mask = input_[:, fixed_indices] > (max_per_ch / 2)
+        #
+        # # # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
+        # # dist_ratio = (max_per_ch - input_[:, fixed_indices].abs()) / max_per_ch
+        # # dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
+        #
+        # dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
+        # grad_direction = -1 * input_[:, fixed_indices] * reduce_ratio
+        #
+        # ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor)
+        # # ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method, quantile_tensor)
+        #
+        # # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
+        # # ctx.save_for_backward(input_, indices, mask)
+        # return input_
 
     @staticmethod
     def backward(ctx, grad):
@@ -159,7 +218,7 @@ def calc_qparams_last_conv(_min, _max, bit, symmetric=False, zero=None):
 def calc_symmetric_qparams(_min, _max, bit, per_channel=False):
     with torch.no_grad():
         n = 2 ** (bit - 1) - 1
-        s = max(_min.abs(), _max.abs())
+        s = torch.max(_min.abs(), _max.abs())
         s = torch.clamp(s, min=1e-8) / n
         # if bit == 4:
         #     s = (_max - _min) / 15
@@ -337,6 +396,20 @@ def clamp_matrix_per_input_channel(x, low_bit, low_group, high_group, symmetric=
         x[:,high_group] = torch.clamp(x[:,high_group], high_qmin, high_qmax)
     return x
 
+
+def clamp_matrix_per_output_channel(x, low_group, high_group, symmetric=False):
+    if symmetric:
+        low_qmin, low_qmax = -8, 7
+        high_qmin, high_qmax = -128, 127
+    else:
+        low_qmin, low_qmax = 0, 15
+        high_qmin, high_qmax = 0, 255
+
+    x[low_group] = torch.clamp(x[low_group], low_qmin, low_qmax)
+    x[high_group] = torch.clamp(x[high_group], high_qmin, high_qmax)
+    return x
+
+
 # def truncate_lower_bits(x, bit, symmetric=False):
 #     if bit == 8:
 #         return x
@@ -384,6 +457,7 @@ def fake_quantize_per_input_channel(x, low_bit, low_group, high_group, zero=None
         return STE.apply(x, _x)
     return _x
 
+
 def fake_quantize_per_output_channel(x, bit, zero, symmetric=False, use_ste=False):
     _x = x.detach()
     scale, zero_point = calc_qparams_per_output_channel(_x, bit, symmetric, zero)
@@ -394,6 +468,52 @@ def fake_quantize_per_output_channel(x, bit, zero, symmetric=False, use_ste=Fals
     if use_ste:
         return STE.apply(x, _x)
     return _x
+
+
+def fake_quantize_per_output_channel_paper(x, low_group, high_group, zero, symmetric=False, use_ste=False):
+    _x = x.detach()
+    scale, zero_point = calc_qparams_per_output_channel_paper(_x, low_group, high_group, symmetric, zero)
+    scale = scale[:, None, None, None]
+    zero_point = zero_point[:, None, None, None]
+
+    _x = (clamp_matrix_per_output_channel(torch.round(_x / scale + zero_point), low_group, high_group, symmetric) - zero_point) * scale
+
+    if use_ste:
+        return STE.apply(x, _x)
+    return _x
+
+
+def calc_qparams_per_output_channel_paper(mat, low_group, high_group, symmetric=False, zero=None):
+    _mat = mat.view(mat.size(0), -1)
+    _min = _mat.min(dim=1).values
+    _max = _mat.max(dim=1).values
+
+    if symmetric:
+        return calc_symmetric_qparams_per_output_channel(_min, _max, low_group, high_group)
+    else:
+        if zero is None:
+            zero = torch.tensor(0.0, device='cuda')
+        _min = torch.where(_min <= zero, _min, zero)
+        _max = torch.where(_max >= zero, _max, zero)
+    return get_scale_and_zeropoint_per_output_channel(_min, _max, low_group, high_group)
+
+
+def calc_symmetric_qparams_per_output_channel(_min, _max, low_group, high_group):
+    with torch.no_grad():
+        s = torch.max(_min.abs(), _max.abs())
+        s[low_group] = torch.clamp(s[low_group], min=1e-8) / 7
+        s[high_group] = torch.clamp(s[high_group], min=1e-8) / 127
+    return s, torch.zeros_like(s, device='cuda')
+
+
+def get_scale_and_zeropoint_per_output_channel(_min, _max, low_group, high_group):
+    s = torch.zeros(_min.size(0), device='cuda')
+    z = torch.zeros(_min.size(0), device='cuda')
+    s[low_group] = (_max[low_group] - _min[low_group]) / 15
+    s[high_group] = (_max[high_group] - _min[high_group]) / 127
+    z[low_group] = torch.clamp(- torch.round(_min[low_group] / s[low_group]), 0, 15)
+    z[high_group] = torch.clamp(- torch.round(_min[high_group] / s[high_group]), 0, 255)
+    return s, z
 
 
 def fake_quantize_per_cluster_2d(x, scale, zero_point, bit, cluster_per_data, use_ste=False):
@@ -445,6 +565,11 @@ def apply_qn(x, scale, zero_point, bit, qn_prob, kernel_size=None, each_channel=
 def quantize_matrix(x, scale, zero_point, bit=None, symmetric=False):
     quantized = torch.round(x / scale + zero_point)
     return clamp_matrix(quantized, bit, symmetric)
+
+
+def quantize_matrix_per_output_channel(x, scale, zero_point, low_group, high_group, symmetric=False):
+    quantized = torch.round(x / scale + zero_point)
+    return clamp_matrix_per_output_channel(quantized, low_group, high_group, symmetric)
 
 
 def quantize_matrix_per_in_channel(x, scale, zero_point, low_bit, low_group, high_group, symmetric=False):
@@ -644,11 +769,11 @@ def transfer_qparams(_fp, _int):
     _int.M0.data = _fp.M0
     _int.shift.data = _fp.shift
     if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d']:
-        if _fp.w_bit.view(-1).size(0) > 1:
-            _fp.w_bit.data = _fp.w_bit.max()
-            _int.low_group = _fp.low_group.cuda()
-            _int.high_group = _fp.high_group.cuda()
-            _int.low_bit = _fp.low_bit
+        if _int.layer_type == 'QuantizedConv2d' and _fp.run_mode == 'paper':
+            # _fp.w_bit.data = _fp.w_bit.max()
+            _int.low_group = _fp.low_group
+            _int.high_group = _fp.high_group
+            # _int.low_bit = _fp.low_bit
         _int.w_bit.data = _fp.w_bit.data
         _int.a_bit.data = _fp.a_bit.data
         negative_values = (_int.shift < 0).nonzero(as_tuple=True)[0]
@@ -691,9 +816,11 @@ def quantize_folded_conv2d_weight_and_bias(_fp, _int, symmetric):
 def quantize_conv2d_weight(_fp, _int, symmetric):
     # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
     # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
-    if _int.per_channel:
+    if _int.run_mode == 'uniform':
         _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2[:, None, None, None],
                                                _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
+    elif _int.run_mode == 'paper':
+        _int.weight.data.copy_(quantize_matrix_per_output_channel(_fp.weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.low_group, _int.high_group, symmetric=symmetric))
     else:
         _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit, symmetric=symmetric))
     _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
@@ -756,8 +883,8 @@ def quantize_layer(_fp, _int):
             if _fp.fold_convbn:
                 fold_flag = True
                 _int = quantize_folded_conv2d_weight_and_bias(_fp, _int, _fp.symmetric)
-            elif _fp.mixed_precision:
-                _int = quantize_conv2d_weight_in_channel(_fp, _int, _fp.symmetric)
+            # elif _fp.mixed_precision:
+            #     _int = quantize_conv2d_weight_in_channel(_fp, _int, _fp.symmetric)
             else:
                 _int = quantize_conv2d_weight(fp_layer, _int, _fp.symmetric)
         else:

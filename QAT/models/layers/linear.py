@@ -282,8 +282,8 @@ class FusedLinear(nn.Module):
         if self.apply_ema:
             self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
             if self.runtime_helper.apply_fake_quantization:
-                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+                s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste, symmetric=self.symmetric)
         else:
             self.act_range[0], self.act_range[1] = get_range(out)
             self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
@@ -297,7 +297,7 @@ class FusedLinear(nn.Module):
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
 
         self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
         return self.s3, self.z3

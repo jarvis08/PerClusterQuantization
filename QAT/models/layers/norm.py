@@ -217,8 +217,8 @@ class FusedBnReLU(nn.Module):
     def __init__(self, num_features, activation=None, w_bit=None, a_bit=None, arg_dict=None):
         super(FusedBnReLU, self).__init__()
         self.layer_type = 'FusedBnReLU'
-        arg_w_bit, self.smooth, self.use_ste, self.runtime_helper, self.num_clusters = \
-            itemgetter('bit', 'smooth', 'ste', 'runtime_helper', 'cluster')(arg_dict)
+        arg_w_bit, self.smooth, self.symmetric, self.use_ste, self.runtime_helper, self.num_clusters = \
+            itemgetter('bit', 'smooth', 'symmetric', 'ste', 'runtime_helper', 'cluster')(arg_dict)
 
         w_bit = w_bit if w_bit is not None else arg_dict['bit_bn_w']
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
@@ -262,8 +262,8 @@ class FusedBnReLU(nn.Module):
 
             weight = self.bn.weight.div(torch.sqrt(var + self.bn.eps))
             bias = self.bn.bias - weight * mean
-            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit)
-            weight = fake_quantize(weight, s, z, self.w_bit)
+            s, z = calc_qparams(weight.min(), weight.max(), self.w_bit, symmetric=self.symmetric)
+            weight = fake_quantize(weight, s, z, self.w_bit, symmetric=self.symmetric)
             fake_out = _x * weight[None, :, None, None] + bias[None, :, None, None]
 
         out = STE.apply(out, fake_out)
@@ -280,26 +280,26 @@ class FusedBnReLU(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
-            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
+            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit, symmetric=self.symmetric)
         else:
-            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste, symmetric=self.symmetric)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
 
         weight = self.bn.weight.div(torch.sqrt(self.bn.running_var + self.bn.eps))
         if weight.min() > 0:
-            self.s2, self.z2 = calc_qparams(torch.tensor(0), weight.max(), self.w_bit)
+            self.s2, self.z2 = calc_qparams(torch.tensor(0), weight.max(), self.w_bit, symmetric=self.symmetric)
         elif weight.max() < 0:
-            self.s2, self.z2 = calc_qparams(weight.min(), torch.tensor(0), self.w_bit)
+            self.s2, self.z2 = calc_qparams(weight.min(), torch.tensor(0), self.w_bit, symmetric=self.symmetric)
         else:
-            self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_bit)
+            self.s2, self.z2 = calc_qparams(weight.min(), weight.max(), self.w_bit, symmetric=self.symmetric)
 
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
 
         self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
         return self.s3, self.z3

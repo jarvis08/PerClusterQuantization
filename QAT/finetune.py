@@ -273,18 +273,18 @@ def _finetune(args, tools, data_loaders, clustering_model):
         del pretrained_model
     model.cuda()
 
-    if args.mixed_precision:
-        runtime_helper.set_skt_arguments(args)
-        # if not args.grad_method:
-        #     runtime_helper.grad_method = ~runtime_helper.grad_method
-        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
-        # # try inference once to record input precisions
-        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
-        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_METH_{args.grad_method}_CON_{args.const_portion}'
-        set_lower_weights(model, args.pre_fixed_channel)
-        validate_setting_bits(model, val_loader, criterion)
-        # pretrained_model.cpu()
-        initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
+    # if args.mixed_precision:
+    #     runtime_helper.set_yj_arguments(args)
+    #     # if not args.grad_method:
+    #     #     runtime_helper.grad_method = ~runtime_helper.grad_method
+    #     model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
+    #     # # try inference once to record input precisions
+    #     # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
+    #     identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_METH_{args.grad_method}_CON_{args.const_portion}'
+    #     set_lower_weights(model, args.pre_fixed_channel)
+    #     validate_setting_bits(model, val_loader, criterion)
+    #     # pretrained_model.cpu()
+    #     initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -306,36 +306,38 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     quantized_model = None
     ratio = 0
-    for e in range(epoch_to_start, args.epoch + 1):
-        if e > args.fq:
-            runtime_helper.apply_fake_quantization = True
-        if e <= args.channel_epoch and args.input_grad:
-            runtime_helper.conv_mixed_grad = True
-        else:
-            runtime_helper.conv_mixed_grad = False
-
-        if not args.mixed_precision or e > args.channel_epoch:
-            train_epoch(model, train_loader, criterion, optimizer, e, logger)
-        else:
-            losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
+    ## channel searching epochs
+    if args.run_mode == 'paper':
+        runtime_helper.set_channel_arguments(args, True)
+        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
+        model.quantile_tensor = torch.tensor(args.quantile, dtype=torch.float, device='cuda')
+        print("<<<<<<<<<<<< Channel Searching START >>>>>>>>>>>>>>>>")
+        for e in range(1, args.channel_epoch + 1):
+            losses, ratio = channel_searching_train_epoch(model, train_loader, criterion, optimizer, e, logger)
+            model.initialize_quant_diff()
+            ## do not update learning rates
+            # opt_scheduler.step()
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
             # with open(identifier + '.csv', 'a') as csvfile:
             #     writer = csv.writer(csvfile)
             #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
+        print("<<<<<<<<<<<< Channel Searching END >>>>>>>>>>>>>>>>")
 
+    runtime_helper.set_channel_arguments(args, False)
+
+    ## normal training mode
+    print("<<<<<<<<<<<< Training START >>>>>>>>>>>>>>>>")
+    for e in range(epoch_to_start, args.epoch + 1):
+        if e > args.fq:
+            runtime_helper.apply_fake_quantization = True
+
+        train_epoch(model, train_loader, criterion, optimizer, e, logger)
         opt_scheduler.step()
 
         if args.fold_convbn:
             tools.folder(model)
 
         fp_score = 0
-        # if args.dataset != 'imagenet':
-        #     if args.cluster > 1:
-        #         #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
-        #         fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
-        #     else:
-        #         #fp_score = validate(model, val_loader, criterion, logger)
-        #         fp_score = validate(model, test_loader, criterion, logger)
 
         state = {
             'epoch': e,
@@ -428,16 +430,25 @@ def _finetune(args, tools, data_loaders, clustering_model):
         method = args.quant_base
 
     pc = ''
-    if args.per_channel:
-        pc = 'PerChannel, '
-    if args.symmetric:
-        pc += 'Symmetric, '
+    # if args.per_channel:
+    #     pc = 'PerChannel, '
+    # if args.symmetric:
+    #     pc += 'Symmetric, '
 
-    with open(f'./[EXP]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('reduce {} /channel {:.2f}% / const {} / quantile {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.reduce_ratio, ratio, args.const_portion, args.quantile, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+    if args.run_mode == 'paper':
+        with open(f'./[{args.run_mode.upper()}]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt','a') as f:
+            f.write(
+                'percentile {} / quantile {} / channel {:.2f}% / ACC {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.percentile, args.quantile, ratio, test_score, args.arch,
+                        args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
+    else:
+        with open(f'./[{args.run_mode.upper()}]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
+            f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                    .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+                            pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
+                            tuning_time_cost, args.gpu, save_path_fp))
 
     # range_fname = None
     # for i in range(9999999):

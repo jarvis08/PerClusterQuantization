@@ -60,7 +60,7 @@ class QuantizedAlexNet(nn.Module):
 class QuantizedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict, num_classes: int = 10) -> None:
         super(QuantizedAlexNetSmall, self).__init__()
-        bit, bit_first, self.mixed_precision, self.num_clusters, self.runtime_helper = itemgetter('bit', 'bit_first', 'mixed_precision', 'cluster', 'runtime_helper')(arg_dict)
+        bit, bit_first, self.run_mode, self.symmetric, self.num_clusters, self.runtime_helper = itemgetter('bit', 'bit_first', 'run_mode', 'symmetric', 'cluster', 'runtime_helper')(arg_dict)
 
         self.target_bit = nn.Parameter(torch.tensor(bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
@@ -68,9 +68,6 @@ class QuantizedAlexNetSmall(nn.Module):
         t_init = list(range(self.num_clusters)) if self.num_clusters > 1 else 0
         self.scale = nn.Parameter(torch.tensor(t_init, dtype=torch.float32), requires_grad=False)
         self.zero_point = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
-        if self.mixed_precision:
-            self.s_input = nn.Parameter(torch.zeros(3, dtype=torch.float32), requires_grad=False)
-            self.z_input = nn.Parameter(torch.zeros(3, dtype=torch.int32), requires_grad=False)
 
         self.conv1 = QuantizedConv2d(3, 96, kernel_size=5, stride=1, padding=2, is_first=True, arg_dict=arg_dict)
         self.conv2 = QuantizedConv2d(96, 256, kernel_size=5, stride=1, padding=2, arg_dict=arg_dict)
@@ -89,10 +86,7 @@ class QuantizedAlexNetSmall(nn.Module):
         if self.runtime_helper.qat_batch_cluster is not None:
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
-            if self.mixed_precision:
-                x = quantize_matrix_per_in_channel(x, self.scale, self.zero_point, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group)
-            else:
-                x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit, symmetric=self.symmetric)
 
         x = self.conv1(x)
         x = self.maxpool1(x.type(torch.cuda.FloatTensor))

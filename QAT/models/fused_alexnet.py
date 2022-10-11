@@ -89,8 +89,8 @@ class FusedAlexNet(nn.Module):
 class FusedAlexNetSmall(nn.Module):
     def __init__(self, arg_dict: dict, num_classes: int = 10) -> None:
         super(FusedAlexNetSmall, self).__init__()
-        target_bit, bit_first, bit_classifier, self.smooth, self.runtime_helper, self.mixed_precision \
-            = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'runtime_helper', 'mixed_precision')(arg_dict)
+        target_bit, bit_first, bit_classifier, self.smooth, self.symmetric, self.runtime_helper, self.run_mode \
+            = itemgetter('bit', 'bit_first', 'bit_classifier', 'smooth', 'symmetric', 'runtime_helper', 'run_mode')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
@@ -116,16 +116,14 @@ class FusedAlexNetSmall(nn.Module):
         self.fc3 = FusedLinear(4096, num_classes, bias=True, is_classifier=True,
                                w_bit=bit_classifier, a_bit=bit_classifier, arg_dict=arg_dict)
 
-        if self.mixed_precision:
+        if self.run_mode == 'paper':
+            self.percentile_tensor = None
+            self.quantile_tensor = None
+            self.high_bit = torch.tensor(8, dtype=torch.int8, device='cuda')
+            self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
-                    module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
-                    module.fixed_indices = None
-                    # module.register_full_backward_hook()
-                    # module.register_full_backward_hook(mixed_hook)
-            self.percentile_tensor = None
-            self.total_ch_sum = 0
+                    self.total_ch_sum += module.out_channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -149,6 +147,13 @@ class FusedAlexNetSmall(nn.Module):
 
         return x
 
+
+    def initialize_quant_diff(self):
+        for module in self.modules():
+            if isinstance(module, FusedConv2d):
+                module.quant_diff.zero_()
+
+
     @torch.no_grad()
     def _update_input_ranges(self, x):
         _min = x.min().item()
@@ -162,12 +167,8 @@ class FusedAlexNetSmall(nn.Module):
 
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
-        if self.mixed_precision:
-            return fake_quantize_per_input_channel(x, self.conv1.low_bit, self.conv1.low_group, self.conv1.high_group,
-                                                   scale=s, zero_point=z)
-        else:
-            return fake_quantize(x, s, z, self.in_bit)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=self.symmetric)
+        return fake_quantize(x, s, z, self.in_bit, symmetric=self.symmetric)
 
 
     def set_quantization_params(self):
@@ -182,39 +183,6 @@ class FusedAlexNetSmall(nn.Module):
         prev_s, prev_z = self.fc1.set_qparams(prev_s, prev_z)
         prev_s, prev_z = self.fc2.set_qparams(prev_s, prev_z)
         _, _ = self.fc3.set_qparams(prev_s, prev_z)
-
-
-    def set_mixed_bits(self, x: torch.Tensor) -> torch.Tensor:
-        def record_input_range(x, module):
-            data = x.transpose(1, 0).reshape(x.size(1), -1)
-            _max = data.max(dim=1).values
-            _min = data.min(dim=1).values
-
-            if module.mixed_ema:
-                updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
-                updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
-
-                module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
-            else:
-                module.val_input_range[0], module.val_input_range[1] = _min, _max
-                module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
-            return module(x)
-
-        x = record_input_range(x, self.conv1)
-        x = self.maxpool(x)
-        x = record_input_range(x, self.conv2)
-        x = self.maxpool(x)
-        x = record_input_range(x, self.conv3)
-        x = record_input_range(x, self.conv4)
-        x = record_input_range(x, self.conv5)
-        x = self.maxpool(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.fc3(x)
-
-        return x
 
 
 def fused_alexnet(arg_dict: dict, **kwargs: Any) -> FusedAlexNet:

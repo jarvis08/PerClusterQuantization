@@ -31,7 +31,6 @@ class RuntimeHelper(object):
         self.num_clusters = None
         self.val_batch = None
         self.undo_gema = False
-        self.conv_mixed_grad = False
         self.const_portion = 0.0
         self.reduce_ratio = 1.0
         self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
@@ -43,6 +42,14 @@ class RuntimeHelper(object):
         self.fzero = None   ###
 
         self.qat_batch_cluster = None
+
+    def set_channel_arguments(self, args, turn_on=False):
+        if turn_on:
+            self.apply_fake_quantization = True
+            self.channel_searching = True
+        else:
+            self.apply_fake_quantization = False
+            self.channel_searching = False
 
     def set_pcq_arguments(self, args):
         self.num_clusters = args.cluster
@@ -234,55 +241,52 @@ def freeze_channels_already_allocated_to_low_bit(model):
         if isinstance(fused, FusedConv2d) and len(fused.low_group):
             fused.conv.weight.grad[:, fused.low_group] = 0
 
+# @torch.no_grad()
+# def gradient_sum_check(w, reduce_ratio):
+#     # navie
+#     grad_sum = w.grad.sum(dim=0)
+#
+#     # considering weight direction
+#
+#         for fused in model.modules():
+#             if isinstance(fused, FusedConv2d):
+#                 # - sign(w) * |p*w| * grad
+#                 grad_sum = (-1 * fused.conv.weight[:,
+#                                  fused.fixed_indices].sign() * reduce_ratio * fused.conv.weight[:,
+#                                                                               fused.fixed_indices].abs() * fused.conv.weight.grad[
+#                                                                                                            :,
+#                                                                                                            fused.fixed_indices]).sum(
+#                     dim=(0, 2, 3))
+#                 indices = torch.where(grad_sum < 0, 1, 0).nonzero(as_tuple=True)[0]
+#                 fused.allowed_channels = fused.fixed_indices[indices]
+
 
 @torch.no_grad()
-def set_mixed_bits_per_iter(model, e, reduce_ratio):
+def set_mixed_bits_per_iter(model, epoch):
     low_counter = 0
     eight_counter = 0
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
-            in_channel = fused.in_channels
-            fused.conv.weight.data[:, fused.allowed_channels].mul_(reduce_ratio)
-            # fused.input_range.data[:, fused.allowed_channels].mul_(reduce_ratio)
+            # fused.conv.weight.data[:, fused.allowed_channels].mul_(reduce_ratio)
+            weight_range = torch.max(torch.amax(fused.conv.weight, dim=(1,2,3)).abs(), torch.amin(fused.conv.weight, dim=(1,2,3)).abs())
+            mask_weight = (weight_range >= weight_range.max() * model.percentile_tensor)
+            act_quantile = torch.quantile(fused.quant_diff, model.quantile_tensor)
+            mask_activation = (fused.quant_diff > act_quantile)
 
-            weight_per_filter_group = fused.conv.weight.view(in_channel, -1)
+            ### mask for gradient ####
 
-            weight_group = weight_per_filter_group.reshape(in_channel, -1)
-            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-            input_range = fused.input_range[1] - fused.input_range[0]
-
-            input_max, weight_max = input_range.max(), weight_range.max()
-
-            weight_bits = (model.percentile_tensor <= (weight_max / weight_range[fused.allowed_channels]))
-
-            input_bits = (model.percentile_tensor <= (input_max / input_range[fused.allowed_channels]))
-
-            renewal_bits = torch.logical_and(input_bits, weight_bits).nonzero(as_tuple=True)[0]
-            fused.w_bit.data[renewal_bits] = fused.low_bit
-
-            fused.low_group = (fused.w_bit.data == fused.low_bit).nonzero(as_tuple=True)[0].cuda()
-            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
+            fused.w_bit.data = torch.where((mask_weight & mask_activation) > 0, model.high_bit, fused.w_bit.data)
+            fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
+            fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
 
     ratio = low_counter / model.total_ch_sum * 100
-    # print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
     return ratio
 
 
-@torch.no_grad()
-def gradient_sum_check(model, reduce_ratio):
-    with torch.no_grad():
-        for fused in model.modules():
-            if isinstance(fused, FusedConv2d):
-                # - sign(w) * |p*w| * grad
-                grad_sum = (-1 * fused.conv.weight[:, fused.fixed_indices].sign() * reduce_ratio * fused.conv.weight[:, fused.fixed_indices].abs() * fused.conv.weight.grad[:, fused.fixed_indices]).sum(dim=(0,2,3))
-                indices = torch.where(grad_sum < 0, 1, 0).nonzero(as_tuple=True)[0]
-                fused.allowed_channels = fused.fixed_indices[indices]
-
-
-def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, reduce_ratio, hvd=None):
+def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -308,11 +312,9 @@ def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, re
 
             optimizer.zero_grad()
             loss.backward()
-            gradient_sum_check(model, reduce_ratio)
-            # freeze_channels_already_allocated_to_low_bit(model)
-            optimizer.step()
-            ratio = set_mixed_bits_per_iter(model, epoch, reduce_ratio)
-
+            # gradient_sum_check(model, reduce_ratio)
+            # optimizer.step()
+            ratio = set_mixed_bits_per_iter(model, epoch)
             t.set_postfix(loss=losses.avg, acc=top1.avg)
     return losses.avg, ratio
 
