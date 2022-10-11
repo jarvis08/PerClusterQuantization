@@ -29,7 +29,7 @@ if [ "$MODE" = paper ]; then
   if [ "$MODEL" = alexnet ]; then
     python main.py \
       --arch $MODEL \
-      --epoch 2 \
+      --epoch 100 \
       --lr 1e-3 \
       --batch 128 \
       --dataset $DATASET \
@@ -39,14 +39,14 @@ if [ "$MODE" = paper ]; then
       --bit 8 \
       --symmetric \
       --per_channel \
-      --channel_epoch 1 \
+      --channel_epoch 10 \
       --percentile $W_PERCENTILE \
       --quantile $ACT_QUANTILE \
       --gpu $GPU_NUM
   else
     python main.py \
     --arch $MODEL \
-    --epoch 2 \
+    --epoch 100 \
     --lr 1e-3 \
     --batch 128 \
     --dataset $DATASET \
@@ -57,7 +57,7 @@ if [ "$MODE" = paper ]; then
     --bit_addcat 8 \
     --symmetric \
     --per_channel \
-    --channel_epoch 1 \
+    --channel_epoch 10 \
     --percentile $W_PERCENTILE \
     --quantile $ACT_QUANTILE \
     --gpu $GPU_NUM
@@ -67,7 +67,7 @@ elif [ "$MODE" = uniform ]; then
   if [ "$MODEL" = alexnet ]; then
     python main.py \
       --arch $MODEL \
-      --epoch 2 \
+      --epoch 100 \
       --lr 1e-3 \
       --batch 128 \
       --dataset $DATASET \
@@ -80,7 +80,7 @@ elif [ "$MODE" = uniform ]; then
   else
     python main.py \
     --arch $MODEL \
-    --epoch 2 \
+    --epoch 100 \
     --lr 1e-3 \
     --batch 128 \
     --dataset $DATASET \
@@ -98,7 +98,7 @@ else
   if [ "$MODEL" = alexnet ]; then
     python main.py \
       --arch $MODEL \
-      --epoch 2 \
+      --epoch 100 \
       --lr 1e-3 \
       --batch 128 \
       --dataset $DATASET \
@@ -110,7 +110,7 @@ else
   else
     python main.py \
     --arch $MODEL \
-    --epoch 2 \
+    --epoch 100 \
     --lr 1e-3 \
     --batch 128 \
     --dataset $DATASET \

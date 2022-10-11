@@ -70,6 +70,8 @@ if not args_qat.bit_classifier:
 # if not args_qat.bit_addcat:
 #     args_qat.bit_addcat = args_qat.bit
 
+assert args_qat.run_mode in ['fp', 'uniform', 'paper'], f"Invalid running mode : {args_qat.run_mode}"
+
 
 def set_func_for_target_arch(arch, is_pcq, is_folded):
     tools = QuantizationTool()
