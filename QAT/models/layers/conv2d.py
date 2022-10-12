@@ -615,8 +615,6 @@ class FusedConv2d(nn.Module):
     def _general(self, x, external_range=None):
         zero = self.runtime_helper.fzero
         if self.run_mode == 'paper':
-            # if self.runtime_helper.channel_searching:
-            #     x = SKT_MIX.apply(x, self.fixed_indices, self.runtime_helper)
             w = fake_quantize_per_output_channel_paper(self.conv.weight, self.low_group, self.high_group, zero,
                                                  symmetric=self.symmetric, use_ste=self.use_ste)
         elif self.run_mode == 'uniform':
@@ -638,8 +636,6 @@ class FusedConv2d(nn.Module):
                 out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
         else:
             # 채널 서칭이 끝난 이후에 ema 값을 기록
-            # import pdb
-            # pdb.set_trace()
             if not self.runtime_helper.channel_searching:
                 if self.apply_ema:
                     self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
@@ -650,12 +646,11 @@ class FusedConv2d(nn.Module):
                     self.act_range[0], self.act_range[1] = get_range(out)
                     self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
             else:
-                with torch.no_grad():
-                    origin_max = torch.amax(out, dim=(0,2,3))
-                    _min, _max = out.min(), out.max()
-                    s, z = calc_qparams(_min, _max, self.a_bit)
-                    out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
-                    self.quant_diff = torch.amax(out, dim=(0,2,3)) / origin_max
+                origin_out = out.view(self.out_channels, -1)
+                s, z = calc_qparams(out.min(), out.max(), self.a_bit)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
+                fq_out = out.view(self.out_channels, -1)
+                self.quant_diff += torch.norm(origin_out - fq_out, 2, dim=1)
         return out
 
     def _norm_folded(self, x, external_range=None):

@@ -265,23 +265,21 @@ def freeze_channels_already_allocated_to_low_bit(model):
 def set_mixed_bits_per_iter(model, epoch):
     low_counter = 0
     eight_counter = 0
+    total_quant_error = 0
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
-            # fused.conv.weight.data[:, fused.allowed_channels].mul_(reduce_ratio)
-            weight_range = torch.max(torch.amax(fused.conv.weight, dim=(1,2,3)).abs(), torch.amin(fused.conv.weight, dim=(1,2,3)).abs())
-            mask_weight = (weight_range >= weight_range.max() * model.percentile_tensor)
-            act_quantile = torch.quantile(fused.quant_diff, model.quantile_tensor)
-            mask_activation = (fused.quant_diff > act_quantile)
+            total_quant_error += fused.quant_diff.sum()
+    avg_quant_error = total_quant_error / model.total_ch_sum
 
-            ### mask for gradient ####
-
-            fused.w_bit.data = torch.where((mask_weight & mask_activation) > 0, model.high_bit, fused.w_bit.data)
+    for fused in model.modules():
+        if isinstance(fused, FusedConv2d):
+            # >= or >
+            fused.w_bit.data = torch.where((fused.quant_error > avg_quant_error) > 0, model.high_bit, fused.w_bit.data)
             fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
             fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
-
     ratio = low_counter / model.total_ch_sum * 100
     return ratio
 
@@ -311,11 +309,10 @@ def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epo
                              .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
-            loss.backward()
-            # gradient_sum_check(model, reduce_ratio)
+            # loss.backward()
             # optimizer.step()
-            ratio = set_mixed_bits_per_iter(model, epoch)
-            t.set_postfix(loss=losses.avg, acc=top1.avg)
+            # t.set_postfix(loss=losses.avg, acc=top1.avg)
+    ratio = set_mixed_bits_per_iter(model, epoch)
     return losses.avg, ratio
 
 

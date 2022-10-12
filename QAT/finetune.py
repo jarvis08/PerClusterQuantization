@@ -248,6 +248,7 @@ def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
 
     return ratio
 
+
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
 
