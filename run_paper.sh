@@ -47,6 +47,7 @@ if [ "$MODE" = paper ]; then
     --dnn_path $MODEL_PATH \
     --run_mode $MODE \
     --smoooth 0.99 \
+    --fold_convbn \
     --bit 8 \
     --symmetric \
     --channel_epoch 10 \
@@ -79,6 +80,7 @@ elif [ "$MODE" = uniform ]; then
     --dnn_path $MODEL_PATH \
     --run_mode $MODE \
     --smoooth 0.99 \
+    --fold_convbn \
     --bit 8 \
     --symmetric \
     --gpu $GPU_NUM
