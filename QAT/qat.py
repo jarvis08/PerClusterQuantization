@@ -37,7 +37,7 @@ parser.add_argument('--bit', default=32, type=int, help='Target bit-width to be 
 parser.add_argument('--bit_conv_act', default=16, type=int,
                     help="CONV's activation bit size when not using Conv&BN folding")
 parser.add_argument('--bit_bn_w', default=16, type=int, help="BN's weight bit size when not using CONV & BN folding")
-parser.add_argument('--bit_addcat', default=16, type=int, help="Bit size used in Skip-connection")
+parser.add_argument('--bit_addcat', default=0, type=int, help="Bit size used in Skip-connection")
 parser.add_argument('--bit_first', default=0, type=int, help="First layer's bit size")
 parser.add_argument('--bit_classifier', default=0, type=int, help="Last classifier layer's bit size")
 parser.add_argument('--smooth', default=0.999, type=float, help='Smoothing parameter of EMA')
@@ -53,10 +53,12 @@ parser.add_argument('--grad_method', action='store_true', help='method to reduce
 parser.add_argument('--record_val', default=False, type=bool, help='For SKT, record num of outputs out of clipping range')
 # parser.add_argument('--weight_scailing', action='store_true', help='For SKT, set bits considering only weight range')
 parser.add_argument('--percentile', default=1.0, type=float, help="threshold to split weight groups into two")
-parser.add_argument('--quantile', default=1.0, type=float, help="threshold to fix input gradients to certain value or not")
 parser.add_argument('--reduce_ratio', default=1.0, type=float, help="weight reduce")
 parser.add_argument('--channel_epoch', default=0, type=int, help='Number of epochs to set low bits')
 parser.add_argument('--method', default='max', type=str, help="how to choose one of scales")
+
+parser.add_argument('--quantile', default=1.0, type=float, help="threshold to fix input gradients to certain value or not")
+parser.add_argument('--compression_ratio', default=50, type=float, help="compression ratio")
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
@@ -67,8 +69,8 @@ if not args_qat.bit_first:
     args_qat.bit_first = args_qat.bit
 if not args_qat.bit_classifier:
     args_qat.bit_classifier = args_qat.bit
-# if not args_qat.bit_addcat:
-#     args_qat.bit_addcat = args_qat.bit
+if not args_qat.bit_addcat:
+    args_qat.bit_addcat = args_qat.bit
 
 assert args_qat.run_mode in ['fp', 'uniform', 'paper'], f"Invalid running mode : {args_qat.run_mode}"
 

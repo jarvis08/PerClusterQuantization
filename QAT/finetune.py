@@ -159,96 +159,6 @@ def set_lower_weights(model, pre_fixed_channel_ratio):
     model.total_ch_sum = total_channel
 
 
-def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None):
-    low_counter = 0
-    eight_counter = 0
-
-    for fused in model.modules():
-        if isinstance(fused, FusedConv2d):
-            in_channel = fused.in_channels
-
-            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
-            weight_group = weight_per_filter_group.reshape(in_channel, -1)
-            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-            weight_max = weight_range.max()
-
-            weight_bits = torch.where(model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]), 1, 0)
-            low_bit = 8 - round(math.log(percentile, 2))
-
-            # input asymmetric version
-            input_range = fused.val_input_range[1] - fused.val_input_range[0]
-            input_max = input_range.max()
-
-            # # input asymmetric version
-            # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
-            # input_max = input_range.max()
-
-            input_bits = torch.where(model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]), 1, 0)
-            fused.w_bit.data[fused.fixed_indices] = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
-
-            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0]
-            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
-            fused.low_bit = torch.tensor(low_bit, dtype=torch.int64, device='cuda')
-
-            low_counter += len(fused.low_group)
-            eight_counter += len(fused.high_group)
-
-            # four_group.append(len(fused.low_group))
-
-    ratio = low_counter / model.total_ch_sum * 100
-    print("Total low bit ratio : {:.2f}% ".format(ratio))
-
-    # with open(identifier + '.csv', 'a') as csvfile:
-    #     writer = csv.writer(csvfile)
-    #     writer.writerow((['0', 'initial', '{:2f}%'.format(ratio)]))
-
-
-def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
-    low_counter = 0
-    eight_counter = 0
-    for fused in model.modules():
-        if isinstance(fused, FusedConv2d):
-            in_channel = fused.in_channels
-            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
-
-            weight_group = weight_per_filter_group.reshape(in_channel, -1)
-            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-
-            # input asymmetric
-            input_range = fused.input_range[1] - fused.input_range[0]
-
-            # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
-
-            # low_bit = 8 - round(math.log(model.percentile_tensor, 2))
-            prev_bit = (fused.w_bit.data != 8)
-            input_max, weight_max = input_range.max(), weight_range.max()
-
-            weight_bits = torch.logical_or(model.percentile_tensor <= (weight_max / weight_range), fused.prev_bit)
-
-            input_bits = (model.percentile_tensor <= (input_max / input_range))
-
-            renewal_bits = torch.logical_or(torch.logical_and(input_bits, weight_bits), prev_bit).nonzero(as_tuple=True)[0]
-            fused.w_bit.data[renewal_bits] = fused.low_bit
-
-            # fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
-
-            fused.low_group = (fused.w_bit.data == fused.low_bit).nonzero(as_tuple=True)[0].cuda()
-            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
-            # fused.low_bit = torch.tensor(fused.low_bit, dtype=torch.int8)
-
-            low_counter += len(fused.low_group)
-            eight_counter += len(fused.high_group)
-
-    ratio = low_counter / model.total_ch_sum * 100
-
-    print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
-    with open(identifier + '.csv', 'a') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(([epoch, '{:2f}%'.format(ratio)]))
-
-    return ratio
-
-
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
 
@@ -306,24 +216,27 @@ def _finetune(args, tools, data_loaders, clustering_model):
     logger = set_logger(save_path_fp)
 
     quantized_model = None
-    ratio = 0
+    trial = 0
+    ratio = 99
     ## channel searching epochs
     if args.run_mode == 'paper':
-        runtime_helper.set_channel_arguments(args, True)
-        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
-        model.quantile_tensor = torch.tensor(args.quantile, dtype=torch.float, device='cuda')
-        print("<<<<<<<<<<<< Channel Searching START >>>>>>>>>>>>>>>>")
-        for e in range(1, args.channel_epoch + 1):
-            losses, ratio = channel_searching_train_epoch(model, train_loader, criterion, optimizer, e, logger)
-            model.initialize_quant_diff()
-            ## do not update learning rates
-            # opt_scheduler.step()
-            print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
-            # with open(identifier + '.csv', 'a') as csvfile:
-            #     writer = csv.writer(csvfile)
-            #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
+        if args.compression_ratio == 0:
+            model.set_channel_bits_to_eight()
+        else:
+            runtime_helper.set_channel_arguments(args, True)
+            model.quantile_tensor = torch.tensor(args.quantile, dtype=torch.float, device='cuda')
+            print("<<<<<<<<<<<< Channel Searching START >>>>>>>>>>>>>>>>")
+            for e in range(1, args.channel_epoch + 1):
+                if ratio < args.compression_ratio:
+                    break
+                trial += 1
+                ratio = channel_searching_train_epoch(model, train_loader, criterion, optimizer, e, logger, trial, args.compression_ratio)
+                ## do not update learning rates
+                # opt_scheduler.step()
+                # with open(identifier + '.csv', 'a') as csvfile:
+                #     writer = csv.writer(csvfile)
+                #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
         print("<<<<<<<<<<<< Channel Searching END >>>>>>>>>>>>>>>>")
-
     runtime_helper.set_channel_arguments(args, False)
 
     ## normal training mode
@@ -437,15 +350,15 @@ def _finetune(args, tools, data_loaders, clustering_model):
     #     pc += 'Symmetric, '
 
     if args.run_mode == 'paper':
-        with open(f'./[{args.run_mode.upper()}]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt','a') as f:
+        with open(f'./[{args.run_mode.upper()}]{args.arch}_{args.dataset}_C{int(args.compression_ratio)}%.txt','a') as f:
             f.write(
-                'percentile {} / quantile {} / channel {:.2f}% / ACC {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.percentile, args.quantile, ratio, test_score, args.arch,
+                'quantile {} / channel {:.2f}% / ACC {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.quantile, ratio, test_score, args.arch,
                         args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
     else:
-        with open(f'./[{args.run_mode.upper()}]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
+        with open(f'./[{args.run_mode.upper()}]{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
             f.write('{:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
                     .format(test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                             pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,

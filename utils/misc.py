@@ -265,28 +265,42 @@ def freeze_channels_already_allocated_to_low_bit(model):
 def set_mixed_bits_per_iter(model, epoch):
     low_counter = 0
     eight_counter = 0
+    quant_error_stack = []
+    layer_idx = 0
+
     total_quant_error = 0
     for fused in model.modules():
-        if isinstance(fused, FusedConv2d):
+        if isinstance(fused, FusedConv2d) and not fused.is_first:
             total_quant_error += fused.quant_diff.sum()
-    avg_quant_error = total_quant_error / model.total_ch_sum
+            quant_error_stack.append(fused.quant_diff.mean().tolist())
 
+    quant_error_stack = torch.tensor(quant_error_stack, dtype=torch.float, device='cuda')
+    avg_quant_error = total_quant_error / model.total_ch_sum
+    quant_error_stack /= avg_quant_error
+    layer_ratio = (1 - torch.nn.functional.normalize(quant_error_stack, p=1, dim=0)) * model.quantile_tensor
+
+    print()
     for fused in model.modules():
-        if isinstance(fused, FusedConv2d):
-            # >= or >
-            fused.w_bit.data = torch.where((fused.quant_error > avg_quant_error) > 0, model.high_bit, fused.w_bit.data)
+        if isinstance(fused, FusedConv2d) and not fused.is_first:
+            q_value = torch.quantile(fused.quant_diff, layer_ratio[layer_idx])
+            fused.w_bit[fused.fixed_ch] = torch.where(fused.quant_diff[fused.fixed_ch] > q_value,
+                                                      model.high_bit, fused.w_bit[fused.fixed_ch])
             fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
             fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
+            fused.fixed_ch = fused.low_group.tolist()
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
+            print("LAYER {} {:.2f}".format(layer_idx, len(fused.low_group) / fused.out_channels * 100))
+            layer_idx += 1
     ratio = low_counter / model.total_ch_sum * 100
     return ratio
 
 
-def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):
+def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, trial, compression_ratio, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
+    ratio=0
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
@@ -300,20 +314,19 @@ def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epo
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
-            if hvd:
-                if hvd.rank() == 0:
-                    logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                                 .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-            else:
-                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-
             optimizer.zero_grad()
             # loss.backward()
             # optimizer.step()
             # t.set_postfix(loss=losses.avg, acc=top1.avg)
-    ratio = set_mixed_bits_per_iter(model, epoch)
-    return losses.avg, ratio
+            if i == round(t.total / 2) or i == (t.total - 1):
+                ratio = set_mixed_bits_per_iter(model, epoch)
+                model.initialize_quant_diff()
+                if ratio < compression_ratio:
+                    return ratio
+                print()
+                print("[Trial {}] 4 bit ratio : {:.2f}%".format(trial, ratio))
+                trial += 1
+    return ratio
 
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):

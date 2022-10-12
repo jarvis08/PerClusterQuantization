@@ -37,8 +37,8 @@ class FoldedFusedBasicBlock(nn.Module):
         self._norm_layer = norm_layer
         self.is_last = is_last
 
-        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper, self.mixed_precision \
-            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper', 'mixed_precision')(arg_dict)
+        target_bit, bit_conv_act, bit_addcat, self.smooth, self.use_ste, self.num_clusters, self.runtime_helper \
+            = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'smooth', 'ste', 'cluster', 'runtime_helper')(arg_dict)
         self.a_bit = torch.nn.Parameter(torch.tensor(bit_addcat, dtype=torch.int8), requires_grad=False)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
 
@@ -348,9 +348,9 @@ class FoldedFusedResNet20(nn.Module):
     def __init__(self, block, layers, arg_dict, num_classes=10):
         super(FoldedFusedResNet20, self).__init__()
         self.arg_dict = arg_dict
-        target_bit, bit_conv_act, self.bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper, self.mixed_precision \
+        target_bit, bit_conv_act, self.bit_addcat, bit_first, bit_classifier, self.smooth, self.num_clusters, self.runtime_helper \
             = itemgetter('bit', 'bit_conv_act', 'bit_addcat', 'bit_first', 'bit_classifier', 'smooth', 'cluster',
-                         'runtime_helper', 'mixed_precision')(arg_dict)
+                         'runtime_helper')(arg_dict)
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.a_bit = torch.nn.Parameter(torch.tensor(self.bit_addcat, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)

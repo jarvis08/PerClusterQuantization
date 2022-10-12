@@ -123,7 +123,10 @@ class FusedAlexNetSmall(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
+                    if module.is_first:
+                        continue
                     self.total_ch_sum += module.out_channels
+            self.conv1.is_first = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
@@ -146,12 +149,17 @@ class FusedAlexNetSmall(nn.Module):
         x = self.fc3(x)
         return x
 
-
     def initialize_quant_diff(self):
         for module in self.modules():
             if isinstance(module, FusedConv2d):
                 module.quant_diff.zero_()
 
+    def set_channel_bits_to_eight(self):
+        for module in self.modules():
+            if isinstance(module, FusedConv2d):
+                module.w_bit = torch.nn.Parameter(torch.full((module.out_channels,), 8, dtype=torch.int8), requires_grad=False)
+                module.low_group = torch.tensor([], dtype=torch.int64)
+                module.high_group = torch.arange(module.out_channels, dtype=torch.int64)
 
     @torch.no_grad()
     def _update_input_ranges(self, x):
