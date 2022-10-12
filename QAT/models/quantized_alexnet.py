@@ -86,7 +86,7 @@ class QuantizedAlexNetSmall(nn.Module):
         if self.runtime_helper.qat_batch_cluster is not None:
             x = quantize_matrix_4d(x, self.scale, self.zero_point, self.runtime_helper.qat_batch_cluster, self.in_bit)
         else:
-            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit, symmetric=self.symmetric)
+            x = quantize_matrix(x, self.scale, self.zero_point, self.in_bit)
 
         x = self.conv1(x)
         x = self.maxpool1(x.type(torch.cuda.FloatTensor))

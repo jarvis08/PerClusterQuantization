@@ -635,7 +635,7 @@ class FusedConv2d(nn.Module):
         if external_range is not None:
             if self.runtime_helper.apply_fake_quantization:
                 s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-                out = fake_quantize(out, s, z, self.a_bit, symmetric=self.symmetric, use_ste=self.use_ste)
+                out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
         else:
             # 채널 서칭이 끝난 이후에 ema 값을 기록
             # import pdb
@@ -644,8 +644,8 @@ class FusedConv2d(nn.Module):
                 if self.apply_ema:
                     self.act_range[0], self.act_range[1] = ema(out, self.act_range, self.smooth)
                     if self.runtime_helper.apply_fake_quantization:
-                        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
-                        out = fake_quantize(out, s, z, self.a_bit, symmetric=self.symmetric, use_ste=self.use_ste)
+                        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+                        out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
                 else:
                     self.act_range[0], self.act_range[1] = get_range(out)
                     self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
@@ -653,8 +653,8 @@ class FusedConv2d(nn.Module):
                 with torch.no_grad():
                     origin_max = torch.amax(out, dim=(0,2,3))
                     _min, _max = out.min(), out.max()
-                    s, z = calc_qparams(_min, _max, self.a_bit, symmetric=self.symmetric)
-                    out = fake_quantize(out, s, z, self.a_bit, symmetric=self.symmetric, use_ste=self.use_ste)
+                    s, z = calc_qparams(_min, _max, self.a_bit)
+                    out = fake_quantize(out, s, z, self.a_bit, use_ste=self.use_ste)
                     self.quant_diff = torch.amax(out, dim=(0,2,3)) / origin_max
         return out
 

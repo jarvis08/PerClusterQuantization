@@ -144,7 +144,6 @@ class FusedAlexNetSmall(nn.Module):
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
-
         return x
 
 
@@ -167,8 +166,8 @@ class FusedAlexNetSmall(nn.Module):
 
 
     def _fake_quantize_input(self, x):
-        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit, symmetric=self.symmetric)
-        return fake_quantize(x, s, z, self.in_bit, symmetric=self.symmetric)
+        s, z = calc_qparams(self.in_range[0], self.in_range[1], self.in_bit)
+        return fake_quantize(x, s, z, self.in_bit)
 
 
     def set_quantization_params(self):

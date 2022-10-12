@@ -280,10 +280,10 @@ class FusedBnReLU(nn.Module):
 
     def _fake_quantize_activation(self, x, external_range=None):
         if external_range is not None:
-            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit, symmetric=self.symmetric)
+            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
         else:
-            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
-        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste, symmetric=self.symmetric)
+            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+        return fake_quantize(x, s, z, self.a_bit, use_ste=self.use_ste)
 
     def set_qparams(self, s1, z1, s_external=None, z_external=None):
         self.s1, self.z1 = s1, z1
@@ -299,7 +299,7 @@ class FusedBnReLU(nn.Module):
         if s_external is not None:
             self.s3, self.z3 = s_external, z_external
         else:
-            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit, symmetric=self.symmetric)
+            self.s3, self.z3 = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
 
         self.M0, self.shift = quantize_M(self.s1.type(torch.double) * self.s2.type(torch.double) / self.s3.type(torch.double))
         return self.s3, self.z3
