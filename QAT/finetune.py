@@ -229,14 +229,14 @@ def _finetune(args, tools, data_loaders, clustering_model):
             for e in range(1, args.channel_epoch + 1):
                 if ratio < args.compression_ratio:
                     break
-                trial += 1
-                ratio = channel_searching_train_epoch(model, train_loader, criterion, optimizer, e, logger, trial, args.compression_ratio)
+                ratio, trial = channel_searching_train_epoch(model, train_loader, criterion, optimizer, e, logger, trial, args.compression_ratio)
                 ## do not update learning rates
                 # opt_scheduler.step()
                 # with open(identifier + '.csv', 'a') as csvfile:
                 #     writer = csv.writer(csvfile)
                 #     writer.writerow(([e, '{:2f}'.format(losses), '{:2f}%'.format(ratio)]))
         print("<<<<<<<<<<<< Channel Searching END >>>>>>>>>>>>>>>>")
+        print("[Final Ratio] ----------> {:2f}%".format(ratio))
     runtime_helper.set_channel_arguments(args, False)
 
     ## normal training mode

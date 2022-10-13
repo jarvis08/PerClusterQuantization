@@ -653,30 +653,20 @@ def quantize_folded_conv2d_weight_and_bias(_fp, _int, symmetric):
     # _int.weight.data.copy_(quantize_matrix(_fp.weight, _int.s2, _int.z2, _int.w_bit))
     # _int.sum_a2.data.copy_(torch.sum(_int.weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
-    # pcq fold
-    if _fp.num_clusters > 1:
-        if _fp.num_norms > 1:  # multiple batch norm parameters
-            for c in range(_fp.num_clusters):
-                _int.folded_weight[c].data.copy_(quantize_matrix(_fp.folded_weight[c], _int.s2[c], _int.z2[c], _int.w_bit))
-                _int.folded_bias[c].data.copy_(
-                    quantize_matrix(_fp.folded_bias[c], _int.s1[c] * _int.s2[c], 0, bit=32, symmetric=True))
-                _int.sum_a2[c].data.copy_(
-                    torch.sum(_int.folded_weight[c], dim=(1, 2, 3))[:, None, None])
-        else:                  # single batch norm parameters
-            _int.folded_weight[0].data.copy_(quantize_matrix(_fp.folded_weight[0], _int.s2, _int.z2, _int.w_bit))
-            for c in range(_fp.num_clusters):
-                _int.folded_bias[c].data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1[c] * _int.s2, 0, bit=32, symmetric=True))
-            _int.sum_a2.data.copy_(torch.sum(_int.folded_weight[0], dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+    if _int.run_mode == 'uniform':
+        _int.folded_weight.data.copy_(
+            quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.w_bit,
+                            symmetric=symmetric))
+        _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+    elif _int.run_mode == 'paper':
+        _int.folded_weight.data.copy_(
+            quantize_matrix_per_output_channel(_fp.folded_weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.low_group, _int.high_group, symmetric=symmetric))
+        _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+    else:
+        _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
+        _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
 
-    else:   # fused fold
-        if _int.per_channel:
-            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2[:, None, None, None], _int.z2[:, None, None, None], _int.w_bit, symmetric=symmetric))
-            _int.folded_bias.data.copy_(quantize_matrix(_fp.folded_bias[0], _int.s1 * _int.s2, 0, bit=32, symmetric=True))
-        else:
-            _int.folded_weight.data.copy_(quantize_matrix(_fp.folded_weight, _int.s2, _int.z2, _int.w_bit))
-            _int.folded_bias.data.copy_(
-                quantize_matrix(_fp.folded_bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
-        _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
+    _int.sum_a2.data.copy_(torch.sum(_int.folded_weight, dim=(1, 2, 3)).reshape(1, _int.out_channels, 1, 1))
     return _int
 
 
@@ -762,11 +752,7 @@ def quantize_layer(_fp, _int):
             _int.is_bias.data = torch.tensor(True, dtype=torch.bool)
 
             if not fold_flag:
-                if _int.num_clusters > 1:
-                    for c in range(_int.num_clusters):
-                        _int.quantized_bias[c].copy_(quantize_matrix(fp_layer.bias, _int.s1[c] * _int.s2, 0, bit=32, symmetric=True))
-                else:
-                    _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
+                _int.quantized_bias[0].copy_(quantize_matrix(fp_layer.bias, _int.s1 * _int.s2, 0, bit=32, symmetric=True))
     return _int
 
 

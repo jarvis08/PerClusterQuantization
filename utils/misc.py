@@ -236,37 +236,23 @@ def save_checkpoint(state, is_best, path):
         shutil.copyfile(filepath, os.path.join(path, 'best.pth'))
 
 
-def freeze_channels_already_allocated_to_low_bit(model):
-    for fused in model.modules():
-        if isinstance(fused, FusedConv2d) and len(fused.low_group):
-            fused.conv.weight.grad[:, fused.low_group] = 0
-
-# @torch.no_grad()
-# def gradient_sum_check(w, reduce_ratio):
-#     # navie
-#     grad_sum = w.grad.sum(dim=0)
-#
-#     # considering weight direction
-#
-#         for fused in model.modules():
-#             if isinstance(fused, FusedConv2d):
-#                 # - sign(w) * |p*w| * grad
-#                 grad_sum = (-1 * fused.conv.weight[:,
-#                                  fused.fixed_indices].sign() * reduce_ratio * fused.conv.weight[:,
-#                                                                               fused.fixed_indices].abs() * fused.conv.weight.grad[
-#                                                                                                            :,
-#                                                                                                            fused.fixed_indices]).sum(
-#                     dim=(0, 2, 3))
-#                 indices = torch.where(grad_sum < 0, 1, 0).nonzero(as_tuple=True)[0]
-#                 fused.allowed_channels = fused.fixed_indices[indices]
-
-
 @torch.no_grad()
-def set_mixed_bits_per_iter(model, epoch):
+def set_mixed_bits_per_iter(model, compression_ratio):
+    def update(model, bit_settings):
+        layer_idx = 0
+        for fused in model.modules():
+            if isinstance(fused, FusedConv2d) and not fused.is_first:
+                fused.w_bit.data = bit_settings[layer_idx].clone()
+                fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
+                fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
+                fused.fixed_ch = fused.low_group.tolist()
+                layer_idx += 1
+
     low_counter = 0
     eight_counter = 0
     quant_error_stack = []
     layer_idx = 0
+    bit_setting_list = []
 
     total_quant_error = 0
     for fused in model.modules():
@@ -283,24 +269,30 @@ def set_mixed_bits_per_iter(model, epoch):
     for fused in model.modules():
         if isinstance(fused, FusedConv2d) and not fused.is_first:
             q_value = torch.quantile(fused.quant_diff, layer_ratio[layer_idx])
-            fused.w_bit[fused.fixed_ch] = torch.where(fused.quant_diff[fused.fixed_ch] > q_value,
-                                                      model.high_bit, fused.w_bit[fused.fixed_ch])
-            fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
-            fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
-            fused.fixed_ch = fused.low_group.tolist()
+            bit_settings = fused.w_bit.data.clone()
+            bit_settings[fused.fixed_ch] = torch.where(fused.quant_diff[fused.fixed_ch] > q_value,
+                                                      model.high_bit, bit_settings[fused.fixed_ch])
+            low_group = (bit_settings.data == 4).nonzero(as_tuple=True)[0]
+            high_group = (bit_settings.data == 8).nonzero(as_tuple=True)[0]
+            bit_setting_list.append(bit_settings)
 
-            low_counter += len(fused.low_group)
-            eight_counter += len(fused.high_group)
-            print("LAYER {} {:.2f}".format(layer_idx, len(fused.low_group) / fused.out_channels * 100))
+            low_counter += len(low_group)
+            eight_counter += len(high_group)
+            print("LAYER {} {:.2f}".format(layer_idx, len(low_group) / fused.out_channels * 100))
             layer_idx += 1
+
     ratio = low_counter / model.total_ch_sum * 100
+    if ratio >= compression_ratio:
+        update(model, bit_setting_list)
+    else:
+        print("[STOP SERACHING] CUR RATIO : {:.2f} | TARGET RATIO : {:.2f}".format(ratio, compression_ratio))
     return ratio
 
 
 def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, trial, compression_ratio, hvd=None):
     losses = AverageMeter()
     top1 = AverageMeter()
-    ratio=0
+    ratio = 0
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
@@ -319,14 +311,14 @@ def channel_searching_train_epoch(model, train_loader, criterion, optimizer, epo
             # optimizer.step()
             # t.set_postfix(loss=losses.avg, acc=top1.avg)
             if i == round(t.total / 2) or i == (t.total - 1):
-                ratio = set_mixed_bits_per_iter(model, epoch)
+                ratio = set_mixed_bits_per_iter(model, compression_ratio)
                 model.initialize_quant_diff()
                 if ratio < compression_ratio:
-                    return ratio
+                    return ratio, trial
                 print()
                 print("[Trial {}] 4 bit ratio : {:.2f}%".format(trial, ratio))
                 trial += 1
-    return ratio
+    return ratio, trial
 
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):

@@ -45,8 +45,6 @@ class QuantizedConv2d(nn.Conv2d):
             if self.run_mode == 'paper':
                 self.low_group = None
                 self.high_group = None
-                # self.low_group = torch.zeros(out_channels, dtype=torch.int8)
-                # self.high_group = torch.zeros(out_channels, dtype=torch.int8)
                 if self.record_val:
                     self.total_size = 0
                     self.low_size = 0
@@ -56,26 +54,9 @@ class QuantizedConv2d(nn.Conv2d):
             self.M0 = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
             self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
-        # if self.mixed_precision:
-        #     self.low_group = torch.zeros(out_channels, dtype=torch.int8)
-        #     self.high_group = torch.zeros(out_channels, dtype=torch.int8)
-        #     self.low_bit = torch.zeros(1, dtype=torch.int8)
-        #     self.s1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.float32), requires_grad=False)
-        #     self.z1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.int32), requires_grad=False)
-        #     if self.record_val:
-        #         self.total_size = 0
-        #         self.low_size = 0
-
         if self.fold_convbn:
-            if self.num_clusters > 1:
-                if self.multi_norm:
-                    self.folded_weight = nn.Parameter(torch.zeros(self.num_clusters, out_channels, in_channels, kernel_size, kernel_size))
-                else:
-                    self.folded_weight = nn.Parameter(torch.zeros(1, out_channels, in_channels, kernel_size, kernel_size))
-                self.folded_bias = nn.Parameter(torch.zeros(self.num_clusters, out_channels, dtype=torch.int32), requires_grad=False)
-            else:
-                self.folded_weight = nn.Parameter(torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
-                self.folded_bias = nn.Parameter(torch.zeros(out_channels, dtype=torch.int32), requires_grad=False )
+            self.folded_weight = nn.Parameter(torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
+            self.folded_bias = nn.Parameter(torch.zeros(out_channels, dtype=torch.int32), requires_grad=False )
 
     def forward(self, x):
         # if self.record_val:
@@ -109,15 +90,7 @@ class QuantizedConv2d(nn.Conv2d):
                     padded = F.pad(x, to_pad, mode='constant', value=self.z1[bc].item())
 
         if self.fold_convbn:
-            if self.num_clusters > 1:
-                if self.multi_norm:
-                    bc = self.runtime_helper.qat_batch_cluster
-                    out = F.conv2d(padded, self.folded_weight[bc], None, self.stride, (0, 0), self.dilation, self.groups)
-                else:
-                    out = F.conv2d(padded, self.folded_weight[0], None, self.stride, (0, 0), self.dilation,
-                                   self.groups)
-            else:
-                out = F.conv2d(padded, self.folded_weight, None, self.stride, (0, 0), self.dilation, self.groups)
+            out = F.conv2d(padded, self.folded_weight, None, self.stride, (0, 0), self.dilation, self.groups)
         else:
             out = F.conv2d(padded, self.weight, None, self.stride, (0, 0), self.dilation, self.groups)
 
@@ -145,7 +118,7 @@ class QuantizedConv2d(nn.Conv2d):
                 sum_q1q2 = sum_q1q2.add(self.folded_bias[bc][None, :, None, None])
             else:
                 sum_q1q2 = sum_q1q2.add(self.quantized_bias[bc][None, :, None, None])
-                
+
         if not self.symmetric:
             input_batch, input_ch = x.shape[0], x.shape[1]
             filter_col, filter_row = self.weight.shape[2], self.weight.shape[3]
@@ -679,67 +652,80 @@ class FusedConv2d(nn.Module):
                 folded_weight.data[c] = folded_weight.data[c].mul(alpha[c]).div(torch.sqrt(var[c].add(eps)))
                 folded_bias.data[c] = folded_bias.data[c].sub(alpha[c].mul(mean[c]).div(torch.sqrt(var[c])))
 
-            if self.per_channel:
+            if self.run_mode == 'paper':
+                fq_folded_weight = fake_quantize_per_output_channel_paper(folded_weight, self.low_group, self.high_group, self.runtime_helper.fzero,
+                                                 symmetric=self.symmetric, use_ste=self.use_ste)
+
+            elif self.run_mode == 'uniform':
                 fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit,
                                                                     self.runtime_helper.fzero,
                                                                     symmetric=self.symmetric, use_ste=False)
-                folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-                                      self.conv.dilation, self.conv.groups)
-            elif self.mixed_precision:
-                self._update_input_ranges(x)
-                fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group,
-                                                           symmetric=self.symmetric, use_ste=self.use_ste)
-                fq_folded_weight = fake_quantize_per_input_channel(folded_weight, self.low_bit, self.low_group, self.high_group,
-                                                    symmetric=self.symmetric, use_ste=self.use_ste)
-
-                folded_out = F.conv2d(fq_input, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-                                      self.conv.dilation, self.conv.groups)
-
             else:
                 s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit,
                                     symmetric=self.symmetric)
                 fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
-                folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-                                      self.conv.dilation, self.conv.groups)
 
-            # folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
-            #                       self.conv.dilation, self.conv.groups)
+            # if self.per_channel:
+            #     fq_folded_weight = fake_quantize_per_output_channel(folded_weight, self.w_bit,
+            #                                                         self.runtime_helper.fzero,
+            #                                                         symmetric=self.symmetric, use_ste=False)
+            #     folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+            #                           self.conv.dilation, self.conv.groups)
+            # elif self.mixed_precision:
+            #     self._update_input_ranges(x)
+            #     fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group,
+            #                                                symmetric=self.symmetric, use_ste=self.use_ste)
+            #     fq_folded_weight = fake_quantize_per_input_channel(folded_weight, self.low_bit, self.low_group, self.high_group,
+            #                                         symmetric=self.symmetric, use_ste=self.use_ste)
+            #
+            #     folded_out = F.conv2d(fq_input, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+            #                           self.conv.dilation, self.conv.groups)
+            #
+            # else:
+            #     s, z = calc_qparams(torch.min(folded_weight), torch.max(folded_weight), self.w_bit,
+            #                         symmetric=self.symmetric)
+            #     fq_folded_weight = fake_quantize(folded_weight, s, z, self.w_bit, use_ste=False)
+            #     folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+            #                           self.conv.dilation, self.conv.groups)
+
+            folded_out = F.conv2d(x, fq_folded_weight, folded_bias, self.conv.stride, self.conv.padding,
+                                  self.conv.dilation, self.conv.groups)
 
             if self._activation:
                 folded_out = self._activation(folded_out)
 
             if external_range is None:
-                _min = folded_out.min().item()
-                _max = folded_out.max().item()
+                if not self.runtime_helper.channel_searching:
+                    _min = folded_out.min().item()
+                    _max = folded_out.max().item()
 
-                # if self.runtime_helper.undo_gema:
-                #     _min = folded_out.min().item()
-                #     _max = folded_out.max().item()
-                # else:
-                #     data = folded_out.view(x.size(0), -1)
-                #     _min = data.min(dim=1).values.mean()
-                #     _max = data.max(dim=1).values.mean()
-
-                if self._activation:
-                    if self.apply_ema:
-                        self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+                    if self._activation:
+                        if self.apply_ema:
+                            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+                        else:
+                            self.act_range[1] = _max
+                            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
                     else:
-                        self.act_range[1] = _max
-                        self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+                        if self.apply_ema:
+                            self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
+                            self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
+                        else:
+                            self.act_range[0], self.act_range[1] = _min, _max
+                            self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
+
+                    if self.runtime_helper.apply_fake_quantization:
+                        if external_range is not None:
+                            s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
+                        else:
+                            s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
+                        folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
                 else:
-                    if self.apply_ema:
-                        self.act_range[0] = self.act_range[0] * self.smooth + _min * (1 - self.smooth)
-                        self.act_range[1] = self.act_range[1] * self.smooth + _max * (1 - self.smooth)
-                    else:
-                        self.act_range[0], self.act_range[1] = _min, _max
-                        self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
-
-                if self.runtime_helper.apply_fake_quantization:
-                    if external_range is not None:
-                        s, z = calc_qparams(external_range[0], external_range[1], self.a_bit)
-                    else:
-                        s, z = calc_qparams(self.act_range[0], self.act_range[1], self.a_bit)
-                    folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=False)
+                    origin_out = folded_out.view(self.out_channels, -1)
+                    s, z = calc_qparams(folded_out.min(), folded_out.max(), self.a_bit)
+                    folded_out = fake_quantize(folded_out, s, z, self.a_bit, use_ste=self.use_ste)
+                    fq_out = folded_out.view(self.out_channels, -1)
+                    with torch.no_grad():
+                        self.quant_diff += torch.norm(origin_out - fq_out, 2, dim=1)
         return STE.apply(general_out, folded_out)
 
 
@@ -761,8 +747,17 @@ class FusedConv2d(nn.Module):
         self.s1, self.z1 = s1, z1
 
         if self.fold_convbn:
-            assert self.per_channel == False, "per channel mode for folded fused model is not implemented"
-            self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit,
+            # # assert self.per_channel == False, "per channel mode for folded fused model is not implemented"
+            # self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit,
+            #                                     symmetric=self.symmetric)
+            if self.run_mode == 'paper':
+                self.s2, self.z2 = calc_qparams_per_output_channel_paper(self.folded_weight, self.low_group,
+                                                                   self.high_group, self.symmetric, zero)
+            elif self.run_mode == 'uniform':
+                self.s2, self.z2 = calc_qparams_per_output_channel(self.folded_weight, self.w_bit,
+                                                                   symmetric=self.symmetric)
+            else:
+                self.s2, self.z2 = calc_qparams(self.folded_weight.min(), self.folded_weight.max(), self.w_bit,
                                                 symmetric=self.symmetric)
         else:
             if self.run_mode == 'paper':

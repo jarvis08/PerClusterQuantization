@@ -94,8 +94,6 @@ class FusedAlexNetSmall(nn.Module):
         self.target_bit = torch.nn.Parameter(torch.tensor(target_bit, dtype=torch.int8), requires_grad=False)
         self.in_bit = torch.nn.Parameter(torch.tensor(bit_first, dtype=torch.int8), requires_grad=False)
 
-        # if self.mixed_precision:
-        #     self.mixed_range = nn.Parameter(torch.zeros(2, 3), requires_grad=False)
         self.in_range = nn.Parameter(torch.zeros(2), requires_grad=False)
         self.apply_ema = nn.Parameter(torch.zeros(1), requires_grad=False)
 
