@@ -112,7 +112,8 @@ class KMeansClustering(object):
         self.model = joblib.load(os.path.join(
             self.args.clustering_path, 'checkpoint.pkl'))
 
-        self.feature_index = torch.load(os.path.join(self.args.clustering_path, 'index.pth'))
+        if os.path.isfile(index_path := os.path.join(self.args.clustering_path, 'index.pth')):
+            self.feature_index = torch.load(index_path)
 
     @torch.no_grad()
     def predict_cluster_of_batch(self, input):

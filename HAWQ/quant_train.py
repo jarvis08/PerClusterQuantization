@@ -493,12 +493,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
+    # for epoch in range(args.start_epoch, 5):
+    #     train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
+    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
+        
     # for epoch in range(args.start_epoch, args.epochs):
-    for epoch in range(args.start_epoch, 10):
+    for epoch in range(args.start_epoch, 20):
         # adjust_learning_rate(optimizer, epoch, args)
 
         # train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
-        train_ema(train_loader, model, clustering_model, criterion, epoch, args)
+        train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
@@ -828,10 +832,7 @@ class ProgressMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, args):
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    if epoch:
-        lr = args.lr * (0.1 ** (epoch // 30))
-    else:
-        lr = 0
+    lr = args.lr * (0.1 ** (epoch // 30))
     print('lr = ', lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
