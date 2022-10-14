@@ -550,15 +550,20 @@ class FusedConv2d(nn.Module):
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
 
         if self.run_mode == 'paper':
-            self.is_first = is_first
-            if is_first:
-                self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 8, dtype=torch.int8), requires_grad=False)
-                self.low_group = torch.tensor([], dtype=torch.int64)
-                self.high_group = torch.arange(out_channels, dtype=torch.int64)
-            else:
-                self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 4, dtype=torch.int8), requires_grad=False)
-                self.low_group = torch.arange(out_channels, dtype=torch.int64)
-                self.high_group = torch.tensor([], dtype=torch.int64)
+            # self.is_first = is_first
+            # if is_first:
+            #     self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 8, dtype=torch.int8), requires_grad=False)
+            #     self.low_group = torch.tensor([], dtype=torch.int64)
+            #     self.high_group = torch.arange(out_channels, dtype=torch.int64)
+            # else:
+            #     self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 4, dtype=torch.int8), requires_grad=False)
+            #     self.low_group = torch.arange(out_channels, dtype=torch.int64)
+            #     self.high_group = torch.tensor([], dtype=torch.int64)
+
+            self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 4, dtype=torch.int8), requires_grad=False)
+            self.low_group = torch.arange(out_channels, dtype=torch.int64)
+            self.high_group = torch.tensor([], dtype=torch.int64)
+
             self.low_bit = torch.nn.Parameter(torch.tensor(8, dtype=torch.int8), requires_grad=False)
             self.quant_diff = torch.zeros(out_channels, dtype=torch.float, device='cuda')
             self.fixed_ch = list(range(out_channels))

@@ -241,7 +241,8 @@ def set_mixed_bits_per_iter(model, compression_ratio):
     def update(model, bit_settings):
         layer_idx = 0
         for fused in model.modules():
-            if isinstance(fused, FusedConv2d) and not fused.is_first:
+            # if isinstance(fused, FusedConv2d) and not fused.is_first:
+            if isinstance(fused, FusedConv2d):
                 fused.w_bit.data = bit_settings[layer_idx].clone()
                 fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
                 fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
@@ -256,7 +257,8 @@ def set_mixed_bits_per_iter(model, compression_ratio):
 
     total_quant_error = 0
     for fused in model.modules():
-        if isinstance(fused, FusedConv2d) and not fused.is_first:
+        # if isinstance(fused, FusedConv2d) and not fused.is_first:
+        if isinstance(fused, FusedConv2d):
             total_quant_error += fused.quant_diff.sum()
             quant_error_stack.append(fused.quant_diff.mean().tolist())
 
@@ -265,9 +267,9 @@ def set_mixed_bits_per_iter(model, compression_ratio):
     quant_error_stack /= avg_quant_error
     layer_ratio = (1 - torch.nn.functional.normalize(quant_error_stack, p=1, dim=0)) * model.quantile_tensor
 
-    print()
     for fused in model.modules():
-        if isinstance(fused, FusedConv2d) and not fused.is_first:
+        # if isinstance(fused, FusedConv2d) and not fused.is_first:
+        if isinstance(fused, FusedConv2d):
             q_value = torch.quantile(fused.quant_diff, layer_ratio[layer_idx])
             bit_settings = fused.w_bit.data.clone()
             bit_settings[fused.fixed_ch] = torch.where(fused.quant_diff[fused.fixed_ch] > q_value,

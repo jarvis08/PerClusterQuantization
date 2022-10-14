@@ -121,10 +121,10 @@ class FusedAlexNetSmall(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    if module.is_first:
-                        continue
+                    # if module.is_first:
+                    #     continue
                     self.total_ch_sum += module.out_channels
-            self.conv1.is_first = True
+            # self.conv1.is_first = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

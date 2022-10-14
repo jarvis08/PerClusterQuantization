@@ -33,7 +33,7 @@ if [ "$MODE" = paper ]; then
       --smoooth 0.99 \
       --bit 8 \
       --symmetric \
-      --channel_epoch 10 \
+      --channel_epoch 100 \
       --quantile $QUANTILE \
       --compression_ratio $COMPRESSION \
       --gpu $GPU_NUM
@@ -50,7 +50,7 @@ if [ "$MODE" = paper ]; then
     --fold_convbn \
     --bit 8 \
     --symmetric \
-    --channel_epoch 10 \
+    --channel_epoch 100 \
     --quantile $QUANTILE \
     --compression_ratio $COMPRESSION \
     --gpu $GPU_NUM

@@ -225,10 +225,10 @@ class FoldedFusedResNet(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    if module.is_first:
-                        continue
+                    # if module.is_first:
+                    #     continue
                     self.total_ch_sum += module.out_channels
-            self.first_conv.is_first = True
+            # self.first_conv.is_first = True
 
         # self.qn_incre_check = self.quant_noise + self.runtime_helper.qn_prob_increment
 
@@ -365,10 +365,10 @@ class FoldedFusedResNet20(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    if module.is_first:
-                        continue
+                    # if module.is_first:
+                    #     continue
                     self.total_ch_sum += module.out_channels
-            self.first_conv.is_first = True
+            # self.first_conv.is_first = True
 
 
     def _make_layer(self, block, planes, blocks, stride=1):
