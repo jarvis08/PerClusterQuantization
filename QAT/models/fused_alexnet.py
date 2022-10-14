@@ -100,7 +100,7 @@ class FusedAlexNetSmall(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.conv1 = FusedConv2d(3, 96, kernel_size=5, stride=1, padding=2, bias=True,
-                                 w_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict)
+                                 w_bit=bit_first, activation=nn.ReLU, arg_dict=arg_dict, is_first=self.runtime_helper.is_first)
         self.conv2 = FusedConv2d(96, 256, kernel_size=5, stride=1, padding=2, bias=True,
                                  activation=nn.ReLU, arg_dict=arg_dict)
         self.conv3 = FusedConv2d(256, 384, kernel_size=3, stride=1, padding=1, bias=True,
@@ -121,10 +121,9 @@ class FusedAlexNetSmall(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    # if module.is_first:
-                    #     continue
+                    if module.is_first:
+                        continue
                     self.total_ch_sum += module.out_channels
-            # self.conv1.is_first = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

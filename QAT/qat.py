@@ -59,6 +59,7 @@ parser.add_argument('--method', default='max', type=str, help="how to choose one
 
 parser.add_argument('--quantile', default=1.0, type=float, help="threshold to fix input gradients to certain value or not")
 parser.add_argument('--compression_ratio', default=50, type=float, help="compression ratio")
+parser.add_argument('--is_first', default=0, type=int, help="compression ratio")
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()

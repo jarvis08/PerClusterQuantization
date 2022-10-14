@@ -179,6 +179,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.nnac and clustering_model.final_cluster is None:
         clustering_model.nn_aware_clustering(pretrained_model, train_loader, args.arch)
 
+    if args.run_mode == 'paper':
+        runtime_helper.is_first = args.is_first
+
     model = get_finetuning_model(arg_dict, tools, pretrained_model)
     if pretrained_model:
         del pretrained_model
@@ -252,6 +255,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     ## normal training mode
     print("<<<<<<<<<<<< Training START >>>>>>>>>>>>>>>>")
+
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True

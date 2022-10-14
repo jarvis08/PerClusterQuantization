@@ -5,7 +5,7 @@ GPU_NUM=${1}
 MODEL=${2}         # alexnet / resnet
 DATASET=${3}       # cifar10 / cifar100
 MODE=${4}
-QUANTILE=${5}    # 0 ~ 1
+FIRST=${5}    # 0 ~ 1
 COMPRESSION=${6} # PERCENTAGE
 
 if [ $MODEL = "resnet" ] ; then
@@ -18,13 +18,14 @@ MODEL_PATH="./pretrained_models/$DATASET/$MODEL_DESC/checkpoint.pth"
 #echo "$MODEL"
 #echo "$MODEL_DESC"
 #echo "$MODEL_PATH"
+echo "$FIRST"
 
 #####################################################
 if [ "$MODE" = paper ]; then
   if [ "$MODEL" = alexnet ]; then
     python main.py \
       --arch $MODEL \
-      --epoch 100 \
+      --epoch 70 \
       --lr 1e-3 \
       --batch 128 \
       --dataset $DATASET \
@@ -32,15 +33,14 @@ if [ "$MODE" = paper ]; then
       --run_mode $MODE \
       --smoooth 0.99 \
       --bit 8 \
-      --symmetric \
       --channel_epoch 100 \
-      --quantile $QUANTILE \
+      --is_first $FIRST \
       --compression_ratio $COMPRESSION \
       --gpu $GPU_NUM
   else
     python main.py \
     --arch $MODEL \
-    --epoch 100 \
+    --epoch 70 \
     --lr 1e-3 \
     --batch 128 \
     --dataset $DATASET \
@@ -49,9 +49,8 @@ if [ "$MODE" = paper ]; then
     --smoooth 0.99 \
     --fold_convbn \
     --bit 8 \
-    --symmetric \
     --channel_epoch 100 \
-    --quantile $QUANTILE \
+    --is_first $FIRST \
     --compression_ratio $COMPRESSION \
     --gpu $GPU_NUM
   fi
@@ -60,7 +59,7 @@ elif [ "$MODE" = uniform ]; then
   if [ "$MODEL" = alexnet ]; then
     python main.py \
       --arch $MODEL \
-      --epoch 100 \
+      --epoch 70 \
       --lr 1e-3 \
       --batch 128 \
       --dataset $DATASET \
@@ -68,12 +67,12 @@ elif [ "$MODE" = uniform ]; then
       --run_mode $MODE \
       --smoooth 0.99 \
       --bit 8 \
-      --symmetric \
+      --is_first $FIRST \
       --gpu $GPU_NUM
   else
     python main.py \
     --arch $MODEL \
-    --epoch 100 \
+    --epoch 70 \
     --lr 1e-3 \
     --batch 128 \
     --dataset $DATASET \
@@ -82,7 +81,7 @@ elif [ "$MODE" = uniform ]; then
     --smoooth 0.99 \
     --fold_convbn \
     --bit 8 \
-    --symmetric \
+    --is_first $FIRST \
     --gpu $GPU_NUM
   fi
 

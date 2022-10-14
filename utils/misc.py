@@ -42,6 +42,7 @@ class RuntimeHelper(object):
         self.fzero = None   ###
 
         self.qat_batch_cluster = None
+        self.is_first = False
 
     def set_channel_arguments(self, args, turn_on=False):
         if turn_on:
@@ -241,8 +242,8 @@ def set_mixed_bits_per_iter(model, compression_ratio):
     def update(model, bit_settings):
         layer_idx = 0
         for fused in model.modules():
-            # if isinstance(fused, FusedConv2d) and not fused.is_first:
-            if isinstance(fused, FusedConv2d):
+            if isinstance(fused, FusedConv2d) and not fused.is_first:
+            # if isinstance(fused, FusedConv2d):
                 fused.w_bit.data = bit_settings[layer_idx].clone()
                 fused.low_group.data = (fused.w_bit.data == 4).nonzero(as_tuple=True)[0]
                 fused.high_group.data = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
@@ -254,22 +255,28 @@ def set_mixed_bits_per_iter(model, compression_ratio):
     quant_error_stack = []
     layer_idx = 0
     bit_setting_list = []
+    # channel_list = []
 
     total_quant_error = 0
     for fused in model.modules():
-        # if isinstance(fused, FusedConv2d) and not fused.is_first:
-        if isinstance(fused, FusedConv2d):
+        if isinstance(fused, FusedConv2d) and not fused.is_first:
+        # if isinstance(fused, FusedConv2d):
             total_quant_error += fused.quant_diff.sum()
             quant_error_stack.append(fused.quant_diff.mean().tolist())
+            # channel_list.append(fused.out_channels)
+    # for i in range(len(channel_list)):
+    #     print(quant_error_stack[i] / channel_list[i])
+    # exit()
 
     quant_error_stack = torch.tensor(quant_error_stack, dtype=torch.float, device='cuda')
     avg_quant_error = total_quant_error / model.total_ch_sum
+
     quant_error_stack /= avg_quant_error
     layer_ratio = (1 - torch.nn.functional.normalize(quant_error_stack, p=1, dim=0)) * model.quantile_tensor
 
     for fused in model.modules():
-        # if isinstance(fused, FusedConv2d) and not fused.is_first:
-        if isinstance(fused, FusedConv2d):
+        if isinstance(fused, FusedConv2d) and not fused.is_first:
+        # if isinstance(fused, FusedConv2d):
             q_value = torch.quantile(fused.quant_diff, layer_ratio[layer_idx])
             bit_settings = fused.w_bit.data.clone()
             bit_settings[fused.fixed_ch] = torch.where(fused.quant_diff[fused.fixed_ch] > q_value,

@@ -541,6 +541,7 @@ class FusedConv2d(nn.Module):
         super(FusedConv2d, self).__init__()
         self.layer_type = 'FusedConv2d'
         self.groups = groups
+        self.is_first = is_first
 
         self.arg_dict = arg_dict
         self.run_mode, self.symmetric, self.smooth, self.fold_convbn, self.use_ste, self.runtime_helper, self.quant_noise, self.qn_prob, self.qn_each_channel\
@@ -550,15 +551,14 @@ class FusedConv2d(nn.Module):
         a_bit = a_bit if a_bit is not None else arg_dict['bit']
 
         if self.run_mode == 'paper':
-            # self.is_first = is_first
-            # if is_first:
-            #     self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 8, dtype=torch.int8), requires_grad=False)
-            #     self.low_group = torch.tensor([], dtype=torch.int64)
-            #     self.high_group = torch.arange(out_channels, dtype=torch.int64)
-            # else:
-            #     self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 4, dtype=torch.int8), requires_grad=False)
-            #     self.low_group = torch.arange(out_channels, dtype=torch.int64)
-            #     self.high_group = torch.tensor([], dtype=torch.int64)
+            if self.is_first:
+                self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 8, dtype=torch.int8), requires_grad=False)
+                self.low_group = torch.tensor([], dtype=torch.int64)
+                self.high_group = torch.arange(out_channels, dtype=torch.int64)
+            else:
+                self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 4, dtype=torch.int8), requires_grad=False)
+                self.low_group = torch.arange(out_channels, dtype=torch.int64)
+                self.high_group = torch.tensor([], dtype=torch.int64)
 
             self.w_bit = torch.nn.Parameter(torch.full((out_channels,), 4, dtype=torch.int8), requires_grad=False)
             self.low_group = torch.arange(out_channels, dtype=torch.int64)
@@ -637,6 +637,7 @@ class FusedConv2d(nn.Module):
                 fq_out = out.view(self.out_channels, -1)
                 with torch.no_grad():
                     self.quant_diff += torch.norm(origin_out - fq_out, 2, dim=1)
+                    self.quant_diff /= (out.shape[2] * out.shape[3])
         return out
 
     def _norm_folded(self, x, external_range=None):
@@ -731,6 +732,7 @@ class FusedConv2d(nn.Module):
                     fq_out = folded_out.view(self.out_channels, -1)
                     with torch.no_grad():
                         self.quant_diff += torch.norm(origin_out - fq_out, 2, dim=1)
+                        self.quant_diff /= (folded_out.shape[2] * folded_out.shape[3])
         return STE.apply(general_out, folded_out)
 
 

@@ -225,8 +225,8 @@ class FoldedFusedResNet(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    # if module.is_first:
-                    #     continue
+                    if module.is_first:
+                        continue
                     self.total_ch_sum += module.out_channels
             # self.first_conv.is_first = True
 
@@ -345,7 +345,7 @@ class FoldedFusedResNet20(nn.Module):
 
         self.arg_dict = arg_dict
 
-        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1,
+        self.first_conv = FusedConv2d(3, 16, kernel_size=3, stride=1, padding=1, is_first=self.runtime_helper.is_first,
                                       w_bit=bit_first, norm_layer=self._norm_layer, activation=nn.ReLU, a_bit=self.bit_addcat, arg_dict=arg_dict)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
@@ -365,10 +365,9 @@ class FoldedFusedResNet20(nn.Module):
             self.total_ch_sum = 0
             for module in self.modules():
                 if isinstance(module, FusedConv2d):
-                    # if module.is_first:
-                    #     continue
+                    if module.is_first:
+                        continue
                     self.total_ch_sum += module.out_channels
-            # self.first_conv.is_first = True
 
 
     def _make_layer(self, block, planes, blocks, stride=1):
