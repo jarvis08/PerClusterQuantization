@@ -493,16 +493,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
-    # for epoch in range(args.start_epoch, 5):
-    #     train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
-    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
-        
-    # for epoch in range(args.start_epoch, args.epochs):
-    for epoch in range(args.start_epoch, 20):
-        # adjust_learning_rate(optimizer, epoch, args)
-
-        # train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
+    for epoch in range(args.start_epoch, 10):
         train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
+        acc1 = validate(test_loader, model, clustering_model, criterion, args)
+        
+    # for epoch in range(args.start_epoch, 20):
+        # train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
+    for epoch in range(args.start_epoch, args.epochs):
+        adjust_learning_rate(optimizer, epoch, args)
+
+        train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
