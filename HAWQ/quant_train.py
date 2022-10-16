@@ -456,9 +456,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     test_loader = data_loaders['test']
     cluster_train_loader = data_loaders['non_aug_train']
 
-    if clustering_model.model is None:
-        clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader)
-        clustering_model.train_clustering_model(cluster_train_loader)
+    # if clustering_model is not None and clustering_model.model is None:
+    #     clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader)
+    #     clustering_model.train_clustering_model(cluster_train_loader)
 
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
