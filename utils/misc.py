@@ -264,8 +264,17 @@ def set_mixed_bits_per_iter(model, compression_ratio):
             total_quant_error += fused.quant_diff.sum()
             quant_error_stack.append(fused.quant_diff.mean().tolist())
             # channel_list.append(fused.out_channels)
-    # for i in range(len(channel_list)):
-    #     print(quant_error_stack[i] / channel_list[i])
+    # # for i in range(len(channel_list)):
+    # #     print(quant_error_stack[i] / channel_list[i])
+    # exit()
+
+    # print(quant_error_stack)
+    # import csv
+    # with open('layer.csv', 'a') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     for fused in model.modules():
+    #         if isinstance(fused, FusedConv2d):
+    #             writer.writerow([fused.quant_diff.mean().item()])
     # exit()
 
     quant_error_stack = torch.tensor(quant_error_stack, dtype=torch.float, device='cuda')

@@ -242,16 +242,17 @@ def _finetune(args, tools, data_loaders, clustering_model):
         print("[Final Ratio] ----------> {:2f}%".format(ratio))
     runtime_helper.set_channel_arguments(args, False)
 
-    # layer_idx = 1
-    # for fused in model.modules():
-    #     with open(f"{args.arch}_{args.dataset}_{args.compression_ratio}.csv", 'a') as csvfile:
-    #         writer = csv.writer(csvfile)
-    #         if isinstance(fused, FusedConv2d):
-    #             total_ch = fused.out_channels
-    #             four = len(fused.low_group) / total_ch * 100
-    #             eight = len(fused.high_group) / total_ch * 100
-    #             writer.writerow([layer_idx, '{:2f}%'.format(four), '{:2f}%'.format(eight)])
-    #             print("".format(layer_idx, four, eight))
+    layer_idx = 1
+    for fused in model.modules():
+        with open(f"{args.arch}_{args.dataset}_{args.compression_ratio}.csv", 'a') as csvfile:
+            writer = csv.writer(csvfile)
+            if isinstance(fused, FusedConv2d):
+                total_ch = fused.out_channels
+                four = len(fused.low_group) / total_ch * 100
+                eight = len(fused.high_group) / total_ch * 100
+                writer.writerow([layer_idx, '{:2f}%'.format(four), '{:2f}%'.format(eight)])
+                print("".format(layer_idx, four, eight))
+    exit()
 
     ## normal training mode
     print("<<<<<<<<<<<< Training START >>>>>>>>>>>>>>>>")
