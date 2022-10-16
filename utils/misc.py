@@ -59,6 +59,7 @@ class RuntimeHelper(object):
     def set_skt_arguments(self, args):
         self.const_portion = args.const_portion
         self.quantile_tensor *= args.quantile
+        self.reduce_gradient = torch.tensor(args.reduce_gradient, dtype=torch.float, device='cuda')
         # self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
 

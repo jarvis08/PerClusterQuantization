@@ -248,6 +248,14 @@ def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
 
     return ratio
 
+
+def initialize_act_range(model):
+    for fused in model.modules():
+        if isinstance(fused, FusedConv2d):
+            fused.act_range.zero_()
+            fused.apply_ema.data = ~fused.apply_ema.data
+
+
 def _finetune(args, tools, data_loaders, clustering_model):
     tuning_start_time = time()
 
@@ -307,6 +315,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
     quantized_model = None
     ratio = 0
     for e in range(epoch_to_start, args.epoch + 1):
+        if e == args.channel_epoch + 1 and args.init_ema:
+            initialize_act_range(model)
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
         if e <= args.channel_epoch and args.input_grad:
@@ -433,9 +443,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.symmetric:
         pc += 'Symmetric, '
 
-    with open(f'./[EXP]qat_{args.arch}_{args.dataset}_{args.bit}_F{args.bit_first}L{args.bit_classifier}_{args.gpu}.txt', 'a') as f:
-        f.write('reduce {} /channel {:.2f}% / const {} / quantile {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.reduce_ratio, ratio, args.const_portion, args.quantile, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+    with open(f'./[EXP]qat_{args.arch[:4]}_{args.dataset}_{args.bit}_EMA_{args.init_ema}.txt', 'a') as f:
+        f.write('reduce {} /channel {:.2f}% / const {} / quantile {} / reduce_gradient {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.reduce_ratio, ratio, args.const_portion, args.quantile, args.reduce_gradient, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 

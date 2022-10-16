@@ -23,6 +23,7 @@ class SKT_MIX(torch.autograd.Function):
         const_portion = runtime_helper.const_portion
         reduce_ratio = runtime_helper.reduce_ratio
         quantile_tensor = runtime_helper.quantile_tensor
+        reduce_gradient = runtime_helper.reduce_gradient
 
         max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
         mask = input_[:, fixed_indices] > (max_per_ch / 2)
@@ -34,7 +35,7 @@ class SKT_MIX(torch.autograd.Function):
         dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
         grad_direction = -1 * input_[:, fixed_indices] * reduce_ratio
 
-        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor)
+        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor, reduce_gradient)
         # ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method, quantile_tensor)
 
         # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
@@ -43,18 +44,18 @@ class SKT_MIX(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad):
-        fixed_indices, mask, grad_direction, const_portion, quantile_tensor = ctx.saved_tensors
+        fixed_indices, mask, grad_direction, const_portion, quantile_tensor, reduce_gradient = ctx.saved_tensors
         # fixed_indices, mask, max_per_ch, const_portion, grad_method, quantile_tensor = ctx.saved_tensors
 
         abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
-        # f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
+        f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
 
         # abs val
         # lower
         grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() <= abs_val), const_portion, grad[:, fixed_indices])
 
-        # # else
-        # grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), quantile_tensor * 0, grad[:, fixed_indices])
+        # else
+        grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), grad[:, fixed_indices] * reduce_gradient, grad[:, fixed_indices])
 
         # # naive fixed gradient method
         # grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])

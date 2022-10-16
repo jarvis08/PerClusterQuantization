@@ -60,6 +60,8 @@ parser.add_argument('--quantile', default=1.0, type=float, help="threshold to fi
 parser.add_argument('--reduce_ratio', default=1.0, type=float, help="weight reduce")
 parser.add_argument('--channel_epoch', default=30, type=int, help='Number of epochs to set low bits')
 parser.add_argument('--method', default='max', type=str, help="how to choose one of scales")
+parser.add_argument('--init_ema', default=0, type=int, help="wheter to initialize recorded ema range ")
+parser.add_argument('--reduce_gradient', default=1.0, type=float, help="wheter to initialize recorded ema range ")
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
