@@ -59,7 +59,6 @@ class RuntimeHelper(object):
     def set_skt_arguments(self, args):
         self.const_portion = args.const_portion
         self.quantile_tensor *= args.quantile
-        self.reduce_gradient = torch.tensor(args.reduce_gradient, dtype=torch.float, device='cuda')
         # self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
 
@@ -283,7 +282,9 @@ def gradient_sum_check(model, reduce_ratio):
                 fused.allowed_channels = fused.fixed_indices[indices]
 
 
-def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, reduce_ratio, hvd=None):
+
+
+def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, reduce_ratio):
     losses = AverageMeter()
     top1 = AverageMeter()
 
@@ -299,13 +300,8 @@ def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, re
             losses.update(loss.item(), input.size(0))
             top1.update(prec.item(), input.size(0))
 
-            if hvd:
-                if hvd.rank() == 0:
-                    logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                                 .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
-            else:
-                logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
-                             .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
 
             optimizer.zero_grad()
             loss.backward()
@@ -570,7 +566,7 @@ def load_tuning_info(path):
 
 
 def check_file_exist(path):
-    return os.path.isfile(path) 
+    return os.path.isfile(path)
 
 
 def add_path(prev_path, to_add, allow_existence=True):
@@ -593,7 +589,7 @@ def set_clustering_dir(args, arch_for_nnac=None):
     path = add_path(path, args.clustering_method)
     path = add_path(path, arch_for_nnac)
     path = add_path(path, args.dataset)
-    
+
     if args.nnac:
         name = f'k{args.cluster}.part{args.partition}.{args.repr_method}.sub{args.sub_cluster}.topk_{args.topk}.sim_{args.sim_threshold}.{args.similarity_method}'
     else:

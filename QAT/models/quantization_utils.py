@@ -19,33 +19,23 @@ class SKT_MIX(torch.autograd.Function):
     @staticmethod
     # def forward(ctx, input_, fixed_indices, grad_method, const_portion, reduce_ratio, quantile_tensor):
     def forward(ctx, input_, fixed_indices, runtime_helper):
-        # max_per_ch = torch.max(input_[:, fixed_indices].view(fixed_indices.size(0), -1).min(dim=1).values.abs(), input_[:, fixed_indices].view(fixed_indices.size(0), -1).max(dim=1).values.abs())
         const_portion = runtime_helper.const_portion
         reduce_ratio = runtime_helper.reduce_ratio
         quantile_tensor = runtime_helper.quantile_tensor
-        reduce_gradient = runtime_helper.reduce_gradient
 
         max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
         mask = input_[:, fixed_indices] > (max_per_ch / 2)
 
-        # # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
-        # dist_ratio = (max_per_ch - input_[:, fixed_indices].abs()) / max_per_ch
-        # dist_ratio = torch.where(dist_ratio == 0.0, torch.tensor(1.0, device='cuda'), dist_ratio)
-
+        # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
         dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
         grad_direction = -1 * input_[:, fixed_indices] * reduce_ratio
 
-        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor, reduce_gradient)
-        # ctx.save_for_backward(fixed_indices, mask,  max_per_ch, const_portion * dist_ratio, grad_method, quantile_tensor)
-
-        # ctx.save_for_backward(fixed_indices, mask,  max_per_ch * const_portion)
-        # ctx.save_for_backward(input_, indices, mask)
+        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor)
         return input_
 
     @staticmethod
     def backward(ctx, grad):
-        fixed_indices, mask, grad_direction, const_portion, quantile_tensor, reduce_gradient = ctx.saved_tensors
-        # fixed_indices, mask, max_per_ch, const_portion, grad_method, quantile_tensor = ctx.saved_tensors
+        fixed_indices, mask, grad_direction, const_portion, quantile_tensor = ctx.saved_tensors
 
         abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
         f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
@@ -55,38 +45,10 @@ class SKT_MIX(torch.autograd.Function):
         grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() <= abs_val), const_portion, grad[:, fixed_indices])
 
         # else
-        grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), grad[:, fixed_indices] * reduce_gradient, grad[:, fixed_indices])
+        grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), grad[:, fixed_indices], grad[:, fixed_indices])
 
         # # naive fixed gradient method
         # grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
-
-        # if grad_method:
-        #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() * const_portion, grad[:, fixed_indices])
-        # else:
-        #     # # prev
-        #     # tmp = torch.masked_select(grad[:, fixed_indices], mask).mean().abs() * const_portion
-        #     # 절대값의 평균
-        #     tmp = torch.masked_select(grad[:, fixed_indices], mask).abs().mean() * const_portion
-        #     grad[:, fixed_indices] = torch.where(mask > 0, grad[:, fixed_indices].abs() - tmp, grad[:, fixed_indices])
-
-        # # consider loss like weight
-        # input_tensor, indices, mask = ctx.saved_tensors
-        # data = input_tensor.transpose(1, 0).reshape(input_tensor.size(1), -1)
-        # _max = data.max(dim=1).values
-        # _min = data.min(dim=1).values
-        # range_ = _max - _min
-        # max_range = range_.max()
-        # max_indices = ((max_range / range_[indices]) < 2.0).nonzero(as_tuple=True)[0]
-        #
-        # # # without considering loss
-        # # grad[:, max_indices] = 0
-        #
-        # ## channel wise version
-        # grad_sum = (-1 * input_tensor[:, max_indices] * 0.9 * grad[:, max_indices]).sum(dim=(0, 2, 3))
-        # indices_ = torch.where(grad_sum > 0, 1, 0).nonzero(as_tuple=True)[0]
-        # grad[:, indices_] = 0
-        # import pdb
-        # pdb.set_trace()
         return grad, None, None, None
 
 

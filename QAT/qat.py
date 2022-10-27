@@ -53,7 +53,7 @@ parser.add_argument('--pre_fixed_channel', default=0.5, type=float, help='For SK
 parser.add_argument('--const_portion', default=0.5, type=float, help='For SKT, set portion of max value to reduce input gradient')
 parser.add_argument('--grad_method', action='store_true', help='method to reduce input gradient')
 parser.add_argument('--record_val', default=False, type=bool, help='For SKT, record num of outputs out of clipping range')
-parser.add_argument('--input_grad', action='store_true', help='For SKT, make gradient of input zero')
+parser.add_argument('--input_grad', action='store_true', help='For SKT, whethert to manipulate input gradients')
 # parser.add_argument('--weight_scailing', action='store_true', help='For SKT, set bits considering only weight range')
 parser.add_argument('--percentile', default=1.0, type=float, help="threshold to split weight groups into two")
 parser.add_argument('--quantile', default=1.0, type=float, help="threshold to fix input gradients to certain value or not")
@@ -61,7 +61,6 @@ parser.add_argument('--reduce_ratio', default=1.0, type=float, help="weight redu
 parser.add_argument('--channel_epoch', default=30, type=int, help='Number of epochs to set low bits')
 parser.add_argument('--method', default='max', type=str, help="how to choose one of scales")
 parser.add_argument('--init_ema', default=0, type=int, help="wheter to initialize recorded ema range ")
-parser.add_argument('--reduce_gradient', default=1.0, type=float, help="wheter to initialize recorded ema range ")
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
