@@ -4,9 +4,9 @@ SCRIPT_PATH="/workspace/PerClusterQuantization/run_HAWQ.sh"
 
 GPU=${1}
 
-MODELS=(alexnet resnet20)
+MODELS=(alexnet)
 DATAS=(cifar10 cifar100 svhn)
-CLUSTERS=(2 4 8 16 32 64 128 256 512 1024)
+CLUSTERS=(1 2 4 8 16 32 64 128 256 512 1024)
 LEARNING_RATES=(0.0001)
 BATCH_SIZES=(128)
 
