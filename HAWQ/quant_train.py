@@ -28,6 +28,8 @@ import torch.distributed as dist
 import torch.optim
 import torch.multiprocessing as mp
 
+import pandas as pd
+
 mp.set_sharing_strategy('file_system')
 
 warnings.filterwarnings("ignore")
@@ -463,12 +465,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
         freeze_model(model)
-        if args.max_method == 'zero':
-            clustering_model.nn_aware_clustering(
-                model, cluster_train_loader, prev_arch)
-        else:
-            clustering_model.zero_max_nn_aware_clustering(
-                model, cluster_train_loader, args.arch)
+        clustering_model.zero_max_nn_aware_clustering(
+            model, cluster_train_loader, args.arch)
         model.toggle_full_precision()
         unfreeze_model(model)
     if args.evaluate:
@@ -476,7 +474,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         return
 
     best_epoch = 0
-    register_acc = 0
+    best_acc1 = 0
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
@@ -493,52 +491,78 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
+
+    ###
+
     for epoch in range(args.start_epoch, 10):
         train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
         acc1 = validate(test_loader, model, clustering_model, criterion, args)
+
+    model.toggle_full_precision()
+    freeze_model(model)
+    score = clustering_model.measure_cluster_score(model, cluster_train_loader, args.arch)
+    model.toggle_full_precision()
+    freeze_model(model)
+
+    cluster = args.sub_cluster if args.nnac else args.cluster
+    try:
+        df_data = pd.read_csv(f"{args.arch}_{args.data}_{cluster}")
         
-    # for epoch in range(args.start_epoch, 20):
-        # train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
-    for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch, args)
+        score_np = score.cpu().numpy()
+        score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
+        
+        score_df = pd.concat([df_data, score_df], axis=1)
+        score_df.to_csv(f"{args.arch}_{args.data}_{cluster}", index=False)
+    except :
+        score_np = score.cpu().numpy()
+        score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
+        score_df.to_csv(f"{args.arch}_{args.data}_{cluster}", index=False)
+        
+        
 
-        train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
-        tuning_fin_time = time.time()
-        one_epoch_time = get_time_cost_in_string(
-            tuning_fin_time - tuning_start_time)
-        acc1 = validate(test_loader, model, clustering_model, criterion, args)
+    # # Train EMA for couple epochs before training parameters
+    # for epoch in range(args.start_epoch, 10):
+    #     train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
+    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
+        
+    # for epoch in range(args.start_epoch, args.epochs):
+    #     adjust_learning_rate(optimizer, epoch, args)
 
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+    #     train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
+    #     tuning_fin_time = time.time()
+    #     one_epoch_time = get_time_cost_in_string(
+    #         tuning_fin_time - tuning_start_time)
+    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
 
-        logging.info(f'Best acc at epoch {epoch}: {best_acc1}')
-        if is_best:
-            # record the best epoch
-            best_epoch = epoch
-            register_acc = best_acc1
+    #     # remember best acc@1 and save checkpoint
+    #     is_best = acc1 > best_acc1
+    #     if (acc1 > best_acc1):
+    #         best_acc1 = max(acc1, best_acc1)
+    #         best_epoch = epoch
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
-                'optimizer': optimizer.state_dict(),
-            }, is_best, finetune_path)
+    #     logging.info(f'Best acc at epoch {best_epoch}: {best_acc1}')
 
-    test_score = register_acc
+    #     if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+    #         save_checkpoint({
+    #             'epoch': epoch + 1,
+    #             'arch': args.arch,
+    #             'state_dict': model.state_dict(),
+    #             'best_acc1': best_acc1,
+    #             'optimizer': optimizer.state_dict(),
+    #         }, is_best, finetune_path)
 
-    time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+    # test_score = best_acc1
 
-    if not args.nnac:
-        with open(f'{log_path}/cluster_{args.cluster}.txt', 'a') as f:
-            f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
-    else:
-        with open(f'{log_path}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
-            f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+    # time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+
+    # if not args.nnac:
+    #     with open(f'{log_path}/cluster_{args.cluster}.txt', 'a') as f:
+    #         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+    #             args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+    # else:
+    #     with open(f'{log_path}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
+    #         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+    #             args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
 def train_ema(train_loader, model, clustering_model, criterion, epoch, args):

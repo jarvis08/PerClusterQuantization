@@ -85,6 +85,10 @@ class Q_ResNet18(nn.Module):
         return x
 
 
+    def delete_counters(self):
+        del self.zero_counter
+        del self.max_counter
+        
     def get_max_activations(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
@@ -252,6 +256,11 @@ class Q_ResNet20(nn.Module):
         return x
 
 
+    def delete_counters(self):
+        del self.zero_counter
+        del self.max_counter
+        
+        
     def get_max_activations(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
@@ -417,6 +426,11 @@ class Q_ResNet50(nn.Module):
         return x
 
 
+    def delete_counters(self):
+        del self.zero_counter
+        del self.max_counter
+        
+        
     def get_max_activations(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 

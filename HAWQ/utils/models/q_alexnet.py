@@ -327,6 +327,9 @@ class Q_AlexNet(nn.Module):
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
+    def delete_counters(self):
+        del self.zero_counter
+        del self.max_counter
 
     def get_output_max_distribution(self, x, cluster, n_clusters):
         if not hasattr(self, 'max_counter'):
@@ -393,6 +396,17 @@ class Q_AlexNet(nn.Module):
             self.max_counter[l_idx][cluster] = _max
         else:
             self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+
+
+    def get_ema_per_layer(self):
+        ema = [[] for _ in range(5)]
+        ema[0] = self.quant_act1.x_max
+        ema[1] = self.quant_act2.x_max
+        ema[2] = self.quant_act3.x_max
+        ema[3] = self.quant_act4.x_max
+        ema[4] = self.quant_act5.x_max
+        return torch.stack(ema)
+        
 
 def q_alexnet(model, model_dict=None, num_clusters=None):
     return Q_AlexNet(model, model_dict, num_clusters)

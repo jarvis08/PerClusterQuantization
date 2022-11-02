@@ -61,7 +61,7 @@ class KMeansClustering(object):
             n_part = 4
             n_data = int(_size / n_part)
             rst = None
-            for c in range(n_part):
+            for c in range(n_part): 
                 c_start = n_data * c
                 part_data = data[:, :, c_start:c_start +
                                  n_data, :].reshape(batch, channel, -1)
@@ -272,13 +272,64 @@ class KMeansClustering(object):
         #                                           gap=0.01)
 
 
-        merged_clusters, n_per_sub = merge_at_once(self.args, dnn_model, n_per_sub, print_log) # NEW WAY
-        # merged_clusters, n_per_sub = merge_stepwise(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
+        # Robustness of clustering (outlier)
+        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, n_per_sub, print_log) # NEW WAY
+        # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
 
         final_clusters = print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, self.args.cluster)
         self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
+        dnn_model.delete_counters()
 
 
+    @torch.no_grad()
+    def measure_cluster_score(self, dnn_model, train_loader, arch, print_log=True):
+        print('\n>>> measure cluster score..')
+        from utils.misc import InputContainer
+
+        n_clusters = self.args.cluster
+        container = InputContainer(
+            train_loader, self, self.args.cluster, self.args.dataset, arch, self.args.batch)
+        container.initialize_generator()
+        container.set_next_batch()
+
+        print('Count Max Values per cluster about dataset..')
+        n_per_sub = [0 for _ in range(self.args.cluster)]
+        dnn_model.eval()
+        
+        with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
+            for i, _ in enumerate(t):
+                input, _, cluster = container.get_batch()
+
+                n_per_sub[cluster] += self.args.batch
+                dnn_model.get_output_max_distribution(
+                    input, cluster, self.args.cluster)
+
+                container.set_next_batch()
+                if container.ready_cluster is None:
+                    break
+            container.check_leftover()
+            for c in range(container.num_clusters):
+                if container.leftover_cluster_data[c]:
+                    input, _, cluster = container.leftover_batch[c][0], \
+                        container.leftover_batch[c][1], c
+                    n_per_sub[cluster] += input.size(0)
+                    dnn_model.get_output_max_distribution(
+                        input, cluster, self.args.cluster)
+
+        n_layers = len(dnn_model.max_counter)
+        n_per_sub = torch.tensor(n_per_sub).cuda()
+        ema = dnn_model.get_ema_per_layer().cuda()
+
+        score = torch.zeros([n_layers, n_clusters]).cuda()
+
+        for layer_idx in range(n_layers):
+            for cluster_idx in range(n_clusters):
+                score[layer_idx][cluster_idx] = torch.mean(torch.abs(dnn_model.max_counter[layer_idx][cluster_idx] - ema[layer_idx][cluster_idx]))
+                
+        cluster_score_per_layer = torch.mean(score, dim=1)
+        
+        return cluster_score_per_layer
 
 ##############################################################
 
@@ -384,14 +435,14 @@ def get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_cluster
 
 
 ############# NEW WAY #############
-def merge_at_once(args, dnn_model, n_per_sub, print_log):
+def clustering_aggregation(args, dnn_model, n_per_sub, print_log):
     n_sub_clusters = args.sub_cluster
     distance, _ = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=1)
     clusters = get_splitted_cluster_sets(distance, target_cluster=args.cluster)
     return merge_clustered_pairs(dnn_model, clusters, n_per_sub, print_log)
 
 ############# OLD WAY #############
-def merge_stepwise(args, dnn_model, n_per_sub, print_log):
+def average_link_clustering(args, dnn_model, n_per_sub, print_log):
     n_sub_clusters = args.sub_cluster
     merged_clusters = []
 
