@@ -798,9 +798,9 @@ class Q_ResUnitBn(nn.Module):
 
     def get_ema_per_layer(self):
         ema = []
+        ema.append(self.quant_act.x_max)
         ema.append(self.quant_act1.x_max)
         ema.append(self.quant_act2.x_max)
-        ema.append(self.quant_act3.x_max)
         ema.append(self.quant_act_int32.x_max)
         return ema
 
@@ -1003,8 +1003,8 @@ class Q_ResBlockBn(nn.Module):
 
     def get_ema_per_layer(self):
         ema = []
+        ema.append(self.quant_act.x_max)
         ema.append(self.quant_act1.x_max)
-        ema.append(self.quant_act2.x_max)
         ema.append(self.quant_act_int32.x_max)
         return ema
 
