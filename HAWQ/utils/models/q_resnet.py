@@ -182,7 +182,15 @@ class Q_ResNet18(nn.Module):
                 x, l_idx = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
                                                                 initialized)
 
-
+    def get_ema_per_layer(self):
+        ema = []
+        ema.append(self.quant_act_int32.x_max)
+        for stage_num in range(0, 4):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                ema = ema + tmp_func.get_ema_per_layer()
+        ema.append(self.quant_act_output.x_max)
+        return torch.stack(ema)
 
 class Q_ResNet20(nn.Module):
     """
@@ -349,6 +357,15 @@ class Q_ResNet20(nn.Module):
                 x, l_idx = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
                                                                 initialized)
 
+    def get_ema_per_layer(self):
+        ema = []
+        ema.append(self.quant_act_int32.x_max)
+        for stage_num in range(0, 3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                ema = ema + tmp_func.get_ema_per_layer()
+        ema.append(self.quant_act_output.x_max)
+        return torch.stack(ema)
 
 
 class Q_ResNet50(nn.Module):
@@ -524,6 +541,15 @@ class Q_ResNet50(nn.Module):
                 x, layer_idx = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, layer_idx,
                                                                 initialized)
 
+    def get_ema_per_layer(self):
+        ema = []
+        ema.append(self.quant_act_int32.x_max)
+        for stage_num in range(0,4):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                ema = ema + tmp_func.get_ema_per_layer()
+        ema.append(self.quant_act_output.x_max)
+        return torch.stack(ema)
 
 
 class Q_ResUnitBn(nn.Module):
@@ -770,7 +796,13 @@ class Q_ResUnitBn(nn.Module):
         
         return x, l_idx
 
-
+    def get_ema_per_layer(self):
+        ema = []
+        ema.append(self.quant_act1.x_max)
+        ema.append(self.quant_act2.x_max)
+        ema.append(self.quant_act3.x_max)
+        ema.append(self.quant_act_int32.x_max)
+        return ema
 
 class Q_ResBlockBn(nn.Module):
     """
@@ -968,6 +1000,14 @@ class Q_ResBlockBn(nn.Module):
             max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
 
         return x, l_idx
+
+    def get_ema_per_layer(self):
+        ema = []
+        ema.append(self.quant_act1.x_max)
+        ema.append(self.quant_act2.x_max)
+        ema.append(self.quant_act_int32.x_max)
+        return ema
+
 
 def q_resnet18(model, num_clusters=None):
     return Q_ResNet18(model, num_clusters)
