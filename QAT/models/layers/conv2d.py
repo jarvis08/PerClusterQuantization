@@ -621,11 +621,9 @@ class FusedConv2d(nn.Module):
         if self.apply_ema:
             updated_min = self.input_range[0] * self.smooth + _min * (1 - self.smooth)
             updated_max = self.input_range[1] * self.smooth + _max * (1 - self.smooth)
-
             self.input_range[0], self.input_range[1] = updated_min, updated_max
         else:
             self.input_range[0], self.input_range[1] = _min, _max
-            # self.apply_ema.data = torch.tensor(True, dtype=torch.bool)
 
     def _general(self, x, external_range=None):
         zero = self.runtime_helper.fzero
@@ -636,7 +634,8 @@ class FusedConv2d(nn.Module):
                            self.conv.groups)
         elif self.mixed_precision:
             if self.runtime_helper.conv_mixed_grad:
-                x = SKT_MIX.apply(x, self.fixed_indices, self.runtime_helper)
+                SKT_MIX.apply(x, self.fixed_indices, self.runtime_helper, False)
+                SKT_MIX.apply(self.conv.weight, self.fixed_indices, self.runtime_helper, self.symmetric)
             self._update_input_ranges(x)
             fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
             # self._update_input_ranges(fq_input)

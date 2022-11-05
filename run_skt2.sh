@@ -2,14 +2,12 @@
 
 ###################################################
 GPU_NUM=${1}
-MODEL=${2} # alexnet / resnet
+MODEL=${2}         # alexnet / resnet
 DATASET=${3}       # cifar10 / cifar100
-REDUCE_RATIO=${4}  # 0.98 / 0.95 / 0.9 / 0.8 / 0.7
-CONST_PORTION=${5} # 1e-4 / 1e-5 / 1e-6 / 1e-7 / 1e-8
-RECORD_VAL=${6}    # true / false
-QUANTILE=${7}      # 0 / 0.25 / 0.5 / 0.75 / 1
-REDUCE_GRADIENT=${8} # 1.0 / 0.75/ 0.5
-INIT_EMA=${9}      # TRUE / FALSE
+CONST_PORTION=${4} # 1e-4 / 1e-5 / 1e-6 / 1e-7 / 1e-8
+QUANTILE=${5}      # 0 / 0.25 / 0.5 / 0.75 / 1
+FIXED_RATIO=${6}
+#REDUCE_RATIO=${4} # 0.98 / 0.95 / 0.9 / 0.8 / 0.7
 
 if [ $MODEL = "resnet" ] ; then
   MODEL_DESC=$MODEL'20'
@@ -21,7 +19,6 @@ MODEL_PATH="./pretrained_models/$DATASET/$MODEL_DESC/checkpoint.pth"
 #echo "$MODEL"
 #echo "$MODEL_DESC"
 #echo "$MODEL_PATH"
-
 #####################################################
 
 if [ "$MODEL" = alexnet ]; then
@@ -39,12 +36,11 @@ if [ "$MODEL" = alexnet ]; then
     --input_grad \
     --percentile 2.0 \
     --channel_epoch 30 \
-    --reduce_ratio $REDUCE_RATIO \
+    --pre_fixed_channel $FIXED_RATIO \
+    --reduce_ratio 1.0 \
     --const_portion $CONST_PORTION \
     --quantile $QUANTILE \
-    --record_val $RECORD_VAL \
-    --reduce_gradient $REDUCE_GRADIENT \
-    --init_ema $INIT_EMA \
+    --init_ema 1 \
     --gpu $GPU_NUM
 else
     python main.py \
@@ -62,12 +58,11 @@ else
     --input_grad \
     --percentile 2.0 \
     --channel_epoch 30 \
-    --reduce_ratio $REDUCE_RATIO \
+    --pre_fixed_channel $FIXED_RATIO \
+    --reduce_ratio 1.0 \
     --const_portion $CONST_PORTION \
     --quantile $QUANTILE \
-    --record_val $RECORD_VAL \
-    --reduce_gradient $REDUCE_GRADIENT \
-    --init_ema $INIT_EMA \
+    --init_ema 1 \
     --gpu $GPU_NUM
 fi
 

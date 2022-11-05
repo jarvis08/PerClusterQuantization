@@ -89,47 +89,6 @@ def draw_violin_graph(data, max_, identifier, arch, epoch):
     plt.close(fig)
 
 
-# def visualize(args, model, epoch):
-#     path = os.path.join('', 'skt_range_yongjoo')
-#     if not os.path.exists(path):
-#         os.makedirs(path)
-#     # path = os.path.join(path, args.arch + args.dataset)
-#     # if not os.path.exists(path):
-#     #     os.makedirs(path)
-#     violin_path  = os.path.join(path, 'violin_output')
-#     if not os.path.exists(violin_path):
-#         os.makedirs(violin_path)
-#     # naming = args.arch + '_' + args.dataset + '_' + str(epoch)
-#     naming = args.arch + '_' + args.dataset
-#
-#     print("Save range output")
-#     print("Save dir: ", violin_path)
-#
-#     conv_cnt = 0
-#     model.cpu()
-#     range_per_group = []
-#     # weight, layer input group
-#     input_group = []
-#     weight_group = []
-#     max_ = 0
-#
-#     # get input, weight distribution per input channel
-#     for m in model.modules():
-#     #         # out_channel = m.out_channels
-#     #         # input_per_out_filter_group = m.input_range.transpose(1, 0).numpy()
-#     #         # weight_per_out_filter_group = m.weight.transpose(1, 0).reshape(m.weight.size(1), -1).numpy()
-#     #         # output_per_out_filter_group = m.act_range.transpose(1,0).numpy()
-#     #
-#     #         # input_min_max_per_group = input_per_out_filter_group.max(axis=1) - input_per_out_filter_group.min(axis=1)
-#     #         # range_per_group.append(min_max_per_group)
-#     #         # if min_max_per_group.max() > max_:
-#     #         #     max_ = min_max_per_group.max()
-#
-#     # violin
-#     # range_per_group_sorted = sorted(list(range_per_group))
-#     # draw_violin_graph(range_per_group, max_, violin_path + f'/{naming}.png', naming, epoch)
-
-
 def validate_setting_bits(model, loader, criterion):
     print('\n>>> Setting bits..')
     # from .utils.misc import accuracy
@@ -179,7 +138,7 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
             input_range = fused.val_input_range[1] - fused.val_input_range[0]
             input_max = input_range.max()
 
-            # # input asymmetric version
+            # # input symmetric version
             # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
             # input_max = input_range.max()
 
@@ -193,60 +152,8 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
 
-            # four_group.append(len(fused.low_group))
-
     ratio = low_counter / model.total_ch_sum * 100
     print("Total low bit ratio : {:.2f}% ".format(ratio))
-
-    # with open(identifier + '.csv', 'a') as csvfile:
-    #     writer = csv.writer(csvfile)
-    #     writer.writerow((['0', 'initial', '{:2f}%'.format(ratio)]))
-
-
-def set_mixed_bits_per_input_channels(model, epoch, identifier=None):
-    low_counter = 0
-    eight_counter = 0
-    for fused in model.modules():
-        if isinstance(fused, FusedConv2d):
-            in_channel = fused.in_channels
-            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
-
-            weight_group = weight_per_filter_group.reshape(in_channel, -1)
-            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-
-            # input asymmetric
-            input_range = fused.input_range[1] - fused.input_range[0]
-
-            # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
-
-            # low_bit = 8 - round(math.log(model.percentile_tensor, 2))
-            prev_bit = (fused.w_bit.data != 8)
-            input_max, weight_max = input_range.max(), weight_range.max()
-
-            weight_bits = torch.logical_or(model.percentile_tensor <= (weight_max / weight_range), fused.prev_bit)
-
-            input_bits = (model.percentile_tensor <= (input_max / input_range))
-
-            renewal_bits = torch.logical_or(torch.logical_and(input_bits, weight_bits), prev_bit).nonzero(as_tuple=True)[0]
-            fused.w_bit.data[renewal_bits] = fused.low_bit
-
-            # fused.w_bit.data = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
-
-            fused.low_group = (fused.w_bit.data == fused.low_bit).nonzero(as_tuple=True)[0].cuda()
-            fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
-            # fused.low_bit = torch.tensor(fused.low_bit, dtype=torch.int8)
-
-            low_counter += len(fused.low_group)
-            eight_counter += len(fused.high_group)
-
-    ratio = low_counter / model.total_ch_sum * 100
-
-    print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
-    with open(identifier + '.csv', 'a') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(([epoch, '{:2f}%'.format(ratio)]))
-
-    return ratio
 
 
 def initialize_act_range(model):
@@ -283,15 +190,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         runtime_helper.set_skt_arguments(args)
-        # if not args.grad_method:
-        #     runtime_helper.grad_method = ~runtime_helper.grad_method
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
-        # # try inference once to record input precisions
-        # identifier = f'[TRAIN_Ratio]percentile_{args.percentile}_ema_{args.smooth}_weight_scailing_{args.weight_scailing}_weight_only_{args.weight_only}_'
-        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_METH_{args.grad_method}_CON_{args.const_portion}'
+        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}__CON_{args.const_portion}'
         set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
-        # pretrained_model.cpu()
         initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -315,10 +217,12 @@ def _finetune(args, tools, data_loaders, clustering_model):
     quantized_model = None
     ratio = 0
     for e in range(epoch_to_start, args.epoch + 1):
-        if e == args.channel_epoch + 1 and args.init_ema:
-            initialize_act_range(model)
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
+        if e == args.channel_epoch + 1 and args.init_ema:
+            initialize_act_range(model)
+            runtime_helper.apply_fake_quantization = False
+
         if e <= args.channel_epoch and args.input_grad:
             runtime_helper.conv_mixed_grad = True
         else:
@@ -358,10 +262,6 @@ def _finetune(args, tools, data_loaders, clustering_model):
         # if e > args.fq:
         if e >= args.epoch:
             model.set_quantization_params()
-            # if args.mixed_precision:
-            #     model.set_mixed_quantization_params(args.method)
-            # else:
-            #     model.set_quantization_params()
             if quantized_model is None:
                 if args.dataset == 'cifar100':
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
@@ -443,7 +343,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.symmetric:
         pc += 'Symmetric, '
 
-    with open(f'./[EXP]qat_{args.arch[:4]}_{args.dataset}_{args.bit}_EMA_{args.init_ema}.txt', 'a') as f:
+    with open(f'./[EXP]qat_{args.arch[:4]}_{args.dataset}_{args.bit}_FIXED_{args.pre_fixed_channel}.txt', 'a') as f:
         f.write('reduce {} /channel {:.2f}% / const {} / quantile {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
                 .format(args.reduce_ratio, ratio, args.const_portion, args.quantile, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,

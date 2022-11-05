@@ -17,38 +17,43 @@ class STE(torch.autograd.Function):
 
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
-    # def forward(ctx, input_, fixed_indices, grad_method, const_portion, reduce_ratio, quantile_tensor):
-    def forward(ctx, input_, fixed_indices, runtime_helper):
+    def forward(ctx, x, fixed_indices, runtime_helper, symmetric):
         const_portion = runtime_helper.const_portion
-        reduce_ratio = runtime_helper.reduce_ratio
         quantile_tensor = runtime_helper.quantile_tensor
 
-        max_per_ch = input_[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1).max(dim=1).values.abs()[None, :, None, None]
-        mask = input_[:, fixed_indices] > (max_per_ch / 2)
+        if symmetric:
+            reshaped = x[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1)
+            max_per_ch = torch.max(reshaped.max(dim=1).values.abs(), reshaped.min(dim=1).values.abs())[None, :, None, None]
+        else:
+            reshaped = x[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1)
+            max_per_ch = (reshaped.max(dim=1).values - reshaped.min(dim=1).values)[None, :, None, None]
+        mask = x[:, fixed_indices] > (max_per_ch / 2)
 
-        # 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
-        dist_ratio = (input_[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
-        grad_direction = -1 * input_[:, fixed_indices] * reduce_ratio
-
-        ctx.save_for_backward(fixed_indices, mask,  grad_direction, const_portion * dist_ratio, quantile_tensor)
-        return input_
+        ## 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
+        ## 이건 뉴런 값이니까 음수인 애들을 절대값 씌워서 하는게 이상함
+        # dist_ratio = (x[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
+        # ctx.save_for_backward(fixed_indices, mask,  const_portion * dist_ratio, quantile_tensor)
+        # ctx.save_for_backward(fixed_indices, mask, torch.sign(x[:, fixed_indices]), const_portion, quantile_tensor)
+        ctx.save_for_backward(fixed_indices, mask, torch.sign(x[:, fixed_indices]), const_portion, quantile_tensor)
+        return
 
     @staticmethod
     def backward(ctx, grad):
-        fixed_indices, mask, grad_direction, const_portion, quantile_tensor = ctx.saved_tensors
-
+        fixed_indices, mask, sign_info, const_portion, quantile_tensor = ctx.saved_tensors
+        grad_sign = torch.sign(grad[:, fixed_indices]) * sign_info
+        # quantile 한 3개 정도 50, 25, 10
         abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
-        f = lambda x: (x.abs() > abs_val) & ((grad_direction * x) > 0)
+        # # 평균의 반의 반
+        # abs_val = grad[:, fixed_indices].abs().mean() * 0.5
 
-        # abs val
         # lower
         grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() <= abs_val), const_portion, grad[:, fixed_indices])
-
         # else
-        grad[:, fixed_indices] = torch.where((mask > 0) & f(grad[:, fixed_indices]), grad[:, fixed_indices], grad[:, fixed_indices])
-
-        # # naive fixed gradient method
-        # grad[:, fixed_indices] = torch.where(mask > 0, const_portion, grad[:, fixed_indices])
+        # make it bigger
+        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() > abs_val) & (grad_sign[:, fixed_indices] > 0), grad[:, fixed_indices] * 2, grad[:, fixed_indices])
+        # else
+        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() > abs_val) & (grad_sign[:, fixed_indices] < 0),
+                                             grad[:, fixed_indices] * 0.5, grad[:, fixed_indices])
         return grad, None, None, None
 
 
