@@ -4,9 +4,10 @@
 GPU_NUM=${1}
 MODEL=${2}         # alexnet / resnet
 DATASET=${3}       # cifar10 / cifar100
-CONST_PORTION=${4} # 1e-4 / 1e-5 / 1e-6 / 1e-7 / 1e-8
-QUANTILE=${5}      # 0 / 0.25 / 0.5 / 0.75 / 1
-FIXED_RATIO=${6}
+FIXED_RATIO=${4}
+CONST_PORTION=${5} # 1e-4 / 1e-5 / 1e-6 / 1e-7 / 1e-8
+QUANTILE=${6}      # 0 / 0.25 / 0.5 / 0.75 / 1
+
 #REDUCE_RATIO=${4} # 0.98 / 0.95 / 0.9 / 0.8 / 0.7
 
 if [ $MODEL = "resnet" ] ; then
