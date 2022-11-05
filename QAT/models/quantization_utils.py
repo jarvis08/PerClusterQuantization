@@ -35,7 +35,7 @@ class SKT_MIX(torch.autograd.Function):
         # ctx.save_for_backward(fixed_indices, mask,  const_portion * dist_ratio, quantile_tensor)
         # ctx.save_for_backward(fixed_indices, mask, torch.sign(x[:, fixed_indices]), const_portion, quantile_tensor)
         ctx.save_for_backward(fixed_indices, mask, torch.sign(x[:, fixed_indices]), const_portion, quantile_tensor)
-        return
+        return x
 
     @staticmethod
     def backward(ctx, grad):
