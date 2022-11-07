@@ -500,7 +500,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     model.toggle_full_precision()
     freeze_model(model)
-    score = clustering_model.measure_cluster_score(model, cluster_train_loader, args.arch)
+    score = clustering_model.measure_cluster_distance(model, cluster_train_loader, args.arch)
     model.toggle_full_precision()
     freeze_model(model)
 

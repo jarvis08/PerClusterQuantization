@@ -331,6 +331,72 @@ class KMeansClustering(object):
         
         return cluster_score_per_layer
 
+
+    @torch.no_grad()
+    def measure_cluster_distance(self, dnn_model, train_loader, arch, print_log=True):
+        print('\n>>> measure cluster score..')
+        from utils.misc import InputContainer
+
+        n_clusters = self.args.cluster
+        container = InputContainer(
+            train_loader, self, self.args.cluster, self.args.dataset, arch, self.args.batch)
+        container.initialize_generator()
+        container.set_next_batch()
+
+        print('Count Max Values per cluster about dataset..')
+        n_per_sub = [0 for _ in range(self.args.cluster)]
+        dnn_model.eval()
+        
+        with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
+            for i, _ in enumerate(t):
+                input, _, cluster = container.get_batch()
+
+                n_per_sub[cluster] += self.args.batch
+                dnn_model.get_output_max_distribution(
+                    input, cluster, self.args.cluster)
+
+                container.set_next_batch()
+                if container.ready_cluster is None:
+                    break
+            container.check_leftover()
+            for c in range(container.num_clusters):
+                if container.leftover_cluster_data[c]:
+                    input, _, cluster = container.leftover_batch[c][0], \
+                        container.leftover_batch[c][1], c
+                    n_per_sub[cluster] += input.size(0)
+                    dnn_model.get_output_max_distribution(
+                        input, cluster, self.args.cluster)
+
+        n_layers = len(dnn_model.max_counter)
+        n_per_sub = torch.tensor(n_per_sub).cuda()
+        ema = dnn_model.get_ema_per_layer().cuda()
+        
+        # First Layer
+        first_layer_ema = ema[0].unsqueeze(1)
+        first_layer_distance = torch.triu(torch.cdist(first_layer_ema, first_layer_ema, p=2), diagonal=1)
+        first_layer_distance = first_layer_distance[torch.nonzero(first_layer_distance, as_tuple=True)]
+        first_layer_score = torch.mean(first_layer_distance).item()
+        
+        # Middle Layer
+        middle_layer_ema = ema[int(ema.size(0)/2)].unsqueeze(1)
+        middle_layer_distance = torch.triu(torch.cdist(middle_layer_ema, middle_layer_ema, p=2), diagonal=1)
+        middle_layer_distance = middle_layer_distance[torch.nonzero(middle_layer_distance, as_tuple=True)]
+        middle_layer_distance = torch.mean(middle_layer_distance).item()
+        
+        # Last Layer
+        last_layer_ema = ema[-1].unsqueeze(1)
+        last_layer_distance = torch.triu(torch.cdist(last_layer_ema, last_layer_ema, p=2), diagonal=1)
+        last_layer_distance = last_layer_distance[torch.nonzero(last_layer_distance, as_tuple=True)]
+        last_layer_distance = torch.mean(last_layer_distance).item()
+        
+        # Total Average Layer
+        total_distance = torch.triu(torch.cdist(ema.T, ema.T, p=2), diagonal=1)
+        total_distance = total_distance[torch.nonzero(total_distance, as_tuple=True)]
+        total_distance = torch.mean(total_distance).item()
+
+        return torch.tensor([first_layer_score, middle_layer_distance, last_layer_distance, total_distance]).cuda()
+
+
 ##############################################################
 
 def get_group_id(index, clusters_group):
