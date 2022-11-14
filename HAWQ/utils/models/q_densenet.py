@@ -59,9 +59,8 @@ class Q_DenseNet(nn.Module):
         x, act_scaling_factor = self.quant_input(input, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
-
-        x, act_scaling_factor = self.pool(x, act_scaling_factor)
         x = self.act1(x) 
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
 
         for stage_num in range(4):
@@ -93,6 +92,10 @@ class Q_DenseNet(nn.Module):
                 else:
                     precision = True
                 setattr(module, 'full_precision_flag', precision)
+    
+    def delete_counters(self):
+        # del self.zero_counter
+        del self.max_counter
     
     def initialize_counter(self, x, n_clusters):
         self.zero_counter = []
@@ -156,6 +159,37 @@ class Q_DenseNet(nn.Module):
             zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
             zeros_idx %= n_features
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+
+    def get_output_max_distribution(self, x, cluster, n_clusters):
+        initialized = True
+        if not hasattr(self, 'max_counter'):
+            initialized = False
+            self.max_counter = []
+            self.max_counter.append([[] for _ in range(n_clusters)])
+
+        x, act_scaling_factor = self.quant_input(input, cluster=cluster)
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
+        x = self.act1(x) 
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
+        
+        l_idx = 0
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        for stage_num in range(0,4):
+            if stage_num != 0:
+                transition = getattr(self, f'trans{stage_num + 1}')
+                x, l_idx, act_scaling_factor = transition.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
+                                                                                      initialized, act_scaling_factor)
+            tmp_func = getattr(self, f'stage{stage_num + 1}')
+            x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx, 
+                                                                                initialized, act_scaling_factor)
+
+
 
 
 class Q_Transition(nn.Module):
@@ -234,6 +268,36 @@ class Q_Transition(nn.Module):
         x = self.features[3](x)
         return x, layer_idx
 
+    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+
+        x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
+        x = self.act(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv(x, act_scaling_factor)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
+
+        return x, l_idx, act_scaling_factor
+    
 
 class Q_DenseUnit(nn.Module):
     def __init__(self):
@@ -341,6 +405,51 @@ class Q_DenseUnit(nn.Module):
 
         return x, layer_idx
 
+    def get_output_max_distribution(self, batch, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+
+        x, bn_scaling_factor = self.quant_bn1(batch, input_scaling_factor)
+        x = self.act1(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act1(x, input_scaling_factor, bn_scaling_factor, cluster=cluster)
+        x, weight_scaling_factor = self.quant_convbn(x, act_scaling_factor)
+        x = self.act2(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
+
+        concat_tensor = torch.cat((batch, x), 1)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act_output(concat_tensor, act_scaling_factor, conv_scaling_factor, 
+                                                concat=True, concat_scaling_factor=input_scaling_factor, cluster=cluster)
+        
+        return x, l_idx, act_scaling_factor
+
+
 
 class Q_DenseBlock(nn.Module):
     def __init__(self):
@@ -372,6 +481,13 @@ class Q_DenseBlock(nn.Module):
             function = getattr(self, f'unit{unit_num + 1}')
             x, layer_idx = function.count_zeros_per_index(x, layer_idx, cluster)
         return x, layer_idx
+
+    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
+        for unit_num in range(self.layers):
+            function = getattr(self, f'unit{unit_num + 1}')
+            x, l_idx, act_scaling_factor = function.get_output_max_distribution(x, l_idx, cluster, n_clusters, max_counter, 
+                                                                                l_idx, initialized, act_scaling_factor)
+        return x, l_idx, act_scaling_factor
 
 
 

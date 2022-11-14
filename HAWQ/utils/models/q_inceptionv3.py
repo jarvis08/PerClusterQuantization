@@ -42,6 +42,7 @@ class Q_InceptConv(nn.Module):
                  padding,
                  num_clusters=1):
         super(Q_InceptConv, self).__init__()
+        self.full_precision = False
 
         self.q_convbn = QuantBnConv2d()
         self.q_convbn.set_param(model.conv, model.bn)
@@ -58,33 +59,28 @@ class Q_InceptConv(nn.Module):
         x = self.relu(x)
         (x, a_sf) = self.q_activ(x, a_sf, w_sf, None, None, cluster=cluster)
         return (x, a_sf, cluster)
-
-
-def q_incept_conv1x1(model,
-                     in_channels,
-                     out_channels,
-                     num_clusters=1):
-    """
-    1x1 version of the quantized InceptionV3 specific convolution block.
-
-    Parameters:
-    ----------
-    model : nn.Module
-        The pretrained floating-point couterpart of this module with the same structure.
-    in_channels : int
-        Number of input channels.
-    out_channels : int
-        Number of output channels.
-    """
-    return Q_InceptConv(
-        model=model,
-        in_channels=in_channels,
-        out_channels=out_channels,
-        kernel_size=1,
-        stride=1,
-        padding=0,
-        num_clusters=num_clusters)
-
+        
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        assert (type(x) is tuple)
+        cluster = x[2]
+        a_sf = x[1]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            
+        (x, w_sf) = self.q_convbn(x)
+        x = self.relu(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_activ(x, a_sf, w_sf, None, None, cluster=cluster)
+        return (x, a_sf, cluster), l_idx
+        
 
 class Q_Concurrent(nn.Sequential):
     """
@@ -124,6 +120,28 @@ class Q_Concurrent(nn.Sequential):
 
         assert (type(out) is not tuple)
         return (out, scaling_factor, cluster, channel_num)
+    
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        out = []
+        scaling_factor = []
+        channel_num = []
+        cluster = x[2]
+        for module in self._modules.values():
+            branch_out, l_idx = module.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+            if type(branch_out) is tuple:
+                out.append(branch_out[0])
+                scaling_factor.append(branch_out[1])
+                channel_num.append(branch_out[0].shape[1])
+            else:
+                out.append(branch_out)
+        if self.stack:
+            out = torch.stack(tuple(out), dim=self.axis)
+        else:
+            out = torch.cat(tuple(out), dim=self.axis)
+
+        assert (type(out) is not tuple)
+        return (out, scaling_factor, cluster, channel_num), l_idx
+
 
 
 class Q_MaxPoolBranch(nn.Module):
@@ -144,6 +162,23 @@ class Q_MaxPoolBranch(nn.Module):
         x = self.q_pool((x, a_sf, cluster))
         return x
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_input_act(x)
+        x = self.q_pool((x, a_sf, cluster))
+        return x, l_idx
+        
+        
 
 class Q_AvgPoolBranch(nn.Module):
     """
@@ -170,10 +205,13 @@ class Q_AvgPoolBranch(nn.Module):
             stride=1,
             padding=1)
         self.q_pool_act = QuantAct(num_clusters=num_clusters)
-        self.q_conv = q_incept_conv1x1(
+        self.q_conv = Q_InceptConv(
             model=model.conv,
             in_channels=in_channels,
             out_channels=out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
             num_clusters=num_clusters)
 
     def forward(self, x):
@@ -185,6 +223,35 @@ class Q_AvgPoolBranch(nn.Module):
 
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
+        (x, a_sf) = self.q_input_act(x)
+        (x, a_sf) = self.q_pool((x, a_sf))
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_pool_act((x, a_sf, cluster))
+        (x, a_sf, _), l_idx = self.q_conv.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+
+        return (x, a_sf, cluster), l_idx
+        
 
 class Q_Conv1x1Branch(nn.Module):
     """
@@ -206,10 +273,13 @@ class Q_Conv1x1Branch(nn.Module):
                  num_clusters=1):
         super(Q_Conv1x1Branch, self).__init__()
         self.q_input_act = QuantAct(num_clusters=num_clusters)
-        self.q_conv = q_incept_conv1x1(
+        self.q_conv = Q_InceptConv(
             model=model.conv,
             in_channels=in_channels,
             out_channels=out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
             num_clusters=num_clusters)
 
     def forward(self, x):
@@ -218,6 +288,21 @@ class Q_Conv1x1Branch(nn.Module):
         (x, a_sf, _) = self.q_conv((x, a_sf, cluster))
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_input_act(x)
+        (x, a_sf, _), l_idx = self.q_conv((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+        return (x, a_sf, cluster), l_idx
 
 class Q_ConvSeqBranch(nn.Module):
     """
@@ -272,7 +357,25 @@ class Q_ConvSeqBranch(nn.Module):
 
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
 
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_input_act(x)
+        for module in list(self.q_conv_list):
+            (x, a_sf, _), l_idx = module.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+            
+        return (x, a_sf, cluster), l_idx
+    
+    
 class Q_ConvSeq3x3Branch(nn.Module):
     """
     Quantized InceptionV3 specific convolutional sequence branch block with splitting by 3x3.
@@ -344,6 +447,39 @@ class Q_ConvSeq3x3Branch(nn.Module):
         x, a_sf = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], cluster, channel_num))
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+            
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_input_act(x)
+        for module in list(self.q_conv_list):
+            (x, a_sf, _), l_idx = module.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+            
+        (y1, scaling_factor1, _), l_idx = self.q_conv1x3.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+        (y2, scaling_factor2, _), l_idx = self.q_conv3x1.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+        channel_num = [y1.shape[1], y2.shape[1]]
+        x = torch.cat((y1, y2), dim=1)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        x, a_sf = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], cluster, channel_num))
+        return (x, a_sf, cluster), l_idx
+        
+        
 
 class Q_InceptionAUnit(nn.Module):
     """
@@ -402,6 +538,25 @@ class Q_InceptionAUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+        
+        x, l_idx = self.branches.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+        
+        
 
 class Q_ReductionAUnit(nn.Module):
     """
@@ -452,6 +607,24 @@ class Q_ReductionAUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            
+        x, l_idx = self.branches.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+            
 
 class Q_InceptionBUnit(nn.Module):
     """
@@ -513,7 +686,25 @@ class Q_InceptionBUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+        
+        x, l_idx = self.branches.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
 
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+    
+    
 class Q_ReductionBUnit(nn.Module):
     """
     Quantized InceptionV3 type Reduction-B unit.
@@ -620,6 +811,24 @@ class Q_InceptionCUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+        
+        x, l_idx = self.branches.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+    
 
 class Q_InceptInitBlock(nn.Module):
     """
@@ -704,6 +913,30 @@ class Q_InceptInitBlock(nn.Module):
         x = self.q_pool2(x)
         return x
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[1]
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        (x, a_sf) = self.q_input_activ(x[0], cluster=cluster)
+        
+        x = self.q_conv1((x, a_sf, cluster))
+        x, l_idx = self.q_conv1.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+        x, l_idx = self.q_conv2.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        x, l_idx = self.q_conv3.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        x = self.q_pool1(x)
+        x, l_idx = self.q_conv4.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        x, l_idx = self.q_conv5.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        x = self.q_pool2(x)
+        return x, l_idx
+            
 
 class Q_InceptionV3(nn.Module):
     """
@@ -798,12 +1031,43 @@ class Q_InceptionV3(nn.Module):
                 if module.bias is not None:
                     init.constant_(module.bias, 0)
 
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        self.full_precision = False if self.full_precision is True else True
+        for module in self.modules():
+            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantBn, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
+
     def forward(self, x, cluster):
         (x, a_sf) = self.features((x, cluster))
         (x, a_sf) = self.q_concat_activ((x, a_sf, cluster))
         x = x.view(x.size(0), -1)
         x = self.output((x, a_sf))
         return x
+
+    def get_output_max_distribution(self, x, n_clusters):
+        initialized = True
+        if not hasattr(self, 'max_counter'):
+            initialized = False
+            self.max_counter = []
+            self.max_counter.append([[] for _ in range(n_clusters)])
+        
+        l_idx = 0
+        x = (x, cluster)
+        for module in list(self.features):
+            x, l_idx = module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
+            
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
 
 
 def q_inceptionv3(model=None, num_clusters=None):
@@ -827,6 +1091,6 @@ def q_inceptionv3(model=None, num_clusters=None):
         b_mid_channels=b_mid_channels,
         model=model,
         num_clusters=num_clusters)
-
+                
     return net
 

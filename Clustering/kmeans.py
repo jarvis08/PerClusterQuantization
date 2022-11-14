@@ -226,8 +226,8 @@ class KMeansClustering(object):
                 n_per_sub[cluster] += self.args.batch
                 dnn_model.get_output_max_distribution(
                     input, cluster, n_sub_clusters)
-                dnn_model.count_zeros_per_index(
-                    input, cluster, n_sub_clusters)
+                # dnn_model.count_zeros_per_index(
+                #     input, cluster, n_sub_clusters)
 
                 container.set_next_batch()
                 if container.ready_cluster is None:
@@ -240,8 +240,8 @@ class KMeansClustering(object):
                     n_per_sub[cluster] += input.size(0)
                     dnn_model.get_output_max_distribution(
                         input, cluster, n_sub_clusters)
-                    dnn_model.count_zeros_per_index(
-                        input, cluster, n_sub_clusters)
+                    # dnn_model.count_zeros_per_index(
+                    #     input, cluster, n_sub_clusters)
 
         # # Handle Empty Clusters
         # for c in range(n_sub_clusters):
@@ -256,13 +256,13 @@ class KMeansClustering(object):
                 print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
             print()
 
-        n_layers = len(dnn_model.zero_counter)
+        n_layers = len(dnn_model.max_counter)
         n_per_sub = torch.tensor(n_per_sub).cuda()
 
-        # shape(n_features) = [layer_idx]
-        n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
-        # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
-        dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
+        # # shape(n_features) = [layer_idx]
+        # n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
+        # # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
+        # dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
 
         # distance_score, num_clusters = test_cases(dnn_model, 
         #                                           n_sub_clusters, 
@@ -566,7 +566,7 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
     n_layers = len(dnn_model.max_counter)
     c1, c2 = pair[0], pair[1]
     if n_per_sub is None:
-        n_per_sub = torch.zeros([dnn_model.zero_counter.size(0)]).cuda()
+        n_per_sub = torch.zeros([len(dnn_model.max_counter)]).cuda()
     n_c1, n_c2 = n_per_sub[c1].item(), n_per_sub[c2].item()
 
     group_id_c1 = get_group_id(c1, merged_clusters)
@@ -584,9 +584,10 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
             dnn_model.max_counter[l][c1] = max_merged_count
             dnn_model.max_counter[l][c2] = max_merged_count
 
-        zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-        dnn_model.zero_counter[c1] = zero_merged_count
-        dnn_model.zero_counter[c2] = zero_merged_count
+        if hasattr(dnn_model, 'zero_counter'):
+            zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+            dnn_model.zero_counter[c1] = zero_merged_count
+            dnn_model.zero_counter[c2] = zero_merged_count
     elif group_id_c1 == group_id_c2:
         # Shouldn't be here
         print("????")
@@ -602,9 +603,10 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
                 group_id_c1 = get_group_id(c1, merged_clusters)
 
             n_per_sub[merged_clusters[group_id_c1]] = n_c1 + n_c2
-            zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-            dnn_model.zero_counter[c1] = zero_merged_count.clone()
-            dnn_model.zero_counter[c2] = zero_merged_count.clone()
+            if hasattr(dnn_model, 'zero_counter'):
+                zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+                dnn_model.zero_counter[c1] = zero_merged_count.clone()
+                dnn_model.zero_counter[c2] = zero_merged_count.clone()
 
             for l in range(n_layers):
                 max_merged_count = torch.cat(
@@ -624,9 +626,10 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
 
             n_per_sub[merged_clusters[group_id_c2]] = n_c1 + n_c2
             # zero_count_per_layer
-            zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
-            dnn_model.zero_counter[c1] = zero_merged_count.clone()
-            dnn_model.zero_counter[c2] = zero_merged_count.clone()
+            if hasattr(dnn_model, 'zero_counter'):
+                zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
+                dnn_model.zero_counter[c1] = zero_merged_count.clone()
+                dnn_model.zero_counter[c2] = zero_merged_count.clone()
 
             for l in range(n_layers):
                 # max_per_layer_per_datapoint

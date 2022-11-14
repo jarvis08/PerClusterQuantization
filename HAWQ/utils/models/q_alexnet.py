@@ -16,7 +16,6 @@ import logging
 class Q_AlexNet(nn.Module):
     def __init__(self, model, model_dict=None, num_clusters=1):
         super().__init__()
-        self.full_precision = False
         features = getattr(model, 'features')
 
         self.quant_input = QuantAct(num_clusters=num_clusters)
@@ -120,7 +119,6 @@ class Q_AlexNet(nn.Module):
 
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
-        self.full_precision = False if self.full_precision is True else True
         for module in self.modules():
             if isinstance(module, (QuantAct, QuantLinear, QuantConv2d, QuantBn, QuantBnConv2d)):
                 precision = getattr(module, 'full_precision_flag')
@@ -333,199 +331,104 @@ class Q_AlexNet(nn.Module):
             self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
     def delete_counters(self):
-        del self.zero_counter
+        # del self.zero_counter
         del self.max_counter
 
     def get_output_max_distribution(self, x, cluster, n_clusters):
-        if self.full_precision:
-            if not hasattr(self, 'max_counter'):
-                self.features = nn.Sequential(self.conv1, self.act1, self.maxpool1,
-                                            self.conv2, self.act2, self.maxpool2,
-                                            self.conv3, self.act3,
-                                            self.conv4, self.act4,
-                                            self.conv5, self.act5,
-                                            self.maxpool3, self.avgpool,
-                                            self.fc1, self.act6,
-                                            self.fc2, self.act7)
-                self.max_counter = []
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
+        if not hasattr(self, 'max_counter'):
+            self.max_counter = []
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+        
+        
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
+        x = self.act1(x)
 
-            x, _ = self.features[0](x)
-            x = self.features[1](x)
-
-            l_idx = 0
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-            
-            x, _ = self.features[2](x)
-            x, _ = self.features[3](x)
-            x = self.features[4](x)
-
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-
-            x, _ = self.features[5](x)
-            x, _ = self.features[6](x)
-            x = self.features[7](x)
-
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-
-            x, _ = self.features[8](x)
-            x = self.features[9](x)
-
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-
-            x, _ = self.features[10](x)
-            x = self.features[11](x)
-
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, _ = self.features[12](x)
-            x, _ = self.features[13](x)
-            x = x.view(x.size(0), -1)
-            x, _ = self.features[14](x)
-            x = self.features[15](x)
-            
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, _ = self.features[16](x)
-            x = self.features[17](x)
-            
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
+        l_idx = 0
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
         else:
-            if not hasattr(self, 'max_counter'):
-                self.max_counter = []
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
-                self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
             
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
+        x = self.act2(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
+        x = self.act3(x)
+
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
             
-            x, act_scaling_factor = self.quant_input(x, cluster=cluster)
-            x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
-            x = self.act1(x)
+        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
+        x = self.act4(x)
 
-            l_idx = 0
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
-            x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
-            x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
-            x = self.act2(x)
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
             
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+        x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
+        x = self.act5(x)
+
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
             
-            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
-            x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
-            x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
-            x = self.act3(x)
+        x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool3(x, act_scaling_factor)
+        x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
 
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
-            x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
-            x = self.act4(x)
+        x = x.view(x.size(0), -1)
 
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
-            x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
-            x = self.act5(x)
+        x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
+        x = self.act6(x)
 
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
-            x, act_scaling_factor = self.maxpool3(x, act_scaling_factor)
-            x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+            
+        x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor, cluster=cluster)
+        x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
+        x = self.act7(x)
 
-            x = x.view(x.size(0), -1)
-
-            x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
-            x = self.act6(x)
-
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-                
-            x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor, cluster=cluster)
-            x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
-            x = self.act7(x)
-
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if self.max_counter[l_idx][cluster] == []:
-                self.max_counter[l_idx][cluster] = _max
-            else:
-                self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
 
 
     def get_ema_per_layer(self):

@@ -77,6 +77,74 @@ class Q_LinearBottleneck(nn.Module):
 
         return x, act_scaling_factor
 
+    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None):
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+            max_counter.append([[] for _ in range(n_clusters)])
+            
+        if self.residual:
+            identity = x
+
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
+
+        x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
+        x = self.activatition_func(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+        
+        x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+
+        x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
+        x = self.activatition_func(x)
+
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+
+        x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
+
+        if self.residual:
+            x = x + identity
+            
+            l_idx += 1
+            _max = x.view(x.size(0), -1).max(dim=1).values
+            if max_counter[l_idx][cluster] == []:
+                max_counter[l_idx][cluster] = _max
+            else:
+                max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+            
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None, cluster=cluster)
+        else:
+            l_idx += 1
+            _max = x.view(x.size(0), -1).max(dim=1).values
+            if max_counter[l_idx][cluster] == []:
+                max_counter[l_idx][cluster] = _max
+            else:
+                max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+                
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
+
+        return x, l_idx, act_scaling_factor
+
 
 class Q_MobileNetV2(nn.Module):
     """
@@ -149,8 +217,8 @@ class Q_MobileNetV2(nn.Module):
 
         # change the final block
         self.quant_act_before_final_block = QuantAct(num_clusters=num_clusters)
+        
         self.features.add_module("final_block", QuantBnConv2d())
-
         self.features.final_block.set_param(model.features.final_block.conv, model.features.final_block.bn)
         self.quant_act_int32_final = QuantAct(num_clusters=num_clusters)
 
@@ -195,6 +263,65 @@ class Q_MobileNetV2(nn.Module):
 
         return x
 
+    def get_output_max_distribution(self, x, n_clusters):
+        initialized = True
+        if not hasattr(self, 'max_counter'):
+            initialized = False
+            self.max_counter = []
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+            self.max_counter.append([[] for _ in range(n_clusters)])
+        
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x = self.activatition_func(x)
+        
+        l_idx = 0
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+            
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+        
+        # the feature block
+        for i, channels_per_stage in enumerate(self.channels):
+            cur_stage = getattr(self.features, f'stage{i+1}')
+            for j, out_channels in enumerate(channels_per_stage):
+                cur_unit = getattr(cur_stage, f'unit{j+1}')
+                x, l_idx, act_scaling_factor = cur_unit.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
+                                                                             initialized, act_scaling_factor)
+
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+            
+        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None, cluster=cluster)
+        x, weight_scaling_factor = self.features.final_block(x, act_scaling_factor)
+        x = self.activatition_func(x)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+            
+        x, act_scaling_factor = self.quant_act_int32_final(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
+
+        # the final pooling
+        x = self.features.final_pool(x, act_scaling_factor)
+        
+        l_idx += 1
+        _max = x.view(x.size(0), -1).max(dim=1).values
+        if self.max_counter[l_idx][cluster] == []:
+            self.max_counter[l_idx][cluster] = _max
+        else:
+            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+            
 
 def q_get_mobilenetv2(model, width_scale, num_clusters=None):
     """
