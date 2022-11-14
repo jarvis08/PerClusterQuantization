@@ -494,7 +494,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     ###
 
-    for epoch in range(args.start_epoch, 1):
+    for epoch in range(args.start_epoch, 10):
         train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
         acc1 = validate(test_loader, model, clustering_model, criterion, args)
 
