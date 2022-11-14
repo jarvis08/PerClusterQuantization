@@ -347,6 +347,7 @@ class KMeansClustering(object):
         n_per_sub = [0 for _ in range(self.args.cluster)]
         dnn_model.eval()
         
+        dnn_model.toggle_full_precision()
         with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
@@ -366,6 +367,7 @@ class KMeansClustering(object):
                     n_per_sub[cluster] += input.size(0)
                     dnn_model.get_output_max_distribution(
                         input, cluster, self.args.cluster)
+        dnn_model.toggle_full_precision()
 
         n_layers = len(dnn_model.max_counter)
         n_per_sub = torch.tensor(n_per_sub).cuda()

@@ -261,6 +261,9 @@ class QuantAct(Module):
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
+            if not torch.is_tensor(cluster):
+                cluster = torch.empty(x.shape[0]).fill_(cluster).type(torch.long)
+
             uniques = torch.unique(cluster)
             # calculate the quantization range of the activations
             if self.running_stat:
