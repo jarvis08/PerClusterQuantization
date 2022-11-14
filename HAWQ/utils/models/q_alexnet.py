@@ -234,7 +234,7 @@ class Q_AlexNet(nn.Module):
                                       self.conv2, self.act2, self.maxpool2,
                                       self.conv3, self.act3,
                                       self.conv4, self.act4,
-                                      self.conv5, self.act5)
+                                      self.conv5, self.act5,
                                       self.maxpool3, self.avgpool,
                                       self.fc1, self.act6,
                                       self.fc2, self.act7)
