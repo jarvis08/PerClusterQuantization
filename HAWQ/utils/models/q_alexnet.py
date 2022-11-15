@@ -16,6 +16,7 @@ import logging
 class Q_AlexNet(nn.Module):
     def __init__(self, model, model_dict=None, num_clusters=1):
         super().__init__()
+        self.full_precision = False
         features = getattr(model, 'features')
 
         self.quant_input = QuantAct(num_clusters=num_clusters)
@@ -119,6 +120,7 @@ class Q_AlexNet(nn.Module):
 
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
+        self.full_precision = False if self.full_precision is True else True
         for module in self.modules():
             if isinstance(module, (QuantAct, QuantLinear, QuantConv2d, QuantBn, QuantBnConv2d)):
                 precision = getattr(module, 'full_precision_flag')
@@ -427,8 +429,6 @@ class Q_AlexNet(nn.Module):
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
 
 
     def get_ema_per_layer(self):
