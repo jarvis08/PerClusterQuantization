@@ -1073,7 +1073,7 @@ class Q_InceptionV3(nn.Module):
         
         l_idx = 0
         x = (x, cluster)
-        for module in list(self.features):
+        for module in list(self.features)[:-1]:
             if type(module) == nn.Sequential:
                 for sub_module in list(module):
                     x, l_idx = sub_module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
