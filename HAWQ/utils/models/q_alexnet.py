@@ -238,7 +238,7 @@ class Q_AlexNet(nn.Module):
                                       self.maxpool3, self.avgpool,
                                       self.fc1, self.act6,
                                       self.fc2, self.act7)
-
+        
         x, _ = self.features[0](x)
         x = self.features[1](x)
 
