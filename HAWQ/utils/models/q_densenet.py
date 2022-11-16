@@ -55,8 +55,8 @@ class Q_DenseNet(nn.Module):
         self.quant_output.is_classifier = True
         self.quant_output.set_param(output)
 
-    def forward(self, input, cluster=None):
-        x, act_scaling_factor = self.quant_input(input, cluster=cluster)
+    def forward(self, x, cluster=None):
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         x = self.act1(x) 
@@ -167,7 +167,7 @@ class Q_DenseNet(nn.Module):
             self.max_counter = []
             self.max_counter.append([[] for _ in range(n_clusters)])
 
-        x, act_scaling_factor = self.quant_input(input, cluster=cluster)
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         x = self.act1(x) 
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
