@@ -42,8 +42,6 @@ class Q_InceptConv(nn.Module):
                  padding,
                  num_clusters=1):
         super(Q_InceptConv, self).__init__()
-        self.full_precision = False
-
         self.q_convbn = QuantBnConv2d()
         self.q_convbn.set_param(model.conv, model.bn)
 
@@ -301,7 +299,7 @@ class Q_Conv1x1Branch(nn.Module):
             max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
             
         (x, a_sf) = self.q_input_act(x)
-        (x, a_sf, _), l_idx = self.q_conv((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
+        (x, a_sf, _), l_idx = self.q_conv.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
         return (x, a_sf, cluster), l_idx
 
 class Q_ConvSeqBranch(nn.Module):
@@ -754,6 +752,24 @@ class Q_ReductionBUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
+        cluster = x[2]
+        
+        if not initialized:
+            max_counter.append([[] for _ in range(n_clusters)])
+        
+        x, l_idx = self.branches.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
+        
+        l_idx += 1
+        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
+        if max_counter[l_idx][cluster] == []:
+            max_counter[l_idx][cluster] = _max
+        else:
+            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+    
 
 class Q_InceptionCUnit(nn.Module):
     """
@@ -927,7 +943,6 @@ class Q_InceptInitBlock(nn.Module):
             
         (x, a_sf) = self.q_input_activ(x[0], cluster=cluster)
         
-        x = self.q_conv1((x, a_sf, cluster))
         x, l_idx = self.q_conv1.get_output_max_distribution((x, a_sf, cluster), n_clusters, max_counter, l_idx, initialized)
         x, l_idx = self.q_conv2.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
         x, l_idx = self.q_conv3.get_output_max_distribution(x, n_clusters, max_counter, l_idx, initialized)
@@ -1033,7 +1048,6 @@ class Q_InceptionV3(nn.Module):
 
     def toggle_full_precision(self):
         print('Model Toggle full precision FUNC')
-        self.full_precision = False if self.full_precision is True else True
         for module in self.modules():
             if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantBn, QuantConv2d)):
                 precision = getattr(module, 'full_precision_flag')
@@ -1050,7 +1064,7 @@ class Q_InceptionV3(nn.Module):
         x = self.output((x, a_sf))
         return x
 
-    def get_output_max_distribution(self, x, n_clusters):
+    def get_output_max_distribution(self, x, cluster, n_clusters):
         initialized = True
         if not hasattr(self, 'max_counter'):
             initialized = False
@@ -1060,7 +1074,11 @@ class Q_InceptionV3(nn.Module):
         l_idx = 0
         x = (x, cluster)
         for module in list(self.features):
-            x, l_idx = module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
+            if type(module) == nn.Sequential:
+                for sub_module in list(module):
+                    x, l_idx = sub_module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
+            else:
+                x, l_idx = module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
             
         l_idx += 1
         _max = x[0].view(x[0].size(0), -1).max(dim=1).values
