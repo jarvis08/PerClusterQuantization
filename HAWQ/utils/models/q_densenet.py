@@ -405,7 +405,7 @@ class Q_DenseUnit(nn.Module):
 
         return x, layer_idx
 
-    def get_output_max_distribution(self, batch, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
+    def get_output_max_distribution(self, batch, cluster, n_clusters, max_counter, l_idx, initialized, input_scaling_factor=None): 
         if not initialized:
             max_counter.append([[] for _ in range(n_clusters)])
             max_counter.append([[] for _ in range(n_clusters)])
@@ -485,7 +485,7 @@ class Q_DenseBlock(nn.Module):
     def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
         for unit_num in range(self.layers):
             function = getattr(self, f'unit{unit_num + 1}')
-            x, l_idx, act_scaling_factor = function.get_output_max_distribution(x, l_idx, cluster, n_clusters, max_counter, 
+            x, l_idx, act_scaling_factor = function.get_output_max_distribution(x, cluster, n_clusters, max_counter, 
                                                                                 l_idx, initialized, act_scaling_factor)
         return x, l_idx, act_scaling_factor
 

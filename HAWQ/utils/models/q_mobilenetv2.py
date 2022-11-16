@@ -16,7 +16,6 @@ class Q_LinearBottleneck(nn.Module):
                 out_channels,
                 stride,
                 expansion,
-                remove_exp_conv,
                 num_clusters=1):
         """
         So-called 'Linear Bottleneck' layer. It is used as a quantized MobileNetV2 unit.
@@ -262,6 +261,17 @@ class Q_MobileNetV2(nn.Module):
         x = x.view(x.size(0), -1)
 
         return x
+
+    def toggle_full_precision(self):
+        print('Model Toggle full precision FUNC')
+        for module in self.modules():
+            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantBn, QuantConv2d)):
+                precision = getattr(module, 'full_precision_flag')
+                if precision:
+                    precision = False
+                else:
+                    precision = True
+                setattr(module, 'full_precision_flag', precision)
 
     def get_output_max_distribution(self, x, n_clusters):
         initialized = True

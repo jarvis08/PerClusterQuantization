@@ -1079,13 +1079,6 @@ class Q_InceptionV3(nn.Module):
                     x, l_idx = sub_module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
             else:
                 x, l_idx = module.get_output_max_distribution(x, n_clusters, self.max_counter, l_idx, initialized)
-            
-        l_idx += 1
-        _max = x[0].view(x[0].size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
 
 
 def q_inceptionv3(model=None, num_clusters=None):
