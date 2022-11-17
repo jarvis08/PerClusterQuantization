@@ -307,9 +307,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
     record_grad[-1][1] = 0
     record_grad[-1][2] = test_score
 
-    with open(f'GRAPH_{args.arch[:4]}_{args.dataset[5:]}' + '.csv', 'a') as csvfile:
+    with open(f'GRAPH_{args.arch[:4]}_{args.dataset[5:]}_GRAD_{args.input_grad}_FIXED_{args.pre_fixed_channel}' + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow((['INPUT_GRAD', args.input_grad, 'FIXED', args.pre_fixed_channel, 'QUANTILE', args.quantile, 'QUANTILE', args.quantile]))
+        writer.writerow((['QUANTILE', args.quantile, 'CONST', args.const_portion]))
         for i in range(len(record_grad)):
             writer.writerow(([i+1, '{:2f}%'.format(record_grad[i][0]), '{:2f}'.format(record_grad[i][1]), '{:2f}'.format(record_grad[i][2])]))
         writer.writerow([])
