@@ -25,7 +25,7 @@ MODEL_PATH="./pretrained_models/$DATASET/$MODEL_DESC/checkpoint.pth"
 if [ "$MODEL" = alexnet ]; then
   python main.py \
     --arch $MODEL \
-    --epoch 2 \
+    --epoch 100 \
     --lr 1e-3 \
     --batch 128 \
     --dataset $DATASET \
@@ -36,7 +36,7 @@ if [ "$MODEL" = alexnet ]; then
     --mixed_precision \
     --input_grad $INPUT_GRAD\
     --percentile 2.0 \
-    --channel_epoch 2 \
+    --channel_epoch 100 \
     --pre_fixed_channel $FIXED_RATIO \
     --reduce_ratio 1.0 \
     --const_portion $CONST_PORTION \
