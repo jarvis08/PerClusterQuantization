@@ -104,6 +104,7 @@ def validate_setting_bits(model, loader, criterion):
 
 def set_lower_weights(model, pre_fixed_channel_ratio):
     total_channel = 0
+
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
@@ -115,6 +116,7 @@ def set_lower_weights(model, pre_fixed_channel_ratio):
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
 
             fused.fixed_indices = torch.topk(weight_range, num_lower_channels, largest=False, sorted=False)[1].cuda()
+            fused.allowed_channels = fused.fixed_indices.clone().detach()
     model.total_ch_sum = total_channel
 
 
@@ -191,7 +193,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
     if args.mixed_precision:
         runtime_helper.set_skt_arguments(args)
         model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
-        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}__CON_{args.const_portion}'
+        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_CON_{args.const_portion}'
         set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
         initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
@@ -216,6 +218,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     quantized_model = None
     ratio = 0
+    record_grad = [[[] for _ in range(3)] for _ in range(args.epoch + 1)]
+
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
@@ -223,7 +227,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             initialize_act_range(model)
             runtime_helper.apply_fake_quantization = False
 
-        if e <= args.channel_epoch and args.input_grad:
+        if e <= args.channel_epoch:
             runtime_helper.conv_mixed_grad = True
         else:
             runtime_helper.conv_mixed_grad = False
@@ -232,6 +236,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
         else:
             losses, ratio = skt_train_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio)
+            record_grad[e-1][0] = ratio
+            record_grad[e-1][1] = losses
             print("Epoch {} low bit ratio : {:.2f}% ".format(e, ratio))
             # with open(identifier + '.csv', 'a') as csvfile:
             #     writer = csv.writer(csvfile)
@@ -243,6 +249,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
             tools.folder(model)
 
         fp_score = 0
+        fp_score = validate(model, test_loader, criterion, logger)
+        record_grad[e - 1][2] = fp_score
         # if args.dataset != 'imagenet':
         #     if args.cluster > 1:
         #         #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
@@ -294,8 +302,17 @@ def _finetune(args, tools, data_loaders, clustering_model):
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
-
     test_score = best_int_val_score
+    record_grad[-1][0] = 0
+    record_grad[-1][1] = 0
+    record_grad[-1][2] = test_score
+
+    with open(f'GRAPH_{args.arch[:4]}_{args.dataset[5:]}' + '.csv', 'a') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow((['INPUT_GRAD', args.input_grad, 'FIXED', args.pre_fixed_channel, 'QUANTILE', args.quantile, 'QUANTILE', args.quantile]))
+        for i in range(len(record_grad)):
+            writer.writerow(([i+1, '{:2f}%'.format(record_grad[i][0]), '{:2f}'.format(record_grad[i][1]), '{:2f}'.format(record_grad[i][2])]))
+        writer.writerow([])
 
     # if args.record_val:
     #     with open('SATUR_' + identifier + '.csv', 'a') as csvfile:
@@ -344,8 +361,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
         pc += 'Symmetric, '
 
     with open(f'./[EXP]qat_{args.arch[:4]}_{args.dataset}_{args.bit}_FIXED_{args.pre_fixed_channel}.txt', 'a') as f:
-        f.write('reduce {} /channel {:.2f}% / const {} / quantile {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
-                .format(args.reduce_ratio, ratio, args.const_portion, args.quantile, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
+        f.write('reduce {} / input_grad {} / channel {:.2f}% / const {} / quantile {} / {:.2f} # {}, {}, {}, LR: {}, W-decay: {}, Epoch: {}, Batch: {}, {}Bit(First/Last/AddCat): {}({}/{}/{}), Smooth: {}, Best-epoch: {}, Time: {}, GPU: {}, Path: {}\n'
+                .format(args.reduce_ratio, args.input_grad, ratio, args.const_portion, args.quantile, test_score, args.arch, args.dataset, method, args.lr, args.weight_decay, args.epoch, args.batch, args.percentile,
                         pc, args.bit, args.bit_first, args.bit_classifier, args.bit_addcat, args.smooth, best_epoch,
                         tuning_time_cost, args.gpu, save_path_fp))
 

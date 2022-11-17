@@ -59,6 +59,7 @@ class RuntimeHelper(object):
     def set_skt_arguments(self, args):
         self.const_portion = torch.tensor(args.const_portion, dtype=torch.float32, device='cuda')
         self.quantile_tensor *= args.quantile
+        self.input_grad = args.input_grad
         # self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
 
@@ -250,8 +251,8 @@ def set_mixed_bits_per_iter(model, e, reduce_ratio):
             input_range = fused.input_range[1] - fused.input_range[0]
             input_max, weight_max = input_range.max(), weight_range.max()
 
-            weight_bits = (model.percentile_tensor <= (weight_max / weight_range[fused.allowed_channels]))
-            input_bits = (model.percentile_tensor <= (input_max / input_range[fused.allowed_channels]))
+            weight_bits = (model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]))
+            input_bits = (model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]))
 
             renewal_bits = torch.logical_and(input_bits, weight_bits).nonzero(as_tuple=True)[0]
             fused.w_bit.data[renewal_bits] = fused.low_bit
@@ -347,6 +348,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
     with torch.no_grad():
         with tqdm(test_loader, unit="batch", ncols=90) as t:
             for i, (input, target) in enumerate(t):
+
                 t.set_description("Validate")
                 input, target = input.cuda(), target.cuda()
                 output = model(input)
@@ -363,6 +365,7 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
                 logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         else:
             logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
+    print()
     return top1.avg
 
 
