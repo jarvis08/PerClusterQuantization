@@ -65,7 +65,10 @@ def get_non_augmented_train_dataset(args, normalizer, model):
                                           transforms.CenterCrop(train_resolution),
                                           transforms.ToTensor(),
                                           normalizer])
-        return datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'), transform=transformer)
+        imagenet_dataset = datasets.ImageFolder(root=os.path.join(args.imagenet, 'train'), transform=transformer)
+        ### partition data
+        dataset_length = int(len(imagenet_dataset) * 0.1)           
+        dataset, _ = torch.utils.data.random_split(imagenet_dataset, [dataset_length, len(imagenet_dataset) - dataset_length])
     else:
         transformer = transforms.Compose([transforms.ToTensor(), normalizer])
         if args.dataset == 'cifar10':
@@ -115,7 +118,7 @@ def get_data_loaders(args, model):
     aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
     non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
 
-    clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=256, shuffle=True,
+    clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=True,
                                               workers=args.worker)
     train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     return {'aug_train': train_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}

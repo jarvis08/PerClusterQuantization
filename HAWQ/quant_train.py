@@ -465,7 +465,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.nnac and clustering_model.final_cluster is None:
         model.toggle_full_precision()
         freeze_model(model)
-        clustering_model.zero_max_nn_aware_clustering(
+        # clustering_model.zero_max_nn_aware_clustering(
+        clustering_model.max_nn_aware_clustering(
             model, cluster_train_loader, args.arch)
         model.toggle_full_precision()
         unfreeze_model(model)
@@ -520,7 +521,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         
 
     # Train EMA for couple epochs before training parameters
-    for epoch in range(args.start_epoch, 10):
+    ema_epoch = 1 if args.data == 'imagenet' else 10
+    for epoch in range(args.start_epoch, ema_epoch):
         train_ema(train_loader, model, clustering_model, criterion, epoch, args)
         acc1 = validate(test_loader, model, clustering_model, criterion, args)
         

@@ -227,114 +227,193 @@ class Q_AlexNet(nn.Module):
 
         return maxs
 
-    def initialize_counter(self, x, n_clusters):
-        self.zero_counter = []
+    # def initialize_counter(self, x, n_clusters):
+    #     self.zero_counter = []
 
-        self.features = nn.Sequential(self.conv1, self.act1, self.maxpool1,
-                                      self.conv2, self.act2, self.maxpool2,
-                                      self.conv3, self.act3,
-                                      self.conv4, self.act4,
-                                      self.conv5, self.act5,
-                                      self.maxpool3, self.avgpool,
-                                      self.fc1, self.act6,
-                                      self.fc2, self.act7)
+    #     self.features = nn.Sequential(self.conv1, self.act1, self.maxpool1,
+    #                                   self.conv2, self.act2, self.maxpool2,
+    #                                   self.conv3, self.act3,
+    #                                   self.conv4, self.act4,
+    #                                   self.conv5, self.act5,
+    #                                   self.maxpool3, self.avgpool,
+    #                                   self.fc1, self.act6,
+    #                                   self.fc2, self.act7)
         
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
 
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
         
-        x, _ = self.features[2](x)
-        x, _ = self.features[3](x)
-        x = self.features[4](x)
+    #     x, _ = self.features[2](x)
+    #     x, _ = self.features[3](x)
+    #     x = self.features[4](x)
         
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[5](x)
-        x, _ = self.features[6](x)
-        x = self.features[7](x)
+    #     x, _ = self.features[5](x)
+    #     x, _ = self.features[6](x)
+    #     x = self.features[7](x)
         
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[8](x)
-        x = self.features[9](x)
+    #     x, _ = self.features[8](x)
+    #     x = self.features[9](x)
         
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[10](x)
-        x = self.features[11](x)
+    #     x, _ = self.features[10](x)
+    #     x = self.features[11](x)
         
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-    def count_zeros_per_index(self, x, cluster, n_clusters):
-        if not hasattr(self, 'zero_counter'):
-            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+    # def count_zeros_per_index(self, x, cluster, n_clusters):
+    #     if not hasattr(self, 'zero_counter'):
+    #         self.initialize_counter(x[0].unsqueeze(0), n_clusters)
 
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
 
-        layer_idx = 0
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx = 0
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
         
-        x, _ = self.features[2](x)
-        x, _ = self.features[3](x)
-        x = self.features[4](x)
+    #     x, _ = self.features[2](x)
+    #     x, _ = self.features[3](x)
+    #     x = self.features[4](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[5](x)
-        x, _ = self.features[6](x)
-        x = self.features[7](x)
+    #     x, _ = self.features[5](x)
+    #     x, _ = self.features[6](x)
+    #     x = self.features[7](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[8](x)
-        x = self.features[9](x)
+    #     x, _ = self.features[8](x)
+    #     x = self.features[9](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[10](x)
-        x = self.features[11](x)
+    #     x, _ = self.features[10](x)
+    #     x = self.features[11](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
     def delete_counters(self):
         # del self.zero_counter
-        del self.max_counter
+        # del self.max_counter
+        del self.max_accumulator
+
+    def update_max_accumulator(self, x, cluster, l_idx):
+        if type(x) is tuple:
+            x = x[0]
+        _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=x.view(x.size(0), -1).max(dim=1).values, reduce=self.reduce)
+        self.max_accumulator[l_idx] = self.max_accumulator[l_idx].max(_max)
+        return l_idx + 1
+        
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax'):
+        if not hasattr(self, 'max_accumulator'):
+            self.reduce = reduce
+            self.max_accumulator = torch.zeros([7, n_clusters]).cuda()
+            self.zero_buffer = torch.zeros(n_clusters).cuda()
+            
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
+        x = self.act1(x)
+        
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
+        x = self.act2(x)
+        
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
+        x = self.act3(x)
+
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
+        x = self.act4(x)
+
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+
+        x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
+        x = self.act5(x)
+
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+
+        x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool3(x, act_scaling_factor)
+        x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
+
+        x = x.view(x.size(0), -1)
+
+        x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
+        x = self.act6(x)
+
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+
+        x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor, cluster=cluster)
+        x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
+        x = self.act7(x)
+
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        
 
     def get_output_max_distribution(self, x, cluster, n_clusters):
         if not hasattr(self, 'max_counter'):

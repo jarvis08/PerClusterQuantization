@@ -206,6 +206,38 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
+    def max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
+        print('\n>>> NN-aware Clustering..')
+        
+        n_per_sub = torch.zeros([self.args.sub_cluster], dtype=torch.int).cuda()
+        dnn_model.eval()
+        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+            for i, (images, _) in enumerate(t):
+                images = images.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+                
+                indices, counts = torch.unique(cluster, return_counts=True)
+                n_per_sub[indices] += counts
+                dnn_model.accumulate_output_max_distribution(images, cluster, self.args.sub_cluster)
+        
+        dnn_model.max_accumulator = torch.transpose(dnn_model.max_accumulator, 0, 1)
+
+        if print_log:
+            print("\n>>> [Original] Number of data per cluster")
+            for c in range(self.args.sub_cluster):
+                print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
+            print()
+            
+        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, dnn_model.max_accumulator, n_per_sub, print_log) # NEW WAY
+        # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
+
+        final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
+        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
+        dnn_model.delete_counters()
+            
+
+    @torch.no_grad()
     def zero_max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
         print('\n>>> zero-max NN-aware Clustering..')
         from utils.misc import InputContainer
@@ -249,6 +281,8 @@ class KMeansClustering(object):
         #         for l in range(len(dnn_model.max_counter)):
         #             dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
 
+        import pdb
+        pdb.set_trace()
 
         if print_log:
             print("\n>>> [Original] Number of data per cluster")
@@ -263,7 +297,7 @@ class KMeansClustering(object):
         # n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
         # # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
         # dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
-
+        
         # distance_score, num_clusters = test_cases(dnn_model, 
         #                                           n_sub_clusters, 
         #                                           task=1,   # 0 : quantile / 1 : max / 2 : mean / 3 : median
@@ -271,9 +305,9 @@ class KMeansClustering(object):
         #                                           to_=4.01,
         #                                           gap=0.01)
 
-
         # Robustness of clustering (outlier)
-        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, n_per_sub, print_log) # NEW WAY
+        max_ratio = get_max_ratio(dnn_model, self.args.n_sub_clusters, task=1)
+        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, max_ratio, n_per_sub, print_log) # NEW WAY
         # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
 
         final_clusters = print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, self.args.cluster)
@@ -446,7 +480,8 @@ def get_candidates_from_lipschitz_bound(args, dnn_model, n_sub_clusters, n_merge
     print("number of candidates : ", candidates.size(0))
     return candidates
 
-def get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=None):
+
+def get_max_ratio(dnn_model, n_sub_clusters, task=None):
     # finding best pair from choosen candidates
     cur_max_counter = deepcopy(dnn_model.max_counter)
     n_layers = len(cur_max_counter)
@@ -464,12 +499,13 @@ def get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=None):
             else:
                 max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.5)
 
-    max_ratio = torch.transpose(max_ratio, 0, 1)
+    return torch.transpose(max_ratio, 0, 1)
 
+def get_pairwise_distance(max_ratio, mask=True):
     distance = torch.cdist(max_ratio, max_ratio, p=2)
     if mask:
         distance = torch.triu(distance, diagonal=1)
-    return distance, max_ratio
+    return distance
 
 def get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_clusters, exclude):
     # measure L2 distance between clusters
@@ -503,10 +539,13 @@ def get_pairs_and_similarity_from_candidates(candidates, distance, n_sub_cluster
 
 
 ############# NEW WAY #############
-def clustering_aggregation(args, dnn_model, n_per_sub, print_log):
+def clustering_aggregation(args, dnn_model, max_ratio, n_per_sub, print_log):
     n_sub_clusters = args.sub_cluster
-    distance, _ = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True, task=1)
+    print(">>> Start measuring pairwise distance")
+    distance = get_pairwise_distance(max_ratio, mask=True)
+    print(">>> Find Splittable cluster set")
     clusters = get_splitted_cluster_sets(distance, target_cluster=args.cluster)
+    print(">>> Start Merging cluster pairs")
     return merge_clustered_pairs(dnn_model, clusters, n_per_sub, print_log)
 
 ############# OLD WAY #############
@@ -532,7 +571,8 @@ def average_link_clustering(args, dnn_model, n_per_sub, print_log):
         candidates = None
         
         # get pairwise distance using approximated clipping values from each clusters
-        distance, max_ratio = get_pairwise_distance(dnn_model, n_sub_clusters, mask=True)
+        max_ratio = get_max_ratio(dnn_model, n_sub_clusters, task=1)
+        distance, max_ratio = get_pairwise_distance(max_ratio, mask=True)
         
         # get a most appropriate merging pair from candidates using distance metric
         # if no candidates are given, choose a most appropriate merging pair from all sets
@@ -563,11 +603,9 @@ def merge_clustered_pairs(dnn_model, clusters, n_per_sub=None, print_log=True):
     return merged_clusters, n_per_sub
 
 def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
-    n_layers = len(dnn_model.max_counter)
     c1, c2 = pair[0], pair[1]
-    if n_per_sub is None:
-        n_per_sub = torch.zeros([len(dnn_model.max_counter)]).cuda()
-    n_c1, n_c2 = n_per_sub[c1].item(), n_per_sub[c2].item()
+    if n_per_sub is not None:
+        n_c1, n_c2 = n_per_sub[c1].item(), n_per_sub[c2].item()
 
     group_id_c1 = get_group_id(c1, merged_clusters)
     group_id_c2 = get_group_id(c2, merged_clusters)
@@ -577,12 +615,20 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
         if print_log:
             print(f'Merge {c1}&{c2}')
         merged_clusters.append(sorted([c1, c2]))
-        n_per_sub[[c1, c2]] = n_c1 + n_c2
-        for l in range(n_layers):
-            max_merged_count = torch.cat(
-                [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-            dnn_model.max_counter[l][c1] = max_merged_count
-            dnn_model.max_counter[l][c2] = max_merged_count
+        if n_per_sub is not None:
+            n_per_sub[[c1, c2]] = n_c1 + n_c2
+        
+        if hasattr(dnn_model, 'max_accumulator'):
+            _max = dnn_model.max_accumulator[c1].max(dnn_model.max_accumulator[c2])
+            dnn_model.max_accumulator[c1] = _max.clone()
+            dnn_model.max_accumulator[c2] = torch.zeros_like(_max).cuda()
+            
+        if hasattr(dnn_model, 'max_counter'):
+            for l in range(len(dnn_model.max_counter)):
+                max_merged_count = torch.cat(
+                    [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+                dnn_model.max_counter[l][c1] = max_merged_count
+                dnn_model.max_counter[l][c2] = max_merged_count
 
         if hasattr(dnn_model, 'zero_counter'):
             zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
@@ -601,18 +647,25 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
                 merged_clusters[group_id_c1] = sorted(list(set(merged_clusters[group_id_c1]) | set(merged_clusters[group_id_c2])))
                 del merged_clusters[group_id_c2]
                 group_id_c1 = get_group_id(c1, merged_clusters)
-
-            n_per_sub[merged_clusters[group_id_c1]] = n_c1 + n_c2
+            if n_per_sub is not None:
+                n_per_sub[merged_clusters[group_id_c1]] = n_c1 + n_c2
+                
+            if hasattr(dnn_model, 'max_accumulator'):
+                _max = dnn_model.max_accumulator[c1].max(dnn_model.max_accumulator[c2])
+                dnn_model.max_accumulator[c1] = _max.clone()
+                dnn_model.max_accumulator[c2] = torch.zeros_like(_max).cuda()
+                
             if hasattr(dnn_model, 'zero_counter'):
                 zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
                 dnn_model.zero_counter[c1] = zero_merged_count.clone()
                 dnn_model.zero_counter[c2] = zero_merged_count.clone()
 
-            for l in range(n_layers):
-                max_merged_count = torch.cat(
-                    [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-                dnn_model.max_counter[l][c1] = max_merged_count.clone()
-                dnn_model.max_counter[l][c2] = max_merged_count.clone()
+            if hasattr(dnn_model, 'max_counter'):
+                for l in range(len(dnn_model.max_counter)):
+                    max_merged_count = torch.cat(
+                        [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+                    dnn_model.max_counter[l][c1] = max_merged_count.clone()
+                    dnn_model.max_counter[l][c2] = max_merged_count.clone()
 
         else:
             if print_log:  
@@ -623,20 +676,27 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
                 merged_clusters[group_id_c2] = sorted(list(set(merged_clusters[group_id_c1]) | set(merged_clusters[group_id_c2])))
                 del merged_clusters[group_id_c1]
                 group_id_c2 = get_group_id(c2, merged_clusters)
-
-            n_per_sub[merged_clusters[group_id_c2]] = n_c1 + n_c2
+            if n_per_sub is not None:
+                n_per_sub[merged_clusters[group_id_c2]] = n_c1 + n_c2
+            
+            if hasattr(dnn_model, 'max_accumulator'):
+                _max = dnn_model.max_accumulator[c1].max(dnn_model.max_accumulator[c2])
+                dnn_model.max_accumulator[c1] = _max.clone()
+                dnn_model.max_accumulator[c2] = torch.zeros_like(_max).cuda()
+                
             # zero_count_per_layer
             if hasattr(dnn_model, 'zero_counter'):
                 zero_merged_count = dnn_model.zero_counter[c1] + dnn_model.zero_counter[c2]
                 dnn_model.zero_counter[c1] = zero_merged_count.clone()
                 dnn_model.zero_counter[c2] = zero_merged_count.clone()
 
-            for l in range(n_layers):
-                # max_per_layer_per_datapoint
-                max_merged_count = torch.cat(
-                    [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
-                dnn_model.max_counter[l][c1] = max_merged_count.clone()
-                dnn_model.max_counter[l][c2] = max_merged_count.clone()
+            if hasattr(dnn_model, 'max_counter'):
+                for l in range(len(dnn_model.max_counter)):
+                    # max_per_layer_per_datapoint
+                    max_merged_count = torch.cat(
+                        [dnn_model.max_counter[l][c1], dnn_model.max_counter[l][c2]])
+                    dnn_model.max_counter[l][c1] = max_merged_count.clone()
+                    dnn_model.max_counter[l][c2] = max_merged_count.clone()
 
     return merged_clusters, n_per_sub
 

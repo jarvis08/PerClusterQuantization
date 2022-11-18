@@ -95,70 +95,104 @@ class Q_DenseNet(nn.Module):
     
     def delete_counters(self):
         # del self.zero_counter
-        del self.max_counter
-    
-    def initialize_counter(self, x, n_clusters):
-        self.zero_counter = []
-
-        self.features = nn.Sequential(self.quant_init_convbn, self.act1, self.pool)
+        # del self.max_counter
+        del self.max_accumulator
         
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
-        x, _ = self.features[2](x)
-
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
-
+    def update_max_accumulator(self, x, cluster, l_idx):
+        if type(x) is tuple:
+            x = x[0]
+        _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=x.view(x.size(0), -1).max(dim=1).values, reduce=self.reduce)
+        self.max_accumulator[l_idx] = self.max_accumulator[l_idx].max(_max)
+        return l_idx + 1    
+    
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax'):
+        if not hasattr(self, 'max_accumulator'):
+            self.reduce = reduce
+            self.max_accumulator = torch.zeros([181, n_clusters]).cuda()
+            self.zero_buffer = torch.zeros(n_clusters).cuda()
+    
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
+        x = self.act1(x) 
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
+        
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
         for stage_num in range(0,4):
             if stage_num != 0:
                 transition = getattr(self, f'trans{stage_num + 1}')
-                x = transition.initialize_counter(x, n_clusters, self.zero_counter)
-                setattr(self, f'trans{stage_num +1}', transition)
+                x, l_idx, act_scaling_factor = transition.accumulate_output_max_distribution(x, cluster, n_clusters, self,
+                                                                                             l_idx, act_scaling_factor)
             tmp_func = getattr(self, f'stage{stage_num + 1}')
-            x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
-            setattr(self, f'stage{stage_num + 1}', tmp_func)
-        
-        self.classifiers = nn.Sequential(self.batch_norm, self.act2)
+            x, l_idx, act_scaling_factor = tmp_func.accumulate_output_max_distribution(x, cluster, n_clusters, self, 
+                                                                                       l_idx, act_scaling_factor)
 
-        x, _ = self.classifiers[0](x)
-        x = self.classifiers[1](x)
-
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
-
-    def count_zeros_per_index(self, x, cluster, n_clusters):
-        if not hasattr(self, 'zero_counter'):
-            self.initialize_counter(x[0].unsqueeze(0), n_clusters)
-
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
-        x, _ = self.features[2](x)
-
-        layer_idx = 0
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
     
-        for stage_num in range(0,4):
-            if stage_num != 0:
-                transition = getattr(self, f'trans{stage_num + 1}')
-                x, layer_idx = transition.count_zeros_per_index(x, layer_idx, cluster)
-            tmp_func = getattr(self, f'stage{stage_num + 1}')
-            x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster)
-        
-        x, _ = self.classifiers[0](x)
-        x = self.classifiers[1](x)
+    # def initialize_counter(self, x, n_clusters):
+    #     self.zero_counter = []
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     self.features = nn.Sequential(self.quant_init_convbn, self.act1, self.pool)
+        
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
+    #     x, _ = self.features[2](x)
+
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    #     for stage_num in range(0,4):
+    #         if stage_num != 0:
+    #             transition = getattr(self, f'trans{stage_num + 1}')
+    #             x = transition.initialize_counter(x, n_clusters, self.zero_counter)
+    #             setattr(self, f'trans{stage_num +1}', transition)
+    #         tmp_func = getattr(self, f'stage{stage_num + 1}')
+    #         x = tmp_func.initialize_counter(x, n_clusters, self.zero_counter)
+    #         setattr(self, f'stage{stage_num + 1}', tmp_func)
+        
+    #     self.classifiers = nn.Sequential(self.batch_norm, self.act2)
+
+    #     x, _ = self.classifiers[0](x)
+    #     x = self.classifiers[1](x)
+
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+
+    # def count_zeros_per_index(self, x, cluster, n_clusters):
+    #     if not hasattr(self, 'zero_counter'):
+    #         self.initialize_counter(x[0].unsqueeze(0), n_clusters)
+
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
+    #     x, _ = self.features[2](x)
+
+    #     layer_idx = 0
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    
+    #     for stage_num in range(0,4):
+    #         if stage_num != 0:
+    #             transition = getattr(self, f'trans{stage_num + 1}')
+    #             x, layer_idx = transition.count_zeros_per_index(x, layer_idx, cluster)
+    #         tmp_func = getattr(self, f'stage{stage_num + 1}')
+    #         x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster)
+        
+    #     x, _ = self.classifiers[0](x)
+    #     x = self.classifiers[1](x)
+
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
     def get_output_max_distribution(self, x, cluster, n_clusters):
         initialized = True
@@ -223,50 +257,70 @@ class Q_Transition(nn.Module):
         x, act_scaling_factor = self.pool(x, act_scaling_factor)
         return x, act_scaling_factor
 
-    def initialize_counter(self, x, n_clusters, zero_counter):
-        self.zero_counter = zero_counter
+    # def initialize_counter(self, x, n_clusters, zero_counter):
+    #     self.zero_counter = zero_counter
         
-        self.features = nn.Sequential(self.batch_norm, self.act, 
-                                      self.conv, self.pool)
+    #     self.features = nn.Sequential(self.batch_norm, self.act, 
+    #                                   self.conv, self.pool)
 
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
 
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[2](x)
+    #     x, _ = self.features[2](x)
 
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x = self.features[3](x)
-        return x
+    #     x = self.features[3](x)
+    #     return x
 
-    def count_zeros_per_index(self, x, layer_idx, cluster):
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
+    # def count_zeros_per_index(self, x, layer_idx, cluster):
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[2](x)
+    #     x, _ = self.features[2](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
             
-        x = self.features[3](x)
-        return x, layer_idx
+    #     x = self.features[3](x)
+    #     return x, layer_idx
+
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, head, l_idx, act_scaling_factor=None):
+        x, bn_scaling_factor = self.batch_norm(x, act_scaling_factor)
+        x = self.act(x)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, bn_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv(x, act_scaling_factor)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.pool(x, act_scaling_factor)
+
+        return x, l_idx, act_scaling_factor
 
     def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
         if not initialized:
@@ -338,72 +392,102 @@ class Q_DenseUnit(nn.Module):
                                                 concat=True, concat_scaling_factor=input_scaling_factor, cluster=cluster)
         return x, act_scaling_factor
 
-    def initialize_counter(self, x, n_clusters, zero_counter):
-        self.zero_counter = zero_counter
+    # def initialize_counter(self, x, n_clusters, zero_counter):
+    #     self.zero_counter = zero_counter
         
-        self.features = nn.Sequential(self.quant_bn1, self.act1,
-                                      self.quant_convbn, self.act2,
-                                      self.quant_conv2)
+    #     self.features = nn.Sequential(self.quant_bn1, self.act1,
+    #                                   self.quant_convbn, self.act2,
+    #                                   self.quant_conv2)
 
-        batch = x
+    #     batch = x
 
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
 
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[2](x)
-        x = self.features[3](x)
+    #     x, _ = self.features[2](x)
+    #     x = self.features[3](x)
         
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        x, _ = self.features[4](x)
-        x = torch.cat((batch, x), 1)
+    #     x, _ = self.features[4](x)
+    #     x = torch.cat((batch, x), 1)
         
-        n_features = x.view(-1).size(0)
-        self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
+    #     n_features = x.view(-1).size(0)
+    #     self.zero_counter.append(torch.zeros((n_clusters, n_features), device='cuda'))
 
-        return x
+    #     return x
 
-    def count_zeros_per_index(self, x, layer_idx, cluster):
-        batch = x
+    # def count_zeros_per_index(self, x, layer_idx, cluster):
+    #     batch = x
 
-        x, _ = self.features[0](x)
-        x = self.features[1](x)
+    #     x, _ = self.features[0](x)
+    #     x = self.features[1](x)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[2](x)
-        x = self.features[3](x)
+    #     x, _ = self.features[2](x)
+    #     x = self.features[3](x)
         
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        x, _ = self.features[4](x)
-        x = torch.cat((batch, x), 1)
+    #     x, _ = self.features[4](x)
+    #     x = torch.cat((batch, x), 1)
 
-        layer_idx += 1
-        n_features = self.zero_counter[layer_idx].size(1)
-        for idx in range(x.size(0)):
-            flattened = x[idx].view(-1)
-            zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
-            zeros_idx %= n_features
-            self.zero_counter[layer_idx][cluster, zeros_idx] += 1
+    #     layer_idx += 1
+    #     n_features = self.zero_counter[layer_idx].size(1)
+    #     for idx in range(x.size(0)):
+    #         flattened = x[idx].view(-1)
+    #         zeros_idx = (flattened == 0.0).nonzero(as_tuple=True)[0]
+    #         zeros_idx %= n_features
+    #         self.zero_counter[layer_idx][cluster, zeros_idx] += 1
 
-        return x, layer_idx
+    #     return x, layer_idx
+
+    def accumulate_output_max_distribution(self, batch, cluster, n_clusters, head, l_idx, input_scaling_factor=None):
+        x, bn_scaling_factor = self.quant_bn1(batch, input_scaling_factor)
+        x = self.act1(x)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, input_scaling_factor, bn_scaling_factor, cluster=cluster)
+        x, weight_scaling_factor = self.quant_convbn(x, act_scaling_factor)
+        x = self.act2(x)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.quant_conv2(x, act_scaling_factor)
+
+        concat_tensor = torch.cat((batch, x), 1)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act_output(concat_tensor, act_scaling_factor, conv_scaling_factor, 
+                                                concat=True, concat_scaling_factor=input_scaling_factor, cluster=cluster)
+        
+        return x, l_idx, act_scaling_factor
 
     def get_output_max_distribution(self, batch, cluster, n_clusters, max_counter, l_idx, initialized, input_scaling_factor=None): 
         if not initialized:
@@ -469,18 +553,25 @@ class Q_DenseBlock(nn.Module):
             x, act_scaling_factor = function(x, act_scaling_factor, cluster=cluster)
         return x, act_scaling_factor
 
-    def initialize_counter(self, x, n_clusters, zero_counter):
-        self.zero_counter = zero_counter
-        for unit_num in range(self.layers):
-            function = getattr(self, f'unit{unit_num + 1}')
-            x = function.initialize_counter(x, n_clusters, self.zero_counter)
-        return x
+    # def initialize_counter(self, x, n_clusters, zero_counter):
+    #     self.zero_counter = zero_counter
+    #     for unit_num in range(self.layers):
+    #         function = getattr(self, f'unit{unit_num + 1}')
+    #         x = function.initialize_counter(x, n_clusters, self.zero_counter)
+    #     return x
         
-    def count_zeros_per_index(self, x, layer_idx, cluster):
+    # def count_zeros_per_index(self, x, layer_idx, cluster):
+    #     for unit_num in range(self.layers):
+    #         function = getattr(self, f'unit{unit_num + 1}')
+    #         x, layer_idx = function.count_zeros_per_index(x, layer_idx, cluster)
+    #     return x, layer_idx
+
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, head, l_idx, act_scaling_factor=None):
         for unit_num in range(self.layers):
             function = getattr(self, f'unit{unit_num + 1}')
-            x, layer_idx = function.count_zeros_per_index(x, layer_idx, cluster)
-        return x, layer_idx
+            x, l_idx, act_scaling_factor = function.accumulate_output_max_distribution(x, cluster, n_clusters, head, 
+                                                                                       l_idx, act_scaling_factor)
+        return x, l_idx, act_scaling_factor
 
     def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, act_scaling_factor=None): 
         for unit_num in range(self.layers):

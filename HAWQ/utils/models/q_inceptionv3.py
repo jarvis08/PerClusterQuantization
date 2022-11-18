@@ -58,6 +58,21 @@ class Q_InceptConv(nn.Module):
         (x, a_sf) = self.q_activ(x, a_sf, w_sf, None, None, cluster=cluster)
         return (x, a_sf, cluster)
         
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        assert (type(x) is tuple)
+        cluster = x[2]
+        a_sf = x[1]
+            
+        (x, w_sf) = self.q_convbn(x)
+        x = self.relu(x)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        (x, a_sf) = self.q_activ(x, a_sf, w_sf, None, None, cluster=cluster)
+        return (x, a_sf, cluster), l_idx
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         assert (type(x) is tuple)
         cluster = x[2]
@@ -119,6 +134,28 @@ class Q_Concurrent(nn.Sequential):
         assert (type(out) is not tuple)
         return (out, scaling_factor, cluster, channel_num)
     
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        out = []
+        scaling_factor = []
+        channel_num = []
+        cluster = x[2]
+        for module in self._modules.values():
+            branch_out, l_idx = module.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+            if type(branch_out) is tuple:
+                out.append(branch_out[0])
+                scaling_factor.append(branch_out[1])
+                channel_num.append(branch_out[0].shape[1])
+            else:
+                out.append(branch_out)
+        if self.stack:
+            out = torch.stack(tuple(out), dim=self.axis)
+        else:
+            out = torch.cat(tuple(out), dim=self.axis)
+
+        assert (type(out) is not tuple)
+        return (out, scaling_factor, cluster, channel_num), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         out = []
         scaling_factor = []
@@ -160,6 +197,18 @@ class Q_MaxPoolBranch(nn.Module):
         x = self.q_pool((x, a_sf, cluster))
         return x
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        (x, a_sf) = self.q_input_act(x)
+        x = self.q_pool((x, a_sf, cluster))
+        return x, l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         if not initialized:
@@ -221,6 +270,26 @@ class Q_AvgPoolBranch(nn.Module):
 
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        (x, a_sf) = self.q_input_act(x)
+        (x, a_sf) = self.q_pool((x, a_sf))
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        (x, a_sf) = self.q_pool_act((x, a_sf, cluster))
+        (x, a_sf, _), l_idx = self.q_conv.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+        
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         
@@ -286,6 +355,18 @@ class Q_Conv1x1Branch(nn.Module):
         (x, a_sf, _) = self.q_conv((x, a_sf, cluster))
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+            
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        (x, a_sf) = self.q_input_act(x)
+        (x, a_sf, _), l_idx = self.q_conv.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         if not initialized:
@@ -355,6 +436,20 @@ class Q_ConvSeqBranch(nn.Module):
 
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        (x, a_sf) = self.q_input_act(x)
+        for module in list(self.q_conv_list):
+            (x, a_sf, _), l_idx = module.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+            
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         if not initialized:
@@ -445,6 +540,31 @@ class Q_ConvSeq3x3Branch(nn.Module):
         x, a_sf = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], cluster, channel_num))
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+            
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        (x, a_sf) = self.q_input_act(x)
+        for module in list(self.q_conv_list):
+            (x, a_sf, _), l_idx = module.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+            
+        (y1, scaling_factor1, _), l_idx = self.q_conv1x3.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+        (y2, scaling_factor2, _), l_idx = self.q_conv3x1.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+        channel_num = [y1.shape[1], y2.shape[1]]
+        x = torch.cat((y1, y2), dim=1)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        x, a_sf = self.q_rescaling_activ((x, [scaling_factor1, scaling_factor2], cluster, channel_num))
+        return (x, a_sf, cluster), l_idx
+        
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         if not initialized:
@@ -536,6 +656,18 @@ class Q_InceptionAUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        x, l_idx = self.branches.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         
@@ -605,6 +737,18 @@ class Q_ReductionAUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        x, l_idx = self.branches.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         
@@ -684,6 +828,18 @@ class Q_InceptionBUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        x, l_idx = self.branches.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         
@@ -752,6 +908,18 @@ class Q_ReductionBUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        x, l_idx = self.branches.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         
@@ -827,6 +995,17 @@ class Q_InceptionCUnit(nn.Module):
         x, a_sf = self.q_rescaling_activ(x)
         return (x, a_sf, cluster)
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[2]
+        x, l_idx = self.branches.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        x, a_sf = self.q_rescaling_activ(x)
+        return (x, a_sf, cluster), l_idx
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[2]
         
@@ -929,6 +1108,25 @@ class Q_InceptInitBlock(nn.Module):
         x = self.q_pool2(x)
         return x
 
+    def accumulate_output_max_distribution(self, x, n_clusters, head, l_idx):
+        cluster = x[1]
+        
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+            
+        (x, a_sf) = self.q_input_activ(x[0], cluster=cluster)
+        
+        x, l_idx = self.q_conv1.accumulate_output_max_distribution((x, a_sf, cluster), n_clusters, head, l_idx)
+        x, l_idx = self.q_conv2.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        x, l_idx = self.q_conv3.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        x = self.q_pool1(x)
+        x, l_idx = self.q_conv4.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        x, l_idx = self.q_conv5.accumulate_output_max_distribution(x, n_clusters, head, l_idx)
+        x = self.q_pool2(x)
+        return x, l_idx
+        
+        
     def get_output_max_distribution(self, x, n_clusters, max_counter, l_idx, initialized):
         cluster = x[1]
         if not initialized:
@@ -1064,12 +1262,32 @@ class Q_InceptionV3(nn.Module):
         x = self.output((x, a_sf))
         return x
 
+    def update_max_accumulator(self, x, cluster, l_idx):
+        if type(x) is tuple:
+            x = x[0]
+        _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=x.view(x.size(0), -1).max(dim=1).values, reduce=self.reduce)
+        self.max_accumulator[l_idx] = self.max_accumulator[l_idx].max(_max)
+        return l_idx + 1    
+    
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax'):
+        if not hasattr(self, 'max_accumulator'):
+            self.reduce = reduce
+            self.max_accumulator = torch.zeros([161, n_clusters]).cuda()
+            self.zero_buffer = torch.zeros(n_clusters).cuda()
+            
+        x = (x, cluster)
+        for module in list(self.features)[:-1]:
+            if type(module) == nn.Sequential:
+                for sub_module in list(module):
+                    x, l_idx = sub_module.accumulate_output_max_distribution(x, n_clusters, self, l_idx)
+            else:
+                x, l_idx = module.accumulate_output_max_distribution(x, n_clusters, self, l_idx)
+
     def get_output_max_distribution(self, x, cluster, n_clusters):
         initialized = True
         if not hasattr(self, 'max_counter'):
             initialized = False
             self.max_counter = []
-            self.max_counter.append([[] for _ in range(n_clusters)])
         
         l_idx = 0
         x = (x, cluster)

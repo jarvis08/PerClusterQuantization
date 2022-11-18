@@ -181,7 +181,7 @@ class QuantAct(Module):
                  fix_flag=False,
                  act_percentile=0,
                  fixed_point_quantization=False,
-                 num_clusters=10):
+                 num_clusters=1):
         super(QuantAct, self).__init__()
 
         self.activation_bit = activation_bit
