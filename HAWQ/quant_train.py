@@ -496,12 +496,12 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     ###
 
     # for epoch in range(args.start_epoch, 10):
-    #     train_ema(cluster_train_loader, model, clustering_model, criterion, epoch, args)
+    #     train_ema(train_loader, model, clustering_model, criterion, epoch, args)
     #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
 
     # freeze_model(model)
-    # score = clustering_model.measure_cluster_score(model, cluster_train_loader, args.arch)
-    # # score = clustering_model.measure_cluster_distance(model, cluster_train_loader, args.arch)
+    # score = clustering_model.measure_cluster_score(model, train_loader, test_loader, args.arch)
+    # # score = clustering_model.measure_cluster_distance(model, train_loader, args.arch)
     # freeze_model(model)
 
     # cluster = args.sub_cluster if args.nnac else args.cluster
@@ -523,6 +523,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     # Train EMA for couple epochs before training parameters
     ema_epoch = 1 if args.data == 'imagenet' else 10
     for epoch in range(args.start_epoch, ema_epoch):
+        print("EMA training epochs...")
         train_ema(train_loader, model, clustering_model, criterion, epoch, args)
         acc1 = validate(test_loader, model, clustering_model, criterion, args)
         
