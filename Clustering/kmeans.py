@@ -315,27 +315,22 @@ class KMeansClustering(object):
         
         dnn_model.delete_counters()
 
-
     @torch.no_grad()
-    def measure_cluster_score(self, dnn_model, train_loader, arch, print_log=True):
-        print('\n>>> measure cluster score..')
+    def get_cluster_score(self, dnn_model, data_loader, ema, arch):
         from utils.misc import InputContainer
-
         n_clusters = self.args.cluster
         container = InputContainer(
-            train_loader, self, self.args.cluster, self.args.dataset, arch, self.args.batch)
+            data_loader, self, self.args.cluster, self.args.dataset, arch, self.args.batch)
         container.initialize_generator()
         container.set_next_batch()
 
         print('Count Max Values per cluster about dataset..')
-        n_per_sub = [0 for _ in range(self.args.cluster)]
         dnn_model.eval()
-        
-        with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
+        dnn_model.delete_counters()
+        with tqdm(range(len(data_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
             for i, _ in enumerate(t):
                 input, _, cluster = container.get_batch()
 
-                n_per_sub[cluster] += self.args.batch
                 dnn_model.get_output_max_distribution(
                     input, cluster, self.args.cluster)
 
@@ -347,23 +342,36 @@ class KMeansClustering(object):
                 if container.leftover_cluster_data[c]:
                     input, _, cluster = container.leftover_batch[c][0], \
                         container.leftover_batch[c][1], c
-                    n_per_sub[cluster] += input.size(0)
                     dnn_model.get_output_max_distribution(
                         input, cluster, self.args.cluster)
+            
+        score = torch.zeros_like(ema)
+        for layer_idx in range(ema.size(0)):
+            for cluster_idx in range(ema.size(1)):
+                score[layer_idx][cluster_idx] = torch.mean(torch.abs(dnn_model.max_counter[layer_idx][cluster_idx] - ema[layer_idx][cluster_idx])) if dnn_model.max_counter[layer_idx][cluster_idx] != [] else 0
+                
+        dnn_model.delete_counters()
+        return score.clone()
 
-        n_layers = len(dnn_model.max_counter)
-        n_per_sub = torch.tensor(n_per_sub).cuda()
+    @torch.no_grad()
+    def measure_cluster_score(self, dnn_model, aug_loader, nonaug_loader, test_loader, arch, print_log=True):
+        print('\n>>> measure cluster score..')
+
         ema = dnn_model.get_ema_per_layer().cuda()
 
-        score = torch.zeros([n_layers, n_clusters]).cuda()
+        aug_score = self.get_cluster_score(dnn_model, aug_loader, ema, arch)
+        nonaug_score = self.get_cluster_score(dnn_model, nonaug_loader, ema, arch)
+        test_score = self.get_cluster_score(dnn_model, test_loader, ema, arch)
 
-        for layer_idx in range(n_layers):
-            for cluster_idx in range(n_clusters):
-                score[layer_idx][cluster_idx] = torch.mean(torch.abs(dnn_model.max_counter[layer_idx][cluster_idx] - ema[layer_idx][cluster_idx]))
-                
-        cluster_score_per_layer = torch.mean(score, dim=1)
+        aug_score_refined = (aug_score.T)[aug_score.sum(dim=0) != 0].T
+        nonaug_score_refined = (nonaug_score.T)[nonaug_score.sum(dim=0) != 0].T
+        test_score_refined = (test_score.T)[test_score.sum(dim=0) != 0].T
         
-        return cluster_score_per_layer
+        aug_score_avg = torch.mean(aug_score_refined, dim=1)
+        nonaug_score_avg = torch.mean(nonaug_score_refined, dim=1)
+        test_score_avg = torch.mean(test_score_refined, dim=1)
+        
+        return aug_score_avg, nonaug_score_avg, test_score_avg
 
 
     @torch.no_grad()

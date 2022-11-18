@@ -88,9 +88,12 @@ class Q_ResNet18(nn.Module):
 
 
     def delete_counters(self):
-        # del self.zero_counter
-        # del self.max_counter
-        del self.max_accumulator
+        if hasattr(self, 'zero_counter'):
+            del self.zero_counter
+        if hasattr(self, 'max_counter'):
+            del self.max_counter
+        if hasattr(self, 'max_accumulator'):
+            del self.max_accumulator
         
     def update_max_accumulator(self, x, cluster, l_idx):
         if type(x) is tuple:
@@ -303,9 +306,12 @@ class Q_ResNet20(nn.Module):
 
 
     def delete_counters(self):
-        # del self.zero_counter
-        # del self.max_counter
-        del self.max_accumulator
+        if hasattr(self, 'zero_counter'):
+            del self.zero_counter
+        if hasattr(self, 'max_counter'):
+            del self.max_counter
+        if hasattr(self, 'max_accumulator'):
+            del self.max_accumulator
         
     def update_max_accumulator(self, x, cluster, l_idx):
         if type(x) is tuple:
@@ -517,9 +523,12 @@ class Q_ResNet50(nn.Module):
 
 
     def delete_counters(self):
-        # del self.zero_counter
-        # del self.max_counter
-        del self.max_accumulator
+        if hasattr(self, 'zero_counter'):
+            del self.zero_counter
+        if hasattr(self, 'max_counter'):
+            del self.max_counter
+        if hasattr(self, 'max_accumulator'):
+            del self.max_accumulator
         
     def update_max_accumulator(self, x, cluster, l_idx):
         if type(x) is tuple:

@@ -94,9 +94,12 @@ class Q_DenseNet(nn.Module):
                 setattr(module, 'full_precision_flag', precision)
     
     def delete_counters(self):
-        # del self.zero_counter
-        # del self.max_counter
-        del self.max_accumulator
+        if hasattr(self, 'zero_counter'):
+            del self.zero_counter
+        if hasattr(self, 'max_counter'):
+            del self.max_counter
+        if hasattr(self, 'max_accumulator'):
+            del self.max_accumulator
         
     def update_max_accumulator(self, x, cluster, l_idx):
         if type(x) is tuple:
