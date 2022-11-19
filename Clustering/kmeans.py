@@ -371,7 +371,7 @@ class KMeansClustering(object):
         nonaug_score_avg = torch.mean(nonaug_score_refined, dim=1)
         test_score_avg = torch.mean(test_score_refined, dim=1)
         
-        return aug_score_avg, nonaug_score_avg, test_score_avg
+        return aug_score_avg.clone(), nonaug_score_avg.clone(), test_score_avg.clone()
 
 
     @torch.no_grad()
@@ -829,7 +829,7 @@ def get_splitted_cluster_sets(distance, threshold=None, target_cluster=None):
             merge_clusters = list(nx.connected_components(graph))
             
             if (delta := target_cluster - len(merge_clusters)):
-                threshold -= 0.00001 * delta
+                threshold -= 0.000005 * delta
             else:
                 break
     # print("applying threshold : ", threshold)
