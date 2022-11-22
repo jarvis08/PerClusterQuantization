@@ -1245,15 +1245,11 @@ class Q_InceptionV3(nn.Module):
                     init.constant_(module.bias, 0)
 
     def toggle_full_precision(self):
-        print('Model Toggle full precision FUNC')
+        # print('Model Toggle full precision FUNC')
         for module in self.modules():
             if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantBn, QuantConv2d)):
                 precision = getattr(module, 'full_precision_flag')
-                if precision:
-                    precision = False
-                else:
-                    precision = True
-                setattr(module, 'full_precision_flag', precision)
+                setattr(module, 'full_precision_flag', not precision)
 
     def forward(self, x, cluster):
         (x, a_sf) = self.features((x, cluster))

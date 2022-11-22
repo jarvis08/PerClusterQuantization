@@ -119,16 +119,12 @@ class Q_AlexNet(nn.Module):
         self.fc3.set_param(fc, model_dict, 'output.fc3')
 
     def toggle_full_precision(self):
-        print('Model Toggle full precision FUNC')
+        # print('Model Toggle full precision FUNC')
         self.full_precision = False if self.full_precision is True else True
         for module in self.modules():
             if isinstance(module, (QuantAct, QuantLinear, QuantConv2d, QuantBn, QuantBnConv2d)):
                 precision = getattr(module, 'full_precision_flag')
-                if precision:
-                    precision = False
-                else:
-                    precision = True
-                setattr(module, 'full_precision_flag', precision)
+                setattr(module, 'full_precision_flag', not precision)
 
     def forward(self, x, cluster):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
