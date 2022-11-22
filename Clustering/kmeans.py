@@ -818,8 +818,9 @@ def measure_average_distance_from_candidates(dnn_model, distance, THRESHOLD):
     
 
 def get_splitted_cluster_sets(distance, threshold=None, target_cluster=None):
+    import math
     if threshold is None:
-        threshold = torch.quantile(distance[torch.nonzero(distance, as_tuple=True)], 0.02275).item() # 2 sigma : 0.02275 / 1.5 sigma : 0.0668 / 1 sigma : 0.158655
+        threshold = torch.quantile(distance[torch.nonzero(distance, as_tuple=True)], 0.0668).item() # 2 sigma : 0.02275 / 1.5 sigma : 0.0668 / 1 sigma : 0.158655
     if target_cluster is None:
         graph = nx.from_numpy_array(torch.where(distance > threshold, torch.zeros(1).cuda(), distance).cpu().numpy())
         merge_clusters = list(nx.connected_components(graph))
@@ -829,7 +830,7 @@ def get_splitted_cluster_sets(distance, threshold=None, target_cluster=None):
             merge_clusters = list(nx.connected_components(graph))
             
             if (delta := target_cluster - len(merge_clusters)):
-                threshold -= 0.000005 * delta
+                threshold -= 0.000001 * delta
             else:
                 break
     # print("applying threshold : ", threshold)
