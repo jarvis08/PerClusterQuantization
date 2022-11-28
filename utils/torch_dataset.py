@@ -102,8 +102,8 @@ def get_test_dataset(args, normalizer, model):
 
 
 def get_data_loader(dataset, batch_size=128, shuffle=False, workers=4):
-    # return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers, pin_memory=True)
-    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, pin_memory=True)
+    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers, pin_memory=True)
+    # return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, pin_memory=True)
 
 
 def get_data_loaders(args, model):
