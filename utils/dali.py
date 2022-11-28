@@ -61,18 +61,16 @@ def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=Fa
 
     
 def get_dali_dataloader(batch_size, data_dir, is_training, num_workers):
-    device_id = torch.cuda.current_device()
-
     train_pipe = create_dali_pipeline(batch_size=batch_size,
                                       num_threads=num_workers,
-                                      device_id=device_id,
-                                      seed=12+device_id,
+                                      device_id=0,
+                                      seed=12,
                                       prefetch_queue_depth=4,
                                       data_dir=data_dir,
                                       crop=224,
                                       size=256,
                                       dali_cpu=False,
-                                      shard_id=device_id,
+                                      shard_id=0,
                                       num_shards=1,
                                       is_training=is_training)
     train_pipe.build()
