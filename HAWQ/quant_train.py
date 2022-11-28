@@ -685,7 +685,7 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
             # for i, (images, target) in enumerate(t):
             for i, data in enumerate(t):
                 if args.dataset == 'imagenet':
-                    images, target = data[0]['data'], data[0]['label']
+                    images, target = data[0]['data'], torch.flatten(data[0]['label'])
                 else:
                     images, target = data
                     
@@ -734,7 +734,11 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, lo
 
     end = time.time()
     with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
-        for i, (images, target) in enumerate(t):
+            for i, data in enumerate(t):
+                if args.dataset == 'imagenet':
+                    images, target = data[0]['data'], torch.flatten(data[0]['label'])
+                else:
+                    images, target = data
             # measure data loading time
             data_time.update(time.time() - end)
 
@@ -874,7 +878,12 @@ def validate(val_loader, model, clustering_model, criterion, args):
     with torch.no_grad():
         end = time.time()
         with tqdm(val_loader, desc="Validate", ncols=95) as t:
-            for i, (images, target) in enumerate(t):
+            for i, data in enumerate(t):
+                if args.dataset == 'imagenet':
+                    images, target = data[0]['data'], torch.flatten(data[0]['label'])
+                else:
+                    images, target = data
+                    
                 if args.gpu is not None:
                     images = images.cuda(args.gpu, non_blocking=True)
                     target = target.cuda(args.gpu, non_blocking=True)
