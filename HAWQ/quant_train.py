@@ -367,6 +367,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     def set_quantize_param(args, model, bit_config):
         name_counter = 0
 
+        fix_BN = True if args.arch == 'densenet121' else args.fix_BN
         for name, m in model.named_modules():
             if name in bit_config.keys():
                 name_counter += 1
@@ -378,9 +379,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 setattr(m, 'act_range_momentum', args.act_range_momentum)
                 setattr(m, 'weight_percentile', args.weight_percentile)
                 setattr(m, 'fix_flag', False)
-                setattr(m, 'fix_BN', args.fix_BN)
+                setattr(m, 'fix_BN', fix_BN)
                 setattr(m, 'fix_BN_threshold', args.fix_BN_threshold)
-                setattr(m, 'training_BN_mode', args.fix_BN)
+                setattr(m, 'training_BN_mode', fix_BN)
                 setattr(m, 'checkpoint_iter_threshold', args.checkpoint_iter)
                 setattr(m, 'save_path', args.save_path)
                 setattr(m, 'fixed_point_quantization',
