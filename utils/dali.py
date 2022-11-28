@@ -8,7 +8,8 @@ import nvidia.dali.types as types
 
 @pipeline_def
 def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=False, is_training=True):
-    images, labels = fn.readers.file(file_root=data_dir,
+    images, labels = fn.readers.file(file_root=[data_dir+"_rec.rec"],
+                                     index_path=[data_dir+"_rec.idx"],
                                      shard_id=shard_id,
                                      num_shards=num_shards,
                                      random_shuffle=is_training,
