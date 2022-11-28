@@ -481,11 +481,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     one_epoch_time = None
 
     ### LOG DIRECTORY ###
-    finetune_path = set_save_dir(args)
-    log_path = set_log_dir(args)
+    # finetune_path = set_save_dir(args)
+    # log_path = set_log_dir(args)
 
-    #finetune_path = set_kt_save_dir(args)
-    #log_path = set_kt_log_dir(args)
+    finetune_path = set_kt_save_dir(args)
+    log_path = set_kt_log_dir(args)
 
     if not os.path.exists(finetune_path):
         os.mkdir(finetune_path)
