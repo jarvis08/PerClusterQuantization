@@ -1,12 +1,9 @@
 import os
 
-try:
-    from nvidia.dali.plugin.pytorch import DALIClassificationIterator, LastBatchPolicy
-    from nvidia.dali.pipeline import pipeline_def
-    import nvidia.dali.types as types
-    import nvidia.dali.fn as fn
-except ImportError:
-    raise ImportError("Please install DALI from https://www.github.com/NVIDIA/DALI to run this example.")
+from nvidia.dali.pipeline import pipeline_def
+from nvidia.dali.plugin.pytorch import DALIClassificationIterator, LastBatchPolicy
+import nvidia.dali.fn as fn
+import nvidia.dali.types as types
 
 
 @pipeline_def
@@ -62,26 +59,27 @@ def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=Fa
     labels = labels.gpu()
     return images, labels
 
+    
+def get_dali_dataloader(batch_size, data_dir, is_training, num_workers):
+    device_id = torch.cuda.current_device()
 
-def get_dali_loader(args, mode):
-    local_rank = 0  # need to be changed for Distributed Training
-    world_size = 1  # need to be changed for Distributed Training
-    if args.dataset == 'imagenet':
-        crop_size = 224
-        val_size = 256
-        pipe = create_dali_pipeline(batch_size=args.batch if mode == 'train' else args.val_batch,
-                                    num_threads=args.worker,
-                                    device_id=local_rank,
-                                    seed=12 + local_rank,
-                                    data_dir=os.path.join(args.imagenet, mode),
-                                    crop=crop_size,
-                                    size=val_size,
-                                    # dali_cpu=False,
-                                    dali_cpu=True,
-                                    shard_id=local_rank,
-                                    num_shards=world_size,
-                                    is_training=True if mode == 'train' else False)
-        pipe.build()
-        loader = DALIClassificationIterator(pipe, reader_name="Reader", last_batch_policy=LastBatchPolicy.PARTIAL)
-        return loader
+    train_pipe = create_dali_pipeline(batch_size=batch_size,
+                                      num_threads=num_workers,
+                                      device_id=device_id,
+                                      seed=12+device_id,
+                                      prefetch_queue_depth=4,
+                                      data_dir=data_dir,
+                                      crop=224,
+                                      size=256,
+                                      dali_cpu=False,
+                                      shard_id=device_id,
+                                      num_shards=1,
+                                      is_training=is_training)
+    train_pipe.build()
+    data_loader = DALIClassificationIterator(train_pipe,
+                                              reader_name="Reader",
+                                              last_batch_policy=LastBatchPolicy.DROP,
+                                              auto_reset=True)
+
+    return data_loader
 
