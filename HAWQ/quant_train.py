@@ -685,7 +685,7 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
             # for i, (images, target) in enumerate(t):
             for i, data in enumerate(t):
                 if args.dataset == 'imagenet':
-                    images, target = data[0]['data'], torch.flatten(data[0]['label'])
+                    images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
                 else:
                     images, target = data
                     
@@ -736,7 +736,7 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, lo
     with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
             for i, data in enumerate(t):
                 if args.dataset == 'imagenet':
-                    images, target = data[0]['data'], torch.flatten(data[0]['label'])
+                    images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
                 else:
                     images, target = data
             # measure data loading time
@@ -880,7 +880,7 @@ def validate(val_loader, model, clustering_model, criterion, args):
         with tqdm(val_loader, desc="Validate", ncols=95) as t:
             for i, data in enumerate(t):
                 if args.dataset == 'imagenet':
-                    images, target = data[0]['data'], torch.flatten(data[0]['label'])
+                    images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
                 else:
                     images, target = data
                     
