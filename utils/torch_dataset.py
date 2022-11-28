@@ -107,18 +107,24 @@ def get_data_loader(dataset, batch_size=128, shuffle=False, workers=4):
 
 
 def get_data_loaders(args, model):
-    normalizer = get_normalizer(args.dataset)
+    if args.dataset != 'imagenet':
+        normalizer = get_normalizer(args.dataset)
 
-    test_dataset = get_test_dataset(args, normalizer, model)
-    test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
-    if args.mode == 'eval':
-        return test_loader
+        test_dataset = get_test_dataset(args, normalizer, model)
+        test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+        if args.mode == 'eval':
+            return test_loader
 
-    clustering_train_loader = None
-    aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
-    non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
+        clustering_train_loader = None
+        aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
+        non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
 
-    clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=True,
-                                              workers=args.worker)
-    train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+        clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=True,
+                                                workers=args.worker)
+        train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
+    else:
+        from .dali import get_dali_dataloader
+        train_loader = get_dali_dataloader(128, os.path.join(args.imagenet, 'train'), is_training=True, num_workers=4)
+        test_loader = get_dali_dataloader(256, os.path.join(args.imagenet, 'val'), is_training=False, num_workers=4)
+        clustering_train_loader = get_dali_dataloader(512, os.path.join(args.imagenet, 'train'), is_training=False, num_workers=4)
     return {'aug_train': train_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}
