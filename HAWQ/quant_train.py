@@ -682,7 +682,13 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
     end = time.time()
     with torch.no_grad():
         with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
-            for i, (images, target) in enumerate(t):
+            # for i, (images, target) in enumerate(t):
+            for i, data in enumerate(t):
+                if args.dataset == 'imagenet':
+                    images, target = data[0]['data'], data[0]['label']
+                else:
+                    images, target = data
+                    
                 # measure data loading time
                 data_time.update(time.time() - end)
 

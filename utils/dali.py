@@ -1,4 +1,5 @@
 import os
+import torch
 
 from nvidia.dali.pipeline import pipeline_def
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator, LastBatchPolicy
@@ -8,12 +9,11 @@ import nvidia.dali.types as types
 
 @pipeline_def
 def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=False, is_training=True):
-    images, labels = fn.readers.file(file_root=[data_dir+"_rec.rec"],
-                                     index_path=[data_dir+"_rec.idx"],
+    images, labels = fn.readers.mxnet(path=[data_dir+".rec"],
+                                     index_path=[data_dir+".idx"],
                                      shard_id=shard_id,
                                      num_shards=num_shards,
                                      random_shuffle=is_training,
-                                     pad_last_batch=True,
                                      name="Reader")
     dali_device = 'cpu' if dali_cpu else 'gpu'
     decoder_device = 'cpu' if dali_cpu else 'mixed'
@@ -62,16 +62,18 @@ def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=Fa
 
     
 def get_dali_dataloader(batch_size, data_dir, is_training, num_workers):
+    device_id = torch.cuda.current_device()
+    
     train_pipe = create_dali_pipeline(batch_size=batch_size,
                                       num_threads=num_workers,
-                                      device_id=0,
-                                      seed=12,
+                                      device_id=device_id,
+                                      seed=12+device_id,
                                       prefetch_queue_depth=4,
                                       data_dir=data_dir,
                                       crop=224,
                                       size=256,
                                       dali_cpu=False,
-                                      shard_id=0,
+                                      shard_id=device_id,
                                       num_shards=1,
                                       is_training=is_training)
     train_pipe.build()
