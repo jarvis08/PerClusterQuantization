@@ -618,7 +618,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     
     
     # Train EMA for couple epochs before training parameters
-    ema_epoch = 1 if args.data == 'imagenet' else 10
+    ema_epoch = 2 if args.data == 'imagenet' else 10
     for epoch in range(args.start_epoch, ema_epoch):
         print("EMA training epochs...")
         train_ema(train_loader, model, clustering_model, criterion, epoch, args)
