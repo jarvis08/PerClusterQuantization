@@ -719,7 +719,7 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
 
 
 
-def train(train_loader, model, clustering_model, criterion, optimizer, epoch, logger, args):
+def train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
