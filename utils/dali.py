@@ -68,7 +68,7 @@ def get_dali_dataloader(batch_size, data_dir, is_training, num_workers):
                                       num_threads=num_workers,
                                       device_id=device_id,
                                       seed=12+device_id,
-                                      prefetch_queue_depth=4,
+                                      prefetch_queue_depth=2,
                                       data_dir=data_dir,
                                       crop=224,
                                       size=256,
