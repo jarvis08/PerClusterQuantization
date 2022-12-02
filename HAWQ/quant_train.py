@@ -635,7 +635,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
-        train(train_loader, model, clustering_model, criterion, optimizer, epoch, logging, args)
+        train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
@@ -701,13 +701,13 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
                 data_time.update(time.time() - end)
 
                 if args.gpu is not None:
-                    images = images.cuda(args.gpu, non_blocking=True)
-                    target = target.cuda(args.gpu, non_blocking=True)
+                    images = images.cuda(args.gpu)
+                    target = target.cuda(args.gpu)
 
                 if clustering_model is None:
-                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
+                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
                 else:
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
+                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
 
                 # compute output
                 output = model(images, cluster)
@@ -727,7 +727,7 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
 
 
 
-def train(train_loader, model, clustering_model, criterion, optimizer, epoch, logger, args):
+def train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -742,22 +742,23 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, lo
 
     end = time.time()
     with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
-            for i, data in enumerate(t):
-                if args.dataset == 'imagenet':
-                    images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
-                else:
-                    images, target = data
+        for i, data in enumerate(t):
+            if args.dataset == 'imagenet':
+                images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
+            else:
+                images, target = data
+                
             # measure data loading time
             data_time.update(time.time() - end)
 
             if args.gpu is not None:
-                images = images.cuda(args.gpu, non_blocking=True)
-                target = target.cuda(args.gpu, non_blocking=True)
+                images = images.cuda(args.gpu)
+                target = target.cuda(args.gpu)
 
             if clustering_model is None:
-                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
+                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
             else:
-                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
+                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
 
             # compute output
             output = model(images, cluster)
