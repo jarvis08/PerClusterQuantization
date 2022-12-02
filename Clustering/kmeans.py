@@ -206,6 +206,27 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
+    def ema_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
+        print('\n>>> NN-aware Clustering..')        
+        ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
+
+        n_per_sub = torch.zeros([self.args.sub_cluster], dtype=torch.int).cuda()
+        dnn_model.eval()
+        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+            for i, (images, _) in enumerate(t):
+                images = images.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+                
+                indices, counts = torch.unique(cluster, return_counts=True)
+                n_per_sub[indices] += counts
+                
+        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
+        
+        final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
+        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
+
+    @torch.no_grad()
     def max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
         print('\n>>> NN-aware Clustering..')
         
@@ -315,6 +336,7 @@ class KMeansClustering(object):
         
         dnn_model.delete_counters()
 
+
     @torch.no_grad()
     def get_cluster_score(self, dnn_model, data_loader, ema, arch):
         from utils.misc import InputContainer
@@ -352,6 +374,7 @@ class KMeansClustering(object):
                 
         dnn_model.delete_counters()
         return score.clone()
+
 
     @torch.no_grad()
     def measure_cluster_score(self, dnn_model, aug_loader, nonaug_loader, test_loader, arch, print_log=True):
@@ -499,7 +522,7 @@ def get_max_ratio(dnn_model, n_sub_clusters, task=None):
     for l in range(n_layers):
         for c in range(n_sub_clusters):
             if task == 0:
-                max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.9986)
+                max_ratio[l][c] = torch.quantile(cur_max_counter[l][c], 0.95) # 0.9986
             elif task == 1:
                 max_ratio[l][c] = torch.amax(cur_max_counter[l][c])
             elif task == 2:

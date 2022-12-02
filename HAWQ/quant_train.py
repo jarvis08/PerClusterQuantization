@@ -421,21 +421,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     prev_arch = args.arch
     args.arch = set_args_arch(args)
-    model, teacher = create_model(args)  # Create Model
+    fp_model, teacher = create_model(args)  # Create Model
     args.arch = reset_args_arch(args)
-    model_dict = transfer_param(args, model) if args.transfer_param else None
-    model = eval_resume(args, model)
+    model_dict = transfer_param(args, fp_model) if args.transfer_param else None
+    fp_model = eval_resume(args, fp_model)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(
-        args, model, model_dict, quantize_arch, args.cluster)
-
+    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster)
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
-
     model = set_quantize_param(args, model, bit_config)
-
     # logging.info(model)
-
     model = quant_resume(args, model)
 
     if args.gpu is not None:
@@ -464,13 +459,28 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         clustering_model.train_clustering_model(cluster_train_loader)
 
     if args.nnac and clustering_model.final_cluster is None:
-        model.toggle_full_precision()
-        freeze_model(model)
+        ###
+        # model.toggle_full_precision()
+        # freeze_model(model)
         # clustering_model.zero_max_nn_aware_clustering(
-        clustering_model.max_nn_aware_clustering(
-            model, cluster_train_loader, args.arch)
-        model.toggle_full_precision()
-        unfreeze_model(model)
+        # clustering_model.max_nn_aware_clustering(
+        #     model, cluster_train_loader, args.arch)
+        ###
+        sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
+        sub_model = set_quantize_param(args, sub_model, bit_config)
+        sub_model = sub_model.cuda(args.gpu)
+        
+        print("EMA training epochs...")
+        ema_epoch = 2 if args.data == 'imagenet' else 10
+        for epoch in range(args.start_epoch, ema_epoch):
+            train_ema(train_loader, sub_model, clustering_model, criterion, epoch, args)
+            
+        sub_model.toggle_full_precision()
+        freeze_model(sub_model)
+        clustering_model.ema_nn_aware_clustering(sub_model, cluster_train_loader, args.arch)
+        del sub_model
+    del fp_model
+    
     if args.evaluate:
         validate(test_loader, model, criterion, args)
         return
@@ -615,8 +625,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     # confusion_matrix(test_loader, model, clustering_model, args)
     # cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args)
 
-    
-    
     # Train EMA for couple epochs before training parameters
     ema_epoch = 2 if args.data == 'imagenet' else 10
     for epoch in range(args.start_epoch, ema_epoch):
