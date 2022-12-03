@@ -12,6 +12,7 @@ from pytorchcv.models.shufflenetv2 import ShuffleUnit, ShuffleInitBlock
 import time
 import logging
 
+ACCUMULATE = {'sum': torch.add, 'max': torch.maximum}
 
 class Q_AlexNet(nn.Module):
     def __init__(self, model, model_dict=None, num_clusters=1):
@@ -339,15 +340,18 @@ class Q_AlexNet(nn.Module):
     def update_max_accumulator(self, x, cluster, l_idx):
         if type(x) is tuple:
             x = x[0]
-        _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=x.view(x.size(0), -1).max(dim=1).values, reduce=self.reduce)
-        self.max_accumulator[l_idx] = self.max_accumulator[l_idx].max(_max)
+        src = torch.abs(x.view(x.size(0), -1).amax(dim=1) - self.clamp[l_idx][cluster])
+        _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=src, reduce=self.reduce, include_self=False)
+        self.max_accumulator[l_idx] = self.accumulate(self.max_accumulator[l_idx], _max)
         return l_idx + 1
         
-    def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax'):
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax', accumulate='max', clamp=None):
         if not hasattr(self, 'max_accumulator'):
             self.reduce = reduce
+            self.accumulate = ACCUMULATE[accumulate]
             self.max_accumulator = torch.zeros([7, n_clusters]).cuda()
             self.zero_buffer = torch.zeros(n_clusters).cuda()
+            self.clamp = clamp if clamp is not None else torch.zeros_like(self.max_accumulator)
             
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
         x, conv_scaling_factor = self.conv1(x, act_scaling_factor)

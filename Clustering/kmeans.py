@@ -339,41 +339,20 @@ class KMeansClustering(object):
 
     @torch.no_grad()
     def get_cluster_score(self, dnn_model, data_loader, ema, arch):
-        from utils.misc import InputContainer
-        n_clusters = self.args.cluster
-        container = InputContainer(
-            data_loader, self, self.args.cluster, self.args.dataset, arch, self.args.batch)
-        container.initialize_generator()
-        container.set_next_batch()
-
-        print('Count Max Values per cluster about dataset..')
+        n_per_sub = torch.zeros([self.args.cluster], dtype=torch.int).cuda()
         dnn_model.eval()
-        dnn_model.delete_counters()
-        with tqdm(range(len(data_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
-            for i, _ in enumerate(t):
-                input, _, cluster = container.get_batch()
-
-                dnn_model.get_output_max_distribution(
-                    input, cluster, self.args.cluster)
-
-                container.set_next_batch()
-                if container.ready_cluster is None:
-                    break
-            container.check_leftover()
-            for c in range(container.num_clusters):
-                if container.leftover_cluster_data[c]:
-                    input, _, cluster = container.leftover_batch[c][0], \
-                        container.leftover_batch[c][1], c
-                    dnn_model.get_output_max_distribution(
-                        input, cluster, self.args.cluster)
-            
-        score = torch.zeros_like(ema)
-        for layer_idx in range(ema.size(0)):
-            for cluster_idx in range(ema.size(1)):
-                score[layer_idx][cluster_idx] = torch.mean(torch.abs(dnn_model.max_counter[layer_idx][cluster_idx] - ema[layer_idx][cluster_idx])) if dnn_model.max_counter[layer_idx][cluster_idx] != [] else 0
+        with tqdm(data_loader, desc="Collecting Cluster Information", ncols=95) as t:
+            for i, (images, _) in enumerate(t):
+                images = images.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
                 
+                indices, counts = torch.unique(cluster, return_counts=True)
+                n_per_sub[indices] += counts
+                dnn_model.accumulate_output_max_distribution(images, cluster, self.args.cluster, reduce='sum', accumulate='sum', clamp=ema)
+        
+        score = torch.nan_to_num(dnn_model.max_accumulator.div(n_per_sub))
         dnn_model.delete_counters()
-        return score.clone()
+        return score
 
 
     @torch.no_grad()
