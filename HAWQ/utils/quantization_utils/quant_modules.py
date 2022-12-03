@@ -269,8 +269,8 @@ class QuantAct(Module):
             if self.running_stat:
                 if self.act_percentile == 0:
                     data = x.view(x.size(0), -1).clone().detach()
-                    self.min = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amin(dim=1), reduce="amin")
-                    self.max = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amax(dim=1), reduce="amax")
+                    self.min = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                    self.max = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
                         
                 elif self.quant_mode == 'symmetric':        # TODO
                     x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
