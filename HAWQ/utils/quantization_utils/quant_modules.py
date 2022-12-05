@@ -288,7 +288,7 @@ class QuantAct(Module):
                     tmp_max = torch.index_select(self.max, 0, non_initialized)
                     self.x_min.index_add_(0, non_initialized, tmp_min)
                     self.x_max.index_add_(0, non_initialized, tmp_max)
-                    self.initialize.index_fill_(0, non_initialized, False)
+                    self.initialize.index_fill_(0, uniques, False)
                 
                 if self.act_range_momentum == -1:
                     self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
