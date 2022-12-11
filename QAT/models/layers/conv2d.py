@@ -580,7 +580,7 @@ class FusedConv2d(nn.Module):
             self.low_bit = torch.zeros(1, dtype=torch.int64)
             self.input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
             self.val_input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
-            self.allowed_channels = None
+            # self.allowed_channels = None
             # self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
         else:
             w_bit = w_bit if w_bit is not None else arg_dict['bit']

@@ -60,6 +60,8 @@ class RuntimeHelper(object):
         self.const_portion = torch.tensor(args.const_portion, dtype=torch.float32, device='cuda')
         self.quantile_tensor *= args.quantile
         self.input_grad = args.input_grad
+        self.schedule_unit = args.schedule_unit
+        self.schedule_count = args.schedule_count
         # self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
 
@@ -278,16 +280,21 @@ def set_mixed_bits_per_iter(model, e, reduce_ratio):
 #                 fused.allowed_channels = fused.fixed_indices[indices]
 
 
-def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, reduce_ratio):
+def skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, epoch, logger, reduce_ratio, runtime_helper, record_grad):
     losses = AverageMeter()
     top1 = AverageMeter()
+    runtime_helper.conv_mixed_grad = True
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
         for i, (input, target) in enumerate(t):
             t.set_description("Epoch {}".format(epoch))
 
-            input.requires_grad = True
+            if (i+1) == len(train_loader):
+                input.requires_grad = True
+            else:
+                input.requires_grad = False
+
             input, target = input.cuda(), target.cuda()
             output = model(input)
             loss = criterion(output, target)
@@ -303,10 +310,65 @@ def skt_train_epoch(model, train_loader, criterion, optimizer, epoch, logger, re
             # gradient_sum_check(model, reduce_ratio)
             # freeze_channels_already_allocated_to_low_bit(model)
             optimizer.step()
-            ratio = set_mixed_bits_per_iter(model, epoch, reduce_ratio)
+
+            if (i + 1) == len(train_loader):
+                ratio = set_mixed_bits_per_iter(model, epoch, reduce_ratio)
+            t.set_postfix(loss=losses.avg, acc=top1.avg)
+
+    record_grad[epoch - 1][0] = ratio
+    record_grad[epoch - 1][1] = losses.avg
+    record_grad[epoch - 1][2] = top1.avg
+    print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
+
+    return record_grad, ratio
+
+
+def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, logger, reduce_ratio, runtime_helper, record_grad,
+                              schedule_count, iter_idx):
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    iter_cnt = 0
+
+    model.train()
+    with tqdm(train_loader, unit="batch", ncols=90) as t:
+        for i, (input, target) in enumerate(t):
+            t.set_description("Epoch {}".format(epoch))
+
+            if (i + 1) % schedule_count == 0 or (i+1 == len(train_loader) and schedule_count == 100):
+                input.requires_grad = True
+                runtime_helper.conv_mixed_grad = True
+            else:
+                input.requires_grad = False
+                runtime_helper.conv_mixed_grad = False
+
+            input, target = input.cuda(), target.cuda()
+            output = model(input)
+            loss = criterion(output, target)
+            prec = accuracy(output, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec.item(), input.size(0))
+
+            logger.debug("[Epoch] {}, step {}/{} [Loss] {:.5f} (avg: {:.5f}) [Score] {:.3f} (avg: {:.3f})"
+                         .format(epoch, i + 1, len(t), loss.item(), losses.avg, prec.item(), top1.avg))
+
+            optimizer.zero_grad()
+            loss.backward()
+            # gradient_sum_check(model, reduce_ratio)
+            # freeze_channels_already_allocated_to_low_bit(model)
+            optimizer.step()
+
+            if (i + 1) % schedule_count == 0 or (i+1 == len(train_loader) and schedule_count == 100):
+                ratio = set_mixed_bits_per_iter(model, epoch, reduce_ratio)
+                record_grad[iter_idx][0] = ratio
+                record_grad[iter_idx][1] = losses.avg
+                record_grad[iter_idx][2] = top1.avg
+                record_grad[iter_idx][3] = -1
+                iter_idx += 1
+                iter_cnt += 1
+                print("Epoch {} Iter {} low bit ratio : {:.2f}% ".format(epoch, iter_cnt * schedule_count, ratio))
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-    return losses.avg, ratio
+    return record_grad, ratio, iter_idx
 
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):
@@ -365,7 +427,6 @@ def validate(model, test_loader, criterion, logger=None, hvd=None):
                 logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
         else:
             logger.debug("[Validation] Loss: {:.5f}, Score: {:.3f}".format(losses.avg, top1.avg))
-    print()
     return top1.avg
 
 

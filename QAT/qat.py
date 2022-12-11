@@ -60,6 +60,8 @@ parser.add_argument('--reduce_ratio', default=1.0, type=float, help="weight redu
 parser.add_argument('--channel_epoch', default=30, type=int, help='Number of epochs to set low bits')
 parser.add_argument('--method', default='max', type=str, help="how to choose one of scales")
 parser.add_argument('--init_ema', default=0, type=int, help="wheter to initialize recorded ema range ")
+parser.add_argument('--schedule_unit', default='iter', type=str, help="wheter to handle gradients per iteration or epoch ")
+parser.add_argument('--schedule_count', default=1, type=int, help="schedule counts")
 
 parser.add_argument('--gpu', default='0', type=str, help='GPU to use')
 args_qat, _ = parser.parse_known_args()
@@ -188,6 +190,9 @@ def main(args_daq, data_loaders, clustering_model):
     print(vars(args))
     assert args.arch in ['mlp', 'alexnet', 'resnet', 'resnet20', 'resnet50','bert', 'densenet', 'mobilenet'], 'Not supported architecture'
     assert args.bit in [4, 8, 16, 32], 'Not supported target bit'
+    assert args.schedule_unit in ['iter', 'epoch'], 'Not supported schedule unit. {args.schedule_unit}'
+    assert args.schedule_count in [1, 5, 10, 100], 'Not supported schedule counts. {args.schedule_count}'
+
     if args.mode == 'fine':
         assert args.bit in [4, 8], 'Please set target bit between 4 & 8'
         # if args.dataset != 'imagenet':
