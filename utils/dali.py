@@ -61,7 +61,7 @@ def create_dali_pipeline(data_dir, crop, size, shard_id, num_shards, dali_cpu=Fa
     return images, labels
 
     
-def get_dali_dataloader(batch_size, data_dir, is_training, num_workers):
+def get_dali_dataloader(batch_size, data_dir, crop, size, is_training, num_workers):
     device_id = torch.cuda.current_device()
     
     train_pipe = create_dali_pipeline(batch_size=batch_size,
@@ -70,8 +70,8 @@ def get_dali_dataloader(batch_size, data_dir, is_training, num_workers):
                                       seed=12+device_id,
                                       prefetch_queue_depth=2,
                                       data_dir=data_dir,
-                                      crop=224,
-                                      size=256,
+                                      crop=crop,
+                                      size=size,
                                       dali_cpu=False,
                                       shard_id=device_id,
                                       num_shards=1,

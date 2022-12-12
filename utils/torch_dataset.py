@@ -124,7 +124,23 @@ def get_data_loaders(args, model):
         train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     else:
         from .dali import get_dali_dataloader
-        train_loader = get_dali_dataloader(128, os.path.join(args.imagenet, 'train'), is_training=True, num_workers=4)
-        test_loader = get_dali_dataloader(256, os.path.join(args.imagenet, 'val'), is_training=False, num_workers=4)
-        clustering_train_loader = get_dali_dataloader(512, os.path.join(args.imagenet, 'train'), is_training=False, num_workers=4)
+        train_resolution, test_resolution = (224, 256) if model != "inceptionv3" else (299, 342)
+        train_loader = get_dali_dataloader(128, 
+                                           os.path.join(args.imagenet, 'train'), 
+                                           crop=train_resolution, 
+                                           size=test_resolution, 
+                                           is_training=True, 
+                                           num_workers=4)
+        test_loader = get_dali_dataloader(256, 
+                                          os.path.join(args.imagenet, 'val'), 
+                                          crop=train_resolution, 
+                                          size=test_resolution, 
+                                          is_training=False, 
+                                          num_workers=4)
+        clustering_train_loader = get_dali_dataloader(512, 
+                                                      os.path.join(args.imagenet, 'train'), 
+                                                      crop=train_resolution, 
+                                                      size=test_resolution, 
+                                                      is_training=False, 
+                                                      num_workers=4)
     return {'aug_train': train_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}
