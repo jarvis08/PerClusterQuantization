@@ -316,8 +316,7 @@ def skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, epoch, 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     record_grad[epoch - 1][0] = ratio
-    record_grad[epoch - 1][1] = losses.avg
-    record_grad[epoch - 1][2] = top1.avg
+    record_grad[epoch - 1][1] = top1.avg
     print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
 
     return record_grad, ratio
@@ -360,9 +359,7 @@ def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, l
             if (i + 1) % schedule_count == 0 or (i+1 == len(train_loader) and schedule_count == 100):
                 ratio = set_mixed_bits_per_iter(model, epoch, reduce_ratio)
                 record_grad[iter_idx][0] = ratio
-                record_grad[iter_idx][1] = losses.avg
-                record_grad[iter_idx][2] = top1.avg
-                record_grad[iter_idx][3] = -1
+                record_grad[iter_idx][1] = top1.avg
                 iter_idx += 1
                 iter_cnt += 1
                 print("Epoch {} Iter {} low bit ratio : {:.2f}% ".format(epoch, iter_cnt * schedule_count, ratio))
