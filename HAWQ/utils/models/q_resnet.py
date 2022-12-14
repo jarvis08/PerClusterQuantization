@@ -1213,51 +1213,51 @@ class Q_ResBlockBn(nn.Module):
         return x, l_idx, act_scaling_factor
 
 
-    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, scaling_factor_int32=None):
-        if not initialized:
-            max_counter.append([[] for _ in range(n_clusters)])
-            max_counter.append([[] for _ in range(n_clusters)])
+    # def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, scaling_factor_int32=None):
+    #     if not initialized:
+    #         max_counter.append([[] for _ in range(n_clusters)])
+    #         max_counter.append([[] for _ in range(n_clusters)])
             
-        if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
-            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
-        else:
-            identity = x
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+    #     if self.resize_identity:
+    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+    #         identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
+    #         identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+    #     else:
+    #         identity = x
+    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
 
-        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-        x = self.act1(x)
+    #     x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
+    #     x = self.act1(x)
         
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+    #     l_idx += 1
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if max_counter[l_idx][cluster] == []:
+    #         max_counter[l_idx][cluster] = _max
+    #     else:
+    #         max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
             
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
-        x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
+    #     x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+    #     x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
 
-        x = x + identity
+    #     x = x + identity
 
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+    #     l_idx += 1
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if max_counter[l_idx][cluster] == []:
+    #         max_counter[l_idx][cluster] = _max
+    #     else:
+    #         max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
             
-        if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-                                                            identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
-        else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-                                                            identity, scaling_factor_int32, None, cluster=cluster)
+    #     if self.resize_identity:
+    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+    #                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
+    #     else:
+    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+    #                                                         identity, scaling_factor_int32, None, cluster=cluster)
 
-        x = self.act2(x)
+    #     x = self.act2(x)
         
-        return x, l_idx, act_scaling_factor
+    #     return x, l_idx, act_scaling_factor
             
 
     def get_ema_per_layer(self):

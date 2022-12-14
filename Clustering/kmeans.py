@@ -211,9 +211,8 @@ class KMeansClustering(object):
     def ema_nn_aware_clustering(self, dnn_model, train_loader, test_loader, arch, print_log=True):
         print('\n>>> NN-aware Clustering..')        
         ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
-        
+        """
         clusters = torch.zeros([0]).cuda()
-        
         freeze_model(dnn_model)
         dnn_model.eval()
         with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
@@ -241,8 +240,8 @@ class KMeansClustering(object):
             
         def cluster_score(ema, maxs, clusters):
             buffer = torch.zeros_like(ema)
-            # src = (maxs-torch.index_select(ema, 0, clusters))**2 # Euclidean Distance
-            src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
+            src = (maxs-torch.index_select(ema, 0, clusters))**2 # Euclidean Distance
+            # src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
             return torch.scatter_reduce(buffer, 0, clusters.repeat(ema.size(1), 1).T, src=src, reduce="mean", include_self=False)
         
         score = cluster_score(ema, maxs, clusters).mean(dim=0).view(-1, 1)
@@ -259,24 +258,23 @@ class KMeansClustering(object):
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         exit()
         
-        cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
-        final_clusters = final_clusters_from_cluster_label(cluster)
         
-        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        # cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
+        # final_clusters = final_clusters_from_cluster_label(cluster)
         
+        # self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
         """
+        
         score = self.validate(test_loader, dnn_model)
         for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
             label = AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_
             self.final_cluster = torch.tensor(label, dtype=torch.int64)
-            cur_score = self.validate(test_loader, dnn_model)
-            score = torch.cat((score, cur_score))
+            score = torch.cat((score, self.validate(test_loader, dnn_model)))
             
         score_np = score.cpu().numpy()
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         exit()
-        """
         
     @torch.no_grad()
     def validate(self, loader, model):
