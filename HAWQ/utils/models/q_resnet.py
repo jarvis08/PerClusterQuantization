@@ -242,7 +242,7 @@ class Q_ResNet18(nn.Module):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
-        self.quant_act_output.x_max = ema[l_idx].item()
+        self.quant_act_output.x_max = ema[l_idx]
         
     
 class Q_ResNet20(nn.Module):
@@ -472,7 +472,7 @@ class Q_ResNet20(nn.Module):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
-        self.quant_act_output.x_max = ema[l_idx].item()
+        self.quant_act_output.x_max = ema[l_idx]
         
 
 class Q_ResNet50(nn.Module):
@@ -706,7 +706,7 @@ class Q_ResNet50(nn.Module):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
-        self.quant_act_output.x_max = ema[l_idx].item()
+        self.quant_act_output.x_max = ema[l_idx]
 
 
 class Q_ResUnitBn(nn.Module):
@@ -1011,11 +1011,11 @@ class Q_ResUnitBn(nn.Module):
 
 
     def set_ema_per_layer(self, ema, l_idx):
-        self.quant_act.x_max = ema[l_idx].item()
+        self.quant_act.x_max = ema[l_idx]
         l_idx += 1
-        self.quant_act1.x_max = ema[l_idx].item()
+        self.quant_act1.x_max = ema[l_idx]
         l_idx += 1
-        self.quant_act2.x_max = ema[l_idx].item()
+        self.quant_act2.x_max = ema[l_idx]
         l_idx += 1
         return l_idx
 
@@ -1268,9 +1268,9 @@ class Q_ResBlockBn(nn.Module):
 
 
     def set_ema_per_layer(self, ema, l_idx):
-        self.quant_act.x_max = ema[l_idx].item()
+        self.quant_act.x_max = ema[l_idx]
         l_idx += 1
-        self.quant_act1.x_max = ema[l_idx].item()
+        self.quant_act1.x_max = ema[l_idx]
         l_idx += 1
         return l_idx
         

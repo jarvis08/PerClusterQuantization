@@ -541,13 +541,13 @@ class Q_AlexNet(nn.Module):
         return torch.stack(ema)
         
     def set_ema_per_layer(self, ema):
-        self.quant_act1.x_max = ema[0].item()
-        self.quant_act2.x_max = ema[1].item()
-        self.quant_act3.x_max = ema[2].item()
-        self.quant_act4.x_max = ema[3].item()
-        self.quant_act5.x_max = ema[4].item()
-        self.quant_act6.x_max = ema[5].item()
-        self.quant_act7.x_max = ema[6].item()
+        self.quant_act1.x_max = ema[0]
+        self.quant_act2.x_max = ema[1]
+        self.quant_act3.x_max = ema[2]
+        self.quant_act4.x_max = ema[3]
+        self.quant_act5.x_max = ema[4]
+        self.quant_act6.x_max = ema[5]
+        self.quant_act7.x_max = ema[6]
         
 
 def q_alexnet(model, model_dict=None, num_clusters=None):

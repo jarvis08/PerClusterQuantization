@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn.functional as F
 from cuml.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from audtorch.metrics.functional import pearsonr as pearson_correlation
 import numpy as np
@@ -209,26 +209,6 @@ class KMeansClustering(object):
 
     @torch.no_grad()
     def ema_nn_aware_clustering(self, dnn_model, train_loader, test_loader, arch, print_log=True):
-        print('\n>>> NN-aware Clustering..')        
-        ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
-        """
-        clusters = torch.zeros([0]).cuda()
-        freeze_model(dnn_model)
-        dnn_model.eval()
-        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
-            for i, (images, _) in enumerate(t):
-                images = images.cuda()
-                cluster = self.predict_cluster_of_batch(images).cuda()
-                dnn_model.get_max_activations(images, cluster)
-                
-                clusters = torch.cat((clusters, cluster))
-        
-        unfreeze_model(dnn_model)
-        
-        maxs = dnn_model.max_counter
-        clusters = clusters.type(torch.LongTensor).cuda()
-        _, n_per_clusters = clusters.unique(return_counts=True)
-        
         def approximate_ema(ema, label, n_per_clusters, cluster_size):
             tmp_ema = torch.zeros([0, ema.size(1)]).cuda()
             for i in range(cluster_size):
@@ -237,13 +217,35 @@ class KMeansClustering(object):
                 tmp_cluster_ema = ema[tmp_index]
                 tmp_ema = torch.cat((tmp_ema, tmp_cluster_ema.T@tmp_cluster_siz/tmp_cluster_siz.sum().view(1, -1)), dim=0)
             return tmp_ema
-            
+        
         def cluster_score(ema, maxs, clusters):
             buffer = torch.zeros_like(ema)
             src = (maxs-torch.index_select(ema, 0, clusters))**2 # Euclidean Distance
             # src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
             return torch.scatter_reduce(buffer, 0, clusters.repeat(ema.size(1), 1).T, src=src, reduce="mean", include_self=False)
         
+        print('\n>>> NN-aware Clustering..')        
+        ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
+        
+        clusters = torch.zeros([0]).cuda()
+        freeze_model(dnn_model)
+        dnn_model.eval()
+        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+            for i, (images, _) in enumerate(t):
+                images = images.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+                # dnn_model.get_max_activations(images, cluster)
+                
+                clusters = torch.cat((clusters, cluster))
+        
+        unfreeze_model(dnn_model)
+        
+        # maxs = dnn_model.max_counter
+        clusters = clusters.type(torch.LongTensor).cuda()
+        _, n_per_clusters = clusters.unique(return_counts=True)
+        
+        """
+
         score = cluster_score(ema, maxs, clusters).mean(dim=0).view(-1, 1)
         # merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
         # final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
@@ -267,8 +269,10 @@ class KMeansClustering(object):
         
         score = self.validate(test_loader, dnn_model)
         for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
-            label = AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_
+            label = AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_
             self.final_cluster = torch.tensor(label, dtype=torch.int64)
+            cur_ema = F.pad(input=approximate_ema(ema, self.final_cluster.cuda(), n_per_clusters, cluster).T, pad=(0,i+1), mode='constant', value=0)
+            dnn_model.set_ema_per_layer(cur_ema)
             score = torch.cat((score, self.validate(test_loader, dnn_model)))
             
         score_np = score.cpu().numpy()
