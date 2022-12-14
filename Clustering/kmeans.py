@@ -294,9 +294,6 @@ class KMeansClustering(object):
                 res.append(correct_k.mul_(100.0 / batch_size))
             return res
         
-        import pdb
-        pdb.set_trace()
-        
         top1 = AverageMeter('Acc@1', ':6.2f')
         top5 = AverageMeter('Acc@5', ':6.2f')
         
