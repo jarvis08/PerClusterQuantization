@@ -111,10 +111,6 @@ class Q_ResNet18(nn.Module):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
         
-        ##################################
-        l_idx = self.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-        
         x = self.pool(x)
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
         x = self.act(x)
@@ -124,7 +120,14 @@ class Q_ResNet18(nn.Module):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, l_idx, act_scaling_factor = tmp_func.accumulate_output_max_distribution(x, cluster, n_clusters, self, 
                                                                                            l_idx, act_scaling_factor)
+        
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
+        
+        
     def get_max_activations(self, x, cluster=None):
         if not hasattr(self, 'max_counter'):
             self.max_counter = torch.zeros([0, 17]).cuda()
@@ -133,7 +136,7 @@ class Q_ResNet18(nn.Module):
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
 
         ##################################
-        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        maxs = torch.zeros([x.size(0), 0]).cuda()
         ##################################
         
         x = self.pool(x)
@@ -145,6 +148,12 @@ class Q_ResNet18(nn.Module):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
 
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
         self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
 
@@ -189,51 +198,51 @@ class Q_ResNet18(nn.Module):
     #             x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
 
-    def get_output_max_distribution(self, x, cluster, n_clusters):
-        initialized = True
-        if not hasattr(self, 'max_counter'):
-            initialized = False
-            self.max_counter = []
-            self.max_counter.append([[] for _ in range(n_clusters)])
+    # def get_output_max_distribution(self, x, cluster, n_clusters):
+    #     initialized = True
+    #     if not hasattr(self, 'max_counter'):
+    #         initialized = False
+    #         self.max_counter = []
+    #         self.max_counter.append([[] for _ in range(n_clusters)])
             
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
-        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
+    #     x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+    #     x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
         
-        l_idx = 0
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+    #     l_idx = 0
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if self.max_counter[l_idx][cluster] == []:
+    #         self.max_counter[l_idx][cluster] = _max
+    #     else:
+    #         self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
             
-        x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
-        x = self.act(x)
+    #     x = self.pool(x)
+    #     x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+    #     x = self.act(x)
 
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, 
-                                                                                    l_idx, initialized, act_scaling_factor)
+    #     for stage_num in range(0, 4):
+    #         for unit_num in range(0, self.channel[stage_num]):
+    #             tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+    #             x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, 
+    #                                                                                 l_idx, initialized, act_scaling_factor)
 
 
     def get_ema_per_layer(self):
         ema = []
-        ema.append(self.quant_act_int32.x_max)
         for stage_num in range(0, 4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 ema = ema + tmp_func.get_ema_per_layer()
+        ema.append(self.quant_act_output.x_max)
         return torch.stack(ema)
     
     
     def set_ema_per_layer(self, ema):
         l_idx = 0
-        self.quant_act_int32.x_max = ema[l_idx].item()
         for stage_num in range(0, 4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
+        self.quant_act_output.x_max = ema[l_idx].item()
         
     
 class Q_ResNet20(nn.Module):
@@ -314,6 +323,7 @@ class Q_ResNet20(nn.Module):
         if hasattr(self, 'max_accumulator'):
             del self.max_accumulator
         
+        
     def update_max_accumulator(self, x, cluster, l_idx):
         if type(x) is tuple:
             x = x[0]
@@ -321,6 +331,7 @@ class Q_ResNet20(nn.Module):
         _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=src, reduce=self.reduce, include_self=False)
         self.max_accumulator[l_idx] = self.accumulate(self.max_accumulator[l_idx], _max)
         return l_idx + 1
+        
         
     def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax', accumulate='max', clamp=None):
         if not hasattr(self, 'max_accumulator'):
@@ -333,9 +344,6 @@ class Q_ResNet20(nn.Module):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
         
-        ##################################
-        l_idx = self.update_max_accumulator(x, cluster, l_idx)
-        ##################################
             
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
         x = self.act(x)
@@ -346,6 +354,11 @@ class Q_ResNet20(nn.Module):
                 x, l_idx, act_scaling_factor = tmp_func.accumulate_output_max_distribution(x, cluster, n_clusters, self, 
                                                                                            l_idx, act_scaling_factor)
             
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
+        
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
             
             
     def get_max_activations(self, x, cluster=None):
@@ -356,7 +369,7 @@ class Q_ResNet20(nn.Module):
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
         
         ##################################
-        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        maxs = torch.zeros([x.size(0), 0]).cuda()
         ##################################
         
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
@@ -367,6 +380,12 @@ class Q_ResNet20(nn.Module):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
 
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
         self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
 
@@ -409,51 +428,51 @@ class Q_ResNet20(nn.Module):
     #             x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
 
-    def get_output_max_distribution(self, x, cluster, n_clusters):
-        initialized = True
-        if not hasattr(self, 'max_counter'):
-            initialized = False
-            self.max_counter = []
-            self.max_counter.append([[] for _ in range(n_clusters)])
+    # def get_output_max_distribution(self, x, cluster, n_clusters):
+    #     initialized = True
+    #     if not hasattr(self, 'max_counter'):
+    #         initialized = False
+    #         self.max_counter = []
+    #         self.max_counter.append([[] for _ in range(n_clusters)])
 
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+    #     x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
-        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
+    #     x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
         
-        l_idx = 0
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+    #     l_idx = 0
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if self.max_counter[l_idx][cluster] == []:
+    #         self.max_counter[l_idx][cluster] = _max
+    #     else:
+    #         self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
             
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
-        x = self.act(x)
+    #     x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+    #     x = self.act(x)
 
-        for stage_num in range(0,3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
-                                                                                    initialized, act_scaling_factor)
+    #     for stage_num in range(0,3):
+    #         for unit_num in range(0, self.channel[stage_num]):
+    #             tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+    #             x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
+    #                                                                                 initialized, act_scaling_factor)
             
 
     def get_ema_per_layer(self):
         ema = []
-        ema.append(self.quant_act_int32.x_max)
         for stage_num in range(0, 3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 ema = ema + tmp_func.get_ema_per_layer()
+        ema.append(self.quant_act_output.x_max)
         return torch.stack(ema)
 
 
     def set_ema_per_layer(self, ema):
         l_idx = 0
-        self.quant_act_int32.x_max = ema[l_idx].item()
         for stage_num in range(0, 3):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
+        self.quant_act_output.x_max = ema[l_idx].item()
         
 
 class Q_ResNet50(nn.Module):
@@ -556,10 +575,6 @@ class Q_ResNet50(nn.Module):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         
-        ##################################
-        l_idx = self.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-        
         x = self.pool(x)
         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
         x = self.act(x)
@@ -570,6 +585,11 @@ class Q_ResNet50(nn.Module):
                 x, l_idx, act_scaling_factor = tmp_func.accumulate_output_max_distribution(x, cluster, n_clusters, self, 
                                                                                            l_idx, act_scaling_factor)
 
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
+        
+        ##################################
+        l_idx = self.update_max_accumulator(x, cluster, l_idx)
+        ##################################
         
     def get_max_activations(self, x, cluster=None):
         if not hasattr(self, 'max_counter'):
@@ -579,7 +599,7 @@ class Q_ResNet50(nn.Module):
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         
         ##################################
-        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        maxs = torch.zeros([x.size(0), 0]).cuda()
         ##################################
         
         x = self.pool(x)
@@ -591,6 +611,12 @@ class Q_ResNet50(nn.Module):
                 tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
                 x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
 
+        x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
         self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
 
@@ -635,53 +661,52 @@ class Q_ResNet50(nn.Module):
     #             x, layer_idx = tmp_func.count_zeros_per_index(x, layer_idx, cluster, n_clusters)
 
 
-    def get_output_max_distribution(self, x, cluster, n_clusters):
-        initialized = True
-        if not hasattr(self, 'max_counter'):
-            initialized = False
-            self.max_counter = []
-            self.max_counter.append([[] for _ in range(n_clusters)])
+    # def get_output_max_distribution(self, x, cluster, n_clusters):
+    #     initialized = True
+    #     if not hasattr(self, 'max_counter'):
+    #         initialized = False
+    #         self.max_counter = []
+    #         self.max_counter.append([[] for _ in range(n_clusters)])
             
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+    #     x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
-        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
+    #     x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         
-        l_idx = 0
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
+    #     l_idx = 0
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if self.max_counter[l_idx][cluster] == []:
+    #         self.max_counter[l_idx][cluster] = _max
+    #     else:
+    #         self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
         
-        x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
-        x = self.act(x)
+    #     x = self.pool(x)
+    #     x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+    #     x = self.act(x)
 
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-                x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
-                                                                initialized, act_scaling_factor)
+    #     for stage_num in range(0, 4):
+    #         for unit_num in range(0, self.channel[stage_num]):
+    #             tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+    #             x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
+    #                                                             initialized, act_scaling_factor)
             
 
     def get_ema_per_layer(self):
         ema = []
-        ema.append(self.quant_act_int32.x_max)
         for stage_num in range(0,4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 ema = ema + tmp_func.get_ema_per_layer()
+        ema.append(self.quant_act_output.x_max)
         return torch.stack(ema)
 
 
     def set_ema_per_layer(self, ema):
         l_idx = 0
-        self.quant_act_int32.x_max = ema[l_idx].item()
-        l_idx += 1
         for stage_num in range(0,4):
             for unit_num in range(0, self.channel[stage_num]):
                 tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
                 l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
+        self.quant_act_output.x_max = ema[l_idx].item()
 
 
 class Q_ResUnitBn(nn.Module):
@@ -755,6 +780,9 @@ class Q_ResUnitBn(nn.Module):
 
 
     def get_max_activations(self, x, scaling_factor_int32=None, cluster=None, maxs=None):
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
             identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
@@ -781,10 +809,6 @@ class Q_ResUnitBn(nn.Module):
         x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
         x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
         x = x + identity
-        
-        ##################################
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
-        ##################################
 
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
@@ -879,6 +903,9 @@ class Q_ResUnitBn(nn.Module):
     #     return x, layer_idx
     
     def accumulate_output_max_distribution(self, x, cluster, n_clusters, head, l_idx, scaling_factor_int32=None):
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
             identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
@@ -906,10 +933,6 @@ class Q_ResUnitBn(nn.Module):
         x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
         x = x + identity
         
-        ##################################
-        l_idx = head.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-        
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
@@ -921,62 +944,62 @@ class Q_ResUnitBn(nn.Module):
 
         return x, l_idx, act_scaling_factor
 
-    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, scaling_factor_int32=None):
-        if not initialized:
-            max_counter.append([[] for _ in range(n_clusters)])
-            max_counter.append([[] for _ in range(n_clusters)])
-            max_counter.append([[] for _ in range(n_clusters)])
+    # def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, scaling_factor_int32=None):
+    #     if not initialized:
+    #         max_counter.append([[] for _ in range(n_clusters)])
+    #         max_counter.append([[] for _ in range(n_clusters)])
+    #         max_counter.append([[] for _ in range(n_clusters)])
 
-        if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
-            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
-        else:
-            identity = x
-            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+    #     if self.resize_identity:
+    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+    #         identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
+    #         identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+    #     else:
+    #         identity = x
+    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
 
-        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-        x = self.act1(x)
+    #     x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
+    #     x = self.act1(x)
         
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+    #     l_idx += 1
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if max_counter[l_idx][cluster] == []:
+    #         max_counter[l_idx][cluster] = _max
+    #     else:
+    #         max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
         
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
-        x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
-        x = self.act2(x)
+    #     x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+    #     x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
+    #     x = self.act2(x)
         
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+    #     l_idx += 1
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if max_counter[l_idx][cluster] == []:
+    #         max_counter[l_idx][cluster] = _max
+    #     else:
+    #         max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
             
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
-        x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
-        x = x + identity
+    #     x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+    #     x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
+    #     x = x + identity
         
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
+    #     l_idx += 1
+    #     _max = x.view(x.size(0), -1).max(dim=1).values
+    #     if max_counter[l_idx][cluster] == []:
+    #         max_counter[l_idx][cluster] = _max
+    #     else:
+    #         max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
         
-        if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-                                                        identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
-        else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-                                                        identity, scaling_factor_int32, None, cluster=cluster)
+    #     if self.resize_identity:
+    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+    #                                                     identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
+    #     else:
+    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+    #                                                     identity, scaling_factor_int32, None, cluster=cluster)
 
-        x = self.act3(x)
+    #     x = self.act3(x)
 
-        return x, l_idx, act_scaling_factor
+    #     return x, l_idx, act_scaling_factor
             
 
     def get_ema_per_layer(self):
@@ -1059,6 +1082,9 @@ class Q_ResBlockBn(nn.Module):
 
 
     def get_max_activations(self, x, scaling_factor_int32=None, cluster=None, maxs=None):
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
             identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
@@ -1077,10 +1103,6 @@ class Q_ResBlockBn(nn.Module):
         x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
         x = x + identity
-        
-        ##################################
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
-        ##################################
 
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
@@ -1155,7 +1177,10 @@ class Q_ResBlockBn(nn.Module):
     #     return x, layer_idx
     
     
-    def accumulate_output_max_distribution(self, x, cluster, n_clusters, head, l_idx, scaling_factor_int32=None):      
+    def accumulate_output_max_distribution(self, x, cluster, n_clusters, head, l_idx, scaling_factor_int32=None):
+        ##################################
+        l_idx = head.update_max_accumulator(x, cluster, l_idx)
+        ##################################
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
             identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
@@ -1175,10 +1200,6 @@ class Q_ResBlockBn(nn.Module):
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
 
         x = x + identity
-
-        ##################################
-        l_idx = head.update_max_accumulator(x, cluster, l_idx)
-        ##################################
             
         if self.resize_identity:
             x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
