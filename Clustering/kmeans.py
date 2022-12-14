@@ -212,68 +212,71 @@ class KMeansClustering(object):
         print('\n>>> NN-aware Clustering..')        
         ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
         
-        # clusters = torch.zeros([0]).cuda()
+        clusters = torch.zeros([0]).cuda()
         
-        # freeze_model(dnn_model)
-        # dnn_model.eval()
-        # with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
-        #     for i, (images, _) in enumerate(t):
-        #         images = images.cuda()
-        #         cluster = self.predict_cluster_of_batch(images).cuda()
-        #         dnn_model.get_max_activations(images, cluster)
+        freeze_model(dnn_model)
+        dnn_model.eval()
+        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+            for i, (images, _) in enumerate(t):
+                images = images.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+                dnn_model.get_max_activations(images, cluster)
                 
-        #         clusters = torch.cat((clusters, cluster))
+                clusters = torch.cat((clusters, cluster))
         
-        # unfreeze_model(dnn_model)
+        unfreeze_model(dnn_model)
         
-        # maxs = dnn_model.max_counter
-        # clusters = clusters.type(torch.LongTensor).cuda()
-        # _, n_per_clusters = clusters.unique(return_counts=True)
+        maxs = dnn_model.max_counter
+        clusters = clusters.type(torch.LongTensor).cuda()
+        _, n_per_clusters = clusters.unique(return_counts=True)
         
-        # def approximate_ema(ema, label, n_per_clusters, cluster_size):
-        #     tmp_ema = torch.zeros([0, ema.size(1)]).cuda()
-        #     for i in range(cluster_size):
-        #         tmp_index = torch.where(label==i)
-        #         tmp_cluster_siz = n_per_clusters[tmp_index].type(torch.float)
-        #         tmp_cluster_ema = ema[tmp_index]
-        #         tmp_ema = torch.cat((tmp_ema, tmp_cluster_ema.T@tmp_cluster_siz/tmp_cluster_siz.sum().view(1, -1)), dim=0)
-        #     return tmp_ema
+        def approximate_ema(ema, label, n_per_clusters, cluster_size):
+            tmp_ema = torch.zeros([0, ema.size(1)]).cuda()
+            for i in range(cluster_size):
+                tmp_index = torch.where(label==i)
+                tmp_cluster_siz = n_per_clusters[tmp_index].type(torch.float)
+                tmp_cluster_ema = ema[tmp_index]
+                tmp_ema = torch.cat((tmp_ema, tmp_cluster_ema.T@tmp_cluster_siz/tmp_cluster_siz.sum().view(1, -1)), dim=0)
+            return tmp_ema
             
-        # def cluster_score(ema, maxs, clusters):
-        #     buffer = torch.zeros_like(ema)
-        #     # src = (maxs-torch.index_select(ema, 0, clusters))**2 # Euclidean Distance
-        #     src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
-        #     return torch.scatter_reduce(buffer, 0, clusters.repeat(ema.size(1), 1).T, src=src, reduce="mean", include_self=False)
+        def cluster_score(ema, maxs, clusters):
+            buffer = torch.zeros_like(ema)
+            # src = (maxs-torch.index_select(ema, 0, clusters))**2 # Euclidean Distance
+            src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
+            return torch.scatter_reduce(buffer, 0, clusters.repeat(ema.size(1), 1).T, src=src, reduce="mean", include_self=False)
         
-        # score = cluster_score(ema, maxs, clusters).mean(dim=0).view(-1, 1)
-        # # merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
-        # # final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
-        # for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
-        #     label = torch.tensor(AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_.get()).cuda()
-        #     cur_cluster = torch.index_select(label, 0, clusters).type(torch.long)
-        #     cur_score = cluster_score(approximate_ema(ema, label, n_per_clusters, cluster), maxs, cur_cluster).mean(dim=0).view(-1, 1)
-        #     score = torch.cat((score, cur_score), dim=1)
-            
-        # score_np = score.cpu().numpy()
-        # score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
-        # score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
-        # exit()
-        
-        # cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
-        # final_clusters = final_clusters_from_cluster_label(cluster)
-        
-        # self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
-        
-        score = self.validate(test_loader, dnn_model)
+        score = cluster_score(ema, maxs, clusters).mean(dim=0).view(-1, 1)
+        # merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
+        # final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
         for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
-            label = AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_
-            self.final_cluster = torch.tensor(label, dtype=torch.int64)
-            score = torch.cat((score, self.validate(test_loader, dnn_model)))
+            label = torch.tensor(AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_.get()).cuda()
+            cur_cluster = torch.index_select(label, 0, clusters).type(torch.long)
+            cur_score = cluster_score(approximate_ema(ema, label, n_per_clusters, cluster), maxs, cur_cluster).mean(dim=0).view(-1, 1)
+            score = torch.cat((score, cur_score), dim=1)
             
         score_np = score.cpu().numpy()
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         exit()
+        
+        cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
+        final_clusters = final_clusters_from_cluster_label(cluster)
+        
+        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
+        """
+        score = self.validate(test_loader, dnn_model)
+        for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
+            label = AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_
+            self.final_cluster = torch.tensor(label, dtype=torch.int64)
+            cur_score = self.validate(test_loader, dnn_model)
+            score = torch.cat((score, cur_score))
+            
+        score_np = score.cpu().numpy()
+        score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
+        score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        exit()
+        """
         
     @torch.no_grad()
     def validate(self, loader, model):
@@ -292,8 +295,10 @@ class KMeansClustering(object):
                 correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
                 res.append(correct_k.mul_(100.0 / batch_size))
             return res
-            
-        batch_time = AverageMeter('Time', ':6.3f')
+        
+        import pdb
+        pdb.set_trace()
+        
         top1 = AverageMeter('Acc@1', ':6.2f')
         top5 = AverageMeter('Acc@5', ':6.2f')
         
@@ -301,7 +306,6 @@ class KMeansClustering(object):
         freeze_model(model)
         model.eval()
         
-        end = time.time()
         with tqdm(loader, desc="Validate", ncols=95) as t:
             for i, data in enumerate(t):
                 if self.args.dataset == 'imagenet':
@@ -309,10 +313,9 @@ class KMeansClustering(object):
                 else:
                     images, target = data
                     
-                images = images.cuda(non_blocking=True)
-                target = target.cuda(non_blocking=True)
-                    
-                cluster = self.predict_cluster_of_batch(images).cuda(non_blocking=True)
+                images = images.cuda()
+                target = target.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
 
                 # compute output
                 output = model(images, cluster)
@@ -322,14 +325,10 @@ class KMeansClustering(object):
                 top1.update(acc1[0].item(), images.size(0))
                 top5.update(acc5[0].item(), images.size(0))
 
-                # measure elapsed time
-                batch_time.update(time.time() - end)
-                end = time.time()
-
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg)
         
         unfreeze_model(model)
-        return torch.tensor([top1.avg]).cuda()
+        return torch.tensor([top1.avg])
     
     
     # @torch.no_grad()
