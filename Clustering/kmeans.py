@@ -275,6 +275,7 @@ class KMeansClustering(object):
             dnn_model.set_ema_per_layer(cur_ema)
             score = torch.cat((score, self.validate(test_loader, dnn_model)))
             
+        score = score.view(1, -1)
         score_np = score.cpu().numpy()
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
