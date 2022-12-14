@@ -1,9 +1,9 @@
 import torch
 
-from cuml.cluster import KMeans
-from sklearn.cluster import MiniBatchKMeans
+from cuml.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from audtorch.metrics.functional import pearsonr as pearson_correlation
 import numpy as np
+import pandas as pd
 import networkx as nx
 
 from tqdm import tqdm
@@ -12,6 +12,8 @@ from copy import deepcopy
 import json
 import os
 import csv
+
+from HAWQ.utils import *
 
 class KMeansClustering(object):
     def __init__(self, args):
@@ -206,174 +208,278 @@ class KMeansClustering(object):
         self.model = best_model
 
     @torch.no_grad()
-    def ema_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
+    def ema_nn_aware_clustering(self, dnn_model, train_loader, test_loader, arch, print_log=True):
         print('\n>>> NN-aware Clustering..')        
         ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
-
-        n_per_sub = torch.zeros([self.args.sub_cluster], dtype=torch.int).cuda()
-        dnn_model.eval()
-        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
-            for i, (images, _) in enumerate(t):
-                images = images.cuda()
-                cluster = self.predict_cluster_of_batch(images).cuda()
+        
+        # clusters = torch.zeros([0]).cuda()
+        
+        # freeze_model(dnn_model)
+        # dnn_model.eval()
+        # with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+        #     for i, (images, _) in enumerate(t):
+        #         images = images.cuda()
+        #         cluster = self.predict_cluster_of_batch(images).cuda()
+        #         dnn_model.get_max_activations(images, cluster)
                 
-                indices, counts = torch.unique(cluster, return_counts=True)
-                n_per_sub[indices] += counts
-                
-        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
+        #         clusters = torch.cat((clusters, cluster))
         
-        final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
-        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        # unfreeze_model(dnn_model)
         
-
-    @torch.no_grad()
-    def max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
-        print('\n>>> NN-aware Clustering..')
+        # maxs = dnn_model.max_counter
+        # clusters = clusters.type(torch.LongTensor).cuda()
+        # _, n_per_clusters = clusters.unique(return_counts=True)
         
-        n_per_sub = torch.zeros([self.args.sub_cluster], dtype=torch.int).cuda()
-        dnn_model.eval()
-        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
-            for i, (images, _) in enumerate(t):
-                images = images.cuda()
-                cluster = self.predict_cluster_of_batch(images).cuda()
-                
-                indices, counts = torch.unique(cluster, return_counts=True)
-                n_per_sub[indices] += counts
-                dnn_model.accumulate_output_max_distribution(images, cluster, self.args.sub_cluster)
-        
-        dnn_model.max_accumulator = torch.transpose(dnn_model.max_accumulator, 0, 1)
-
-        if print_log:
-            print("\n>>> [Original] Number of data per cluster")
-            for c in range(self.args.sub_cluster):
-                print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
-            print()
+        # def approximate_ema(ema, label, n_per_clusters, cluster_size):
+        #     tmp_ema = torch.zeros([0, ema.size(1)]).cuda()
+        #     for i in range(cluster_size):
+        #         tmp_index = torch.where(label==i)
+        #         tmp_cluster_siz = n_per_clusters[tmp_index].type(torch.float)
+        #         tmp_cluster_ema = ema[tmp_index]
+        #         tmp_ema = torch.cat((tmp_ema, tmp_cluster_ema.T@tmp_cluster_siz/tmp_cluster_siz.sum().view(1, -1)), dim=0)
+        #     return tmp_ema
             
-        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, dnn_model.max_accumulator, n_per_sub, print_log) # NEW WAY
-        # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
-
-        final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
-        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        # def cluster_score(ema, maxs, clusters):
+        #     buffer = torch.zeros_like(ema)
+        #     # src = (maxs-torch.index_select(ema, 0, clusters))**2 # Euclidean Distance
+        #     src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
+        #     return torch.scatter_reduce(buffer, 0, clusters.repeat(ema.size(1), 1).T, src=src, reduce="mean", include_self=False)
         
-        dnn_model.delete_counters()
+        # score = cluster_score(ema, maxs, clusters).mean(dim=0).view(-1, 1)
+        # # merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
+        # # final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
+        # for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
+        #     label = torch.tensor(AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_.get()).cuda()
+        #     cur_cluster = torch.index_select(label, 0, clusters).type(torch.long)
+        #     cur_score = cluster_score(approximate_ema(ema, label, n_per_clusters, cluster), maxs, cur_cluster).mean(dim=0).view(-1, 1)
+        #     score = torch.cat((score, cur_score), dim=1)
+            
+        # score_np = score.cpu().numpy()
+        # score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
+        # score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        # exit()
+        
+        # cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
+        # final_clusters = final_clusters_from_cluster_label(cluster)
+        
+        # self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
+        score = self.validate(test_loader, dnn_model)
+        for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
+            label = AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_
+            self.final_cluster = torch.tensor(label, dtype=torch.int64)
+            score = torch.cat((score, self.validate(test_loader, dnn_model)))
+            
+        score_np = score.cpu().numpy()
+        score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
+        score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        exit()
+        
+    @torch.no_grad()
+    def validate(self, loader, model):
+        @torch.no_grad()
+        def accuracy(output, target, topk=(1,)):
+            """Computes the accuracy over the k top predictions for the specified values of k"""
+            maxk = max(topk)
+            batch_size = target.size(0)
+
+            _, pred = output.topk(maxk, 1, True, True)
+            pred = pred.t()
+            correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+            res = []
+            for k in topk:
+                correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+                res.append(correct_k.mul_(100.0 / batch_size))
+            return res
+            
+        batch_time = AverageMeter('Time', ':6.3f')
+        top1 = AverageMeter('Acc@1', ':6.2f')
+        top5 = AverageMeter('Acc@5', ':6.2f')
+        
+        # switch to evaluate mode
+        freeze_model(model)
+        model.eval()
+        
+        end = time.time()
+        with tqdm(loader, desc="Validate", ncols=95) as t:
+            for i, data in enumerate(t):
+                if self.args.dataset == 'imagenet':
+                    images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
+                else:
+                    images, target = data
+                    
+                images = images.cuda(non_blocking=True)
+                target = target.cuda(non_blocking=True)
+                    
+                cluster = self.predict_cluster_of_batch(images).cuda(non_blocking=True)
+
+                # compute output
+                output = model(images, cluster)
+
+                # measure accuracy and record loss
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                top1.update(acc1[0].item(), images.size(0))
+                top5.update(acc5[0].item(), images.size(0))
+
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
+
+                t.set_postfix(acc1=top1.avg, acc5=top5.avg)
+        
+        unfreeze_model(model)
+        return torch.tensor([top1.avg]).cuda()
+    
+    
+    # @torch.no_grad()
+    # def max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
+    #     print('\n>>> NN-aware Clustering..')
+        
+    #     n_per_sub = torch.zeros([self.args.sub_cluster], dtype=torch.int).cuda()
+    #     dnn_model.eval()
+    #     with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+    #         for i, (images, _) in enumerate(t):
+    #             images = images.cuda()
+    #             cluster = self.predict_cluster_of_batch(images).cuda()
+                
+    #             indices, counts = torch.unique(cluster, return_counts=True)
+    #             n_per_sub[indices] += counts
+    #             dnn_model.accumulate_output_max_distribution(images, cluster, self.args.sub_cluster)
+        
+    #     dnn_model.max_accumulator = torch.transpose(dnn_model.max_accumulator, 0, 1)
+
+    #     if print_log:
+    #         print("\n>>> [Original] Number of data per cluster")
+    #         for c in range(self.args.sub_cluster):
+    #             print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
+    #         print()
+            
+    #     merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, dnn_model.max_accumulator, n_per_sub, print_log) # NEW WAY
+    #     # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
+
+    #     final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
+    #     self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
+    #     dnn_model.delete_counters()
             
 
-    @torch.no_grad()
-    def zero_max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
-        print('\n>>> zero-max NN-aware Clustering..')
-        from utils.misc import InputContainer
+    # @torch.no_grad()
+    # def zero_max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
+    #     print('\n>>> zero-max NN-aware Clustering..')
+    #     from utils.misc import InputContainer
 
-        n_sub_clusters = self.args.sub_cluster
-        container = InputContainer(
-            train_loader, self, n_sub_clusters, self.args.dataset, arch, self.args.batch)
-        container.initialize_generator()
-        container.set_next_batch()
+    #     n_sub_clusters = self.args.sub_cluster
+    #     container = InputContainer(
+    #         train_loader, self, n_sub_clusters, self.args.dataset, arch, self.args.batch)
+    #     container.initialize_generator()
+    #     container.set_next_batch()
 
-        print('Count Max Values and Zero Counter per cluster about dataset..')
-        n_per_sub = [0 for _ in range(n_sub_clusters)]
-        dnn_model.eval()
-        with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
-            for i, _ in enumerate(t):
-                input, _, cluster = container.get_batch()
+    #     print('Count Max Values and Zero Counter per cluster about dataset..')
+    #     n_per_sub = [0 for _ in range(n_sub_clusters)]
+    #     dnn_model.eval()
+    #     with tqdm(range(len(train_loader)*2), desc="Collecting Cluster Informations", ncols=90) as t:
+    #         for i, _ in enumerate(t):
+    #             input, _, cluster = container.get_batch()
 
-                n_per_sub[cluster] += self.args.batch
-                dnn_model.get_output_max_distribution(
-                    input, cluster, n_sub_clusters)
-                # dnn_model.count_zeros_per_index(
-                #     input, cluster, n_sub_clusters)
+    #             n_per_sub[cluster] += self.args.batch
+    #             dnn_model.get_output_max_distribution(
+    #                 input, cluster, n_sub_clusters)
+    #             # dnn_model.count_zeros_per_index(
+    #             #     input, cluster, n_sub_clusters)
 
-                container.set_next_batch()
-                if container.ready_cluster is None:
-                    break
-            container.check_leftover()
-            for c in range(container.num_clusters):
-                if container.leftover_cluster_data[c]:
-                    input, _, cluster = container.leftover_batch[c][0], \
-                        container.leftover_batch[c][1], c
-                    n_per_sub[cluster] += input.size(0)
-                    dnn_model.get_output_max_distribution(
-                        input, cluster, n_sub_clusters)
-                    # dnn_model.count_zeros_per_index(
-                    #     input, cluster, n_sub_clusters)
+    #             container.set_next_batch()
+    #             if container.ready_cluster is None:
+    #                 break
+    #         container.check_leftover()
+    #         for c in range(container.num_clusters):
+    #             if container.leftover_cluster_data[c]:
+    #                 input, _, cluster = container.leftover_batch[c][0], \
+    #                     container.leftover_batch[c][1], c
+    #                 n_per_sub[cluster] += input.size(0)
+    #                 dnn_model.get_output_max_distribution(
+    #                     input, cluster, n_sub_clusters)
+    #                 # dnn_model.count_zeros_per_index(
+    #                 #     input, cluster, n_sub_clusters)
 
-        # # Handle Empty Clusters
-        # for c in range(n_sub_clusters):
-        #     if dnn_model.max_counter[0][c] == []:
-        #         for l in range(len(dnn_model.max_counter)):
-        #             dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
+    #     # # Handle Empty Clusters
+    #     # for c in range(n_sub_clusters):
+    #     #     if dnn_model.max_counter[0][c] == []:
+    #     #         for l in range(len(dnn_model.max_counter)):
+    #     #             dnn_model.max_counter[l][c] = torch.zeros(1).cuda()
 
-        import pdb
-        pdb.set_trace()
+    #     import pdb
+    #     pdb.set_trace()
 
-        if print_log:
-            print("\n>>> [Original] Number of data per cluster")
-            for c in range(n_sub_clusters):
-                print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
-            print()
+    #     if print_log:
+    #         print("\n>>> [Original] Number of data per cluster")
+    #         for c in range(n_sub_clusters):
+    #             print(f"{{C{c}: {n_per_sub[c]}}}", end=' ')
+    #         print()
 
-        n_layers = len(dnn_model.max_counter)
-        n_per_sub = torch.tensor(n_per_sub).cuda()
+    #     n_layers = len(dnn_model.max_counter)
+    #     n_per_sub = torch.tensor(n_per_sub).cuda()
 
-        # # shape(n_features) = [layer_idx]
-        # n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
-        # # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
-        # dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
+    #     # # shape(n_features) = [layer_idx]
+    #     # n_features = torch.tensor([dnn_model.zero_counter[i].size(1) for i in range(n_layers)]).cuda()
+    #     # # shape(dnn_model.zero_counter) = [cluster_size, layer_size, neurons]
+    #     # dnn_model.zero_counter = torch.transpose(torch.stack([torch.nn.ConstantPad1d((0, torch.amax(n_features) - n_features[i]), 0)(dnn_model.zero_counter[i]) for i in range(n_layers)]), 0, 1)
         
-        # distance_score, num_clusters = test_cases(dnn_model, 
-        #                                           n_sub_clusters, 
-        #                                           task=1,   # 0 : quantile / 1 : max / 2 : mean / 3 : median
-        #                                           from_=0.,
-        #                                           to_=4.01,
-        #                                           gap=0.01)
+    #     # distance_score, num_clusters = test_cases(dnn_model, 
+    #     #                                           n_sub_clusters, 
+    #     #                                           task=1,   # 0 : quantile / 1 : max / 2 : mean / 3 : median
+    #     #                                           from_=0.,
+    #     #                                           to_=4.01,
+    #     #                                           gap=0.01)
 
-        # Robustness of clustering (outlier)
-        max_ratio = get_max_ratio(dnn_model, self.args.n_sub_clusters, task=1)
-        merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, max_ratio, n_per_sub, print_log) # NEW WAY
-        # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
+    #     # Robustness of clustering (outlier)
+    #     max_ratio = get_max_ratio(dnn_model, self.args.n_sub_clusters, task=1)
+    #     merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, max_ratio, n_per_sub, print_log) # NEW WAY
+    #     # merged_clusters, n_per_sub = average_link_clustering(self.args, dnn_model, n_per_sub, print_log) # OLD WAY
 
-        final_clusters = print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, self.args.cluster)
-        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+    #     final_clusters = print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, self.args.cluster)
+    #     self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
         
-        dnn_model.delete_counters()
+    #     dnn_model.delete_counters()
 
 
-    @torch.no_grad()
-    def get_cluster_score(self, dnn_model, data_loader, ema, arch):
-        n_per_sub = torch.zeros([self.args.cluster], dtype=torch.int).cuda()
-        dnn_model.eval()
-        with tqdm(data_loader, desc="Collecting Cluster Information", ncols=95) as t:
-            for i, (images, _) in enumerate(t):
-                images = images.cuda()
-                cluster = self.predict_cluster_of_batch(images).cuda()
+    # @torch.no_grad()
+    # def get_cluster_score(self, dnn_model, data_loader, ema, arch):
+    #     n_per_sub = torch.zeros([self.args.cluster], dtype=torch.int).cuda()
+    #     dnn_model.eval()
+    #     with tqdm(data_loader, desc="Collecting Cluster Information", ncols=95) as t:
+    #         for i, (images, _) in enumerate(t):
+    #             images = images.cuda()
+    #             cluster = self.predict_cluster_of_batch(images).cuda()
                 
-                indices, counts = torch.unique(cluster, return_counts=True)
-                n_per_sub[indices] += counts
-                dnn_model.accumulate_output_max_distribution(images, cluster, self.args.cluster, reduce='sum', accumulate='sum', clamp=ema)
+    #             indices, counts = torch.unique(cluster, return_counts=True)
+    #             n_per_sub[indices] += counts
+    #             dnn_model.accumulate_output_max_distribution(images, cluster, self.args.cluster, reduce='sum', accumulate='sum', clamp=ema)
         
-        score = torch.nan_to_num(dnn_model.max_accumulator.div(n_per_sub))
-        dnn_model.delete_counters()
-        return score
+    #     score = torch.nan_to_num(dnn_model.max_accumulator.div(n_per_sub))
+    #     dnn_model.delete_counters()
+    #     return score
 
 
-    @torch.no_grad()
-    def measure_cluster_score(self, dnn_model, aug_loader, nonaug_loader, test_loader, arch, print_log=True):
-        print('\n>>> measure cluster score..')
+    # @torch.no_grad()
+    # def measure_cluster_score(self, dnn_model, aug_loader, nonaug_loader, test_loader, arch, print_log=True):
+    #     print('\n>>> measure cluster score..')
 
-        ema = dnn_model.get_ema_per_layer().cuda()
+    #     ema = dnn_model.get_ema_per_layer().cuda()
 
-        aug_score = self.get_cluster_score(dnn_model, aug_loader, ema, arch)
-        nonaug_score = self.get_cluster_score(dnn_model, nonaug_loader, ema, arch)
-        test_score = self.get_cluster_score(dnn_model, test_loader, ema, arch)
+    #     aug_score = self.get_cluster_score(dnn_model, aug_loader, ema, arch)
+    #     nonaug_score = self.get_cluster_score(dnn_model, nonaug_loader, ema, arch)
+    #     test_score = self.get_cluster_score(dnn_model, test_loader, ema, arch)
 
-        aug_score_refined = (aug_score.T)[aug_score.sum(dim=0) != 0].T
-        nonaug_score_refined = (nonaug_score.T)[nonaug_score.sum(dim=0) != 0].T
-        test_score_refined = (test_score.T)[test_score.sum(dim=0) != 0].T
+    #     aug_score_refined = (aug_score.T)[aug_score.sum(dim=0) != 0].T
+    #     nonaug_score_refined = (nonaug_score.T)[nonaug_score.sum(dim=0) != 0].T
+    #     test_score_refined = (test_score.T)[test_score.sum(dim=0) != 0].T
         
-        aug_score_avg = torch.mean(aug_score_refined, dim=1)
-        nonaug_score_avg = torch.mean(nonaug_score_refined, dim=1)
-        test_score_avg = torch.mean(test_score_refined, dim=1)
+    #     aug_score_avg = torch.mean(aug_score_refined, dim=1)
+    #     nonaug_score_avg = torch.mean(nonaug_score_refined, dim=1)
+    #     test_score_avg = torch.mean(test_score_refined, dim=1)
         
-        return aug_score_avg.clone(), nonaug_score_avg.clone(), test_score_avg.clone()
+    #     return aug_score_avg.clone(), nonaug_score_avg.clone(), test_score_avg.clone()
 
 
     @torch.no_grad()
@@ -602,6 +708,12 @@ def average_link_clustering(args, dnn_model, n_per_sub, print_log):
 
 
 ##############################################################
+def final_clusters_from_cluster_label(cluster):
+    final_clusters = dict()
+    for i in range(cluster.size(0)):
+        final_clusters[str(i)] = cluster[i].item()
+    return {k:v for k, v in sorted(final_clusters.items(), key=lambda item: item[1])}
+
 def merge_clustered_pairs(dnn_model, clusters, n_per_sub=None, print_log=True):
     merged_clusters = []
     for cluster in clusters:
@@ -897,3 +1009,27 @@ def test_cases(dnn_model, n_sub_clusters, task=1, from_=0., to_=4.01, gap=0.01):
     # from scipy.sparse.csgraph import connected_components
 
 ##############################################################
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self, name, fmt=':f'):
+        self.name = name
+        self.fmt = fmt
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+    def __str__(self):
+        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        return fmtstr.format(**self.__dict__)

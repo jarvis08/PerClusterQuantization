@@ -125,32 +125,27 @@ class Q_ResNet18(nn.Module):
                 x, l_idx, act_scaling_factor = tmp_func.accumulate_output_max_distribution(x, cluster, n_clusters, self, 
                                                                                            l_idx, act_scaling_factor)
 
-    
-    
-    # def get_max_activations(self, x, cluster=None):
-    #     x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+    def get_max_activations(self, x, cluster=None):
+        if not hasattr(self, 'max_counter'):
+            self.max_counter = torch.zeros([0, 17]).cuda()
+            
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
 
-    #     x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
+        ##################################
+        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        ##################################
+        
+        x = self.pool(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x = self.act(x)
 
-    #     maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)                                      #####
-    #     x = self.pool(x)
-    #     x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        for stage_num in range(0, 4):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+                x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
 
-    #     x = self.act(x)
-
-    #     for stage_num in range(0, 4):
-    #         for unit_num in range(0, self.channel[stage_num]):
-    #             tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-    #             x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
-
-    #     x = self.final_pool(x, act_scaling_factor)
-
-    #     x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, cluster=cluster)
-    #     x = x.view(x.size(0), -1)
-    #     x = self.quant_output(x, act_scaling_factor)
-
-    #     maxs = torch.cat((maxs, torch.amax(x[0].view(x[0].size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     return maxs
+        self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
 
     # def initialize_counter(self, x, n_clusters):
@@ -343,28 +338,26 @@ class Q_ResNet20(nn.Module):
             
             
             
-    # def get_max_activations(self, x, cluster=None):
-    #     x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+    def get_max_activations(self, x, cluster=None):
+        if not hasattr(self, 'max_counter'):
+            self.max_counter = torch.zeros([0, 19]).cuda()
+            
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
+        
+        ##################################
+        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x = self.act(x)
 
-    #     x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
-    #     maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)                                      #####
-    #     x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        for stage_num in range(0,3):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
+                x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
 
-    #     x = self.act(x)
-
-    #     for stage_num in range(0,3):
-    #         for unit_num in range(0, self.channel[stage_num]):
-    #             tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-    #             x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
-
-    #     x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-
-    #     x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, cluster=cluster)
-    #     x = x.view(x.size(0), -1)
-    #     x = self.quant_output(x, act_scaling_factor)
-
-    #     maxs = torch.cat((maxs, torch.amax(x[0].view(x[0].size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     return maxs
+        self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
 
     # def initialize_counter(self, x, n_clusters):
@@ -559,30 +552,27 @@ class Q_ResNet50(nn.Module):
                                                                                            l_idx, act_scaling_factor)
 
         
-    # def get_max_activations(self, x, cluster=None):
-    #     x, act_scaling_factor = self.quant_input(x, cluster=cluster)
-
-    #     x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
-    #     maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)                                      #####
+    def get_max_activations(self, x, cluster=None):
+        if not hasattr(self, 'max_counter'):
+            self.max_counter = torch.zeros([0, 49]).cuda()
+            
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)
         
-    #     x = self.pool(x)
-    #     x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        ##################################
+        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        ##################################
         
-    #     x = self.act(x)
+        x = self.pool(x)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x = self.act(x)
 
-    #     for stage_num in range(0, 4):
-    #         for unit_num in range(0, self.channel[stage_num]):
-    #             tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
-    #             x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
+        for stage_num in range(0, 4):
+            for unit_num in range(0, self.channel[stage_num]):
+                tmp_func = getattr(self, f"stage{stage_num+1}.unit{unit_num+1}")
+                x, act_scaling_factor, maxs = tmp_func.get_max_activations(x, act_scaling_factor, cluster=cluster, maxs=maxs)
 
-    #     x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
-
-    #     x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, cluster=cluster)
-    #     x = x.view(x.size(0), -1)
-    #     x = self.quant_output(x, act_scaling_factor)
-
-    #     maxs = torch.cat((maxs, torch.amax(x[0].view(x[0].size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     return maxs
+        self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
 
     # def initialize_counter(self, x, n_clusters):
@@ -735,43 +725,48 @@ class Q_ResUnitBn(nn.Module):
         return x, act_scaling_factor
 
 
-    # def get_max_activations(self, x, scaling_factor_int32=None, cluster=None, maxs=None):
-    #     if self.resize_identity:
-    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
-    #         identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-    #         identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
-    #         maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     else:
-    #         identity = x
-    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+    def get_max_activations(self, x, scaling_factor_int32=None, cluster=None, maxs=None):
+        if self.resize_identity:
+            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+        else:
+            identity = x
+            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
 
-    #     x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
+        x = self.act1(x)
         
-    #     x = self.act1(x)
-    #     x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
+        x = self.act2(x)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
+        x = x + identity
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
 
-    #     x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     x = self.act2(x)
-    #     x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        if self.resize_identity:
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
+        else:
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, scaling_factor_int32, None, cluster=cluster)
 
-    #     x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        x = self.act3(x)
 
-    #     x = x + identity
-
-    #     if self.resize_identity:
-    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-    #                                                      identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
-    #     else:
-    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-    #                                                      identity, scaling_factor_int32, None, cluster=cluster)
-
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     x = self.act3(x)
-
-    #     return x, act_scaling_factor, maxs
+        return x, act_scaling_factor, maxs
 
 
 
@@ -1024,37 +1019,40 @@ class Q_ResBlockBn(nn.Module):
         return x, act_scaling_factor
 
 
-    # def get_max_activations(self, x, scaling_factor_int32=None, cluster=None, maxs=None):
-    #     if self.resize_identity:
-    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
-    #         identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
-    #         identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
-    #         maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     else:
-    #         identity = x
-    #         x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+    def get_max_activations(self, x, scaling_factor_int32=None, cluster=None, maxs=None):
+        if self.resize_identity:
+            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
+            identity_act_scaling_factor = act_scaling_factor.clone() if act_scaling_factor is not None else None
+            identity, identity_weight_scaling_factor = self.quant_identity_convbn(x, act_scaling_factor)
+        else:
+            identity = x
+            x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, cluster=cluster)
 
-    #     x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     x = self.act1(x)
-    #     x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
+        x = self.act1(x)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
+        x = x + identity
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
 
-    #     x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
+        if self.resize_identity:
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
+        else:
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
+                                                         identity, scaling_factor_int32, None, cluster=cluster)
 
-    #     x = x + identity
+        x = self.act2(x)
 
-    #     if self.resize_identity:
-    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-    #                                                      identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
-    #     else:
-    #         x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, 
-    #                                                      identity, scaling_factor_int32, None, cluster=cluster)
-
-    #     maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-    #     x = self.act2(x)
-
-    #     return x, act_scaling_factor, maxs
+        return x, act_scaling_factor, maxs
 
 
     # def initialize_counter(self, x, n_clusters, zero_counter):

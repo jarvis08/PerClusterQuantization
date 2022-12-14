@@ -172,57 +172,73 @@ class Q_AlexNet(nn.Module):
         return x
 
 
-    def get_max_activations(self, x):
-        x, act_scaling_factor = self.quant_input(x)
-
+    def get_max_activations(self, x, cluster=None):
+        if not hasattr(self, 'max_counter'):
+            self.max_counter = torch.zeros([0, 7]).cuda()
+        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
         x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
-        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)                                      #####
         x = self.act1(x)
-        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor)
-
-        x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
-
-        x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-        x = self.act2(x)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor)
-
-        x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
-
-        x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-        x = self.act3(x)
-        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor)
-
-        x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-        x = self.act4(x)
-        x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor)
         
+        ##################################
+        maxs = torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act1(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
+        x = self.act2(x)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
+        x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
+        x = self.act3(x)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act3(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
+        x = self.act4(x)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act4(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
         x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
         x = self.act5(x)
-        x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor)
-
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act5(x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
         x, act_scaling_factor = self.maxpool3(x, act_scaling_factor)
         x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
 
         x = x.view(x.size(0), -1)
 
         x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
         x = self.act6(x)
-        x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor)
-
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        
+        x, act_scaling_factor = self.quant_act6(x, act_scaling_factor, fc_scaling_factor, cluster=cluster)
         x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
         x = self.act7(x)
-        x, act_scaling_factor = self.quant_act7(x, act_scaling_factor, fc_scaling_factor)
+        
+        ##################################
+        maxs = torch.cat((maxs, torch.amax(x.view(x.size(0), -1), dim=-1, keepdim=True)), dim=1)
+        ##################################
+        self.max_counter = torch.cat((self.max_counter, maxs), dim=0)
 
-        x = self.fc3(x, act_scaling_factor)
-        maxs = torch.cat((maxs, torch.amax(x[0].view(x[0].size(0), -1), dim=-1, keepdim=True)), dim=1)            #####
-
-        return maxs
 
     # def initialize_counter(self, x, n_clusters):
     #     self.zero_counter = []
