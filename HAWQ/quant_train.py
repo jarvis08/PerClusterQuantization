@@ -471,7 +471,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         sub_model = sub_model.cuda(args.gpu)
         
         print("EMA training epochs...")
-        ema_epoch = 2 if args.data == 'imagenet' else 1
+        ema_epoch = 2 if args.data == 'imagenet' else 10
         for epoch in range(args.start_epoch, ema_epoch):
             train_ema(cluster_train_loader, sub_model, clustering_model, criterion, epoch, args)
             
