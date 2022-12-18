@@ -60,7 +60,7 @@ class Q_ResNet18(nn.Module):
                 setattr(module, 'full_precision_flag', not precision)
 
 
-    def forward(self, x, cluster):
+    def forward(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
@@ -293,7 +293,7 @@ class Q_ResNet20(nn.Module):
                 setattr(module, 'full_precision_flag', not precision)
 
 
-    def forward(self, x, cluster):
+    def forward(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_init_block_convbn(x, act_scaling_factor)
@@ -524,7 +524,7 @@ class Q_ResNet50(nn.Module):
                 setattr(module, 'full_precision_flag', not precision)
 
 
-    def forward(self, x, cluster):
+    def forward(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
         x, weight_scaling_factor = self.quant_init_convbn(x, act_scaling_factor)

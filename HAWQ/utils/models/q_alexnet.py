@@ -127,7 +127,7 @@ class Q_AlexNet(nn.Module):
                 precision = getattr(module, 'full_precision_flag')
                 setattr(module, 'full_precision_flag', not precision)
 
-    def forward(self, x, cluster):
+    def forward(self, x, cluster=None):
         x, act_scaling_factor = self.quant_input(x, cluster=cluster)
 
         x, conv_scaling_factor = self.conv1(x, act_scaling_factor)

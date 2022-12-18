@@ -145,7 +145,10 @@ class QuantLinear(Module):
                 else:
                     return F.linear(x_int, weight=self.weight_integer) * bias_scaling_factor
         else:
-            return (F.linear(x, weight=self.weight, bias=self.bias), None)
+            if not self.is_classifier:
+                return (F.linear(x, weight=self.weight, bias=self.bias), None)
+            else:
+                return F.linear(x, weight=self.weight, bias=self.bias)
 
 
 class QuantAct(Module):
@@ -211,8 +214,8 @@ class QuantAct(Module):
         self.is_classifier = False
     def __repr__(self):
         return "{0}(activation_bit={1}, full_precision_flag={2}, " \
-               "quant_mode={3}".format(self.__class__.__name__, self.activation_bit,
-                                       self.full_precision_flag, self.quant_mode)
+            "quant_mode={3})".format(self.__class__.__name__, self.activation_bit,
+                                        self.full_precision_flag, self.quant_mode)
 
     def fix(self):
         """

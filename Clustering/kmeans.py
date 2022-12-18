@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
+import pdb
 from tqdm import tqdm
 import joblib
 from copy import deepcopy
@@ -224,6 +225,43 @@ class KMeansClustering(object):
             # src = torch.abs(maxs-torch.index_select(ema, 0, clusters)) # Manhattan Distance
             return torch.scatter_reduce(buffer, 0, clusters.repeat(ema.size(1), 1).T, src=src, reduce="mean", include_self=False)
         
+        def set_new_ema_and_validate(self, model, data_loader, n_per_clusters, i, cluster_size):
+            ema = get_ema_for_model(model, self.args.sub_cluster)
+            new_ema = approximate_ema(ema, self.final_cluster.cuda(), n_per_clusters, cluster_size)
+            pad_ema = F.pad(input=new_ema.T, pad=(0, i+1), mode='constant', value=0)
+            model = set_ema_for_model(model, pad_ema)
+            return self.validate(data_loader, model)
+
+        def set_new_ema_and_score(self, model, fp_model, data_loader, n_per_clusters, i, cluster_size):
+            ema = get_ema_for_model(model, self.args.sub_cluster)
+            new_min = approximate_ema(ema[0], self.final_cluster.cuda(), n_per_clusters, cluster_size)
+            new_max = approximate_ema(ema[1], self.final_cluster.cuda(), n_per_clusters, cluster_size)
+            pad_min = F.pad(input=new_min.T, pad=(0, i+1), mode='constant', value=0)
+            pad_max = F.pad(input=new_max.T, pad=(0, i+1), mode='constant', value=0)
+            model = set_ema_for_model(model, pad_min, pad_max)
+            return self.validate_score(data_loader, model, fp_model).view(-1, 1)
+        
+        def get_ema_for_model(model, cluster_size):
+            min_ema = torch.zeros([cluster_size, 0]).cuda()
+            max_ema = torch.zeros([cluster_size, 0]).cuda()
+            for name, m in model.named_modules():
+                if "quant_act" in name or "quant_input" in name:
+                    tmp_min = getattr(m, 'x_min')
+                    tmp_max = getattr(m, 'x_max')
+                    min_ema = torch.cat((min_ema, tmp_min.view(-1, 1)), dim=1)
+                    max_ema = torch.cat((max_ema, tmp_max.view(-1, 1)), dim=1)
+            return (min_ema, max_ema)
+                    
+        def set_ema_for_model(model, min, max):
+            index = 0
+            for name, m in model.named_modules():
+                if "quant_act" in name or "quant_input" in name:
+                    setattr(m, 'x_min', min[index])
+                    setattr(m, 'x_max', max[index])
+                    index += 1
+            return model
+                    
+        
         print('\n>>> NN-aware Clustering..')        
         ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
         
@@ -244,8 +282,22 @@ class KMeansClustering(object):
         clusters = clusters.type(torch.LongTensor).cuda()
         _, n_per_clusters = clusters.unique(return_counts=True)
         
+        fp_model = deepcopy(dnn_model)
+        fp_model.toggle_full_precision()
+        score = self.validate_score(test_loader, dnn_model, fp_model)
+        for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
+            label = AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_
+            self.final_cluster = torch.tensor(label, dtype=torch.int64)
+            cur_score = set_new_ema_and_score(self, dnn_model, fp_model, test_loader, n_per_clusters, i, cluster)
+            score = torch.cat((score, cur_score), dim=1)
+        
+        score_np = score.cpu().numpy()
+        score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
+        score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        exit()
+        
         """
-
+        # Score Per Layer
         score = cluster_score(ema, maxs, clusters).mean(dim=0).view(-1, 1)
         # merged_clusters, n_per_sub = clustering_aggregation(self.args, dnn_model, ema, n_per_sub, print_log) # NEW WAY
         # final_clusters = print_merged_clusters(merged_clusters, n_per_sub, self.args.sub_cluster, self.args.cluster)
@@ -259,27 +311,32 @@ class KMeansClustering(object):
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         exit()
-        
-        
-        # cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
-        # final_clusters = final_clusters_from_cluster_label(cluster)
-        
-        # self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
         """
         
+        """
+        # Validation Accuracy Per Layer
         score = self.validate(test_loader, dnn_model)
         for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
             label = AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_
             self.final_cluster = torch.tensor(label, dtype=torch.int64)
-            cur_ema = F.pad(input=approximate_ema(ema, self.final_cluster.cuda(), n_per_clusters, cluster).T, pad=(0,i+1), mode='constant', value=0)
-            dnn_model.set_ema_per_layer(cur_ema)
-            score = torch.cat((score, self.validate(test_loader, dnn_model)))
+            # cur_ema = F.pad(input=approximate_ema(ema, self.final_cluster.cuda(), n_per_clusters, cluster).T, pad=(0,i+1), mode='constant', value=0)
+            # dnn_model.set_ema_per_layer(cur_ema)
+            # score = torch.cat((score, self.validate(test_loader, dnn_model)))
+            cur_score = self.set_new_ema_and_validate(dnn_model, test_loader, n_per_clusters, i, cluster)
+            score = torch.cat((score, cur_score))
             
         score = score.view(1, -1)
         score_np = score.cpu().numpy()
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         exit()
+        """
+        
+        # cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
+        # final_clusters = final_clusters_from_cluster_label(cluster)
+        
+        # self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        
         
     @torch.no_grad()
     def validate(self, loader, model):
@@ -330,6 +387,73 @@ class KMeansClustering(object):
         unfreeze_model(model)
         return torch.tensor([top1.avg])
     
+    @torch.no_grad()
+    def validate_score(self, loader, model, fp_model):
+        @torch.no_grad()
+        def accuracy(output, target, topk=(1,)):
+            """Computes the accuracy over the k top predictions for the specified values of k"""
+            maxk = max(topk)
+            batch_size = target.size(0)
+
+            _, pred = output.topk(maxk, 1, True, True)
+            pred = pred.t()
+            correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+            res = []
+            for k in topk:
+                correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+                res.append(correct_k.mul_(100.0 / batch_size))
+            return res
+        
+        mae_diff = AverageMeter('mae', ':.8e')
+        mse_diff = AverageMeter('mse', ':.8e')
+        kl_diff = AverageMeter('kl', ':.8e')
+        loss_diff = AverageMeter('loss', ':.8e')
+        
+        criterion = F.cross_entropy
+        
+        fp_top1 = AverageMeter('FP_Acc@1', ':6.2f')
+        top1 = AverageMeter('Acc@1', ':6.2f')
+        
+        # switch to evaluate mode
+        freeze_model(model)
+        freeze_model(fp_model)
+        model.eval()
+        fp_model.eval()
+        
+        with tqdm(loader, desc="Validate", ncols=95) as t:
+            for i, data in enumerate(t):
+                if self.args.dataset == 'imagenet':
+                    images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
+                else:
+                    images, target = data
+                    
+                images = images.cuda()
+                target = target.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+
+                # compute output
+                output = model(images, cluster)
+                fp_output = fp_model(images)
+                
+                # measure accuracy
+                fp_acc1, fp_acc5 = accuracy(fp_output, target, topk=(1, 5))
+                fp_top1.update(fp_acc1[0].item(), images.size(0))
+                
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                top1.update(acc1[0].item(), images.size(0))
+
+                mae_diff.update((output-fp_output).abs().sum(1).mean(), images.size(0))
+                mse_diff.update((output-fp_output).pow(2).sum(1).mean(), images.size(0))
+                kl_diff.update(F.kl_div(output, fp_output), images.size(0))
+                loss_diff.update((criterion(output, target)-criterion(fp_output, target)).abs(), images.size(0))
+
+                t.set_postfix(fp_acc1=fp_top1.avg, acc1=top1.avg)
+        
+        unfreeze_model(model)
+        unfreeze_model(fp_model)
+        return torch.tensor([top1.avg, mae_diff.avg, mse_diff.avg, kl_diff.avg, loss_diff.avg])
+        
     
     # @torch.no_grad()
     # def max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):
