@@ -231,7 +231,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             range_cnt = range_interval * args.epoch
 
 
-    record_grad = [[[] for _ in range(3)] for _ in range(range_cnt + 1)]
+    record_grad = [[[] for _ in range(4)] for _ in range(range_cnt + 1)]
 
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
@@ -266,9 +266,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
             if args.schedule_unit == 'iter':
                 assert iter_idx > 0, 'iter_idx {}'.format(iter_idx)
                 for i in range(iter_idx - range_interval, iter_idx):
-                    record_grad[i][2] = fp_score
+                    record_grad[i][3] = fp_score
             else:
-                record_grad[e - 1][2] = fp_score
+                record_grad[e - 1][3] = fp_score
 
         # if args.dataset != 'imagenet':
         #     if args.cluster > 1:
@@ -324,13 +324,14 @@ def _finetune(args, tools, data_loaders, clustering_model):
     test_score = best_int_val_score
     record_grad[-1][0] = -1
     record_grad[-1][1] = 0
-    record_grad[-1][2] = test_score
+    record_grad[-1][2] = -1
+    record_grad[-1][3] = test_score
 
     with open(f'GRAPH_{args.arch[:4]}_{args.dataset[5:]}_CONST_{args.const_portion}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow((['QUANTILE', args.quantile]))
         for i in range(len(record_grad)):
-            writer.writerow(([i, '{:.2f}%'.format(record_grad[i][0]), '{:.5f}'.format(record_grad[i][1]), '{:.2f}'.format(record_grad[i][2])]))
+            writer.writerow(([i, '{:.2f}%'.format(record_grad[i][0]), '{:.5f}'.format(record_grad[i][1]), '{:.5f}'.format(record_grad[i][2]), '{:.2f}'.format(record_grad[i][3])]))
         writer.writerow([])
 
     # if args.record_val:

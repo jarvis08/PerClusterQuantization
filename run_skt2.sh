@@ -61,7 +61,7 @@ else
     --symmetric \
     --mixed_precision \
     --input_grad True\
-    --percentile 2.0 \
+    --percentile 1.8 \
     --channel_epoch 100 \
     --pre_fixed_channel 1.0 \
     --reduce_ratio 1.0 \
