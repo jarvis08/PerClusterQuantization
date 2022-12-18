@@ -284,7 +284,7 @@ class KMeansClustering(object):
         
         fp_model = deepcopy(dnn_model)
         fp_model.toggle_full_precision()
-        score = self.validate_score(test_loader, dnn_model, fp_model)
+        score = self.validate_score(test_loader, dnn_model, fp_model).view(-1, 1)
         for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
             label = AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_
             self.final_cluster = torch.tensor(label, dtype=torch.int64)
