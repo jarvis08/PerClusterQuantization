@@ -225,24 +225,6 @@ class Q_ResNet18(nn.Module):
     #             x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, 
     #                                                                                 l_idx, initialized, act_scaling_factor)
 
-
-    def get_ema_per_layer(self):
-        ema = []
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                ema = ema + tmp_func.get_ema_per_layer()
-        ema.append(self.quant_act_output.x_max)
-        return torch.stack(ema)
-    
-    
-    def set_ema_per_layer(self, ema):
-        l_idx = 0
-        for stage_num in range(0, 4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
-        self.quant_act_output.x_max = ema[l_idx]
         
     
 class Q_ResNet20(nn.Module):
@@ -455,24 +437,6 @@ class Q_ResNet20(nn.Module):
     #             x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
     #                                                                                 initialized, act_scaling_factor)
             
-
-    def get_ema_per_layer(self):
-        ema = []
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                ema = ema + tmp_func.get_ema_per_layer()
-        ema.append(self.quant_act_output.x_max)
-        return torch.stack(ema)
-
-
-    def set_ema_per_layer(self, ema):
-        l_idx = 0
-        for stage_num in range(0, 3):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
-        self.quant_act_output.x_max = ema[l_idx]
         
 
 class Q_ResNet50(nn.Module):
@@ -689,24 +653,6 @@ class Q_ResNet50(nn.Module):
     #             x, l_idx, act_scaling_factor = tmp_func.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
     #                                                             initialized, act_scaling_factor)
             
-
-    def get_ema_per_layer(self):
-        ema = []
-        for stage_num in range(0,4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                ema = ema + tmp_func.get_ema_per_layer()
-        ema.append(self.quant_act_output.x_max)
-        return torch.stack(ema)
-
-
-    def set_ema_per_layer(self, ema):
-        l_idx = 0
-        for stage_num in range(0,4):
-            for unit_num in range(0, self.channel[stage_num]):
-                tmp_func = getattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}')
-                l_idx = tmp_func.set_ema_per_layer(ema, l_idx)
-        self.quant_act_output.x_max = ema[l_idx]
 
 
 class Q_ResUnitBn(nn.Module):
@@ -1002,23 +948,6 @@ class Q_ResUnitBn(nn.Module):
     #     return x, l_idx, act_scaling_factor
             
 
-    def get_ema_per_layer(self):
-        ema = []
-        ema.append(self.quant_act.x_max)
-        ema.append(self.quant_act1.x_max)
-        ema.append(self.quant_act2.x_max)
-        return ema
-
-
-    def set_ema_per_layer(self, ema, l_idx):
-        self.quant_act.x_max = ema[l_idx]
-        l_idx += 1
-        self.quant_act1.x_max = ema[l_idx]
-        l_idx += 1
-        self.quant_act2.x_max = ema[l_idx]
-        l_idx += 1
-        return l_idx
-
 
 class Q_ResBlockBn(nn.Module):
     """
@@ -1258,21 +1187,6 @@ class Q_ResBlockBn(nn.Module):
     #     x = self.act2(x)
         
     #     return x, l_idx, act_scaling_factor
-            
-
-    def get_ema_per_layer(self):
-        ema = []
-        ema.append(self.quant_act.x_max)
-        ema.append(self.quant_act1.x_max)
-        return ema
-
-
-    def set_ema_per_layer(self, ema, l_idx):
-        self.quant_act.x_max = ema[l_idx]
-        l_idx += 1
-        self.quant_act1.x_max = ema[l_idx]
-        l_idx += 1
-        return l_idx
         
 
 def q_resnet18(model, num_clusters=None):

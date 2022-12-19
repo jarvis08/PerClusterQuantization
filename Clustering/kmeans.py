@@ -263,7 +263,8 @@ class KMeansClustering(object):
                     
         
         print('\n>>> NN-aware Clustering..')        
-        ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
+        # ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
+        _, ema = get_ema_for_model(dnn_model, self.args.sub_cluster)
         
         clusters = torch.zeros([0]).cuda()
         freeze_model(dnn_model)

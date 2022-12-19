@@ -527,27 +527,6 @@ class Q_AlexNet(nn.Module):
         _max = x.view(x.size(0), -1).max(dim=1).values
         if self.max_counter[l_idx][cluster] == []:
             self.max_counter[l_idx][cluster] = _max
-
-
-    def get_ema_per_layer(self):
-        ema = [[] for _ in range(7)]
-        ema[0] = self.quant_act1.x_max
-        ema[1] = self.quant_act2.x_max
-        ema[2] = self.quant_act3.x_max
-        ema[3] = self.quant_act4.x_max
-        ema[4] = self.quant_act5.x_max
-        ema[5] = self.quant_act6.x_max
-        ema[6] = self.quant_act7.x_max
-        return torch.stack(ema)
-        
-    def set_ema_per_layer(self, ema):
-        self.quant_act1.x_max = ema[0]
-        self.quant_act2.x_max = ema[1]
-        self.quant_act3.x_max = ema[2]
-        self.quant_act4.x_max = ema[3]
-        self.quant_act5.x_max = ema[4]
-        self.quant_act6.x_max = ema[5]
-        self.quant_act7.x_max = ema[6]
         
 
 def q_alexnet(model, model_dict=None, num_clusters=None):
