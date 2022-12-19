@@ -259,8 +259,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if args.fold_convbn:
             tools.folder(model)
 
+        runtime_helper.conv_mixed_grad = True
         fp_score = 0
         fp_score = validate(model, test_loader, criterion, logger)
+        # fp_score = validate(model, val_loader, criterion, logger)
 
         if args.mixed_precision and e <= args.channel_epoch:
             if args.schedule_unit == 'iter':
@@ -297,7 +299,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             quantized_model = tools.quantizer(model, quantized_model)
             quantized_model.cuda()
 
-            #int_score = validate(quantized_model, val_loader, criterion, logger)
+            # int_score = validate(quantized_model, val_loader, criterion, logger)
             int_score = validate(quantized_model, test_loader, criterion, logger)
 
             if int_score > best_int_val_score:
