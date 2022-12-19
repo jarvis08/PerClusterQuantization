@@ -232,14 +232,14 @@ class KMeansClustering(object):
             model = set_ema_for_model(model, pad_ema)
             return self.validate(data_loader, model)
 
-        def set_new_ema_and_score(self, model, fp_model, data_loader, n_per_clusters, i, cluster_size):
+        def set_new_ema_and_score(self, model, copy_model, fp_model, data_loader, n_per_clusters, i, cluster_size):
             ema = get_ema_for_model(model, self.args.sub_cluster)
             new_min = approximate_ema(ema[0], self.final_cluster.cuda(), n_per_clusters, cluster_size)
             new_max = approximate_ema(ema[1], self.final_cluster.cuda(), n_per_clusters, cluster_size)
             pad_min = F.pad(input=new_min.T, pad=(0, i+1), mode='constant', value=0)
             pad_max = F.pad(input=new_max.T, pad=(0, i+1), mode='constant', value=0)
-            model = set_ema_for_model(model, pad_min, pad_max)
-            return self.validate_score(data_loader, model, fp_model).view(-1, 1)
+            copy_model = set_ema_for_model(copy_model, pad_min, pad_max)
+            return self.validate_score(data_loader, copy_model, fp_model).view(-1, 1)
         
         def get_ema_for_model(model, cluster_size):
             min_ema = torch.zeros([cluster_size, 0]).cuda()
@@ -284,11 +284,12 @@ class KMeansClustering(object):
         
         fp_model = deepcopy(dnn_model)
         fp_model.toggle_full_precision()
+        copy_model = deepcopy(dnn_model)
         score = self.validate_score(test_loader, dnn_model, fp_model).view(-1, 1)
         for i, cluster in enumerate(reversed(range(self.args.cluster, self.args.sub_cluster))):
             label = AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema).labels_
             self.final_cluster = torch.tensor(label, dtype=torch.int64)
-            cur_score = set_new_ema_and_score(self, dnn_model, fp_model, test_loader, n_per_clusters, i, cluster)
+            cur_score = set_new_ema_and_score(self, dnn_model, copy_model, fp_model, test_loader, n_per_clusters, i, cluster)
             score = torch.cat((score, cur_score), dim=1)
         
         score_np = score.cpu().numpy()
