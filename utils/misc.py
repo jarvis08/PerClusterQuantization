@@ -36,6 +36,7 @@ class RuntimeHelper(object):
         self.reduce_ratio = 1.0
         self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
         self.quantile_tensor = torch.tensor(1, dtype=torch.float, device='cuda')
+        self.first_trial = True
 
         self.mask_4d = None ###
         self.mask_2d = None ###

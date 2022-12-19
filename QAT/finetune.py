@@ -196,6 +196,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
         identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_CON_{args.const_portion}'
         set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
+        runtime_helper.first_trial = False
         initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -261,8 +262,8 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
         runtime_helper.conv_mixed_grad = True
         fp_score = 0
-        fp_score = validate(model, test_loader, criterion, logger)
-        # fp_score = validate(model, val_loader, criterion, logger)
+        # fp_score = validate(model, test_loader, criterion, logger)
+        fp_score = validate(model, val_loader, criterion, logger)
 
         if args.mixed_precision and e <= args.channel_epoch:
             if args.schedule_unit == 'iter':
