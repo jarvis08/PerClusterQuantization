@@ -283,6 +283,8 @@ class KMeansClustering(object):
         clusters = clusters.type(torch.LongTensor).cuda()
         _, n_per_clusters = clusters.unique(return_counts=True)
         
+        """
+        # Score Per Model Output 
         fp_model = deepcopy(dnn_model)
         fp_model.toggle_full_precision()
         copy_model = deepcopy(dnn_model)
@@ -297,6 +299,8 @@ class KMeansClustering(object):
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         exit()
+        """
+        
         
         """
         # Score Per Layer
@@ -334,10 +338,10 @@ class KMeansClustering(object):
         exit()
         """
         
-        # cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
-        # final_clusters = final_clusters_from_cluster_label(cluster)
+        cluster = torch.tensor(AgglomerativeClustering(n_clusters=self.args.cluster, connectivity='pairwise').fit(ema).labels_).cuda()
+        final_clusters = final_clusters_from_cluster_label(cluster)
         
-        # self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
+        self.args, self.final_cluster = save_cluster_info(self.args, self.feature_index, final_clusters)
         
         
     @torch.no_grad()
