@@ -245,7 +245,7 @@ class KMeansClustering(object):
             min_ema = torch.zeros([cluster_size, 0]).cuda()
             max_ema = torch.zeros([cluster_size, 0]).cuda()
             for name, m in model.named_modules():
-                if "quant_act" in name or "quant_input" in name:
+                if "quant_act" in name:
                     tmp_min = getattr(m, 'x_min')
                     tmp_max = getattr(m, 'x_max')
                     min_ema = torch.cat((min_ema, tmp_min.view(-1, 1)), dim=1)
@@ -255,7 +255,7 @@ class KMeansClustering(object):
         def set_ema_for_model(model, min, max):
             index = 0
             for name, m in model.named_modules():
-                if "quant_act" in name or "quant_input" in name:
+                if "quant_act" in name:
                     setattr(m, 'x_min', min[index])
                     setattr(m, 'x_max', max[index])
                     index += 1
