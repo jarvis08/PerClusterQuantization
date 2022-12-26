@@ -949,9 +949,10 @@ def save_checkpoint(state, is_best, nnac=False, cluster=None, accuracy=None, fil
         #                 os.path.join(filename, f'model_best_{cluster}_{accuracy:.3f}.pth.tar'))
     if is_best:
         if not nnac:
-            torch.save(state, os.path.join(filename, f'model_split_{cluster}_{accuracy:.3f}.pth.tar'))
+            path = f'model_split_{cluster}_{accuracy:.3f}.pth.tar'
         else:
-            torch.save(state, os.path.join(filename, f'model_nnac_{cluster}_{accuracy:.3f}.pth.tar'))
+            path = f'model_nnac_{cluster}_{accuracy:.3f}.pth.tar'
+        torch.save(state, os.path.join(filename, path))
     
 
 
