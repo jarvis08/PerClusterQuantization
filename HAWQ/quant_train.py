@@ -455,28 +455,31 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     cluster_train_loader = data_loaders['non_aug_train']
 
     if clustering_model is not None and clustering_model.model is None:
+        # Prune Kmeans Features by correlation
     #     clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader)
         clustering_model.train_clustering_model(cluster_train_loader)
 
-    if args.nnac and clustering_model.final_cluster is None:
-        ###
-        # model.toggle_full_precision()
-        # freeze_model(model)
-        # clustering_model.zero_max_nn_aware_clustering(
-        # clustering_model.max_nn_aware_clustering(
-        #     model, cluster_train_loader, args.arch)
-        ###
-        sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
-        sub_model = set_quantize_param(args, sub_model, bit_config)
-        sub_model = sub_model.cuda(args.gpu)
+    # if args.nnac and clustering_model.final_cluster is None:
+    #     # Old Way
+    #     ###
+    #     # model.toggle_full_precision()
+    #     # freeze_model(model)
+    #     # clustering_model.zero_max_nn_aware_clustering(
+    #     # clustering_model.max_nn_aware_clustering(
+    #     #     model, cluster_train_loader, args.arch)
+    #     ###
+    #     # New Way
+    #     sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
+    #     sub_model = set_quantize_param(args, sub_model, bit_config)
+    #     sub_model = sub_model.cuda(args.gpu)
         
-        print("EMA training epochs...")
-        ema_epoch = 2 if args.data == 'imagenet' else 10
-        for epoch in range(args.start_epoch, ema_epoch):
-            train_ema(cluster_train_loader, sub_model, clustering_model, criterion, epoch, args)
+    #     print("EMA training epochs...")
+    #     ema_epoch = 2 if args.data == 'imagenet' else 1
+    #     for epoch in range(args.start_epoch, ema_epoch):
+    #         train_ema(cluster_train_loader, sub_model, clustering_model, criterion, epoch, args)
             
-        clustering_model.ema_nn_aware_clustering(sub_model, cluster_train_loader, test_loader, args.arch)
-        del sub_model
+    #     clustering_model.ema_nn_aware_clustering(sub_model, cluster_train_loader, test_loader, args.arch)
+    #     del sub_model
     del fp_model
     
     if args.evaluate:
@@ -490,11 +493,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     one_epoch_time = None
 
     ### LOG DIRECTORY ###
-    # finetune_path = set_save_dir(args)
-    # log_path = set_log_dir(args)
+    finetune_path = set_save_dir(args)
+    log_path = set_log_dir(args)
 
-    finetune_path = set_kt_save_dir(args)
-    log_path = set_kt_log_dir(args)
+    # finetune_path = set_kt_save_dir(args)
+    # log_path = set_kt_log_dir(args)
 
     if not os.path.exists(finetune_path):
         os.mkdir(finetune_path)
@@ -644,18 +647,29 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if (acc1 > best_acc1):
             best_acc1 = max(acc1, best_acc1)
             best_epoch = epoch
+            best_model = model
 
         logging.info(f'Best acc at epoch {best_epoch}: {best_acc1}')
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'cluster': args.cluster,
-                'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
-                'optimizer': optimizer.state_dict(),
-            }, is_best, finetune_path)
+        # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+        #     save_checkpoint({
+        #         'epoch': epoch + 1,
+        #         'arch': args.arch,
+        #         'cluster': args.cluster,
+        #         'state_dict': model.state_dict(),
+        #         'best_acc1': best_acc1,
+        #         'optimizer': optimizer.state_dict(),
+        #     }, is_best, finetune_path)
+        
+    cluster = args.cluster if not args.nnac else args.sub_cluster
+    save_checkpoint({
+        'epoch': best_epoch,
+        'arch': args.arch,
+        'cluster': cluster,
+        'state_dict': best_model.state_dict(),
+        'best_acc1': best_acc1,
+        'optimizer': optimizer.state_dict(),
+    }, True, cluster, best_acc1, finetune_path)
 
     test_score = best_acc1
 
@@ -928,11 +942,11 @@ def validate(val_loader, model, clustering_model, criterion, args):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, filename=None):
+def save_checkpoint(state, is_best, cluster=None, accuracy=None, filename=None):
     torch.save(state, filename + 'checkpoint.pth.tar')
     if is_best:
         shutil.copyfile(filename + 'checkpoint.pth.tar',
-                        filename + 'model_best.pth.tar')
+                        filename + f'model_best_{cluster}_{accuracy:.3f}.pth.tar')
 
 
 class AverageMeter(object):

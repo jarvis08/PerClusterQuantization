@@ -568,13 +568,7 @@ def set_save_dir(args, allow_existence=True):
     path = add_path(path, args.quant_base)
     path = add_path(path, args.mode)
     path = add_path(path, args.dataset)
-    if args.quant_base == 'hawq':
-        if args.quant_scheme == 'uniform4':
-            path = add_path(path, args.arch + '_' + str(4) + 'bit')
-        else:
-            path = add_path(path, args.arch + '_' + str(8) + 'bit')
-    else:
-        path = add_path(path, args.arch + '_' + str(args.bit) + 'bit')
+    path = add_path(path, args.arch)
     path = add_path(path, datetime.now().strftime(
         "%m-%d-%H%M"), allow_existence=allow_existence)
     with open(os.path.join(path, "params.json"), 'w') as f:
