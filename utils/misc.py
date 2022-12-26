@@ -569,8 +569,6 @@ def set_save_dir(args, allow_existence=True):
     path = add_path(path, args.mode)
     path = add_path(path, args.dataset)
     path = add_path(path, args.arch)
-    path = add_path(path, datetime.now().strftime(
-        "%m-%d-%H%M"), allow_existence=allow_existence)
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path

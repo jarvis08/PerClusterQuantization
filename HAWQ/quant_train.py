@@ -943,10 +943,10 @@ def validate(val_loader, model, clustering_model, criterion, args):
 
 
 def save_checkpoint(state, is_best, cluster=None, accuracy=None, filename=None):
-    torch.save(state, filename + 'checkpoint.pth.tar')
+    torch.save(state, os.path.join(filename, 'checkpoint.pth.tar'))
     if is_best:
-        shutil.copyfile(filename + 'checkpoint.pth.tar',
-                        filename + f'model_best_{cluster}_{accuracy:.3f}.pth.tar')
+        shutil.copyfile(os.path.join(filename, 'checkpoint.pth.tar'),
+                        os.path.join(filename, f'model_best_{cluster}_{accuracy:.3f}.pth.tar'))
 
 
 class AverageMeter(object):
