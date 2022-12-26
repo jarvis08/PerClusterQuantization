@@ -669,7 +669,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         'state_dict': best_model.state_dict(),
         'best_acc1': best_acc1,
         'optimizer': optimizer.state_dict(),
-    }, True, cluster, best_acc1, finetune_path)
+    }, True, finetune_path, args.nnac, cluster, best_acc1)
 
     test_score = best_acc1
 
@@ -942,7 +942,7 @@ def validate(val_loader, model, clustering_model, criterion, args):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, nnac=False, cluster=None, accuracy=None, filename=None):
+def save_checkpoint(state, is_best, filename=None, nnac=False, cluster=None, accuracy=None):
     # torch.save(state, os.path.join(filename, 'checkpoint.pth.tar'))
     # if is_best:
         # shutil.copyfile(os.path.join(filename, 'checkpoint.pth.tar'),
