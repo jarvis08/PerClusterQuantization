@@ -567,8 +567,8 @@ def set_save_dir(args, allow_existence=True):
     path = add_path('', 'result')
     path = add_path(path, args.quant_base)
     path = add_path(path, args.mode)
-    path = add_path(path, args.dataset)
     path = add_path(path, args.arch)
+    path = add_path(path, args.dataset)
     with open(os.path.join(path, "params.json"), 'w') as f:
         json.dump(vars(args), f, indent=4)
     return path
