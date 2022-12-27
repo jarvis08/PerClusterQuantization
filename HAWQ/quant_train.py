@@ -649,8 +649,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         if (is_best := (acc1 > best_acc1)):
             best_acc1 = max(acc1, best_acc1)
             best_epoch = epoch
-            best_model = deepcopy(model)
-            best_optimizer = deepcopy(optimizer)
+            best_model = model.state_dict()
+            best_optimizer = optimizer.state_dict()
 
         logging.info(f'Best acc at epoch {best_epoch}: {best_acc1}')
 
@@ -659,9 +659,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         #         'epoch': epoch + 1,
         #         'arch': args.arch,
         #         'cluster': args.cluster,
-        #         'state_dict': model.state_dict(),
+        #         'state_dict': model,
         #         'best_acc1': best_acc1,
-        #         'optimizer': optimizer.state_dict(),
+        #         'optimizer': optimizer,
         #     }, is_best, finetune_path)
         
     cluster = args.cluster if not args.nnac else args.sub_cluster
@@ -669,9 +669,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         'epoch': best_epoch,
         'arch': args.arch,
         'cluster': cluster,
-        'state_dict': best_model.state_dict(),
+        'state_dict': best_model,
         'best_acc1': best_acc1,
-        'optimizer': best_optimizer.state_dict(),
+        'optimizer': best_optimizer,
     }, True, finetune_path, args.nnac, cluster, best_acc1)
 
     test_score = best_acc1
