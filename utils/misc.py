@@ -15,44 +15,21 @@ import random
 from HAWQ.utils.quantization_utils.quant_modules import freeze_model, unfreeze_model
 
 
-class RuntimeHelper(object):
-    """
-        apply_fake_quantization : Flag used in layers
-        batch_cluster           : Cluster information of current batch
-        kmeans                  : Trained K-Means model's object
-        pcq_initialized         : Initialize mean and variance of BatchNorm
-    """
-
+class SKT_Helper(object):
     def __init__(self):
-        self.apply_fake_quantization = False
-        self.batch_cluster = None
-        self.qn_prob = 0.0
-        self.num_clusters = None
-        self.val_batch = None
-        self.undo_gema = False
+        self.repl_grad = None
+        self.quantile = None
+        self.schedule_unit = None
+        self.schedule_count = None
+        self.input_range_momentum = 0.99
+        self.manipulate_grad = False
 
-        self.mask_4d = None
-        self.mask_2d = None
-        self.izero = None
-        self.fzero = None
-
-        self.qat_batch_cluster = None
-
-    def set_pcq_arguments(self, args):
-        self.num_clusters = args.cluster
-        self.val_batch = args.val_batch
-        if args.undo_gema:
-            self.undo_gema = True
-
-        mask = torch.ones(1, dtype=torch.int64, device='cuda')
-        self.mask_4d = mask.view(-1, 1, 1, 1)
-        self.mask_2d = mask.view(-1, 1)
-        self.izero = torch.tensor([0], dtype=torch.int32, device='cuda')
-        self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
-
-    def set_num_clusters(self, num_clusters):
-        self.num_clusters = num_clusters
-
+    def set_skt_arguments(self, args):
+        self.repl_grad = torch.tensor(args.repl_grad, dtype=torch.float32, device='cuda')
+        self.quantile = torch.tensor(args.quantile, dtype=torch.float32, device='cuda')
+        self.schedule_unit = args.schedule_unit
+        self.schedule_count = args.schedule_count
+        self.input_range_momentum = args.act_range_momentum
 
 class InputContainer(object):
     def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, model_name, batch_size):

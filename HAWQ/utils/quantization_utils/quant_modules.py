@@ -280,9 +280,7 @@ class QuantAct(Module):
                 # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
                 # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
                 elif self.quant_mode == 'asymmetric':       # TODO
-                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)
-
-                # Initialization
+                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)                # Initialization
                 if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
                     tmp_min = torch.index_select(self.min, 0, non_initialized)
                     tmp_max = torch.index_select(self.max, 0, non_initialized)
@@ -921,7 +919,7 @@ class QuantConv2d(Module):
             self.quant_mode)
         return s
 
-    def set_param(self, conv, model_dict=None, dict_idx=None):
+    def set_param(self, conv, model_dict=None, dict_idx=None, skt_helper=None):
         self.in_channels = conv.in_channels
         self.out_channels = conv.out_channels
         self.kernel_size = conv.kernel_size
@@ -931,6 +929,16 @@ class QuantConv2d(Module):
         self.groups = conv.groups
         self.conv = conv
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
+
+        if skt_helper:
+            self.skt_helper = skt_helper
+            self.is_recorded = False
+            self.input_range_momentum = skt_helper.input_range_momentum
+            self.register_buffer('w_bit', torch.full((self.in_channels,), 8, dtype=torch.int64))
+            self.register_buffer('low_group', torch.zeros(self.in_channels, dtype=torch.int64))
+            self.register_buffer('high_group', torch.zeros(self.in_channels, dtype=torch.int64))
+            self.register_buffer('low_bit', torch.zeros(1, dtype=torch.int64))
+            self.register_buffer('input_range', torch.zeros((2, self.in_channels)))
 
         if model_dict is not None :
             self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
@@ -984,6 +992,29 @@ class QuantConv2d(Module):
 
                     w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
                     w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
+
+            elif self.skt_helper:
+                if self.skt_helper.manipulate_grad:
+                    SKT_MIX.apply(x, self.skt_helper, False)
+                    SKT_MIX.apply(self.conv.weight, self.runtime_helper, self.symmetric)
+
+                ## record input range
+                x_transform = x.transpose(1, 0).reshape(self.in_channels, -1)
+                x_min = x_transform.min(dim=1).values
+                x_max = x_transform.max(dim=1).values
+
+                if self.is_recorded:
+                    updated_min = self.input_range[0] * self.input_range_momentum + x_min * (1 - self.input_range_momentum)
+                    updated_max = self.input_range[1] * self.input_range_momentum + x_max * (1 - self.input_range_momentum)
+                    self.input_range[0], self.input_range[1] = updated_min, updated_max
+                else:
+                    self.input_range[0], self.input_range[1] = x_min, x_max
+
+                w_transform = self.weight.data.transpose(1, 0).reshape(self.in_channels, -1)
+                w_min = w_transform.min(dim=1).values
+                w_max = w_transform.max(dim=1).values
+
+
             else:
                 if self.weight_percentile == 0:
                     w_min = self.weight.data.min()

@@ -1,7 +1,7 @@
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from .utils import *
 from .bit_config import *
-from utils.misc import RuntimeHelper, get_time_cost_in_string, load_dnn_model, set_save_dir, set_kt_save_dir, set_log_dir, set_kt_log_dir
+from utils.misc import SKT_Helper, get_time_cost_in_string, load_dnn_model, set_save_dir, set_kt_save_dir, set_log_dir, set_kt_log_dir
 from HAWQ.utils.models.q_densenet import q_densenet
 from HAWQ.utils.models.q_alexnet import q_alexnet
 import torchvision.models as models
@@ -173,6 +173,32 @@ parser.add_argument('--transfer_param', action='store_true',
 parser.add_argument('--dnn_path', default='', type=str,
                     help="Pretrained model's path")
 
+# skt arguments
+parser.add_argument('--mixed_precision',
+                    action='store_true',
+                    help='For SKT')
+parser.add_argument('--repl_grad',
+                    type=float,
+                    default=1e-5,
+                    help='grad value to replace input gradient for manipulation')
+parser.add_argument('--range_ratio',
+                    type=float,
+                    default=1.0,
+                    help="ratio of setting a channel with a range less than the max range as a low bit channel")
+parser.add_argument('--quantile',
+                    type=float,
+                    default=1.0,
+                    help="criteria for determining whether the abs of input gradient is small or large ")
+parser.add_argument('--schedule_unit',
+                    type=str,
+                    default='epoch',
+                    help="whether to handle gradients per iteration or epoch ")
+parser.add_argument('--schedule_count',
+                    default=1,
+                    type=int,
+                    help="schedule counts")
+
+
 best_acc1 = 0
 quantize_arch_dict = {'resnet18': q_resnet18,
                       'resnet20': q_resnet20,
@@ -187,7 +213,6 @@ args_hawq.save_path = os.path.join("/home/work/JK-Data/checkpoint/{}/{}/{}/".for
     args_hawq.arch, args_hawq.data, os.getpid()))
 if not os.path.exists(args_hawq.save_path):
     os.makedirs(args_hawq.save_path)
-
 
 logging.basicConfig(format='%(asctime)s - %(message)s',
                     datefmt='%d-%b-%y %H:%M:%S', filename=args_hawq.save_path + 'log{}.log'.format(os.getpid()))
@@ -220,6 +245,7 @@ def main(args_daq, data_loaders, clustering_model=None):
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
+
     # Simply call main_worker function
     main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
 
@@ -359,10 +385,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     "=> no checkpoint found at '{}'".format(args.resume))
         return optimizer
 
-    def get_quantize_model(args, model, model_dict, quantize_arch, num_clusters):
+    def get_quantize_model(args, model, model_dict, quantize_arch, num_clusters, skt_helper=None):
         if args.arch.lower() == 'alexnet':
-            return quantize_arch(model, model_dict, num_clusters)
-        return quantize_arch(model, num_clusters)
+            return quantize_arch(model, model_dict, num_clusters, skt_helper)
+        return quantize_arch(model, num_clusters, skt_helper)
 
     def set_quantize_param(args, model, bit_config):
         name_counter = 0
@@ -419,6 +445,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
 
+    skt_helper = None
+    if args.mixed_precision:
+        assert args.schedule_unit in ['iter', 'epoch'], f'Not supported schedule unit : {args.schedule_unit}'
+        # assert args.schedule_count in [1, 5, 10, 100], f'Not supported schedule count {args.schedule_count}'
+        skt_helper = SKT_Helper()
+        skt_helper.set_skt_arguments(args)
+
     prev_arch = args.arch
     args.arch = set_args_arch(args)
     fp_model, teacher = create_model(args)  # Create Model
@@ -427,7 +460,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     fp_model = eval_resume(args, fp_model)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster)
+    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster, args.mixed_precision)
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     model = set_quantize_param(args, model, bit_config)
     # logging.info(model)
