@@ -600,7 +600,7 @@ class FusedConv2d(nn.Module):
     def forward(self, x, external_range=None):
         # int_quantization.float2gemmlowp(x, 1.0, 1.0, 1, False, False, x)
         if not self.training:
-            if self.mixed_precision and not self.runtime_helper.first_trial:
+            if self.mixed_precision:
                 fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group,
                                                            symmetric=self.symmetric, use_ste=self.use_ste)
                 w = fake_quantize_per_input_channel(self.conv.weight, self.low_bit, self.low_group, self.high_group,

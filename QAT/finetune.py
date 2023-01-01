@@ -196,7 +196,6 @@ def _finetune(args, tools, data_loaders, clustering_model):
         identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_CON_{args.const_portion}'
         set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
-        runtime_helper.first_trial = False
         initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
