@@ -49,7 +49,7 @@ class QuantizedConv2d(nn.Conv2d):
         if self.mixed_precision:
             self.low_group = torch.zeros(in_channels, dtype=torch.int8)
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
-            self.low_bit = torch.zeros(1, dtype=torch.int8)
+            self.low_bit = torch.tensor(7, dtype=torch.int64)
             self.s1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.float32), requires_grad=False)
             self.z1_mixed = nn.Parameter(torch.zeros(in_channels, dtype=torch.int32), requires_grad=False)
             if self.record_val:
@@ -70,8 +70,6 @@ class QuantizedConv2d(nn.Conv2d):
     def forward(self, x):
         if self.mixed_precision:
             # drop 2 lower bits
-            if self.record_val:
-                self.record_total_val(x)
             if self.low_group.view(-1).size(0):
                 x = truncate_lower_bits(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric)
                 # x[:, self.low_group] = truncate_lower_bits(x[:, self.low_group], self.low_bit, symmetric=self.symmetric)
@@ -82,10 +80,6 @@ class QuantizedConv2d(nn.Conv2d):
             out = self._totalsum(out)
         return out
 
-    def record_total_val(self, x):
-        _x = x.view(-1)
-        self.total_size += list(_x.shape)[0]
-        self.low_size += (x[:, self.low_group] < 64).bitwise_or(x[:, self.low_group] > 63).nonzero(as_tuple=True)[0].size(0)
 
     def _conv_impl(self, x):
         padded = x
@@ -575,13 +569,11 @@ class FusedConv2d(nn.Module):
 
         if self.mixed_precision:
             self.w_bit = torch.nn.Parameter(torch.full((in_channels,), 8, dtype=torch.int64), requires_grad=False)
-            self.low_group = torch.zeros(in_channels, dtype=torch.int64)
-            self.high_group = torch.zeros(in_channels, dtype=torch.int64)
-            self.low_bit = torch.zeros(1, dtype=torch.int64)
+            self.register_buffer('low_group', torch.zeros(in_channels, dtype=torch.int64))
+            self.register_buffer('high_group', torch.zeros(in_channels, dtype=torch.int64))
+            self.register_buffer('low_bit', torch.tensor(7, dtype=torch.int64))
             self.input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
             self.val_input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
-            # self.allowed_channels = None
-            # self.mixed_act_range = nn.Parameter(torch.zeros(2, out_channels), requires_grad=False)
         else:
             w_bit = w_bit if w_bit is not None else arg_dict['bit']
             self.w_bit = torch.nn.Parameter(torch.tensor(w_bit, dtype=torch.int8), requires_grad=False)

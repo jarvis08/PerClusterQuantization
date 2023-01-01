@@ -326,8 +326,11 @@ def truncate_lower_bits(x, bit, low_group, high_group, symmetric=False):
     if bit == 8:
         return x
 
-    # bit_truncator = torch.tensor(4, dtype=torch.int8, device='cuda')
-    x[:, low_group] = torch.where(x[:, low_group] % 4 >= 2, x[:, low_group] // 4 + 1, x[:, low_group] // 4) * 4
+    # truncate rightmost 3 bits
+    mask = x[:, low_group].abs() % 8 >= 4
+    x[:, low_group][mask] = (x[:, low_group][mask] // 8 + x[:, low_group][mask].sign()) * 8
+    x[:, low_group][~mask] = (x[:, low_group][~mask] // 8) * 8
+
     return clamp_matrix_per_input_channel(x, bit, low_group, high_group, symmetric=symmetric, only_low=True)
 
     # return x.type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
@@ -341,7 +344,7 @@ def fake_quantize_per_input_channel(x, low_bit, low_group, high_group, zero=None
 
     _x = clamp_matrix_per_input_channel(torch.round(_x / scale + zero_point), low_bit, low_group, high_group, symmetric=symmetric)
 
-    # drop 2 bits
+    # drop 3 bits
     if low_group.view(-1).size(0):
         _x = truncate_lower_bits(_x, low_bit, low_group, high_group, symmetric=symmetric)
         # _x[:, low_group] = truncate_lower_bits(_x[:, low_group], low_bit, symmetric=symmetric)

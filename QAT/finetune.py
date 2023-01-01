@@ -149,7 +149,6 @@ def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None
 
             fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0]
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
-            fused.low_bit = torch.tensor(low_bit, dtype=torch.int64, device='cuda')
 
             low_counter += len(fused.low_group)
             eight_counter += len(fused.high_group)
