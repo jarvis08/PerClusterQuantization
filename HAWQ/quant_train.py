@@ -137,15 +137,15 @@ parser.add_argument('--weight-percentile',
                     default=0,
                     help='the percentage used for weight percentile'
                          '(0 means no percentile, 99.9 means cut off 0.1%)')
-"""
+
 parser.add_argument('--channel-wise',
                     action='store_false',
                     help='whether to use channel-wise quantizaiton or not')
-"""
-parser.add_argument('--channel-wise',
-                    type=bool,
-                    default=True,
-                    help='whether to use channel-wise quantizaiton or not')
+
+# parser.add_argument('--channel-wise',
+#                     type=bool,
+#                     default=False,
+#                     help='whether to use channel-wise quantizaiton or not')
 
 parser.add_argument('--bias-bit',
                     type=int,
@@ -460,7 +460,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     fp_model = eval_resume(args, fp_model)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster, args.mixed_precision)
+    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster, skt_helper)
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     model = set_quantize_param(args, model, bit_config)
     # logging.info(model)

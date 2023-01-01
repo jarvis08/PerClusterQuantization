@@ -932,13 +932,10 @@ class QuantConv2d(Module):
 
         if skt_helper:
             self.skt_helper = skt_helper
-            self.is_recorded = False
             self.input_range_momentum = skt_helper.input_range_momentum
             self.register_buffer('w_bit', torch.full((self.in_channels,), 8, dtype=torch.int64))
-            self.register_buffer('low_group', torch.zeros(self.in_channels, dtype=torch.int64))
-            self.register_buffer('high_group', torch.zeros(self.in_channels, dtype=torch.int64))
-            self.register_buffer('low_bit', torch.zeros(1, dtype=torch.int64))
             self.register_buffer('input_range', torch.zeros((2, self.in_channels)))
+            self.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool))
 
         if model_dict is not None :
             self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
@@ -969,7 +966,9 @@ class QuantConv2d(Module):
             x = x[0]
 
         if not self.full_precision_flag:
-            if self.quant_mode == "symmetric":
+            if self.skt_helper:
+                self.weight_function = MixedSymmetricQuantFunction.apply
+            elif self.quant_mode == "symmetric":
                 self.weight_function = SymmetricQuantFunction.apply
             elif self.quant_mode == "asymmetric":
                 self.weight_function = AsymmetricQuantFunction.apply
@@ -994,26 +993,30 @@ class QuantConv2d(Module):
                     w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
 
             elif self.skt_helper:
+                self.low_group = (self.w_bit < 8).nonzero(as_tuple=True)[0]
+                self.high_group = (self.w_bit == 8).nonzero(as_tuple=True)[0]
+
                 if self.skt_helper.manipulate_grad:
+                    # sKT_MIX 이름 + quant mode False 대신
                     SKT_MIX.apply(x, self.skt_helper, False)
-                    SKT_MIX.apply(self.conv.weight, self.runtime_helper, self.symmetric)
+                    SKT_MIX.apply(self.conv.weight, self.runtime_helper, self.quant_mode)
 
                 ## record input range
                 x_transform = x.transpose(1, 0).reshape(self.in_channels, -1)
                 x_min = x_transform.min(dim=1).values
                 x_max = x_transform.max(dim=1).values
 
-                if self.is_recorded:
+                if self.apply_ema:
                     updated_min = self.input_range[0] * self.input_range_momentum + x_min * (1 - self.input_range_momentum)
                     updated_max = self.input_range[1] * self.input_range_momentum + x_max * (1 - self.input_range_momentum)
                     self.input_range[0], self.input_range[1] = updated_min, updated_max
                 else:
                     self.input_range[0], self.input_range[1] = x_min, x_max
+                    self.apply_ema = ~self.apply_ema
 
                 w_transform = self.weight.data.transpose(1, 0).reshape(self.in_channels, -1)
                 w_min = w_transform.min(dim=1).values
                 w_max = w_transform.max(dim=1).values
-
 
             else:
                 if self.weight_percentile == 0:
@@ -1022,6 +1025,10 @@ class QuantConv2d(Module):
                 else:
                     w_min, w_max = get_percentile_min_max(self.weight.view(-1), 100 - self.weight_percentile,
                                                         self.weight_percentile, output_tensor=True)
+
+            if self.skt_helper:
+                self.conv_scaling_factor = symmetric_linear_quantization_params_per_in_channel(self.w_bit, w_min, w_max)
+                self.weight_integer = self.weight_function(self.weight, self.low_group, self.high_group, self.conv_scaling_factor.view(1, -1, 1, 1))
 
             self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
             self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor.view(-1, 1, 1, 1))

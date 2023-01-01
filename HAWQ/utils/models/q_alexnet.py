@@ -21,6 +21,9 @@ class Q_AlexNet(nn.Module):
         self.skt_helper = skt_helper
         features = getattr(model, 'features')
 
+        if skt_helper:
+            self.total_ch_cnt = 0
+
         self.quant_input = QuantAct(num_clusters=num_clusters)
 
         # stage1
@@ -526,5 +529,5 @@ class Q_AlexNet(nn.Module):
         return torch.stack(ema)
         
 
-def q_alexnet(model, model_dict=None, num_clusters=None):
-    return Q_AlexNet(model, model_dict, num_clusters)
+def q_alexnet(model, model_dict=None, num_clusters=None, skt_helper=None):
+    return Q_AlexNet(model, model_dict, num_clusters, skt_helper)

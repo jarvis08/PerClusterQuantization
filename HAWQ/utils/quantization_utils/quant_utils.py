@@ -11,11 +11,11 @@ from torch.autograd import Function, Variable
 
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, fixed_indices, runtime_helper, symmetric):
+    def forward(ctx, x, fixed_indices, runtime_helper, quant_mode):
         const_portion = runtime_helper.const_portion
         quantile_tensor = runtime_helper.quantile_tensor
 
-        if symmetric:
+        if quant_mode == 'symmetric':
             reshaped = x[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1)
             max_per_ch = torch.max(reshaped.max(dim=1).values.abs(), reshaped.min(dim=1).values.abs())[None, :, None, None]
         else:
@@ -257,6 +257,16 @@ def asymmetric_linear_quantization_params(num_bits,
         return scale, zero_point
 
 
+def symmetric_linear_quantization_params_per_in_channel(num_bits,
+                                         saturation_min,
+                                         saturation_max):
+    with torch.no_grad():
+        n = 2 ** (num_bits - 1) - 1
+        scale, _ = torch.max(torch.stack([saturation_min.abs(), saturation_max.abs()], dim=1), dim=1)
+        scale = torch.clamp(scale, min=1e-8) / n
+    return scale
+
+
 def batch_frexp(inputs):
     """
     Decompose the scaling factor into mantissa and twos exponent.
@@ -383,6 +393,47 @@ class AsymmetricQuantFunction(Function):
         #     scale = scale.view(-1, 1)
         # else:
         #     scale = scale.view(-1)
+        return grad_output.clone() / scale, None, None, None
+
+
+class MixedSymmetricQuantFunction(Function):
+
+    @staticmethod
+    def forward(ctx, x, low_group, high_group, specified_scale=None):
+
+        if specified_scale is not None:
+            scale = specified_scale
+        else:
+            raise ValueError("The SymmetricQuantFunction requires a pre-calculated scaling factor")
+
+        zero_point = torch.zeros_like(scale).cuda()
+
+        new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
+
+        if low_group.size(0):
+            new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], -64, 63)
+            # truncate the rightmost 3 bits
+            mask = new_quant_x[:, low_group].abs() % 8 >= 4
+            new_quant_x[:, low_group][mask] = (new_quant_x[:, low_group][mask] // 8 + new_quant_x[:, low_group][mask].sign()) * 8
+            new_quant_x[:, low_group][~mask] = (new_quant_x[:, low_group][~mask] // 8) * 8
+
+        new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], -128, 127)
+
+        ctx.scale = scale
+        return new_quant_x
+
+    @staticmethod
+    def backward(ctx, grad_output):
+
+        scale = ctx.scale
+        # if len(grad_output.shape) == 4:
+        #     scale = scale.view(-1, 1, 1, 1)
+        # # reshape scale and zeropoint for linear weights
+        # elif len(grad_output.shape) == 2:
+        #     scale = scale.view(-1, 1)
+        # else:
+        #     scale = scale.view(-1)
+
         return grad_output.clone() / scale, None, None, None
 
 
