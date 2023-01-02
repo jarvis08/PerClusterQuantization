@@ -43,17 +43,13 @@ class SKT_MIX(torch.autograd.Function):
         grad_sign = torch.sign(grad[:, fixed_indices]) * sign_info
         # quantile 한 3개 정도 50, 25, 10
         abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
-        # # 평균의 반의 반
-        # abs_val = grad[:, fixed_indices].abs().mean() * 0.5
 
-        # lower
-        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() <= abs_val), const_portion, grad[:, fixed_indices])
-        # else
-        # make it bigger
-        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() > abs_val) & (grad_sign[:, fixed_indices] > 0), grad[:, fixed_indices] * 2, grad[:, fixed_indices])
-        # else
-        grad[:, fixed_indices] = torch.where((mask > 0) & (grad[:, fixed_indices].abs() > abs_val) & (grad_sign[:, fixed_indices] < 0),
-                                             grad[:, fixed_indices] * 0.5, grad[:, fixed_indices])
+        # replace
+        grad[:, fixed_indices] = torch.where(mask & (grad[:, fixed_indices].abs() < abs_val), const_portion * grad[:, fixed_indices].sign(), grad[:, fixed_indices])
+        # control
+        grad[:, fixed_indices] = torch.where(mask & (grad[:, fixed_indices].abs() >= abs_val) & (grad_sign[:, fixed_indices] > 0), grad[:, fixed_indices] / 2, grad[:, fixed_indices])
+        grad[:, fixed_indices] = torch.where(mask & (grad[:, fixed_indices].abs() >= abs_val) & (grad_sign[:, fixed_indices] < 0),
+                                             grad[:, fixed_indices] * 2, grad[:, fixed_indices])
         return grad, None, None, None
 
 
@@ -304,22 +300,6 @@ def clamp_matrix_per_input_channel(x, low_bit, low_group, high_group, symmetric=
 
         x[:,high_group] = torch.clamp(x[:,high_group], high_qmin, high_qmax)
     return x
-
-# def truncate_lower_bits(x, bit, symmetric=False):
-#     if bit == 8:
-#         return x
-#     if symmetric:
-#         if bit == 6:
-#             truncator = -4
-#         elif bit == 7:
-#             truncator = -16
-#     else:
-#         if bit == 6:
-#             truncator = 60
-#         elif bit == 7:
-#             truncator = 120
-#     bit_truncator = torch.tensor(truncator, dtype=torch.int8, device='cuda')
-#     return x.type(torch.cuda.CharTensor).bitwise_and(bit_truncator).type(torch.cuda.FloatTensor)
 
 
 def truncate_lower_bits(x, bit, low_group, high_group, symmetric=False):

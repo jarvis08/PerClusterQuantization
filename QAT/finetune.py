@@ -218,38 +218,31 @@ def _finetune(args, tools, data_loaders, clustering_model):
     quantized_model = None
     ratio = 0
 
-    if args.schedule_unit == 'epoch':
-        range_cnt = round(args.epoch / args.schedule_count)
-    else:
-        iter_idx = 0
-        if args.schedule_count == 100:
-            range_interval = math.ceil(len(train_loader) / args.schedule_count)
-            range_cnt = range_interval * args.epoch
-        else:
-            range_interval = math.floor(len(train_loader) / args.schedule_count)
-            range_cnt = range_interval * args.epoch
+    # if args.schedule_unit == 'epoch':
+    #     range_cnt = round(args.epoch / args.schedule_count)
+    # else:
+    #     iter_idx = 0
+    #     if args.schedule_count == 100:
+    #         range_interval = math.ceil(len(train_loader) / args.schedule_count)
+    #         range_cnt = range_interval * args.epoch
+    #     else:
+    #         range_interval = math.floor(len(train_loader) / args.schedule_count)
+    #         range_cnt = range_interval * args.epoch
 
 
-    record_grad = [[[] for _ in range(4)] for _ in range(range_cnt + 1)]
+    record_grad = [[[] for _ in range(3)] for _ in range(args.epoch)]
+    record_idx = 0
 
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
             runtime_helper.apply_fake_quantization = True
-        # if e == args.channel_epoch + 1 and args.init_ema:
-        #     initialize_act_range(model)
-        #     runtime_helper.apply_fake_quantization = False
 
-        # if e <= args.channel_epoch:
-        #     runtime_helper.conv_mixed_grad = True
-        # else:
-        #     runtime_helper.conv_mixed_grad = False
-
-        runtime_helper.conv_mixed_grad = False
         if args.mixed_precision and e <= args.channel_epoch:
+            runtime_helper.conv_mixed_grad = True
             if args.schedule_unit == 'epoch':
-                record_grad, ratio = skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio, runtime_helper, record_grad)
+                ratio = skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, e, logger, runtime_helper)
             else:
-                record_grad, ratio, iter_idx = skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, e, logger, args.reduce_ratio, runtime_helper, record_grad, args.schedule_count, iter_idx)
+                ratio = skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, e, logger, runtime_helper, args.schedule_count)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
 
@@ -258,18 +251,15 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if args.fold_convbn:
             tools.folder(model)
 
-        runtime_helper.conv_mixed_grad = True
         fp_score = 0
         # fp_score = validate(model, test_loader, criterion, logger)
-        fp_score = validate(model, val_loader, criterion, logger)
+        fp_score, fp_loss = validate(model, val_loader, criterion, logger)
 
         if args.mixed_precision and e <= args.channel_epoch:
-            if args.schedule_unit == 'iter':
-                assert iter_idx > 0, 'iter_idx {}'.format(iter_idx)
-                for i in range(iter_idx - range_interval, iter_idx):
-                    record_grad[i][3] = fp_score
-            else:
-                record_grad[e - 1][3] = fp_score
+            record_grad[record_idx][0] = ratio
+            record_grad[record_idx][1] = fp_score
+            record_grad[record_idx][2] = fp_loss
+            record_idx += 1
 
         # if args.dataset != 'imagenet':
         #     if args.cluster > 1:
@@ -299,7 +289,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             quantized_model.cuda()
 
             # int_score = validate(quantized_model, val_loader, criterion, logger)
-            int_score = validate(quantized_model, test_loader, criterion, logger)
+            int_score, _ = validate(quantized_model, test_loader, criterion, logger)
 
             if int_score > best_int_val_score:
                 best_epoch = e
@@ -323,27 +313,14 @@ def _finetune(args, tools, data_loaders, clustering_model):
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
 
     test_score = best_int_val_score
-    record_grad[-1][0] = -1
-    record_grad[-1][1] = 0
-    record_grad[-1][2] = -1
-    record_grad[-1][3] = test_score
 
     with open(f'GRAPH_{args.arch[:4]}_{args.dataset[5:]}_CONST_{args.const_portion}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow((['QUANTILE', args.quantile]))
+        writer.writerow((['', 'INT4 Channel Ratio', 'Validation Accuracy', 'Validation Loss']))
         for i in range(len(record_grad)):
-            writer.writerow(([i, '{:.2f}%'.format(record_grad[i][0]), '{:.5f}'.format(record_grad[i][1]), '{:.5f}'.format(record_grad[i][2]), '{:.2f}'.format(record_grad[i][3])]))
+            writer.writerow(([i, '{:.2f}%'.format(record_grad[i][0]), '{:.2f}'.format(record_grad[i][1]), '{:.5f}'.format(record_grad[i][2])]))
         writer.writerow([])
 
-    # if args.record_val:
-    #     with open('SATUR_' + identifier + '.csv', 'a') as csvfile:
-    #         writer = csv.writer(csvfile)
-    #         for m in quantized_model.modules():
-    #             i = 0
-    #             if isinstance(m, QuantizedConv2d):
-    #                 ch_ratio = m.low_size / m.total_size * 100
-    #                 writer.writerow(([i, '{:2f}%'.format(ch_ratio)]))
-    #                 i += 1
 
     '''
     # Test quantized model which scored the best with validation dataset
