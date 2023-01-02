@@ -1030,6 +1030,7 @@ class QuantConv2d(Module):
                 self.conv_scaling_factor = symmetric_linear_quantization_params_per_in_channel(self.w_bit, w_min, w_max)
                 self.weight_integer = self.weight_function(self.weight, self.low_group, self.high_group, self.conv_scaling_factor.view(1, -1, 1, 1))
 
+
             self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
             self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor.view(-1, 1, 1, 1))
             bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.conv_scaling_factor.view(1, -1)
