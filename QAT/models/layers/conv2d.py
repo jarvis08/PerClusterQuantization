@@ -569,8 +569,8 @@ class FusedConv2d(nn.Module):
 
         if self.mixed_precision:
             self.w_bit = torch.nn.Parameter(torch.full((in_channels,), 8, dtype=torch.int64), requires_grad=False)
-            self.register_buffer('low_group', torch.zeros(in_channels, dtype=torch.int64))
-            self.register_buffer('high_group', torch.zeros(in_channels, dtype=torch.int64))
+            self.register_buffer('low_group', torch.tensor([]))
+            self.register_buffer('high_group', torch.arange(in_channels, dtype=torch.int64))
             self.register_buffer('low_bit', torch.tensor(7, dtype=torch.int64))
             self.input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
             self.val_input_range = nn.Parameter(torch.zeros((2, in_channels)), requires_grad=False)
