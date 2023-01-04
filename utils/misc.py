@@ -36,6 +36,7 @@ class RuntimeHelper(object):
         self.reduce_ratio = 1.0
         self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
         self.quantile_tensor = torch.tensor(1, dtype=torch.float, device='cuda')
+        self.percentile = 0.5
         self.first_trial = True
 
         self.mask_4d = None ###
@@ -58,6 +59,7 @@ class RuntimeHelper(object):
         self.fzero = torch.tensor([0], dtype=torch.float32, device='cuda')
 
     def set_skt_arguments(self, args):
+        self.percentile = args.percentile
         self.const_portion = torch.tensor(args.const_portion, dtype=torch.float32, device='cuda')
         self.quantile_tensor *= args.quantile
         self.input_grad = args.input_grad
@@ -248,17 +250,14 @@ def set_mixed_bits_per_iter(model):
             in_channel = fused.in_channels
             # fused.conv.weight.data[:, fused.allowed_channels].mul_(reduce_ratio)
 
-            weight_per_filter_group = fused.conv.weight.view(in_channel, -1)
-            weight_group = weight_per_filter_group.reshape(in_channel, -1)
+            weight_group = fused.conv.weight.transpose(1, 0).reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
             input_range = fused.input_range[1] - fused.input_range[0]
-            input_max, weight_max = input_range.max(), weight_range.max()
 
-            weight_bits = (model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]))
-            input_bits = (model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]))
+            weight_bits = (weight_range <= weight_range.max() * model.percentile)
+            input_bits = (input_range <= input_range.max() * model.percentile)
 
-            renewal_bits = torch.logical_and(input_bits, weight_bits).nonzero(as_tuple=True)[0]
-            fused.w_bit.data[renewal_bits] = fused.low_bit
+            fused.w_bit.data[torch.logical_and(input_bits, weight_bits)] = fused.low_bit
 
             fused.low_group = (fused.w_bit.data == fused.low_bit).nonzero(as_tuple=True)[0].cuda()
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0].cuda()
@@ -313,11 +312,11 @@ def skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, epoch, 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
-    return ratio
+    return ratio, losses.avg, top1.avg
 
 
 def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, logger, runtime_helper,
-                              schedule_count):
+                              schedule_count, iter_idx, record_arr):
     losses = AverageMeter()
     top1 = AverageMeter()
     iter_cnt = 0
@@ -345,11 +344,13 @@ def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, l
 
             if (i + 1) % schedule_count == 0 or (i+1 == len(train_loader) and schedule_count == 100):
                 ratio = set_mixed_bits_per_iter(model)
+                record_arr[iter_idx][:3] = ratio, losses.avg, top1.avg
+                iter_idx += 1
                 iter_cnt += 1
                 print("Epoch {} Iter {} low bit ratio : {:.2f}% ".format(epoch, iter_cnt * schedule_count, ratio))
 
             t.set_postfix(loss=losses.avg, acc=top1.avg)
-    return ratio
+    return ratio, losses.avg, top1.avg, iter_idx, record_arr
 
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, logger, hvd=None):

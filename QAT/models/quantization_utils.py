@@ -17,39 +17,28 @@ class STE(torch.autograd.Function):
 
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, fixed_indices, runtime_helper, symmetric):
-        const_portion = runtime_helper.const_portion
-        quantile_tensor = runtime_helper.quantile_tensor
-
+    def forward(ctx, x, runtime_helper, symmetric):
+        reshaped = x.transpose(1, 0).reshape(x.size(1), -1)
         if symmetric:
-            reshaped = x[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1)
             max_per_ch = torch.max(reshaped.max(dim=1).values.abs(), reshaped.min(dim=1).values.abs())[None, :, None, None]
         else:
-            reshaped = x[:, fixed_indices].transpose(1, 0).reshape(fixed_indices.size(0), -1)
             max_per_ch = (reshaped.max(dim=1).values - reshaped.min(dim=1).values)[None, :, None, None]
-        mask = x[:, fixed_indices] > (max_per_ch / 2)
+        mask = x > (max_per_ch * runtime_helper.percentile)
 
-        ## 이거 넘어가는 부분 가중치 주는거 : max range - 현 을 over로 설정하면 값이 너무 클 수 있을 것 같아서 일단은 max /
-        ## 이건 뉴런 값이니까 음수인 애들을 절대값 씌워서 하는게 이상함
-        # dist_ratio = (x[:, fixed_indices].abs() - (max_per_ch / 2)) / (max_per_ch / 2)
-        # ctx.save_for_backward(fixed_indices, mask,  const_portion * dist_ratio, quantile_tensor)
-        # ctx.save_for_backward(fixed_indices, mask, torch.sign(x[:, fixed_indices]), const_portion, quantile_tensor)
-        ctx.save_for_backward(fixed_indices, mask, torch.sign(x[:, fixed_indices]), const_portion, quantile_tensor)
+        ctx.save_for_backward(mask, torch.sign(x), runtime_helper.const_portion, runtime_helper.quantile_tensor)
         return x
 
     @staticmethod
     def backward(ctx, grad):
-        fixed_indices, mask, sign_info, const_portion, quantile_tensor = ctx.saved_tensors
-        grad_sign = torch.sign(grad[:, fixed_indices]) * sign_info
-        # quantile 한 3개 정도 50, 25, 10
-        abs_val = torch.quantile(grad[:, fixed_indices].abs(), quantile_tensor)
+        mask, sign_info, const_portion, quantile_tensor = ctx.saved_tensors
+        grad_sign = torch.sign(grad) * sign_info
+        abs_val = torch.quantile(grad.abs(), quantile_tensor)
 
         # replace
-        grad[:, fixed_indices] = torch.where(mask & (grad[:, fixed_indices].abs() < abs_val), const_portion * grad[:, fixed_indices].sign(), grad[:, fixed_indices])
+        grad = torch.where(mask & (grad.abs() <= abs_val), const_portion * grad.sign(), grad)
         # control
-        grad[:, fixed_indices] = torch.where(mask & (grad[:, fixed_indices].abs() >= abs_val) & (grad_sign[:, fixed_indices] > 0), grad[:, fixed_indices] / 2, grad[:, fixed_indices])
-        grad[:, fixed_indices] = torch.where(mask & (grad[:, fixed_indices].abs() >= abs_val) & (grad_sign[:, fixed_indices] < 0),
-                                             grad[:, fixed_indices] * 2, grad[:, fixed_indices])
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
         return grad, None, None, None
 
 

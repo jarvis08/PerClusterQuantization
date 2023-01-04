@@ -409,8 +409,7 @@ class FusedResNet20(nn.Module):
                 if isinstance(module, FusedConv2d):
                     module.input_range = nn.Parameter(torch.zeros((2, module.in_channels)), requires_grad=False)
                     module.mixed_ema = nn.Parameter(torch.tensor(0, dtype=torch.bool), requires_grad=False)
-                    module.fixed_indices = None
-            self.percentile_tensor = None
+            self.percentile = None
             self.total_ch_sum = 0
 
     def _make_layer(self, block, planes, blocks, stride=1):

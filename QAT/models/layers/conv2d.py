@@ -636,8 +636,8 @@ class FusedConv2d(nn.Module):
                            self.conv.groups)
         elif self.mixed_precision:
             if self.runtime_helper.conv_mixed_grad:
-                SKT_MIX.apply(x, self.fixed_indices, self.runtime_helper, False)
-                SKT_MIX.apply(self.conv.weight, self.fixed_indices, self.runtime_helper, self.symmetric)
+                SKT_MIX.apply(x, self.runtime_helper, False)
+                SKT_MIX.apply(self.conv.weight, self.runtime_helper, self.symmetric)
             self._update_input_ranges(x)
             fq_input = fake_quantize_per_input_channel(x, self.low_bit, self.low_group, self.high_group, symmetric=self.symmetric, use_ste=self.use_ste)
             # self._update_input_ranges(fq_input)

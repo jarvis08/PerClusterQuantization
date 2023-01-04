@@ -120,34 +120,26 @@ def set_lower_weights(model, pre_fixed_channel_ratio):
     model.total_ch_sum = total_channel
 
 
-def initial_set_mixed_bits_per_input_channels(model, percentile, identifier=None):
+def initial_set_mixed_bits_per_input_channels(model):
     low_counter = 0
     eight_counter = 0
 
     for fused in model.modules():
         if isinstance(fused, FusedConv2d):
             in_channel = fused.in_channels
+            model.total_ch_sum += in_channel
 
-            weight_per_filter_group = fused.conv.weight.transpose(1, 0)
-            weight_group = weight_per_filter_group.reshape(in_channel, -1)
+            weight_group = fused.conv.weight.transpose(1, 0).reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-            weight_max = weight_range.max()
 
-            weight_bits = torch.where(model.percentile_tensor <= (weight_max / weight_range[fused.fixed_indices]), 1, 0)
-            low_bit = 8 - round(math.log(percentile, 2))
+            weight_bits = torch.where(weight_range <= weight_range.max() * model.percentile, 1, 0)
 
-            # input asymmetric version
             input_range = fused.val_input_range[1] - fused.val_input_range[0]
-            input_max = input_range.max()
 
-            # # input symmetric version
-            # input_range = torch.max(fused.val_input_range[1].abs(), fused.val_input_range[0].abs())
-            # input_max = input_range.max()
+            input_bits = torch.where(input_range <= input_range.max() * model.percentile, 1, 0)
+            fused.w_bit.data[torch.logical_and(input_bits, weight_bits)] = fused.low_bit
 
-            input_bits = torch.where(model.percentile_tensor <= (input_max / input_range[fused.fixed_indices]), 1, 0)
-            fused.w_bit.data[fused.fixed_indices] = torch.where(torch.logical_and(input_bits, weight_bits) > 0, low_bit, 8)
-
-            fused.low_group = (fused.w_bit.data == low_bit).nonzero(as_tuple=True)[0]
+            fused.low_group = (fused.w_bit.data == 7).nonzero(as_tuple=True)[0]
             fused.high_group = (fused.w_bit.data == 8).nonzero(as_tuple=True)[0]
 
             low_counter += len(fused.low_group)
@@ -191,11 +183,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     if args.mixed_precision:
         runtime_helper.set_skt_arguments(args)
-        model.percentile_tensor = torch.tensor(args.percentile, dtype=torch.float, device='cuda')
-        identifier = f'GRAD_{args.input_grad}_{args.arch[:4]}_DATA_{args.dataset[5:]}_CON_{args.const_portion}'
-        set_lower_weights(model, args.pre_fixed_channel)
+        model.percentile = args.percentile
+        # set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
-        initial_set_mixed_bits_per_input_channels(model, args.percentile, identifier=identifier)
+        initial_set_mixed_bits_per_input_channels(model)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -218,20 +209,20 @@ def _finetune(args, tools, data_loaders, clustering_model):
     quantized_model = None
     ratio = 0
 
-    # if args.schedule_unit == 'epoch':
-    #     range_cnt = round(args.epoch / args.schedule_count)
-    # else:
-    #     iter_idx = 0
-    #     if args.schedule_count == 100:
-    #         range_interval = math.ceil(len(train_loader) / args.schedule_count)
-    #         range_cnt = range_interval * args.epoch
-    #     else:
-    #         range_interval = math.floor(len(train_loader) / args.schedule_count)
-    #         range_cnt = range_interval * args.epoch
+    if args.schedule_unit == 'epoch':
+        range_cnt = round(args.epoch / args.schedule_count)
+    else:
+        iter_idx = 0
+        if args.schedule_count == 100:
+            range_interval = math.ceil(len(train_loader) / args.schedule_count)
+            range_cnt = range_interval * args.epoch
+        else:
+            range_interval = math.floor(len(train_loader) / args.schedule_count)
+            range_cnt = range_interval * args.epoch
 
-
-    record_grad = [[[] for _ in range(3)] for _ in range(args.epoch)]
     record_idx = 0
+    record_united = [[[] for _ in range(5)] for _ in range(args.epoch)]
+    record_separated = [[[] for _ in range(5)] for _ in range(range_cnt)]
 
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
@@ -240,9 +231,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
         if args.mixed_precision and e <= args.channel_epoch:
             runtime_helper.conv_mixed_grad = True
             if args.schedule_unit == 'epoch':
-                ratio = skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, e, logger, runtime_helper)
+                ratio, train_loss, train_acc = skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, e, logger, runtime_helper)
             else:
-                ratio = skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, e, logger, runtime_helper, args.schedule_count)
+                ratio, train_loss, train_acc, iter_idx, record_separated = skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, e, logger, runtime_helper, args.schedule_count, iter_idx, record_separated)
         else:
             train_epoch(model, train_loader, criterion, optimizer, e, logger)
 
@@ -256,10 +247,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
         fp_score, fp_loss = validate(model, val_loader, criterion, logger)
 
         if args.mixed_precision and e <= args.channel_epoch:
-            record_grad[record_idx][0] = ratio
-            record_grad[record_idx][1] = fp_score
-            record_grad[record_idx][2] = fp_loss
+            record_united[record_idx] = ratio, train_loss, train_acc, fp_loss, fp_score
             record_idx += 1
+            if args.schedule_unit == 'iter':
+                for i in range(iter_idx - range_interval, iter_idx):
+                    record_separated[i][3:] = fp_loss, fp_score
 
         # if args.dataset != 'imagenet':
         #     if args.cluster > 1:
@@ -314,12 +306,26 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
     test_score = best_int_val_score
 
-    with open(f'GRAPH_{args.arch[:4]}_{args.dataset[5:]}_CONST_{args.const_portion}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
+    identifier = '{} {} - '.format(args.schedule_unit, args.schedule_count)
+    with open(f'United_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow((['', 'INT4 Channel Ratio', 'Validation Accuracy', 'Validation Loss']))
-        for i in range(len(record_grad)):
-            writer.writerow(([i, '{:.2f}%'.format(record_grad[i][0]), '{:.2f}'.format(record_grad[i][1]), '{:.5f}'.format(record_grad[i][2])]))
+        writer.writerow((['', identifier + 'ch', identifier + 'train loss', identifier + 'train acc', identifier + 'val loss', identifier + 'val acc']))
+        for i in range(len(record_united)):
+            writer.writerow(([i, '{:.2f}%'.format(record_united[i][0]), '{:.5f}'.format(record_united[i][1]), '{:.2f}'.format(record_united[i][2]), '{:.5f}'.format(record_united[i][3]), '{:.2f}'.format(record_united[i][4])]))
         writer.writerow([])
+
+    if args.schedule_unit == 'iter':
+        with open(
+                f'SEP_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv',
+                'a') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow((['', identifier + 'ch', identifier + 'train loss', identifier + 'train acc',
+                              identifier + 'val loss', identifier + 'val acc']))
+            for i in range(len(record_separated)):
+                writer.writerow(([i, '{:.2f}%'.format(record_separated[i][0]), '{:.5f}'.format(record_separated[i][1]),
+                                  '{:.2f}'.format(record_separated[i][2]), '{:.5f}'.format(record_separated[i][3]),
+                                  '{:.2f}'.format(record_separated[i][4])]))
+            writer.writerow([])
 
 
     '''
