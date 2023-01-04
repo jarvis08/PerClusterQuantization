@@ -138,14 +138,14 @@ parser.add_argument('--weight-percentile',
                     help='the percentage used for weight percentile'
                          '(0 means no percentile, 99.9 means cut off 0.1%)')
 
-parser.add_argument('--channel-wise',
-                    action='store_false',
-                    help='whether to use channel-wise quantizaiton or not')
-
 # parser.add_argument('--channel-wise',
-#                     type=bool,
-#                     default=False,
+#                     action='store_false',
 #                     help='whether to use channel-wise quantizaiton or not')
+
+parser.add_argument('--channel-wise',
+                    type=bool,
+                    default=False,
+                    help='whether to use channel-wise quantizaiton or not')
 
 parser.add_argument('--bias-bit',
                     type=int,

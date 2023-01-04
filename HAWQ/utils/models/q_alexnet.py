@@ -35,8 +35,8 @@ class Q_AlexNet(nn.Module):
         conv_block.conv.kernel_size = (5, 5)
         conv_block.conv.padding = (2, 2)
 
-        self.conv1 = QuantConv2d()
-        self.conv1.set_param(conv_block.conv, model_dict, 'features.stage1.unit1.conv', self.skt_helper)
+        self.conv1 = QuantConv2d(skt_helper=self.skt_helper)
+        self.conv1.set_param(conv_block.conv, model_dict, 'features.stage1.unit1.conv')
         self.act1 = nn.ReLU()
         self.quant_act1 = QuantAct(num_clusters=num_clusters)
 
@@ -50,8 +50,8 @@ class Q_AlexNet(nn.Module):
         conv_block.conv.stride = (1, 1)
         conv_block.conv.kernel_size = (5, 5)
         conv_block.conv.padding = (2, 2)
-        self.conv2 = QuantConv2d()
-        self.conv2.set_param(conv_block.conv, model_dict, 'features.stage2.unit1.conv', self.skt_helper)
+        self.conv2 = QuantConv2d(skt_helper=self.skt_helper)
+        self.conv2.set_param(conv_block.conv, model_dict, 'features.stage2.unit1.conv')
         self.act2 = nn.ReLU()
         self.quant_act2 = QuantAct(num_clusters=num_clusters)
 
@@ -65,8 +65,8 @@ class Q_AlexNet(nn.Module):
         conv_block.conv.kernel_size = (3, 3)
         conv_block.conv.stride = (1, 1)
         conv_block.conv.padding = (1, 1)
-        self.conv3 = QuantConv2d()
-        self.conv3.set_param(conv_block.conv, model_dict, 'features.stage3.unit1.conv', self.skt_helper)
+        self.conv3 = QuantConv2d(skt_helper=self.skt_helper)
+        self.conv3.set_param(conv_block.conv, model_dict, 'features.stage3.unit1.conv')
         self.act3 = nn.ReLU()
         self.quant_act3 = QuantAct(num_clusters=num_clusters)
 
@@ -76,8 +76,8 @@ class Q_AlexNet(nn.Module):
         conv_block.conv.kernel_size = (3, 3)
         conv_block.conv.stride = (1, 1)
         conv_block.conv.padding = (1, 1)
-        self.conv4 = QuantConv2d()
-        self.conv4.set_param(conv_block.conv, model_dict, 'features.stage3.unit2.conv', self.skt_helper)
+        self.conv4 = QuantConv2d(skt_helper=self.skt_helper)
+        self.conv4.set_param(conv_block.conv, model_dict, 'features.stage3.unit2.conv')
         self.act4 = nn.ReLU()
         self.quant_act4 = QuantAct(num_clusters=num_clusters)
 
@@ -87,8 +87,8 @@ class Q_AlexNet(nn.Module):
         conv_block.conv.kernel_size = (3, 3)
         conv_block.conv.stride = (1, 1)
         conv_block.conv.padding = (1, 1)
-        self.conv5 = QuantConv2d()
-        self.conv5.set_param(conv_block.conv, model_dict, 'features.stage3.unit3.conv', self.skt_helper)
+        self.conv5 = QuantConv2d(skt_helper=self.skt_helper)
+        self.conv5.set_param(conv_block.conv, model_dict, 'features.stage3.unit3.conv')
         self.act5 = nn.ReLU()
         self.quant_act5 = QuantAct(num_clusters=num_clusters)
 

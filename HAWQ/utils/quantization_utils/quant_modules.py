@@ -193,7 +193,7 @@ class QuantAct(Module):
         self.act_percentile = act_percentile
         self.fixed_point_quantization = fixed_point_quantization
         self.num_clusters = num_clusters
-        
+
         self.register_buffer('tmp', torch.zeros(self.num_clusters))
         self.register_buffer('min', torch.zeros(self.num_clusters))
         self.register_buffer('max', torch.zeros(self.num_clusters))
@@ -230,7 +230,7 @@ class QuantAct(Module):
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
-                concat_scaling_factor=None, concat_weight_scaling_factor=None, cluster=None):
+                concat_scaling_factor=None, concat_weight_scaling_factor=None, cluster=None, candidate_channels=None):
         """
         x: the activation that we need to quantize
         pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
@@ -255,9 +255,15 @@ class QuantAct(Module):
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == "symmetric":
-                self.act_function = SymmetricQuantFunction.apply
+                if candidate_channels:
+                    self.act_function = MixedSymmetricQuantFunction.apply
+                else:
+                    self.act_function = SymmetricQuantFunction.apply
             elif self.quant_mode == "asymmetric":
-                self.act_function = AsymmetricQuantFunction.apply
+                if candidate_channels:
+                    self.act_function = MixedAsymmetricQuantFunction.apply
+                else:
+                    self.act_function = AsymmetricQuantFunction.apply
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
@@ -901,7 +907,9 @@ class QuantConv2d(Module):
                  quant_mode="symmetric",
                  per_channel=False,
                  fix_flag=False,
-                 weight_percentile=0):
+                 weight_percentile=0,
+                 skt_helper=None,
+                 input_range_momentum=0.99):
         super(QuantConv2d, self).__init__()
         self.full_precision_flag = full_precision_flag
         self.weight_bit = weight_bit
@@ -911,6 +919,8 @@ class QuantConv2d(Module):
         self.weight_percentile = weight_percentile
         self.bias_bit = bias_bit
         self.quantize_bias = (False if bias_bit is None else True)
+        self.skt_helper = skt_helper
+        self.input_range_momentum = input_range_momentum
 
     def __repr__(self):
         s = super(QuantConv2d, self).__repr__()
@@ -919,7 +929,7 @@ class QuantConv2d(Module):
             self.quant_mode)
         return s
 
-    def set_param(self, conv, model_dict=None, dict_idx=None, skt_helper=None):
+    def set_param(self, conv, model_dict=None, dict_idx=None):
         self.in_channels = conv.in_channels
         self.out_channels = conv.out_channels
         self.kernel_size = conv.kernel_size
@@ -930,12 +940,11 @@ class QuantConv2d(Module):
         self.conv = conv
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
 
-        if skt_helper:
-            self.skt_helper = skt_helper
-            self.input_range_momentum = skt_helper.input_range_momentum
-            self.register_buffer('w_bit', torch.full((self.in_channels,), 8, dtype=torch.int64))
+        if self.skt_helper:
             self.register_buffer('input_range', torch.zeros((2, self.in_channels)))
             self.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool))
+            self.register_buffer('w_bit', torch.zeros(self.in_channels))
+            self.candidate_channels = None
 
         if model_dict is not None :
             self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
@@ -966,14 +975,36 @@ class QuantConv2d(Module):
             x = x[0]
 
         if not self.full_precision_flag:
-            if self.skt_helper:
-                self.weight_function = MixedSymmetricQuantFunction.apply
-            elif self.quant_mode == "symmetric":
-                self.weight_function = SymmetricQuantFunction.apply
+            if self.quant_mode == "symmetric":
+                if self.skt_helper:
+                    self.weight_function = MixedSymmetricQuantFunction.apply
+                else:
+                    self.weight_function = SymmetricQuantFunction.apply
             elif self.quant_mode == "asymmetric":
-                self.weight_function = AsymmetricQuantFunction.apply
+                if self.skt_helper:
+                    self.weight_function = MixedAsymmetricQuantFunction.apply
+                else:
+                    self.weight_function = AsymmetricQuantFunction.apply
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+
+            # record input range & maniuplate grad
+            if self.skt_helper:
+                if self.skt_helper.manipulate_grad:
+                    SKT_MIX.apply(x, self.skt_helper, 'asymmetric')
+                    SKT_MIX.apply(self.conv.weight, self.skt_helper, self.quant_mode)
+
+                x_transform = x.transpose(1, 0).reshape(self.in_channels, -1)
+                x_min = x_transform.min(dim=1).values
+                x_max = x_transform.max(dim=1).values
+
+                if self.apply_ema:
+                    updated_min = self.input_range[0] * self.input_range_momentum + x_min * (1 - self.input_range_momentum)
+                    updated_max = self.input_range[1] * self.input_range_momentum + x_max * (1 - self.input_range_momentum)
+                    self.input_range[0], self.input_range[1] = updated_min, updated_max
+                else:
+                    self.input_range[0], self.input_range[1] = x_min, x_max
+                    self.apply_ema = ~self.apply_ema
 
             if self.per_channel:
                 w_transform = self.weight.data.contiguous().view(self.out_channels, -1)
@@ -992,32 +1023,6 @@ class QuantConv2d(Module):
                     w_min = torch.kthvalue(w_transform, k=lower_index, dim=1).values
                     w_max = torch.kthvalue(w_transform, k=upper_index, dim=1).values
 
-            elif self.skt_helper:
-                self.low_group = (self.w_bit < 8).nonzero(as_tuple=True)[0]
-                self.high_group = (self.w_bit == 8).nonzero(as_tuple=True)[0]
-
-                if self.skt_helper.manipulate_grad:
-                    # sKT_MIX 이름 + quant mode False 대신
-                    SKT_MIX.apply(x, self.skt_helper, False)
-                    SKT_MIX.apply(self.conv.weight, self.runtime_helper, self.quant_mode)
-
-                ## record input range
-                x_transform = x.transpose(1, 0).reshape(self.in_channels, -1)
-                x_min = x_transform.min(dim=1).values
-                x_max = x_transform.max(dim=1).values
-
-                if self.apply_ema:
-                    updated_min = self.input_range[0] * self.input_range_momentum + x_min * (1 - self.input_range_momentum)
-                    updated_max = self.input_range[1] * self.input_range_momentum + x_max * (1 - self.input_range_momentum)
-                    self.input_range[0], self.input_range[1] = updated_min, updated_max
-                else:
-                    self.input_range[0], self.input_range[1] = x_min, x_max
-                    self.apply_ema = ~self.apply_ema
-
-                w_transform = self.weight.data.transpose(1, 0).reshape(self.in_channels, -1)
-                w_min = w_transform.min(dim=1).values
-                w_max = w_transform.max(dim=1).values
-
             else:
                 if self.weight_percentile == 0:
                     w_min = self.weight.data.min()
@@ -1026,14 +1031,14 @@ class QuantConv2d(Module):
                     w_min, w_max = get_percentile_min_max(self.weight.view(-1), 100 - self.weight_percentile,
                                                         self.weight_percentile, output_tensor=True)
 
+            self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max,
+                                                                            self.per_channel)
             if self.skt_helper:
-                self.conv_scaling_factor = symmetric_linear_quantization_params_per_in_channel(self.w_bit, w_min, w_max)
-                self.weight_integer = self.weight_function(self.weight, self.low_group, self.high_group, self.conv_scaling_factor.view(1, -1, 1, 1))
-
-
-            self.conv_scaling_factor = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
-            self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor.view(-1, 1, 1, 1))
+                self.weight_integer = self.weight_function(self.weight, self.candidate_channels, self.conv_scaling_factor.view(1, -1, 1, 1))
+            else:
+                self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.conv_scaling_factor.view(-1, 1, 1, 1))
             bias_scaling_factor = pre_act_scaling_factor.view(-1, 1) * self.conv_scaling_factor.view(1, -1)
+
             if self.quantize_bias and (self.bias is not None):
                 self.bias_integer = self.weight_function(self.bias, self.bias_bit, bias_scaling_factor)
                 self.bias_integer = self.bias_integer.view(self.bias_integer.size(0), self.bias_integer.size(1), 1, 1)

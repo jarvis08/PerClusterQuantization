@@ -21,7 +21,6 @@ class SKT_Helper(object):
         self.quantile = None
         self.schedule_unit = None
         self.schedule_count = None
-        self.input_range_momentum = 0.99
         self.manipulate_grad = False
 
     def set_skt_arguments(self, args):
@@ -29,7 +28,6 @@ class SKT_Helper(object):
         self.quantile = torch.tensor(args.quantile, dtype=torch.float32, device='cuda')
         self.schedule_unit = args.schedule_unit
         self.schedule_count = args.schedule_count
-        self.input_range_momentum = args.act_range_momentum
 
 class InputContainer(object):
     def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, model_name, batch_size):
