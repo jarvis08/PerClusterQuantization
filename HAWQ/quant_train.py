@@ -537,10 +537,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     fp_model = eval_resume(args, fp_model)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster)
+    # model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster)
     ###
-    # cluster_size = args.cluster if not args.nnac else args.sub_cluster
-    # model = get_quantize_model(args, fp_model, model_dict, quantize_arch, cluster_size)
+    cluster_size = args.cluster if not args.nnac else args.sub_cluster
+    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, cluster_size)
     ###
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     model = set_quantize_param(args, model, bit_config)
@@ -574,27 +574,29 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         clustering_model.train_clustering_model(cluster_train_loader)
 
     if args.nnac and clustering_model.final_cluster is None:
-    #     # Old Way
-    #     ###
-    #     # model.toggle_full_precision()
-    #     # freeze_model(model)
-    #     # clustering_model.zero_max_nn_aware_clustering(
-    #     # clustering_model.max_nn_aware_clustering(
-    #     #     model, cluster_train_loader, args.arch)
-    #     ###
-    #     # New Way
-    #     sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
-    #     sub_model = set_quantize_param(args, sub_model, bit_config)
-    #     sub_model = sub_model.cuda(args.gpu)
+        # Old Way
+        ###
+        # model.toggle_full_precision()
+        # freeze_model(model)
+        # clustering_model.zero_max_nn_aware_clustering(
+        # clustering_model.max_nn_aware_clustering(
+        #     model, cluster_train_loader, args.arch)
+        ###
+        # New Way
+        sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
+        sub_model = set_quantize_param(args, sub_model, bit_config)
+        sub_model = sub_model.cuda(args.gpu)
+        fp_model = fp_model.cuda(args.gpu)
         
-    #     print("EMA training epochs...")
-    #     ema_epoch = 2 if args.data == 'imagenet' else 1
-    #     for epoch in range(args.start_epoch, ema_epoch):
-    #         train_ema(cluster_train_loader, sub_model, clustering_model, criterion, epoch, args)
+        print("EMA training epochs...")
+        ema_epoch = 2 if args.data == 'imagenet' else 10
+        for epoch in range(args.start_epoch, ema_epoch):
+            train_ema(cluster_train_loader, sub_model, clustering_model, criterion, epoch, args)
             
-    #     clustering_model.ema_nn_aware_clustering(sub_model, cluster_train_loader, test_loader, args.arch)
-    #     del sub_model
-        clustering_model.ema_nn_aware_clustering(model, cluster_train_loader, test_loader, args.arch)
+        clustering_model.ema_nn_aware_clustering(fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
+        del sub_model
+        
+        # clustering_model.ema_nn_aware_clustering(model, cluster_train_loader, test_loader, args.arch)
     del fp_model
     
     if args.evaluate:

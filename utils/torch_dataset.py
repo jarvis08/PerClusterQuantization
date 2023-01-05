@@ -119,7 +119,7 @@ def get_data_loaders(args, model):
         aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
         non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
 
-        clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=True,
+        clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=False,
                                                 workers=args.worker)
         train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     else:
