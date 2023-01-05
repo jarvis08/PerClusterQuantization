@@ -296,7 +296,6 @@ class KMeansClustering(object):
             merging_model = AgglomerativeClustering(n_clusters=cluster, connectivity='pairwise').fit(ema)
             self.final_cluster = torch.tensor(merging_model.labels_, dtype=torch.int64)
             cur_score = set_new_ema_and_score(self, dnn_model, copy_model, copy_fp_model, train_loader, n_per_clusters, i+1, cluster)
-            pdb.set_trace()
             score = torch.cat((score, cur_score), dim=1)
         
         
