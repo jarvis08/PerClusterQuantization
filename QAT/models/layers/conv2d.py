@@ -47,6 +47,7 @@ class QuantizedConv2d(nn.Conv2d):
             self.shift = nn.Parameter(torch.tensor(t_init, dtype=torch.int32), requires_grad=False)
 
         if self.mixed_precision:
+            self.w_bit = torch.nn.Parameter(torch.full((in_channels,), 8, dtype=torch.int64), requires_grad=False)
             self.low_group = torch.zeros(in_channels, dtype=torch.int8)
             self.high_group = torch.zeros(in_channels, dtype=torch.int8)
             self.low_bit = torch.tensor(7, dtype=torch.int64)

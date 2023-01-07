@@ -530,8 +530,12 @@ def transfer_params(arch, dataset, qat_model):
     assert not 'alex' in arch, "Load our pretrained model when training alexnet"
 
     torchcv_dict = torchcv.state_dict()
-    for cv, our in zip(model_dict.items(), torchcv_dict.items()):
-        model_dict[cv[0]].copy_(torchcv_dict[our[0]])
+
+    our_iter, cv_iter = model_dict.__iter__(), torchcv_dict.__iter__()
+    for our, cv in zip(our_iter, cv_iter):
+        while 'input_range' in our or 'apply_ema' in our:
+            our = next(our_iter)
+        model_dict[our].copy_(torchcv_dict[cv])
 
     return qat_model
 

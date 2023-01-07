@@ -221,8 +221,9 @@ def _finetune(args, tools, data_loaders, clustering_model):
             range_cnt = range_interval * args.epoch
 
     record_idx = 0
-    record_united = [[[] for _ in range(5)] for _ in range(args.epoch)]
-    record_separated = [[[] for _ in range(5)] for _ in range(range_cnt)]
+    record_united = [[[] for _ in range(7)] for _ in range(args.epoch)]
+    record_separated = [[[] for _ in range(7)] for _ in range(range_cnt)]
+    int_loss, int_score = -1, -1
 
     for e in range(epoch_to_start, args.epoch + 1):
         if e > args.fq:
@@ -246,21 +247,6 @@ def _finetune(args, tools, data_loaders, clustering_model):
         # fp_score = validate(model, test_loader, criterion, logger)
         fp_score, fp_loss = validate(model, val_loader, criterion, logger)
 
-        if args.mixed_precision and e <= args.channel_epoch:
-            record_united[record_idx] = ratio, train_loss, train_acc, fp_loss, fp_score
-            record_idx += 1
-            if args.schedule_unit == 'iter':
-                for i in range(iter_idx - range_interval, iter_idx):
-                    record_separated[i][3:] = fp_loss, fp_score
-
-        # if args.dataset != 'imagenet':
-        #     if args.cluster > 1:
-        #         #fp_score = pcq_validate(model, clustering_model, val_loader, criterion, runtime_helper, logger)
-        #         fp_score = pcq_validate(model, clustering_model, test_loader, criterion, runtime_helper, logger)
-        #     else:
-        #         #fp_score = validate(model, val_loader, criterion, logger)
-        #         fp_score = validate(model, test_loader, criterion, logger)
-
         state = {
             'epoch': e,
             'state_dict': model.state_dict(),
@@ -269,9 +255,11 @@ def _finetune(args, tools, data_loaders, clustering_model):
         save_checkpoint(state, False, save_path_fp)
 
         # Test quantized model, and save if performs the best
-        # if e > args.fq:
-        if e >= args.epoch:
+
+        #if e >= args.epoch:
+        if e > args.fq:
             model.set_quantization_params()
+            quantized_model = None
             if quantized_model is None:
                 if args.dataset == 'cifar100':
                     quantized_model = tools.quantized_model_initializer(arg_dict, num_classes=100)
@@ -281,7 +269,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
             quantized_model.cuda()
 
             # int_score = validate(quantized_model, val_loader, criterion, logger)
-            int_score, _ = validate(quantized_model, test_loader, criterion, logger)
+            int_score, int_loss = validate(quantized_model, test_loader, criterion, logger)
 
             if int_score > best_int_val_score:
                 best_epoch = e
@@ -303,28 +291,36 @@ def _finetune(args, tools, data_loaders, clustering_model):
                 filepath = os.path.join(save_path_int, 'checkpoint.pth')
                 torch.save({'state_dict': quantized_model.state_dict()}, filepath)
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
+            del quantized_model
+
+        if args.mixed_precision and e <= args.channel_epoch:
+            if args.schedule_unit == 'iter' and args.schedule_count == 1:
+
+            record_united[record_idx] = ratio, train_loss, train_acc, fp_loss, fp_score, int_loss, int_score
+            record_idx += 1
+            if args.schedule_unit == 'iter':
+                for i in range(iter_idx - range_interval, iter_idx):
+                    record_separated[i][3:] = fp_loss, fp_score, int_loss, int_score
 
     test_score = best_int_val_score
 
     identifier = '{} {} - '.format(args.schedule_unit, args.schedule_count)
     with open(f'United_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow((['', identifier + 'ch', identifier + 'train loss', identifier + 'train acc', identifier + 'val loss', identifier + 'val acc']))
+        writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
         for i in range(len(record_united)):
-            writer.writerow(([i, '{:.2f}%'.format(record_united[i][0]), '{:.5f}'.format(record_united[i][1]), '{:.2f}'.format(record_united[i][2]), '{:.5f}'.format(record_united[i][3]), '{:.2f}'.format(record_united[i][4])]))
+            writer.writerow(([i, '{:.2f}%'.format(record_united[i][0]), '{:.5f}'.format(record_united[i][1]), '{:.2f}'.format(record_united[i][2]), '{:.5f}'.format(record_united[i][3]), '{:.2f}'.format(record_united[i][4]), '{:.5f}'.format(record_united[i][5]), '{:.2f}'.format(record_united[i][6])]))
         writer.writerow([])
 
     if args.schedule_unit == 'iter':
         with open(
-                f'SEP_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv',
-                'a') as csvfile:
+                f'SEP_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow((['', identifier + 'ch', identifier + 'train loss', identifier + 'train acc',
-                              identifier + 'val loss', identifier + 'val acc']))
+            writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
             for i in range(len(record_separated)):
                 writer.writerow(([i, '{:.2f}%'.format(record_separated[i][0]), '{:.5f}'.format(record_separated[i][1]),
                                   '{:.2f}'.format(record_separated[i][2]), '{:.5f}'.format(record_separated[i][3]),
-                                  '{:.2f}'.format(record_separated[i][4])]))
+                                  '{:.2f}'.format(record_separated[i][4]), '{:.5f}'.format(record_separated[i][5]), '{:.2f}'.format(record_separated[i][6])]))
             writer.writerow([])
 
 

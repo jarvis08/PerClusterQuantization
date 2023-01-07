@@ -585,9 +585,9 @@ def transfer_qparams(_fp, _int):
     _int.shift.data = _fp.shift
     if _int.layer_type in ['QuantizedConv2d', 'QuantizedLinear', 'QuantizedBn2d']:
         if _fp.w_bit.view(-1).size(0) > 1:
-            _fp.w_bit.data = _fp.w_bit.max()
-            _int.low_group = _fp.low_group.cuda()
-            _int.high_group = _fp.high_group.cuda()
+            # _fp.w_bit.data = _fp.w_bit.max()
+            _int.low_group = _fp.low_group
+            _int.high_group = _fp.high_group
             _int.low_bit = _fp.low_bit
         _int.w_bit.data = _fp.w_bit.data
         _int.a_bit.data = _fp.a_bit.data
