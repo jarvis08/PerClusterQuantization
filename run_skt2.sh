@@ -46,7 +46,7 @@ if [ "$MODEL" = alexnet ]; then
     --init_ema 0 \
     --schedule_unit $SCHEDULE_UNIT \
     --schedule_count $SCHEDULE_COUNT \
-    --gpu $GPU_NUM \
+    --gpu $GPU_NUM
 else
     python main.py \
     --arch $MODEL \
