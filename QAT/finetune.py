@@ -293,8 +293,10 @@ def _finetune(args, tools, data_loaders, clustering_model):
             print('Best INT-val Score: {:.2f} (Epoch: {})'.format(best_int_val_score, best_epoch))
             del quantized_model
 
+
         if args.mixed_precision and e <= args.channel_epoch:
             if args.schedule_unit == 'iter' and args.schedule_count == 1:
+                continue
 
             record_united[record_idx] = ratio, train_loss, train_acc, fp_loss, fp_score, int_loss, int_score
             record_idx += 1
@@ -305,23 +307,26 @@ def _finetune(args, tools, data_loaders, clustering_model):
     test_score = best_int_val_score
 
     identifier = '{} {} - '.format(args.schedule_unit, args.schedule_count)
-    with open(f'United_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
-        for i in range(len(record_united)):
-            writer.writerow(([i, '{:.2f}%'.format(record_united[i][0]), '{:.5f}'.format(record_united[i][1]), '{:.2f}'.format(record_united[i][2]), '{:.5f}'.format(record_united[i][3]), '{:.2f}'.format(record_united[i][4]), '{:.5f}'.format(record_united[i][5]), '{:.2f}'.format(record_united[i][6])]))
-        writer.writerow([])
 
-    if args.schedule_unit == 'iter':
-        with open(
-                f'SEP_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
+
+    if not (args.schedule_unit == 'iter' and args.schedule_count == 1):
+        with open(f'United_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
-            for i in range(len(record_separated)):
-                writer.writerow(([i, '{:.2f}%'.format(record_separated[i][0]), '{:.5f}'.format(record_separated[i][1]),
-                                  '{:.2f}'.format(record_separated[i][2]), '{:.5f}'.format(record_separated[i][3]),
-                                  '{:.2f}'.format(record_separated[i][4]), '{:.5f}'.format(record_separated[i][5]), '{:.2f}'.format(record_separated[i][6])]))
+            for i in range(len(record_united)):
+                writer.writerow(([i, '{:.2f}%'.format(record_united[i][0]), '{:.5f}'.format(record_united[i][1]), '{:.2f}'.format(record_united[i][2]), '{:.5f}'.format(record_united[i][3]), '{:.2f}'.format(record_united[i][4]), '{:.5f}'.format(record_united[i][5]), '{:.2f}'.format(record_united[i][6])]))
             writer.writerow([])
+
+        if args.schedule_unit == 'iter':
+            with open(
+                    f'SEP_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
+                for i in range(len(record_separated)):
+                    writer.writerow(([i, '{:.2f}%'.format(record_separated[i][0]), '{:.5f}'.format(record_separated[i][1]),
+                                      '{:.2f}'.format(record_separated[i][2]), '{:.5f}'.format(record_separated[i][3]),
+                                      '{:.2f}'.format(record_separated[i][4]), '{:.5f}'.format(record_separated[i][5]), '{:.2f}'.format(record_separated[i][6])]))
+                writer.writerow([])
 
 
     '''
