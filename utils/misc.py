@@ -21,11 +21,12 @@ class SKT_Helper(object):
         self.quantile = None
         self.schedule_unit = None
         self.schedule_count = None
-        self.manipulate_grad = False
+        # self.manipulate_grad = False
 
     def set_skt_arguments(self, args):
         self.repl_grad = torch.tensor(args.repl_grad, dtype=torch.float32, device='cuda')
         self.quantile = torch.tensor(args.quantile, dtype=torch.float32, device='cuda')
+        self.range_ratio = args.range_ratio
         self.schedule_unit = args.schedule_unit
         self.schedule_count = args.schedule_count
 

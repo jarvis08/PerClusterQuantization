@@ -138,14 +138,14 @@ parser.add_argument('--weight-percentile',
                     help='the percentage used for weight percentile'
                          '(0 means no percentile, 99.9 means cut off 0.1%)')
 
-# parser.add_argument('--channel-wise',
-#                     action='store_false',
-#                     help='whether to use channel-wise quantizaiton or not')
-
 parser.add_argument('--channel-wise',
-                    type=bool,
-                    default=False,
+                    action='store_false',
                     help='whether to use channel-wise quantizaiton or not')
+
+# parser.add_argument('--channel-wise',
+#                     type=bool,
+#                     default=False,
+#                     help='whether to use channel-wise quantizaiton or not')
 
 parser.add_argument('--bias-bit',
                     type=int,
@@ -484,6 +484,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     cudnn.benchmark = True
 
     train_loader = data_loaders['aug_train']
+    val_loader = data_loaders['val']
     test_loader = data_loaders['test']
     cluster_train_loader = data_loaders['non_aug_train']
 
@@ -658,13 +659,87 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     # confusion_matrix(test_loader, model, clustering_model, args)
     # cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args)
 
-    # Train EMA for couple epochs before training parameters
-    ema_epoch = 2 if args.data == 'imagenet' else 10
-    for epoch in range(args.start_epoch, ema_epoch):
-        print("EMA training epochs...")
-        train_ema(train_loader, model, clustering_model, criterion, epoch, args)
-        acc1 = validate(test_loader, model, clustering_model, criterion, args)
-        
+    # # Train EMA for couple epochs before training parameters
+    # ema_epoch = 2 if args.data == 'imagenet' else 10
+    # for epoch in range(args.start_epoch, ema_epoch):
+    #     print("EMA training epochs...")
+    #     train_ema(train_loader, model, clustering_model, criterion, epoch, args)
+    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
+
+
+    def config_settings(model):
+        for cur in enumerate(model.modules()):
+            if isinstance(cur, QuantAct):
+                next_module = next(model.modules)
+                if isinstance(next_module, QuantConv2d) or isinstance(next_module, QuantBnConv2d):
+                    assert next_module.quant_mode == 'symmetric', 'asymmetric version for weight is not implemented'
+                    assert cur.quant_mode == 'asymmetric', 'symmetric version for input is not implemented'
+
+                    in_channel = next_module.in_channels
+                    model.total_ch_sum += in_channel
+                    cur.mixed_precision = True
+                    cur.register_buffer('input_range', torch.zeros((2, in_channel), device='cuda'))
+                    cur.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
+                    cur.register_buffer('low_group', torch.tensor([], dtype=torch.int64))
+                    cur.register_buffer('high_group', torch.arange(in_channel, dtype=torch.int64))
+
+
+    def channel_initialization(model, val_loader):
+        print('\n>>> Setting bits..')
+
+        # switch to evaluate mode
+        freeze_model(model)
+        model.eval()
+
+        with torch.no_grad():
+            with tqdm(val_loader, unit="batch", ncols=90) as t:
+                for i, (input, target) in enumerate(t):
+                    t.set_description("Validate for channel init")
+                    input, target = input.cuda(), target.cuda()
+                    model.record_input_range(input)
+
+        unfreeze_model(model)
+
+    def incremental_channel_selection(model, range_ratio):
+        four_counter = 0
+        eight_counter = 0
+
+        for cur in enumerate(model.modules()):
+            next_module = next(model.modules)
+            if isinstance(cur, QuantAct) and cur.mixed_precision:
+                in_channel = next_module.in_channels
+
+                weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
+                weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+                input_range = cur.input_range[1] - cur.input_range[0]
+
+                weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
+                input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
+                mask = torch.logical_and(input_bits, weight_bits)
+
+                cur.low_group = mask.nonzero(as_tuple=True)[0]
+                cur.high_group = ~mask.nonzero(as_tuple=True)[0]
+
+                four_counter += len(cur.low_group)
+                eight_counter += len(cur.high_group)
+
+                cur.input_range.zero_()
+                cur.apply_ema = ~cur.apply_ema
+
+        assert four_counter + eight_counter == model.total_ch_sum, 'Somthing wrong'
+        ratio = four_counter / model.total_ch_sum * 100
+        return ratio
+
+
+    if args.mixed_precision:
+        config_settings(model)
+        print('\n>>> Setting bits..')
+        validate(val_loader, model, clustering_model, criterion, args)
+        # channel_initialization(model, val_loader)
+        ratio = incremental_channel_selection(model, args.range_ratio)
+        print("Initial Int-4 channel ratio : {:.2f}% ".format(ratio))
+
+
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 

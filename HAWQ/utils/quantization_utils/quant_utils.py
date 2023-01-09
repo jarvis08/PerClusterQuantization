@@ -12,12 +12,12 @@ from torch.autograd import Function, Variable
 class SKT_MIX(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, skt_helper, quant_mode):
-        reshaped = x.transpose(1, 0).reshape(x.size(0), -1)
+        reshaped = x.transpose(1, 0).reshape(x.size(1), -1)
         if quant_mode == 'symmetric':
             max_per_ch = torch.max(reshaped.max(dim=1).values.abs(), reshaped.min(dim=1).values.abs())[None, :, None, None]
         else:
             max_per_ch = (reshaped.max(dim=1).values - reshaped.min(dim=1).values)[None, :, None, None]
-        mask = x > (max_per_ch / 2)
+        mask = x > (max_per_ch * skt_helper.range_ratio)
 
         ctx.save_for_backward(mask, torch.sign(x), skt_helper.const_portion, skt_helper.quantile_tensor)
         return x
@@ -28,9 +28,11 @@ class SKT_MIX(torch.autograd.Function):
         grad_sign = torch.sign(grad) * sign_info
         abs_val = torch.quantile(grad.abs(), quantile_tensor)
 
-        grad = torch.where((mask > 0) & (grad.abs() <= abs_val), const_portion, grad)
-        grad = torch.where((mask > 0) & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
-        grad = torch.where((mask > 0) & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
+        # replace
+        grad = torch.where(mask & (grad.abs() <= abs_val), const_portion * grad.sign(), grad)
+        # control
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
         return grad, None, None, None
 
 
@@ -375,7 +377,7 @@ class AsymmetricQuantFunction(Function):
 
 class MixedSymmetricQuantFunction(Function):
     @staticmethod
-    def forward(ctx, x, candidate_channels, specified_scale=None):
+    def forward(ctx, x, low_group, high_group, specified_scale=None):
 
         if specified_scale is not None:
             scale = specified_scale
@@ -385,8 +387,6 @@ class MixedSymmetricQuantFunction(Function):
         zero_point = torch.zeros_like(scale).cuda()
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
-
-        low_group, high_group = candidate_channels
 
         if low_group.size(0):
             # truncate the rightmost 3 bits
@@ -411,7 +411,7 @@ class MixedSymmetricQuantFunction(Function):
 
 class MixedAsymmetricQuantFunction(Function):
     @staticmethod
-    def forward(ctx, x, candidate_channels, specified_scale=None, specified_zero_point=None):
+    def forward(ctx, x, low_group, high_group, specified_scale=None, specified_zero_point=None):
         if specified_scale is not None:
             scale = specified_scale
         else:
@@ -424,7 +424,6 @@ class MixedAsymmetricQuantFunction(Function):
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
-        low_group, high_group = candidate_channels
         if low_group.size(0):
             # truncate the rightmost 3 bits
             mask = new_quant_x[:, low_group].abs() % 8 >= 4
