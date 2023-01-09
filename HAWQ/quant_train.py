@@ -532,6 +532,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     prev_arch = args.arch
     args.arch = set_args_arch(args)
     fp_model, teacher = create_model(args)  # Create Model
+    copy_fp_model = deepcopy(fp_model)
     args.arch = reset_args_arch(args)
     model_dict = transfer_param(args, fp_model) if args.transfer_param else None
     fp_model = eval_resume(args, fp_model)
@@ -574,29 +575,21 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         clustering_model.train_clustering_model(cluster_train_loader)
 
     if args.nnac and clustering_model.final_cluster is None:
-        # Old Way
-        ###
-        # model.toggle_full_precision()
-        # freeze_model(model)
-        # clustering_model.zero_max_nn_aware_clustering(
-        # clustering_model.max_nn_aware_clustering(
-        #     model, cluster_train_loader, args.arch)
-        ###
-        # New Way
         sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
         sub_model = set_quantize_param(args, sub_model, bit_config)
         sub_model = sub_model.cuda(args.gpu)
-        fp_model = fp_model.cuda(args.gpu)
+        fp_model = copy_fp_model.cuda()
         
-        print("EMA training epochs...")
-        ema_epoch = 2 if args.data == 'imagenet' else 10
-        for epoch in range(args.start_epoch, ema_epoch):
-            train_ema(cluster_train_loader, sub_model, clustering_model, criterion, epoch, args)
+        # print("EMA training epochs...")
+        ema_epoch = 1 if args.data == 'imagenet' else 1
+        for epoch in range(ema_epoch):
+            train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
             
         clustering_model.ema_nn_aware_clustering(fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
         del sub_model
         
-        # clustering_model.ema_nn_aware_clustering(model, cluster_train_loader, test_loader, args.arch)
+        # Merge After Finetune
+        # clustering_model.ema_nn_aware_clustering(fp_model, model, cluster_train_loader, test_loader, args.arch)
     del fp_model
     
     if args.evaluate:
@@ -623,20 +616,17 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         
 
     ### Debugging
-    # for epoch in range(args.start_epoch, 10):
-    #     train_ema(train_loader, model, clustering_model, criterion, epoch, args)
-    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
+    # train_ema(train_loader, model, clustering_model, criterion, args)
+    # acc1 = validate(test_loader, model, clustering_model, criterion, args)
 
     # confusion_matrix(test_loader, model, clustering_model, args)
     # cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args)
 
 
     # Train EMA for couple epochs before training parameters
-    ema_epoch = 2 if args.data == 'imagenet' else 10
-    for epoch in range(args.start_epoch, ema_epoch):
-        print("EMA training epochs...")
-        train_ema(train_loader, model, clustering_model, criterion, epoch, args)
-        acc1 = validate(test_loader, model, clustering_model, criterion, args)
+    print("EMA training epochs...")
+    train_ema(train_loader, model, clustering_model, criterion, args)
+    acc1 = validate(test_loader, model, clustering_model, criterion, args)
         
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
@@ -691,22 +681,20 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
 
 
-def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
+def train_ema(train_loader, model, clustering_model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
 
-    # switch to train mode
-    if args.fix_BN == True:
-        model.eval()
-    else:
-        model.train()
+    activate_full_precision(model)
+    activate_calibration(model)
+    model.eval()
 
     end = time.time()
     with torch.no_grad():
-        with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
+        with tqdm(train_loader, desc="EMA training epochs: ", ncols=95) as t:
             # for i, (images, target) in enumerate(t):
             for i, data in enumerate(t):
                 if args.dataset == 'imagenet':
@@ -742,6 +730,8 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
 
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
+    deactivate_full_precision(model)
+    deactivate_calibration(model)
 
 
 def train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):

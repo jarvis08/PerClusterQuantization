@@ -212,14 +212,14 @@ class KMeansClustering(object):
                 })
             json.dump(args_to_save, f, indent=4)
         self.model = best_model
-
+        
     @torch.no_grad()
     def ema_nn_aware_clustering(self, fp_model, dnn_model, train_loader, test_loader, arch, print_log=True):
-        def approximate_ema(ema, label, n_per_clusters, cluster_size):
+        def approximate_ema(ema, label, size_per_clusters, target_cluster_size):
             tmp_ema = torch.zeros([0, ema.size(1)]).cuda()
-            for i in range(cluster_size):
+            for i in range(target_cluster_size):
                 tmp_index = torch.where(label==i)
-                tmp_cluster_siz = n_per_clusters[tmp_index].type(torch.float)
+                tmp_cluster_siz = size_per_clusters[tmp_index].type(torch.float)
                 tmp_cluster_ema = ema[tmp_index]
                 tmp_ema = torch.cat((tmp_ema, (tmp_cluster_ema.T@tmp_cluster_siz/tmp_cluster_siz.sum()).view(1, -1)), dim=0)
             return tmp_ema
@@ -244,8 +244,8 @@ class KMeansClustering(object):
             pad_min = F.pad(input=new_min.T, pad=(0, i), mode='constant', value=0)
             pad_max = F.pad(input=new_max.T, pad=(0, i), mode='constant', value=0)
             set_ema_for_model(copy_model, pad_min, pad_max)
-            # return self.validate_score(data_loader, copy_model, fp_model).view(-1, 1)
-            return self.validate_score_per_clusters(data_loader, copy_model, fp_model, cluster_size, cluster_size+i) 
+            return self.validate_score(data_loader, copy_model, fp_model).view(-1, 1)
+            # return self.validate_score_per_clusters(data_loader, copy_model, fp_model, cluster_size, cluster_size+i) 
         
         def get_ema_for_model(model, cluster_size):
             min_ema = torch.zeros([cluster_size, 0]).cuda()
@@ -288,6 +288,74 @@ class KMeansClustering(object):
         clusters = clusters.type(torch.LongTensor).cuda()
         _, n_per_clusters = clusters.unique(return_counts=True)
         
+        pdb.set_trace()
+        # Representation 고정, Cluster Size 고정
+        # 크기가 작은 클러스터 N 개 선정, 각각 가장 가까운 Cluster 와 매핑 후 한번에 Merge
+        # 하지만, Cycle가 발생할 수 있어 확정적으로 원하는 개수의 Final Cluster 생성 불가능
+        
+        # Representation 고정, Cluster Size 변동
+        # 가장 크기가 작은 클러스터 선별, 가장 가까운 Cluster 와 매핑 후 Merge. 이 때, Representation 은 바꾸지 않는다.
+        # 해당 조합의 Cluster Size 를 변동시키고, 다시 가장 크기가 작은 클러스터 선별, 위 과정을 반복한다.
+        # 하지만, 만약 Merge 된 클러스터가 가장 작은 클러스터일 시, 무엇을 기준으로 Merge 해야할 지 난해하다.
+        # Weighted Average 된 Representation? 클러스터 조합 내 다른 클러스터와 가장 가까운 클러스터?
+        
+        # Representation 변동, Cluster Size 변동
+        # 가장 크기가 작은 클러스터 선정, 가장 가까운 Cluster 와 매핑 후 Merge. 이 때, Representation 은 Weighted Average.
+        # 해당 조합의 Cluster Size 를 변동시키고, 다시 가장 크기가 작은 클러스터 그룹 선별, 위 과정을 반복한다.
+        # 한번에 합하는 방식이 아니며 Representation 이 변동되기 때문에 Merging 순서가 중요할 수 있다.
+        # 일종의 Hierarchical Clustering. 이게 가장 말이 될 것으로 보임. 그런데 이 경우 Merge Index를 트래킹하기 굉장히 귀찮을 수도..
+        
+        def approximate_ema2(ema, merged_clusters, size_per_clusters):
+            tmp_ema = ema.clone()
+            for clusters in merged_clusters:
+                tmp_cluster_siz = size_per_clusters[clusters].type(torch.float)
+                tmp_cluster_ema = tmp_ema[clusters]
+                ema[clusters] = (tmp_cluster_ema.T@tmp_cluster_siz/tmp_cluster_siz.sum()).view(1, -1)
+            return tmp_ema
+                
+        
+        copy_model = deepcopy(dnn_model)
+        train_score = self.validate_score(train_loader, copy_model).view(-1, 1)
+        test_score = self.validate_score(test_loader, copy_model).view(-1, 1)
+        
+        n_iter = 0
+        merged_clusters = []
+        cur_cluster_size = self.args.sub_cluster
+        
+        tmp_size_per_clusters = n_per_clusters.clone()
+        while (cur_cluster_size > self.args.cluster):
+            tmp_ema = approximate_ema2(ema, merged_clusters, tmp_size_per_clusters)
+            _, from_index = torch.sort(tmp_size_per_clusters)
+            
+            distance = torch.cdist(tmp_ema[from_index[n_iter]].view(1,-1), tmp_ema, p=2)
+            distance[0, from_index[n_iter]] = torch.inf
+            if (id := get_group_id(from_index[n_iter], merged_clusters)) is not None:
+                distance[0, merged_clusters[id]] = torch.inf
+                
+            _, to_index = distance.min(dim=1)
+            pair = [from_index[n_iter].item(), to_index.item()]
+            merged_clusters, tmp_size_per_clusters = merge(None, pair, merged_clusters, tmp_size_per_clusters, print_log=False)
+            
+            cur_cluster_size = self.args.sub_cluster - sum([len(merged_elements)-1 for merged_elements in merged_clusters])
+            self.final_cluster = get_final_cluster(merged_clusters, self.args.sub_cluster, cur_cluster_size)
+            train_cur_score = set_new_ema_and_score(self, dnn_model, copy_model, None, train_loader, n_per_clusters, self.args.sub_cluster - cur_cluster_size, cur_cluster_size)
+            test_cur_score = set_new_ema_and_score(self, dnn_model, copy_model, None, test_loader, n_per_clusters, self.args.sub_cluster - cur_cluster_size, cur_cluster_size)
+            train_score = torch.cat((train_score, train_cur_score), dim=1)
+            test_score = torch.cat((test_score, test_cur_score), dim=1)
+            
+        score_np = train_score.cpu().numpy()
+        columns = [self.args.sub_cluster] + [i for i in reversed(range(self.args.cluster, self.args.sub_cluster))]
+        score_df = pd.DataFrame(score_np, columns=columns)
+        score_df.to_csv(f"train_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        
+        score_np = test_score.cpu().numpy()
+        columns = [self.args.sub_cluster] + [i for i in reversed(range(self.args.cluster, self.args.sub_cluster))]
+        score_df = pd.DataFrame(score_np, columns=columns)
+        score_df.to_csv(f"test_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        exit()
+            
+            
+        """
         # Score Based on Error Rate
         copy_model = deepcopy(dnn_model)
         copy_fp_model = deepcopy(fp_model)
@@ -311,6 +379,7 @@ class KMeansClustering(object):
         score_df = pd.DataFrame(score_np, columns=[i for i in reversed(range(self.args.cluster, self.args.sub_cluster+1))])
         score_df.to_csv(f"{arch}_{self.args.dataset}_{self.args.sub_cluster}_error_rate.csv", index=False)
         exit()
+        """
         
         """
         # Score Per Model Output 
@@ -429,7 +498,7 @@ class KMeansClustering(object):
         return torch.tensor([top1.avg])
     
     @torch.no_grad()
-    def validate_score(self, loader, model, fp_model):
+    def validate_score(self, loader, model, fp_model=None):
         @torch.no_grad()
         def accuracy(output, target, topk=(1,)):
             """Computes the accuracy over the k top predictions for the specified values of k"""
@@ -456,9 +525,8 @@ class KMeansClustering(object):
         
         # switch to evaluate mode
         freeze_model(model)
-        freeze_model(fp_model)
         model.eval()
-        fp_model.eval()
+        # fp_model.eval()
         
         criterion = nn.CrossEntropyLoss().cuda()
         
@@ -476,28 +544,27 @@ class KMeansClustering(object):
                 # compute output
                 output = model(images, cluster)
                 loss = criterion(output, target)
-                fp_output = fp_model(images)
-                fp_loss = criterion(fp_output, target)
+                # fp_output = fp_model(images)
+                # fp_loss = criterion(fp_output, target)
                 
                 losses.update(loss.item(), images.size(0))
-                fp_losses.update(fp_loss.item(), images.size(0))
+                # fp_losses.update(fp_loss.item(), images.size(0))
                 
                 # measure accuracy
-                fp_acc1, fp_acc5 = accuracy(fp_output, target, topk=(1, 5))
-                fp_top1.update(fp_acc1[0].item(), images.size(0))
+                # fp_acc1, fp_acc5 = accuracy(fp_output, target, topk=(1, 5))
+                # fp_top1.update(fp_acc1[0].item(), images.size(0))
                 
                 acc1, acc5 = accuracy(output, target, topk=(1, 5))
                 top1.update(acc1[0].item(), images.size(0))
 
-                mae_diff.update((output-fp_output).abs().sum(1).mean(), images.size(0))
-                mse_diff.update((output-fp_output).pow(2).sum(1).mean(), images.size(0))
+                # mae_diff.update((output-fp_output).abs().sum(1).mean(), images.size(0))
+                # mse_diff.update((output-fp_output).pow(2).sum(1).mean(), images.size(0))
 
-                t.set_postfix(fp_acc1=fp_top1.avg, acc1=top1.avg)
+                t.set_postfix(acc1=top1.avg)
         
         unfreeze_model(model)
-        unfreeze_model(fp_model)
         # return torch.tensor([top1.avg, mae_diff.avg, mse_diff.avg])
-        return torch.tensor([losses.avg, fp_losses.avg])
+        return torch.tensor([top1.avg, losses.avg])
         
     @torch.no_grad()
     def validate_score_per_clusters(self, loader, model, fp_model, num_cluster, cluster_size):
@@ -986,7 +1053,8 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
             print(f'Merge {c1}&{c2}')
         merged_clusters.append(sorted([c1, c2]))
         if n_per_sub is not None:
-            n_per_sub[[c1, c2]] = n_c1 + n_c2
+            n_per_sub[min(pair)] = n_c1 + n_c2
+            n_per_sub[max(pair)] = n_c1 + n_c2 # torch.inf
         
         if hasattr(dnn_model, 'max_accumulator'):
             _max = dnn_model.max_accumulator[c1].max(dnn_model.max_accumulator[c2])
@@ -1005,8 +1073,7 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
             dnn_model.zero_counter[c1] = zero_merged_count
             dnn_model.zero_counter[c2] = zero_merged_count
     elif group_id_c1 == group_id_c2:
-        # Shouldn't be here
-        print("????")
+        pass
     else:
         if group_id_c1 is not None:
             if print_log:
@@ -1018,7 +1085,8 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
                 del merged_clusters[group_id_c2]
                 group_id_c1 = get_group_id(c1, merged_clusters)
             if n_per_sub is not None:
-                n_per_sub[merged_clusters[group_id_c1]] = n_c1 + n_c2
+                n_per_sub[merged_clusters[group_id_c1][0]] = n_c1 + n_c2
+                n_per_sub[merged_clusters[group_id_c1][1:]] = n_c1 + n_c2 # torch.inf
                 
             if hasattr(dnn_model, 'max_accumulator'):
                 _max = dnn_model.max_accumulator[c1].max(dnn_model.max_accumulator[c2])
@@ -1047,7 +1115,8 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
                 del merged_clusters[group_id_c1]
                 group_id_c2 = get_group_id(c2, merged_clusters)
             if n_per_sub is not None:
-                n_per_sub[merged_clusters[group_id_c2]] = n_c1 + n_c2
+                n_per_sub[merged_clusters[group_id_c2][0]] = n_c1 + n_c2
+                n_per_sub[merged_clusters[group_id_c2][1:]] = n_c1 + n_c2 # torch.inf
             
             if hasattr(dnn_model, 'max_accumulator'):
                 _max = dnn_model.max_accumulator[c1].max(dnn_model.max_accumulator[c2])
@@ -1070,33 +1139,53 @@ def merge(dnn_model, pair, merged_clusters, n_per_sub=None, print_log=True):
 
     return merged_clusters, n_per_sub
 
-
-
 ##############################################################
 
-def print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, n_fin_clusters):
+def get_final_cluster(merged_clusters, n_sub_clusters, n_fin_clusters):
+    final_cluster = torch.zeros(n_sub_clusters, dtype=torch.int64)
+    k = 0 
+    leftover_clusters = set(range(n_sub_clusters))
+    for i, merged_single_cluster in enumerate(merged_clusters):
+        leftover_clusters = leftover_clusters.difference(merged_single_cluster)
+        for cluster in merged_single_cluster:
+            final_cluster[cluster] = k
+        k += 1
+        
+    for cluster in leftover_clusters:
+        final_cluster[cluster] = k
+        k += 1
+        
+    return final_cluster
+
+def print_merged_clusters(merged_clusters, n_per_sub, n_sub_clusters, n_fin_clusters, print_log=True):
     final_clusters = dict()
     n_per_final = [0 for _ in range(n_fin_clusters)]
     k = 0  # Final cluster ID
     leftover_clusters = set(range(n_sub_clusters))
-    print("\n>>> Merged clusters")
+    if print_log:
+        print("\n>>> Merged clusters")
     for i, merged_single_cluster in enumerate(merged_clusters):
-        print(f"C{k}: {tuple(merged_single_cluster)}")
+        if print_log:
+            print(f"C{k}: {tuple(merged_single_cluster)}")
 
         leftover_clusters = leftover_clusters.difference(merged_single_cluster)
         for cluster in merged_single_cluster:
-            final_clusters[str(cluster)] = k
-        n_per_final[k] = n_per_sub[merged_single_cluster[0]]
+            final_clusters[cluster] = k
+        
+        if n_per_sub is not None:
+            n_per_final[k] = n_per_sub[merged_single_cluster[0]]
         k += 1
 
     for cluster in leftover_clusters:
-        final_clusters[str(cluster)] = k
-        n_per_final[k] = n_per_sub[cluster]
+        final_clusters[cluster] = k
+        if n_per_sub is not None:
+            n_per_final[k] = n_per_sub[cluster]
         k += 1
 
-    print(f"\n>>> [Final] Number of data per cluster")
-    for c in range(n_fin_clusters):
-        print(f"C{c}: {n_per_final[c]}")
+    if print_log and n_per_sub is not None:
+        print(f"\n>>> [Final] Number of data per cluster")
+        for c in range(n_fin_clusters):
+            print(f"C{c}: {n_per_final[c]}")
 
     return final_clusters
 

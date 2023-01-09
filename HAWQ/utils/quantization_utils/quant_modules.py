@@ -89,6 +89,12 @@ class QuantLinear(Module):
     def unfix(self):
         self.fix_flag = False
 
+    def activate_full_precision(self):
+        self.full_precision_flag = True
+        
+    def deactivate_full_precision(self):
+        self.full_precision_flag = False
+        
     def forward(self, x, prev_act_scaling_factor=None):
         """
         using quantized weights to forward activation x
@@ -179,6 +185,7 @@ class QuantAct(Module):
                  activation_bit=4,
                  act_range_momentum=0.95,
                  full_precision_flag=False,
+                 calibration_flag=False,
                  running_stat=True,
                  quant_mode="symmetric",
                  fix_flag=False,
@@ -190,6 +197,7 @@ class QuantAct(Module):
         self.activation_bit = activation_bit
         self.act_range_momentum = act_range_momentum
         self.full_precision_flag = full_precision_flag
+        self.calibration_flag = calibration_flag
         self.running_stat = running_stat
         self.quant_mode = quant_mode
         self.fix_flag = fix_flag
@@ -229,6 +237,18 @@ class QuantAct(Module):
         """
         self.running_stat = True
         self.fix_flag = False
+
+    def activate_full_precision(self):
+        self.full_precision_flag = True
+        
+    def deactivate_full_precision(self):
+        self.full_precision_flag = False
+        
+    def activate_calibration(self):
+        self.calibration_flag = True
+        
+    def deactivate_calibration(self):
+        self.calibration_flag = False
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
@@ -358,6 +378,29 @@ class QuantAct(Module):
                 correct_output_scale = act_scaling_factor.view(-1, 1)
             return (quant_act_int * correct_output_scale, act_scaling_factor)
         else:
+            if self.calibration_flag:
+                uniques = torch.unique(cluster)
+                if self.act_percentile == 0:
+                    data = x.view(x.size(0), -1).clone().detach()
+                    self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                    self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
+
+                # Initialization
+                if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
+                    tmp_min = torch.index_select(self.min, 0, non_initialized)
+                    tmp_max = torch.index_select(self.max, 0, non_initialized)
+                    self.x_min.index_add_(0, non_initialized, tmp_min)
+                    self.x_max.index_add_(0, non_initialized, tmp_max)
+                    self.initialize.index_fill_(0, uniques, False)
+                
+                if self.act_range_momentum == -1:
+                    self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
+                    self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
+                else:
+                    tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                    tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                    self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
+                    self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
             return (x, None)
 
 
@@ -443,6 +486,12 @@ class QuantBnConv2d(Module):
         self.fix_flag = False
         self.fix_BN = self.training_BN_mode
 
+    def activate_full_precision(self):
+        self.full_precision_flag = True
+        
+    def deactivate_full_precision(self):
+        self.full_precision_flag = False
+        
     def forward(self, x, pre_act_scaling_factor=None):
         """
         x: the input activation
@@ -663,6 +712,12 @@ class QuantBn(Module):
         self.fix_flag = False
         self.fix_BN = self.training_BN_mode
 
+    def activate_full_precision(self):
+        self.full_precision_flag = True
+        
+    def deactivate_full_precision(self):
+        self.full_precision_flag = False
+        
     def forward(self, x, pre_act_scaling_factor=None):
         if type(x) is tuple:
             x_scaling_factor = x[1]
@@ -957,6 +1012,12 @@ class QuantConv2d(Module):
     def unfix(self):
         self.fix_flag = False
 
+    def activate_full_precision(self):
+        self.full_precision_flag = True
+        
+    def deactivate_full_precision(self):
+        self.full_precision_flag = False
+        
     def forward(self, x, pre_act_scaling_factor=None):
         if type(x) is tuple:
             pre_act_scaling_factor = x[1]
@@ -1061,3 +1122,26 @@ def unfreeze_model(model):
             mod = getattr(model, attr)
             if isinstance(mod, nn.Module) and 'norm' not in attr:
                 unfreeze_model(mod)
+
+
+def activate_calibration(model):
+    for module in model.modules():
+        if isinstance(module, (QuantAct)):
+            module.activate_calibration()
+        
+def deactivate_calibration(model):
+    for module in model.modules():
+        if isinstance(module, (QuantAct)):
+            module.deactivate_calibration()
+    
+def activate_full_precision(model):
+    for module in model.modules():
+        if isinstance(module, (QuantAct, QuantLinear, QuantConv2d, QuantBn, QuantBnConv2d)):
+            module.activate_full_precision()
+    
+def deactivate_full_precision(model):
+    for module in model.modules():
+        if isinstance(module, (QuantAct, QuantLinear, QuantConv2d, QuantBn, QuantBnConv2d)):
+            module.deactivate_full_precision()
+            
+    
