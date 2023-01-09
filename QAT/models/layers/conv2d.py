@@ -621,12 +621,17 @@ class FusedConv2d(nn.Module):
         _max = data.max(dim=1).values
         _min = data.min(dim=1).values
 
-        if self.apply_ema:
-            updated_min = self.input_range[0] * self.smooth + _min * (1 - self.smooth)
-            updated_max = self.input_range[1] * self.smooth + _max * (1 - self.smooth)
-            self.input_range[0], self.input_range[1] = updated_min, updated_max
+        if self.runtime_helper.input_ema_method == 'max':
+            if self.apply_ema:
+                updated_min = self.input_range[0] * self.smooth + _min * (1 - self.smooth)
+                updated_max = self.input_range[1] * self.smooth + _max * (1 - self.smooth)
+                self.input_range[0], self.input_range[1] = updated_min, updated_max
+            else:
+                self.input_range[0], self.input_range[1] = _min, _max
         else:
-            self.input_range[0], self.input_range[1] = _min, _max
+            self.input_range[0] += _min
+            self.input_range[1] += _max
+
 
     def _general(self, x, external_range=None):
         zero = self.runtime_helper.fzero

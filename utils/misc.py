@@ -65,6 +65,7 @@ class RuntimeHelper(object):
         self.input_grad = args.input_grad
         self.schedule_unit = args.schedule_unit
         self.schedule_count = args.schedule_count
+        self.input_ema_method = args.input_ema_method
         # self.grad_method = torch.tensor(True, dtype=torch.bool, device='cuda')
 
 
@@ -242,7 +243,7 @@ def freeze_channels_already_allocated_to_low_bit(model):
 
 
 @torch.no_grad()
-def set_mixed_bits_per_iter(model):
+def set_mixed_bits_per_iter(model, data_size):
     low_counter = 0
     eight_counter = 0
     for fused in model.modules():
@@ -252,7 +253,7 @@ def set_mixed_bits_per_iter(model):
 
             weight_group = fused.conv.weight.transpose(1, 0).reshape(in_channel, -1)
             weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-            input_range = fused.input_range[1] - fused.input_range[0]
+            input_range = fused.input_range[1] - fused.input_range[0] / data_size
 
             weight_bits = (weight_range <= weight_range.max() * model.percentile)
             input_bits = (input_range <= input_range.max() * model.percentile)
@@ -284,6 +285,7 @@ def skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, epoch, 
     losses = AverageMeter()
     top1 = AverageMeter()
     runtime_helper.conv_mixed_grad = True
+    is_ema_max = (runtime_helper.input_ema_method == 'max')
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
@@ -308,7 +310,11 @@ def skt_train_epoch_per_epoch(model, train_loader, criterion, optimizer, epoch, 
             optimizer.step()
 
             if (i + 1) == len(train_loader):
-                ratio = set_mixed_bits_per_iter(model)
+                if is_ema_max:
+                    ratio = set_mixed_bits_per_iter(model, 1)
+                else:
+                    ratio = set_mixed_bits_per_iter(model, len(train_loader.dataset))
+
             t.set_postfix(loss=losses.avg, acc=top1.avg)
 
     print("Epoch {} low bit ratio : {:.2f}% ".format(epoch, ratio))
@@ -321,6 +327,8 @@ def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, l
     top1 = AverageMeter()
     iter_cnt = 0
     runtime_helper.conv_mixed_grad = True
+    is_ema_max = (runtime_helper.input_ema_method == 'max')
+    data_size = 0
 
     model.train()
     with tqdm(train_loader, unit="batch", ncols=90) as t:
@@ -328,6 +336,7 @@ def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, l
             t.set_description("Epoch {}".format(epoch))
 
             input.requires_grad = True
+            data_size += input.size(0)
             input, target = input.cuda(), target.cuda()
             output = model(input)
             loss = criterion(output, target)
@@ -343,7 +352,11 @@ def skt_train_epoch_per_iter(model, train_loader, criterion, optimizer, epoch, l
             optimizer.step()
 
             if (i + 1) % schedule_count == 0 or (i+1 == len(train_loader) and schedule_count == 100):
-                ratio = set_mixed_bits_per_iter(model)
+                if is_ema_max:
+                    ratio = set_mixed_bits_per_iter(model, 1)
+                else:
+                    ratio = set_mixed_bits_per_iter(model, data_size)
+                    data_size = 0
                 record_arr[iter_idx][:3] = ratio, losses.avg, top1.avg
                 iter_idx += 1
                 iter_cnt += 1

@@ -58,14 +58,18 @@ class FusedBasicBlock(nn.Module):
             _max = data.max(dim=1).values
             _min = data.min(dim=1).values
 
-            if module.mixed_ema:
-                updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
-                updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
+            if self.runtime_helper.input_ema_method == 'max':
+                if module.mixed_ema:
+                    updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
+                    updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
 
-                module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
+                    module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
+                else:
+                    module.val_input_range[0], module.val_input_range[1] = _min, _max
+                    module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
             else:
-                module.val_input_range[0], module.val_input_range[1] = _min, _max
-                module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
+                module.val_input_range[0] += _min
+                module.val_input_range[1] += _max
 
         identity = x
 
@@ -431,14 +435,18 @@ class FusedResNet20(nn.Module):
             _max = data.max(dim=1).values
             _min = data.min(dim=1).values
 
-            if module.mixed_ema:
-                updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
-                updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
+            if self.runtime_helper.input_ema_method == 'max':
+                if module.mixed_ema:
+                    updated_min = module.val_input_range[0] * self.smooth + _min * (1 - self.smooth)
+                    updated_max = module.val_input_range[1] * self.smooth + _max * (1 - self.smooth)
 
-                module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
+                    module.val_input_range[0], module.val_input_range[1] = updated_min, updated_max
+                else:
+                    module.val_input_range[0], module.val_input_range[1] = _min, _max
+                    module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
             else:
-                module.val_input_range[0], module.val_input_range[1] = _min, _max
-                module.mixed_ema.data = torch.tensor(True, dtype=torch.bool)
+                module.val_input_range[0] += _min
+                module.val_input_range[1] += _max
 
         record_input_range(x, self.first_conv)
         x = self.first_conv(x)

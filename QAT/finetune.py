@@ -120,7 +120,7 @@ def set_lower_weights(model, pre_fixed_channel_ratio):
     model.total_ch_sum = total_channel
 
 
-def initial_set_mixed_bits_per_input_channels(model):
+def initial_set_mixed_bits_per_input_channels(model, data_size):
     low_counter = 0
     eight_counter = 0
 
@@ -134,7 +134,7 @@ def initial_set_mixed_bits_per_input_channels(model):
 
             weight_bits = torch.where(weight_range <= weight_range.max() * model.percentile, 1, 0)
 
-            input_range = fused.val_input_range[1] - fused.val_input_range[0]
+            input_range = (fused.val_input_range[1] - fused.val_input_range[0]) / data_size
 
             input_bits = torch.where(input_range <= input_range.max() * model.percentile, 1, 0)
             fused.w_bit.data[torch.logical_and(input_bits, weight_bits)] = fused.low_bit
@@ -182,11 +182,16 @@ def _finetune(args, tools, data_loaders, clustering_model):
     model.cuda()
 
     if args.mixed_precision:
+        data_size = 1
+        assert args.input_ema_method in ['max', 'avg'], 'EMA method {} for input is not implemented'.format(args.input_ema_method)
+        if args.input_ema_method == 'avg':
+            data_size = len(val_loader.dataset)
+
         runtime_helper.set_skt_arguments(args)
         model.percentile = args.percentile
         # set_lower_weights(model, args.pre_fixed_channel)
         validate_setting_bits(model, val_loader, criterion)
-        initial_set_mixed_bits_per_input_channels(model)
+        initial_set_mixed_bits_per_input_channels(model, data_size)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     opt_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
@@ -310,7 +315,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
 
     if not (args.schedule_unit == 'iter' and args.schedule_count == 1):
-        with open(f'United_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
+        with open(f'United_{args.input_ema_method}_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
             for i in range(len(record_united)):
@@ -319,7 +324,7 @@ def _finetune(args, tools, data_loaders, clustering_model):
 
         if args.schedule_unit == 'iter':
             with open(
-                    f'SEP_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
+                    f'SEP_{args.input_ema_method}_{args.arch[:4]}_{args.dataset[5:]}_PERC_{args.percentile}({args.schedule_unit}_{args.schedule_count})' + '.csv', 'a') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow((['', 'ch', 'train loss', 'train acc', 'val loss', 'val acc', 'int loss', 'int acc']))
                 for i in range(len(record_separated)):
