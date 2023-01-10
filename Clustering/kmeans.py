@@ -44,15 +44,16 @@ class KMeansClustering(object):
                              n_data, _size).transpose(3, 4).contiguous()
             data = data.view(batch, channel, n_part * n_part, -1)
 
-            if self.args.repr_method == 'max':
-                rst, _ = data.topk(k=3, dim=-1)
-                rst = rst.mean(-1, keepdim=True)
-            elif self.args.repr_method == 'mean':
-                rst = data.mean(-1, keepdim=True)
-            else:
-                _min = data.min(-1, keepdim=True).values
-                _max = data.max(-1, keepdim=True).values
-                rst = torch.cat((_min, _max), dim=-1)
+            rst = data.mean(-1, keepdim=True)
+            # if self.args.repr_method == 'max':
+            #     rst, _ = data.topk(k=3, dim=-1)
+            #     rst = rst.mean(-1, keepdim=True)
+            # elif self.args.repr_method == 'mean':
+            #     rst = data.mean(-1, keepdim=True)
+            # else:
+            #     _min = data.min(-1, keepdim=True).values
+            #     _max = data.max(-1, keepdim=True).values
+            #     rst = torch.cat((_min, _max), dim=-1)
 
             rst = rst.view(rst.size(0), -1)
             if self.feature_index is not None:
