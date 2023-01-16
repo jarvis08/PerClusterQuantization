@@ -29,6 +29,35 @@ bit_config_dict = {
 },
 
 
+"bit_config_alexnet_uniform8" : {
+    'quant_input': 8,
+
+    'conv1': 8,
+    'quant_act1': 8,
+
+    'conv2': 8,
+    'quant_act2': 8,
+
+    'conv3': 8,
+    'quant_act3': 8,
+
+    'conv4': 8,
+    'quant_act4': 8,
+
+    'conv5': 8,
+    'quant_act5': 8,
+
+    'fc1': 8,
+    'quant_act6': 8,
+
+    'fc2': 8,
+    'quant_act7': 8,
+
+    'fc3': 8
+
+},
+
+
 "bit_config_resnet18_uniform4" : {
 'quant_input': 8,
 'quant_init_block_convbn': 8,
@@ -595,6 +624,72 @@ bit_config_dict = {
 'quant_output': 8
 },
 
+
+# Change first, last layer bit to 8bit
+"bit_config_resnet20_uniform8" : {
+'quant_input': 8,
+'quant_init_block_convbn': 8,
+'quant_act_int32': 16,
+
+'stage1.unit1.quant_act': 8,
+'stage1.unit1.quant_convbn1': 8,
+'stage1.unit1.quant_act1': 8,
+'stage1.unit1.quant_convbn2': 8,
+'stage1.unit1.quant_act_int32': 16,
+
+'stage1.unit2.quant_act': 8,
+'stage1.unit2.quant_convbn1': 8,
+'stage1.unit2.quant_act1': 8,
+'stage1.unit2.quant_convbn2': 8,
+'stage1.unit2.quant_act_int32': 16,
+
+'stage1.unit3.quant_act': 8,
+'stage1.unit3.quant_convbn1': 8,
+'stage1.unit3.quant_act1': 8,
+'stage1.unit3.quant_convbn2': 8,
+'stage1.unit3.quant_act_int32': 16,
+
+'stage2.unit1.quant_act': 8,
+'stage2.unit1.quant_convbn1': 8,
+'stage2.unit1.quant_act1': 8,
+'stage2.unit1.quant_convbn2': 8,
+'stage2.unit1.quant_identity_convbn': 8,
+'stage2.unit1.quant_act_int32': 16,
+
+'stage2.unit2.quant_act': 8,
+'stage2.unit2.quant_convbn1': 8,
+'stage2.unit2.quant_act1': 8,
+'stage2.unit2.quant_convbn2': 8,
+'stage2.unit2.quant_act_int32': 16,
+
+'stage2.unit3.quant_act': 8,
+'stage2.unit3.quant_convbn1': 8,
+'stage2.unit3.quant_act1': 8,
+'stage2.unit3.quant_convbn2': 8,
+'stage2.unit3.quant_act_int32': 16,
+
+'stage3.unit1.quant_act': 8,
+'stage3.unit1.quant_convbn1': 8,
+'stage3.unit1.quant_act1': 8,
+'stage3.unit1.quant_convbn2': 8,
+'stage3.unit1.quant_identity_convbn': 8,
+'stage3.unit1.quant_act_int32': 16,
+
+'stage3.unit2.quant_act': 8,
+'stage3.unit2.quant_convbn1': 8,
+'stage3.unit2.quant_act1': 8,
+'stage3.unit2.quant_convbn2': 8,
+'stage3.unit2.quant_act_int32': 16,
+
+'stage3.unit3.quant_act': 8,
+'stage3.unit3.quant_convbn1': 8,
+'stage3.unit3.quant_act1': 8,
+'stage3.unit3.quant_convbn2': 8,
+'stage3.unit3.quant_act_int32': 16,
+
+'quant_act_output': 8,
+'quant_output': 8
+},
 
 
 "bit_config_resnet50_uniform4" : {

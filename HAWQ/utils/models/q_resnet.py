@@ -243,7 +243,7 @@ class Q_ResNet20(nn.Module):
         init_block = getattr(features, 'init_block')
 
         if self.skt_helper:
-            self.total_ch_sum = 0
+            self.total_element_size = 0
 
         self.quant_input = QuantAct(num_clusters=num_clusters)
 

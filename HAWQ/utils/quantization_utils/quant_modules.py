@@ -195,6 +195,7 @@ class QuantAct(Module):
         self.num_clusters = num_clusters
         self.mixed_precision = False
         self.init_record = False
+        self.element_size = 0
 
         self.register_buffer('tmp', torch.zeros(self.num_clusters))
         self.register_buffer('min', torch.zeros(self.num_clusters))
@@ -240,6 +241,8 @@ class QuantAct(Module):
         self.x_max.zero_()
 
     def record_range(self, x):
+        if self.init_record:
+            self.element_size += x.size(2) * x.size(3)
         x_transform = x.transpose(1, 0).reshape(x.size(1), -1)
         input_min = x_transform.min(dim=1).values
         input_max = x_transform.max(dim=1).values

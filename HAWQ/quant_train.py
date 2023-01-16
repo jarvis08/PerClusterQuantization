@@ -676,20 +676,24 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     next_module = next(iterator)
 
                 in_channel = next_module.in_channels
-                model.total_ch_sum += in_channel
                 cur.mixed_precision = True
+                cur.init_record = True
+                if isinstance(next_module, QuantBnConv2d):
+                    cur.element_size = next_module.conv.weight.size(2) * next_module.conv.weight.size(3)
+                else:
+                    cur.element_size = next_module.weight.size(2) * next_module.weight.size(3)
                 cur.register_buffer('input_range', torch.zeros((2, in_channel), device='cuda'))
                 cur.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
                 cur.register_buffer('prev_mask', torch.zeros(in_channel, dtype=torch.bool, device='cuda'))
                 cur.register_buffer('low_group', torch.tensor([], dtype=torch.int64, device='cuda'))
                 cur.register_buffer('high_group', torch.arange(in_channel, dtype=torch.int64, device='cuda'))
-                cur.init_record = True
                 next_module.x_quant_mode = cur.quant_mode
 
 
     def initial_incremental_channel_selection(model):
         four_counter = 0
         eight_counter = 0
+        element_counter = 0
         range_ratio = model.skt_helper.range_ratio
         iterator = iter(model.modules())
 
@@ -721,15 +725,18 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 next_module.low_group = cur.low_group
                 next_module.high_group = cur.high_group
 
-                four_counter += len(cur.low_group)
-                eight_counter += len(cur.high_group)
+                four_counter += len(cur.low_group) * cur.element_size
+                eight_counter += len(cur.high_group) * cur.element_size
+                element_counter += next_module.in_channels * cur.element_size
 
                 # initialize params for training
                 cur.init_records()
 
-        assert four_counter + eight_counter == model.total_ch_sum, 'total num of channel mismatch'
-        ratio = four_counter / model.total_ch_sum * 100
-        print("Initial Int-4 channel ratio : {:.2f}%".format(ratio))
+        assert four_counter + eight_counter == element_counter, 'total num of element size mismatch'
+        model.total_element_size = element_counter
+
+        ratio = four_counter / model.total_element_size * 100
+        print("Initial Int-4 Neuron ratio : {:.2f}%".format(ratio))
         return ratio
 
     if args.mixed_precision:
@@ -868,11 +875,11 @@ def incremental_channel_selection(model, epoch):
             next_module.low_group = cur.low_group
             next_module.high_group = cur.high_group
 
-            four_counter += len(cur.low_group)
-            eight_counter += len(cur.high_group)
+            four_counter += len(cur.low_group) * cur.element_size
+            eight_counter += len(cur.high_group) * cur.element_size
 
-    ratio = four_counter / model.total_ch_sum * 100
-    print("Epoch {} Int-4 channel ratio : {:.2f}%".format(epoch, ratio))
+    ratio = four_counter / model.total_element_size * 100
+    print("Epoch {} Int-4 Neuron ratio : {:.2f}%".format(epoch, ratio))
     return ratio
 
 
