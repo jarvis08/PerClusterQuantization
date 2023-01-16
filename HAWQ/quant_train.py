@@ -792,10 +792,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
 
     if args.mixed_precision:
-        with open(f'{log_path}/LR_{args.learning_rate}_range_{args.range_ratio}_({args.schedule_unit}-{args.schedule_count}).txt', 'a') as f:
+        with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}_({args.schedule_unit}-{args.schedule_count}).txt', 'a') as f:
             f.write(
                 'Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                    ch_ratio, neuron_ratio, test_score, args.repl_grad, args.quantile, args.lr, args.batch_size, args.weight_decay, args.cluster,
+                    ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay, args.cluster,
                     best_epoch, time_cost, args.data, one_epoch_time))
     else:
         if not args.nnac:
@@ -967,12 +967,14 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
     top5 = AverageMeter('Acc@5', ':6.2f')
 
     global iter_cnt, res_iters
+    is_per_epoch = (iter_cnt == len(train_loader))
+
     # switch to train mode
     if args.fix_BN == True:
         model.eval()
     else:
         model.train()
-
+    
     end = time.time()
     with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
         for i, data in enumerate(t):
@@ -1014,15 +1016,13 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
             if (i + 1 + res_iters) % iter_cnt == 0:
                 ch_ratio, neuron_ratio = incremental_channel_selection(model, epoch)
                 model.reset_input_range()
-                res_iters = 0
-            else:
-                res_iters += 1
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
+    res_iters = (len(train_loader) + res_iters) % iter_cnt
     return ch_ratio, neuron_ratio
 
 
