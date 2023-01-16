@@ -21,8 +21,8 @@ class Q_AlexNet(nn.Module):
         self.skt_helper = skt_helper
         features = getattr(model, 'features')
 
-        if skt_helper:
-            self.total_ch_cnt = 0
+        if self.skt_helper:
+            self.total_ch_sum = 0
 
         self.quant_input = QuantAct(num_clusters=num_clusters)
 
@@ -419,8 +419,7 @@ class Q_AlexNet(nn.Module):
         ##################################
         l_idx = self.update_max_accumulator(x, cluster, l_idx)
         ##################################
-        
-        
+
 
     def get_output_max_distribution(self, x, cluster, n_clusters):
         if not hasattr(self, 'max_counter'):

@@ -177,17 +177,17 @@ parser.add_argument('--dnn_path', default='', type=str,
 parser.add_argument('--mixed_precision',
                     action='store_true',
                     help='For SKT')
-parser.add_argument('--repl_grad',
+parser.add_argument('--replace_grad',
                     type=float,
                     default=1e-5,
                     help='grad value to replace input gradient for manipulation')
 parser.add_argument('--range_ratio',
                     type=float,
-                    default=1.0,
+                    default=0.5,
                     help="ratio of setting a channel with a range less than the max range as a low bit channel")
 parser.add_argument('--quantile',
                     type=float,
-                    default=1.0,
+                    default=0.5,
                     help="criteria for determining whether the abs of input gradient is small or large ")
 parser.add_argument('--schedule_unit',
                     type=str,
@@ -448,7 +448,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     skt_helper = None
     if args.mixed_precision:
         assert args.schedule_unit in ['iter', 'epoch'], f'Not supported schedule unit : {args.schedule_unit}'
-        # assert args.schedule_count in [1, 5, 10, 100], f'Not supported schedule count {args.schedule_count}'
         skt_helper = SKT_Helper()
         skt_helper.set_skt_arguments(args)
 
@@ -668,82 +667,83 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
 
     def config_settings(model):
-        for cur in enumerate(model.modules()):
-            if isinstance(cur, QuantAct):
-                next_module = next(model.modules)
-                if isinstance(next_module, QuantConv2d) or isinstance(next_module, QuantBnConv2d):
-                    assert next_module.quant_mode == 'symmetric', 'asymmetric version for weight is not implemented'
-                    assert cur.quant_mode == 'asymmetric', 'symmetric version for input is not implemented'
+        iterator = iter(model.modules())
+        for cur in iterator:
+            if isinstance(cur, QuantAct) and cur.activation_bit < 16:
+                next_module = next(iterator)
+                while not (isinstance(next_module, QuantConv2d) or isinstance(next_module, QuantBnConv2d)):
+                    if isinstance(next_module, QuantLinear): return
+                    next_module = next(iterator)
 
-                    in_channel = next_module.in_channels
-                    model.total_ch_sum += in_channel
-                    cur.mixed_precision = True
-                    cur.register_buffer('input_range', torch.zeros((2, in_channel), device='cuda'))
-                    cur.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
-                    cur.register_buffer('low_group', torch.tensor([], dtype=torch.int64))
-                    cur.register_buffer('high_group', torch.arange(in_channel, dtype=torch.int64))
+                in_channel = next_module.in_channels
+                model.total_ch_sum += in_channel
+                cur.mixed_precision = True
+                cur.register_buffer('input_range', torch.zeros((2, in_channel), device='cuda'))
+                cur.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
+                cur.register_buffer('prev_mask', torch.zeros(in_channel, dtype=torch.bool, device='cuda'))
+                cur.register_buffer('low_group', torch.tensor([], dtype=torch.int64, device='cuda'))
+                cur.register_buffer('high_group', torch.arange(in_channel, dtype=torch.int64, device='cuda'))
+                cur.init_record = True
+                next_module.x_quant_mode = cur.quant_mode
 
 
-    def channel_initialization(model, val_loader):
-        print('\n>>> Setting bits..')
-
-        # switch to evaluate mode
-        freeze_model(model)
-        model.eval()
-
-        with torch.no_grad():
-            with tqdm(val_loader, unit="batch", ncols=90) as t:
-                for i, (input, target) in enumerate(t):
-                    t.set_description("Validate for channel init")
-                    input, target = input.cuda(), target.cuda()
-                    model.record_input_range(input)
-
-        unfreeze_model(model)
-
-    def incremental_channel_selection(model, range_ratio):
+    def initial_incremental_channel_selection(model):
         four_counter = 0
         eight_counter = 0
+        range_ratio = model.skt_helper.range_ratio
+        iterator = iter(model.modules())
 
-        for cur in enumerate(model.modules()):
-            next_module = next(model.modules)
-            if isinstance(cur, QuantAct) and cur.mixed_precision:
+        for cur in iterator:
+            if isinstance(cur, QuantAct) and cur.activation_bit < 16:
+                next_module = next(iterator)
+                while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
+                    next_module = next(iterator)
+                if isinstance(next_module, QuantLinear): break
+
                 in_channel = next_module.in_channels
-
+                # candidate channel selection
                 weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
                 weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-                input_range = cur.input_range[1] - cur.input_range[0]
 
+                if cur.quant_mode == 'asymmetric':
+                    input_range = cur.input_range[1] - cur.input_range[0]
+                else:
+                    input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
+
+                # int4 channel selection
                 weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
                 input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
                 mask = torch.logical_and(input_bits, weight_bits)
 
+                cur.prev_mask[mask] = True
                 cur.low_group = mask.nonzero(as_tuple=True)[0]
-                cur.high_group = ~mask.nonzero(as_tuple=True)[0]
+                cur.high_group = (~mask).nonzero(as_tuple=True)[0]
+                next_module.low_group = cur.low_group
+                next_module.high_group = cur.high_group
 
                 four_counter += len(cur.low_group)
                 eight_counter += len(cur.high_group)
 
-                cur.input_range.zero_()
-                cur.apply_ema = ~cur.apply_ema
+                # initialize params for training
+                cur.init_records()
 
-        assert four_counter + eight_counter == model.total_ch_sum, 'Somthing wrong'
+        assert four_counter + eight_counter == model.total_ch_sum, 'total num of channel mismatch'
         ratio = four_counter / model.total_ch_sum * 100
+        print("Initial Int-4 channel ratio : {:.2f}%".format(ratio))
         return ratio
-
 
     if args.mixed_precision:
         config_settings(model)
-        print('\n>>> Setting bits..')
         validate(val_loader, model, clustering_model, criterion, args)
-        # channel_initialization(model, val_loader)
-        ratio = incremental_channel_selection(model, args.range_ratio)
-        print("Initial Int-4 channel ratio : {:.2f}% ".format(ratio))
-
+        initial_incremental_channel_selection(model)
 
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
-        train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
+        if args.mixed_precision:
+            skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
+        else:
+            train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
@@ -834,6 +834,47 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
 
+def incremental_channel_selection(model, epoch):
+    four_counter = 0
+    eight_counter = 0
+    range_ratio = model.skt_helper.range_ratio
+    iterator = iter(model.modules())
+
+    for cur in iterator:
+        if isinstance(cur, QuantAct) and cur.activation_bit < 16:
+            next_module = next(iterator)
+            while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
+                next_module = next(iterator)
+            if isinstance(next_module, QuantLinear): break
+            in_channel = next_module.in_channels
+
+            # candidate channel selction
+            weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
+            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+
+            if cur.quant_mode == 'asymmetric':
+                input_range = cur.input_range[1] - cur.input_range[0]
+            else:
+                input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
+
+            # int4 channel selection
+            weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
+            input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
+            mask = torch.logical_and(input_bits, weight_bits)
+
+            cur.prev_mask = torch.logical_or(cur.prev_mask, mask)
+            cur.low_group = cur.prev_mask.nonzero(as_tuple=True)[0]
+            cur.high_group = (~cur.prev_mask).nonzero(as_tuple=True)[0]
+            next_module.low_group = cur.low_group
+            next_module.high_group = cur.high_group
+
+            four_counter += len(cur.low_group)
+            eight_counter += len(cur.high_group)
+
+    ratio = four_counter / model.total_ch_sum * 100
+    print("Epoch {} Int-4 channel ratio : {:.2f}%".format(epoch, ratio))
+    return ratio
+
 
 def train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -855,7 +896,7 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, ar
                 images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
             else:
                 images, target = data
-                
+
             # measure data loading time
             data_time.update(time.time() - end)
 
@@ -888,6 +929,69 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, ar
             end = time.time()
 
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
+
+
+def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
+    batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    iters = len(train_loader)
+
+    # switch to train mode
+    if args.fix_BN == True:
+        model.eval()
+    else:
+        model.train()
+
+    end = time.time()
+    with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
+        for i, data in enumerate(t):
+            if args.dataset == 'imagenet':
+                images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
+            else:
+                images, target = data
+
+            images.requires_grad = True
+
+            # measure data loading time
+            data_time.update(time.time() - end)
+
+            if args.gpu is not None:
+                images = images.cuda(args.gpu)
+                target = target.cuda(args.gpu)
+
+            if clustering_model is None:
+                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
+            else:
+                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+
+            # compute output
+            output = model(images, cluster)
+            loss = criterion(output, target)
+
+            # measure accuracy and record loss
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), images.size(0))
+            top1.update(acc1[0].item(), images.size(0))
+            top5.update(acc5[0].item(), images.size(0))
+
+            # compute gradient and do SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # candidate channel selection
+            if i + 1 == iters:
+                ratio = incremental_channel_selection(model, epoch)
+
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
+    return ratio
 
 
 def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_loader, args, ngpus_per_node,

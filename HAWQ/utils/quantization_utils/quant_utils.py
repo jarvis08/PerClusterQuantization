@@ -9,7 +9,7 @@ from decimal import Decimal
 from torch.autograd import Function, Variable
 
 
-class SKT_MIX(torch.autograd.Function):
+class SKT_GRAD(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, skt_helper, quant_mode):
         reshaped = x.transpose(1, 0).reshape(x.size(1), -1)
@@ -19,17 +19,17 @@ class SKT_MIX(torch.autograd.Function):
             max_per_ch = (reshaped.max(dim=1).values - reshaped.min(dim=1).values)[None, :, None, None]
         mask = x > (max_per_ch * skt_helper.range_ratio)
 
-        ctx.save_for_backward(mask, torch.sign(x), skt_helper.const_portion, skt_helper.quantile_tensor)
+        ctx.save_for_backward(mask, torch.sign(x), skt_helper.replace_grad, skt_helper.quantile)
         return x
 
     @staticmethod
     def backward(ctx, grad):
-        mask, sign_info, const_portion, quantile_tensor = ctx.saved_tensors
+        mask, sign_info, replace_grad, quantile = ctx.saved_tensors
         grad_sign = torch.sign(grad) * sign_info
-        abs_val = torch.quantile(grad.abs(), quantile_tensor)
+        abs_val = torch.quantile(grad.abs(), quantile)
 
         # replace
-        grad = torch.where(mask & (grad.abs() <= abs_val), const_portion * grad.sign(), grad)
+        grad = torch.where(mask & (grad.abs() <= abs_val), replace_grad * grad.sign(), grad)
         # control
         grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
         grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
@@ -395,7 +395,6 @@ class MixedSymmetricQuantFunction(Function):
             new_quant_x[:, low_group][~mask] = (new_quant_x[:, low_group][~mask] // 8) * 8
 
             new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], -64, 63)
-
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], -128, 127)
 
         ctx.scale = scale

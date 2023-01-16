@@ -235,15 +235,19 @@ class Q_ResNet20(nn.Module):
     """
         Quantized ResNet20 model for dataset CIFAR100, CIFAR10
     """
-    def __init__(self, model, num_clusters=1):
+    def __init__(self, model, num_clusters=1, skt_helper=None):
         super().__init__()
         self.full_precision = False
+        self.skt_helper = skt_helper
         features = getattr(model, 'features')
         init_block = getattr(features, 'init_block')
 
+        if self.skt_helper:
+            self.total_ch_sum = 0
+
         self.quant_input = QuantAct(num_clusters=num_clusters)
 
-        self.quant_init_block_convbn = QuantBnConv2d()
+        self.quant_init_block_convbn = QuantBnConv2d(skt_helper=self.skt_helper)
         self.quant_init_block_convbn.set_param(init_block.conv, init_block.bn)
 
         self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
@@ -256,7 +260,7 @@ class Q_ResNet20(nn.Module):
             stage = getattr(features, "stage{}".format(stage_num + 1))
             for unit_num in range(0, self.channel[stage_num]):
                 unit = getattr(stage, 'unit{}'.format(unit_num + 1))
-                quant_unit = Q_ResBlockBn()
+                quant_unit = Q_ResBlockBn(skt_helper=self.skt_helper)
                 quant_unit.set_param(unit, num_clusters=num_clusters)
                 setattr(self, f'stage{stage_num + 1}.unit{unit_num + 1}', quant_unit)
 
@@ -967,8 +971,9 @@ class Q_ResBlockBn(nn.Module):
     """
         Quantized ResNet block with residual path.
     """
-    def __init__(self):
+    def __init__(self, skt_helper=None):
         super(Q_ResBlockBn, self).__init__()
+        self.skt_helper = skt_helper
 
     def set_param(self, unit, num_clusters=1):
         self.resize_identity = unit.resize_identity
@@ -976,14 +981,14 @@ class Q_ResBlockBn(nn.Module):
         self.quant_act = QuantAct(num_clusters=num_clusters)
 
         convbn1 = unit.body.conv1
-        self.quant_convbn1 = QuantBnConv2d()
+        self.quant_convbn1 = QuantBnConv2d(skt_helper=self.skt_helper)
         self.quant_convbn1.set_param(convbn1.conv, convbn1.bn)
         self.act1 = nn.ReLU()
 
         self.quant_act1 = QuantAct(num_clusters=num_clusters)
 
         convbn2 = unit.body.conv2
-        self.quant_convbn2 = QuantBnConv2d()
+        self.quant_convbn2 = QuantBnConv2d(skt_helper=self.skt_helper)
         self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
 
         if self.resize_identity:
@@ -1212,8 +1217,8 @@ class Q_ResBlockBn(nn.Module):
 def q_resnet18(model, num_clusters=None):
     return Q_ResNet18(model, num_clusters)
 
-def q_resnet20(model, num_clusters=None):
-    return Q_ResNet20(model, num_clusters)
+def q_resnet20(model, num_clusters=None, skt_helper=None):
+    return Q_ResNet20(model, num_clusters, skt_helper)
 
 def q_resnet50(model, num_clusters=None):
     return Q_ResNet50(model, num_clusters)
