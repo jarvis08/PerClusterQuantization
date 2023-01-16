@@ -564,6 +564,10 @@ def set_log_dir(args):
 
 
 def set_kt_log_dir(args):
+    if args.mixed_precision:
+        path = add_path('/home/work/JK-Data/', 'skt')
+        if not os.path.exists(path):
+            os.mkdir(path)
     path = add_path('/home/work/JK-Data/', args.arch)
     path = add_path(path, args.data)
     return path

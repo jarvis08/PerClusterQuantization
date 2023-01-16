@@ -12,12 +12,12 @@ from torch.autograd import Function, Variable
 class SKT_GRAD(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, skt_helper, quant_mode):
-        reshaped = x.transpose(1, 0).reshape(x.size(1), -1)
+        x_reshaped = x.transpose(1, 0).reshape(x.size(1), -1)
         if quant_mode == 'symmetric':
-            max_per_ch = torch.max(reshaped.max(dim=1).values.abs(), reshaped.min(dim=1).values.abs())[None, :, None, None]
+            max_per_ch = torch.max(x_reshaped.max(dim=1).values.abs(), x_reshaped.min(dim=1).values.abs())
         else:
-            max_per_ch = (reshaped.max(dim=1).values - reshaped.min(dim=1).values)[None, :, None, None]
-        mask = x > (max_per_ch * skt_helper.range_ratio)
+            max_per_ch = (x_reshaped.max(dim=1).values - x_reshaped.min(dim=1)).values
+        mask = x > (max_per_ch.max() * skt_helper.range_ratio)
 
         ctx.save_for_backward(mask, torch.sign(x), skt_helper.replace_grad, skt_helper.quantile)
         return x
@@ -390,10 +390,7 @@ class MixedSymmetricQuantFunction(Function):
 
         if low_group.size(0):
             # truncate the rightmost 3 bits
-            mask = new_quant_x[:, low_group].abs() % 8 >= 4
-            new_quant_x[:, low_group][mask] = (new_quant_x[:, low_group][mask] // 8 + new_quant_x[:, low_group][mask].sign()) * 8
-            new_quant_x[:, low_group][~mask] = (new_quant_x[:, low_group][~mask] // 8) * 8
-
+            new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
             new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], -64, 63)
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], -128, 127)
 
@@ -425,10 +422,7 @@ class MixedAsymmetricQuantFunction(Function):
 
         if low_group.size(0):
             # truncate the rightmost 3 bits
-            mask = new_quant_x[:, low_group].abs() % 8 >= 4
-            new_quant_x[:, low_group][mask] = (new_quant_x[:, low_group][mask] // 8 + new_quant_x[:, low_group][mask].sign()) * 8
-            new_quant_x[:, low_group][~mask] = (new_quant_x[:, low_group][~mask] // 8) * 8
-
+            new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
             new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], 0, 127)
 
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], 0, 255)

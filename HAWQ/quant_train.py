@@ -679,9 +679,9 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 cur.mixed_precision = True
                 cur.init_record = True
                 if isinstance(next_module, QuantBnConv2d):
-                    cur.element_size = next_module.conv.weight.size(2) * next_module.conv.weight.size(3)
+                    cur.element_size = next_module.conv.weight.size(0) * next_module.conv.weight.size(2) * next_module.conv.weight.size(3)
                 else:
-                    cur.element_size = next_module.weight.size(2) * next_module.weight.size(3)
+                    cur.element_size = next_module.weight.size(0) * next_module.weight.size(2) * next_module.weight.size(3)
                 cur.register_buffer('input_range', torch.zeros((2, in_channel), device='cuda'))
                 cur.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
                 cur.register_buffer('prev_mask', torch.zeros(in_channel, dtype=torch.bool, device='cuda'))
@@ -691,9 +691,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
 
     def initial_incremental_channel_selection(model):
-        four_counter = 0
-        eight_counter = 0
-        element_counter = 0
+        neuron_four_counter, neuron_eight_counter, ch_four_counter, ch_eight_counter = 0, 0, 0, 0
+        ch_counter, element_counter = 0, 0
         range_ratio = model.skt_helper.range_ratio
         iterator = iter(model.modules())
 
@@ -725,30 +724,44 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 next_module.low_group = cur.low_group
                 next_module.high_group = cur.high_group
 
-                four_counter += len(cur.low_group) * cur.element_size
-                eight_counter += len(cur.high_group) * cur.element_size
+                ch_four_counter += len(cur.low_group)
+                ch_eight_counter += len(cur.high_group)
+                neuron_four_counter += len(cur.low_group) * cur.element_size
+                neuron_eight_counter += len(cur.high_group) * cur.element_size
+                ch_counter += next_module.in_channels
                 element_counter += next_module.in_channels * cur.element_size
 
                 # initialize params for training
                 cur.init_records()
 
-        assert four_counter + eight_counter == element_counter, 'total num of element size mismatch'
+        assert ch_four_counter + ch_eight_counter == ch_counter, 'total num of in-channels mismatch'
+        assert neuron_four_counter + neuron_eight_counter == element_counter, 'total num of element size mismatch'
+
+        model.total_ch = ch_counter
         model.total_element_size = element_counter
 
-        ratio = four_counter / model.total_element_size * 100
-        print("Initial Int-4 Neuron ratio : {:.2f}%".format(ratio))
-        return ratio
+        ch_ratio = ch_four_counter / model.total_ch * 100
+        neuron_ratio = neuron_four_counter / model.total_element_size * 100
+        print("Initial Int-4 Neuron ratio : {:.2f}%".format(neuron_ratio))
+        return ch_ratio, neuron_ratio
+
 
     if args.mixed_precision:
         config_settings(model)
         validate(val_loader, model, clustering_model, criterion, args)
         initial_incremental_channel_selection(model)
+        global iter_cnt, res_iters
+        res_iters = 0
+        if args.schedule_unit == 'epoch':
+            iter_cnt = len(train_loader)
+        else:
+            iter_cnt = args.schedule_count
 
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
         if args.mixed_precision:
-            skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
+            ch_ratio, neuron_ratio = skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
         else:
             train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
         tuning_fin_time = time.time()
@@ -778,15 +791,21 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
 
-    if not args.nnac:
-        with open(f'{log_path}/cluster_{args.cluster}.txt', 'a') as f:
-            f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+    if args.mixed_precision:
+        with open(f'{log_path}/LR_{args.learning_rate}_range_{args.range_ratio}_({args.schedule_unit}-{args.schedule_count}).txt', 'a') as f:
+            f.write(
+                'Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+                    ch_ratio, neuron_ratio, test_score, args.repl_grad, args.quantile, args.lr, args.batch_size, args.weight_decay, args.cluster,
+                    best_epoch, time_cost, args.data, one_epoch_time))
     else:
-        with open(f'{log_path}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
-            f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
-
+        if not args.nnac:
+            with open(f'{log_path}/cluster_{args.cluster}.txt', 'a') as f:
+                f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+                    args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+        else:
+            with open(f'{log_path}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
+                f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+                    args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
 
 
 def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
@@ -842,8 +861,7 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
 
 
 def incremental_channel_selection(model, epoch):
-    four_counter = 0
-    eight_counter = 0
+    neuron_four_counter, neuron_eight_counter, ch_four_counter, ch_eight_counter = 0, 0, 0, 0
     range_ratio = model.skt_helper.range_ratio
     iterator = iter(model.modules())
 
@@ -875,12 +893,15 @@ def incremental_channel_selection(model, epoch):
             next_module.low_group = cur.low_group
             next_module.high_group = cur.high_group
 
-            four_counter += len(cur.low_group) * cur.element_size
-            eight_counter += len(cur.high_group) * cur.element_size
+            ch_four_counter += len(cur.low_group)
+            ch_eight_counter += len(cur.high_group)
+            neuron_four_counter += len(cur.low_group) * cur.element_size
+            neuron_eight_counter += len(cur.high_group) * cur.element_size
 
-    ratio = four_counter / model.total_element_size * 100
-    print("Epoch {} Int-4 Neuron ratio : {:.2f}%".format(epoch, ratio))
-    return ratio
+    ch_ratio = ch_four_counter / model.total_ch * 100
+    neuron_ratio = neuron_four_counter / model.total_element_size * 100
+    print("Epoch {} Int-4 Neuron ratio : {:.2f}%".format(epoch, neuron_ratio))
+    return ch_ratio, neuron_ratio
 
 
 def train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
@@ -944,8 +965,8 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
-    iters = len(train_loader)
 
+    global iter_cnt, res_iters
     # switch to train mode
     if args.fix_BN == True:
         model.eval()
@@ -990,15 +1011,19 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
             optimizer.step()
 
             # candidate channel selection
-            if i + 1 == iters:
-                ratio = incremental_channel_selection(model, epoch)
+            if (i + 1 + res_iters) % iter_cnt == 0:
+                ch_ratio, neuron_ratio = incremental_channel_selection(model, epoch)
+                model.reset_input_range()
+                res_iters = 0
+            else:
+                res_iters += 1
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
-    return ratio
+    return ch_ratio, neuron_ratio
 
 
 def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_loader, args, ngpus_per_node,

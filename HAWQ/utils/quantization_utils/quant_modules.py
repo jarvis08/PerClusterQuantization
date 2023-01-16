@@ -240,6 +240,10 @@ class QuantAct(Module):
         self.x_min.zero_()
         self.x_max.zero_()
 
+    def reset_input_range(self):
+        self.input_range.zero_()
+        self.apply_ema = ~self.apply_ema
+
     def record_range(self, x):
         if self.init_record:
             self.element_size += x.size(2) * x.size(3)
