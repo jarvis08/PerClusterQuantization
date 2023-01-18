@@ -1,6 +1,7 @@
 #! /bin/bash
 
-PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+#PRETRAINED_MODEL_PATH="/workspace/pretrained_models"
+PRETRAINED_MODEL_PATH="/home/yongjuice/quantization/PerClusterQuantization/pretrained_models"
 # IMAGENET_PATH="/home/work/.Datasets/Imagenet2012"
 IMAGENET_PATH="/home/work/.Datasets/Imagenet2012_rec"
 # IMAGENET_PATH="/workspace/dataset"

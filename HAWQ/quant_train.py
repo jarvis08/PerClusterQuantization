@@ -671,17 +671,19 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         for cur in iterator:
             if isinstance(cur, QuantAct) and cur.activation_bit < 16:
                 next_module = next(iterator)
-                while not (isinstance(next_module, QuantConv2d) or isinstance(next_module, QuantBnConv2d)):
-                    if isinstance(next_module, QuantLinear): return
+                while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
                     next_module = next(iterator)
+                if isinstance(next_module, QuantLinear): break
 
+                next_module = next(iterator)
                 in_channel = next_module.in_channels
-                cur.mixed_precision = True
-                cur.init_record = True
+                cur.mixed_precision = cur.init_record = True
                 if isinstance(next_module, QuantBnConv2d):
-                    cur.element_size = next_module.conv.weight.size(0) * next_module.conv.weight.size(2) * next_module.conv.weight.size(3)
+                    cur.element_size = next_module.conv.weight.size(0) * next_module.conv.weight.size(
+                        2) * next_module.conv.weight.size(3)
                 else:
-                    cur.element_size = next_module.weight.size(0) * next_module.weight.size(2) * next_module.weight.size(3)
+                    cur.element_size = next_module.weight.size(0) * next_module.weight.size(
+                        2) * next_module.weight.size(3)
                 cur.register_buffer('input_range', torch.zeros((2, in_channel), device='cuda'))
                 cur.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
                 cur.register_buffer('prev_mask', torch.zeros(in_channel, dtype=torch.bool, device='cuda'))
@@ -696,43 +698,52 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         range_ratio = model.skt_helper.range_ratio
         iterator = iter(model.modules())
 
+        def internal_channel_selection(cur, next_module):
+            nonlocal neuron_four_counter, neuron_eight_counter, ch_four_counter, ch_eight_counter, ch_counter, element_counter
+            in_channel = next_module.in_channels
+            # candidate channel selection
+            if isinstance(next_module, QuantConv2d):
+                weight_group = next_module.weight.transpose(1, 0).reshape(in_channel, -1)
+            else:
+                weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
+            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+
+            if cur.quant_mode == 'asymmetric':
+                input_range = cur.input_range[1] - cur.input_range[0]
+            else:
+                input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
+
+            # int4 channel selection
+            weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
+            input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
+            mask = torch.logical_and(input_bits, weight_bits)
+
+            cur.prev_mask[mask] = True
+            cur.low_group = mask.nonzero(as_tuple=True)[0]
+            cur.high_group = (~mask).nonzero(as_tuple=True)[0]
+            next_module.low_group = cur.low_group
+            next_module.high_group = cur.high_group
+
+            ch_four_counter += len(cur.low_group)
+            ch_eight_counter += len(cur.high_group)
+            neuron_four_counter += len(cur.low_group) * cur.element_size
+            neuron_eight_counter += len(cur.high_group) * cur.element_size
+            ch_counter += next_module.in_channels
+            element_counter += next_module.in_channels * cur.element_size
+
+            # initialize params for training
+            cur.init_records()
+
         for cur in iterator:
+            if isinstance(cur, Q_ResBlockBn) and cur.resize_identity:
+                internal_channel_selection(cur.quant_act, cur.quant_identity_convbn)
+                continue
             if isinstance(cur, QuantAct) and cur.activation_bit < 16:
                 next_module = next(iterator)
                 while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
                     next_module = next(iterator)
                 if isinstance(next_module, QuantLinear): break
-
-                in_channel = next_module.in_channels
-                # candidate channel selection
-                weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
-                weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-
-                if cur.quant_mode == 'asymmetric':
-                    input_range = cur.input_range[1] - cur.input_range[0]
-                else:
-                    input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
-
-                # int4 channel selection
-                weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
-                input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
-                mask = torch.logical_and(input_bits, weight_bits)
-
-                cur.prev_mask[mask] = True
-                cur.low_group = mask.nonzero(as_tuple=True)[0]
-                cur.high_group = (~mask).nonzero(as_tuple=True)[0]
-                next_module.low_group = cur.low_group
-                next_module.high_group = cur.high_group
-
-                ch_four_counter += len(cur.low_group)
-                ch_eight_counter += len(cur.high_group)
-                neuron_four_counter += len(cur.low_group) * cur.element_size
-                neuron_eight_counter += len(cur.high_group) * cur.element_size
-                ch_counter += next_module.in_channels
-                element_counter += next_module.in_channels * cur.element_size
-
-                # initialize params for training
-                cur.init_records()
+                internal_channel_selection(cur, next_module)
 
         assert ch_four_counter + ch_eight_counter == ch_counter, 'total num of in-channels mismatch'
         assert neuron_four_counter + neuron_eight_counter == element_counter, 'total num of element size mismatch'
@@ -830,7 +841,7 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
                     images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
                 else:
                     images, target = data
-                    
+
                 # measure data loading time
                 data_time.update(time.time() - end)
 
@@ -865,38 +876,48 @@ def incremental_channel_selection(model, epoch):
     range_ratio = model.skt_helper.range_ratio
     iterator = iter(model.modules())
 
+    def internal_channel_select(cur, next_module):
+        nonlocal neuron_four_counter, neuron_eight_counter, ch_four_counter, ch_eight_counter
+        in_channel = next_module.in_channels
+
+        # candidate channel selction
+        if isinstance(next_module, QuantConv2d):
+            weight_group = next_module.weight.transpose(1, 0).reshape(in_channel, -1)
+        else:
+            weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
+        weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+
+        if cur.quant_mode == 'asymmetric':
+            input_range = cur.input_range[1] - cur.input_range[0]
+        else:
+            input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
+
+        # int4 channel selection
+        weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
+        input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
+        mask = torch.logical_and(input_bits, weight_bits)
+
+        cur.prev_mask = torch.logical_or(cur.prev_mask, mask)
+        cur.low_group = cur.prev_mask.nonzero(as_tuple=True)[0]
+        cur.high_group = (~cur.prev_mask).nonzero(as_tuple=True)[0]
+        next_module.low_group = cur.low_group
+        next_module.high_group = cur.high_group
+
+        ch_four_counter += len(cur.low_group)
+        ch_eight_counter += len(cur.high_group)
+        neuron_four_counter += len(cur.low_group) * cur.element_size
+        neuron_eight_counter += len(cur.high_group) * cur.element_size
+
     for cur in iterator:
+        if isinstance(cur, Q_ResBlockBn) and cur.resize_identity:
+            internal_channel_select(cur.quant_act, cur.quant_identity_convbn)
+            continue
         if isinstance(cur, QuantAct) and cur.activation_bit < 16:
             next_module = next(iterator)
             while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
                 next_module = next(iterator)
             if isinstance(next_module, QuantLinear): break
-            in_channel = next_module.in_channels
-
-            # candidate channel selction
-            weight_group = next_module.conv.weight.transpose(1, 0).reshape(in_channel, -1)
-            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-
-            if cur.quant_mode == 'asymmetric':
-                input_range = cur.input_range[1] - cur.input_range[0]
-            else:
-                input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
-
-            # int4 channel selection
-            weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
-            input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
-            mask = torch.logical_and(input_bits, weight_bits)
-
-            cur.prev_mask = torch.logical_or(cur.prev_mask, mask)
-            cur.low_group = cur.prev_mask.nonzero(as_tuple=True)[0]
-            cur.high_group = (~cur.prev_mask).nonzero(as_tuple=True)[0]
-            next_module.low_group = cur.low_group
-            next_module.high_group = cur.high_group
-
-            ch_four_counter += len(cur.low_group)
-            ch_eight_counter += len(cur.high_group)
-            neuron_four_counter += len(cur.low_group) * cur.element_size
-            neuron_eight_counter += len(cur.high_group) * cur.element_size
+            internal_channel_select(cur, next_module)
 
     ch_ratio = ch_four_counter / model.total_ch * 100
     neuron_ratio = neuron_four_counter / model.total_element_size * 100
@@ -967,7 +988,6 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
     top5 = AverageMeter('Acc@5', ':6.2f')
 
     global iter_cnt, res_iters
-    is_per_epoch = (iter_cnt == len(train_loader))
 
     # switch to train mode
     if args.fix_BN == True:
@@ -982,8 +1002,6 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
                 images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
             else:
                 images, target = data
-
-            images.requires_grad = True
 
             # measure data loading time
             data_time.update(time.time() - end)

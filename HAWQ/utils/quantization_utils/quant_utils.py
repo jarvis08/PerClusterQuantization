@@ -16,7 +16,7 @@ class SKT_GRAD(torch.autograd.Function):
         if quant_mode == 'symmetric':
             max_per_ch = torch.max(x_reshaped.max(dim=1).values.abs(), x_reshaped.min(dim=1).values.abs())
         else:
-            max_per_ch = (x_reshaped.max(dim=1).values - x_reshaped.min(dim=1)).values
+            max_per_ch = x_reshaped.max(dim=1).values - x_reshaped.min(dim=1).values
         mask = x > (max_per_ch.max() * skt_helper.range_ratio)
 
         ctx.save_for_backward(mask, torch.sign(x), skt_helper.replace_grad, skt_helper.quantile)

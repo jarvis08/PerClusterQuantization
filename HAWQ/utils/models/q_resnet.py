@@ -309,9 +309,9 @@ class Q_ResNet20(nn.Module):
         for cur in iterator:
             if isinstance(cur, QuantAct) and cur.activation_bit < 16:
                 next_module = next(iterator)
-                while not (isinstance(next_module, QuantConv2d) or isinstance(next_module, QuantBnConv2d)):
-                    if isinstance(next_module, QuantLinear): return
+                while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
                     next_module = next(iterator)
+                if isinstance(next_module, QuantLinear): break
                 cur.reset_input_range()
 
     def delete_counters(self):
@@ -1001,7 +1001,7 @@ class Q_ResBlockBn(nn.Module):
         self.quant_convbn2.set_param(convbn2.conv, convbn2.bn)
 
         if self.resize_identity:
-            self.quant_identity_convbn = QuantBnConv2d()
+            self.quant_identity_convbn = QuantBnConv2d(skt_helper=self.skt_helper, is_identity=True)
             self.quant_identity_convbn.set_param(unit.identity_conv.conv, unit.identity_conv.bn)
 
         self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
