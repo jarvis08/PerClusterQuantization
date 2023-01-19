@@ -178,11 +178,7 @@ class Q_AlexNet(nn.Module):
     def reset_input_range(self):
         iterator = iter(self.modules())
         for cur in iterator:
-            if isinstance(cur, QuantAct) and cur.activation_bit < 16:
-                next_module = next(iterator)
-                while not (isinstance(next_module, QuantConv2d) or isinstance(next_module, QuantBnConv2d)):
-                    if isinstance(next_module, QuantLinear): return
-                    next_module = next(iterator)
+            if isinstance(cur, QuantConv2d):
                 cur.reset_input_range()
 
     def get_max_activations(self, x):

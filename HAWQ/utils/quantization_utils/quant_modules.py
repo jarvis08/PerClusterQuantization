@@ -193,9 +193,6 @@ class QuantAct(Module):
         self.act_percentile = act_percentile
         self.fixed_point_quantization = fixed_point_quantization
         self.num_clusters = num_clusters
-        self.mixed_precision = False
-        self.init_record = False
-        self.element_size = 0
 
         self.register_buffer('tmp', torch.zeros(self.num_clusters))
         self.register_buffer('min', torch.zeros(self.num_clusters))
@@ -232,35 +229,6 @@ class QuantAct(Module):
         self.running_stat = True
         self.fix_flag = False
 
-    def init_records(self):
-        self.init_record = False
-        self.input_range.zero_()
-        self.apply_ema = ~self.apply_ema
-        self.initialize = ~self.initialize
-        self.x_min.zero_()
-        self.x_max.zero_()
-
-    def reset_input_range(self):
-        self.input_range.zero_()
-        self.apply_ema = ~self.apply_ema
-
-    def record_range(self, x):
-        if self.init_record:
-            self.element_size += x.size(2) * x.size(3)
-        x_transform = x.transpose(1, 0).reshape(x.size(1), -1)
-        input_min = x_transform.min(dim=1).values
-        input_max = x_transform.max(dim=1).values
-
-        if self.apply_ema:
-            updated_min = self.input_range[0] * self.act_range_momentum + input_min * (
-                    1 - self.act_range_momentum)
-            updated_max = self.input_range[1] * self.act_range_momentum + input_max * (
-                    1 - self.act_range_momentum)
-            self.input_range[0], self.input_range[1] = updated_min, updated_max
-        else:
-            self.input_range[0], self.input_range[1] = input_min, input_max
-            self.apply_ema = ~self.apply_ema
-
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
                 concat_scaling_factor=None, concat_weight_scaling_factor=None, cluster=None, candidate_channels=None):
@@ -288,15 +256,9 @@ class QuantAct(Module):
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == "symmetric":
-                if self.mixed_precision:
-                    self.act_function = MixedSymmetricQuantFunction.apply
-                else:
-                    self.act_function = SymmetricQuantFunction.apply
+                self.act_function = SymmetricQuantFunction.apply
             elif self.quant_mode == "asymmetric":
-                if self.mixed_precision:
-                    self.act_function = MixedAsymmetricQuantFunction.apply
-                else:
-                    self.act_function = AsymmetricQuantFunction.apply
+                self.act_function = AsymmetricQuantFunction.apply
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
@@ -305,10 +267,7 @@ class QuantAct(Module):
 
             uniques = torch.unique(cluster)
             # calculate the quantization range of the activations
-            if self.running_stat or self.init_record:
-                if self.mixed_precision and self.activation_bit < 16:
-                    self.record_range(x)
-
+            if self.running_stat:
                 if self.act_percentile == 0:
                     data = x.view(x.size(0), -1).clone().detach()
                     self.min = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
@@ -354,10 +313,7 @@ class QuantAct(Module):
             if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
                 # this is for the case of input quantization,
                 # or the case using fixed-point rather than integer-only quantization
-                if self.mixed_precision:
-                    quant_act_int = self.act_function(x, self.low_group, self.high_group, act_scaling_factor.view(-1, 1, 1, 1))
-                else:
-                    quant_act_int = self.act_function(x, self.activation_bit, act_scaling_factor.view(-1, 1, 1, 1))
+                quant_act_int = self.act_function(x, self.activation_bit, act_scaling_factor.view(-1, 1, 1, 1))
             elif type(pre_act_scaling_factor) is list:       # TODO
                 # this is for the case of multi-branch quantization
                 branch_num = len(pre_act_scaling_factor)
@@ -455,9 +411,12 @@ class QuantBnConv2d(Module):
         self.fix_BN_threshold = fix_BN_threshold
         self.counter = 1
         self.skt_helper = skt_helper
+        self.mixed_precision = False
+        self.init_record = False
         self.is_identity = is_identity
 
     def set_param(self, conv, bn):
+        self.in_channels = conv.in_channels
         self.out_channels = conv.out_channels
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
         self.register_buffer('convbn_scaling_factor', torch.zeros(self.out_channels))
@@ -470,9 +429,13 @@ class QuantBnConv2d(Module):
         self.in_channels = self.conv.in_channels
 
         if self.skt_helper:
+            self.mixed_precision = True
             self.register_buffer('low_group', torch.tensor([], dtype=torch.int64))
             self.register_buffer('high_group', torch.arange(self.in_channels, dtype=torch.int64))
-            self.x_quant_mode = ''
+            self.register_buffer('input_range', torch.zeros((2, self.in_channels), device='cuda'))
+            self.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
+            self.register_buffer('prev_mask', torch.zeros(self.in_channels, dtype=torch.bool, device='cuda'))
+            self.element_size = self.conv.weight.size(0) * self.conv.weight.size(2) * self.conv.weight.size(3)
 
     def __repr__(self):
         conv_s = super(QuantBnConv2d, self).__repr__()
@@ -494,6 +457,33 @@ class QuantBnConv2d(Module):
         """
         self.fix_flag = False
         self.fix_BN = self.training_BN_mode
+
+    def init_records(self):
+        self.init_record = False
+        self.input_range.zero_()
+        self.apply_ema = ~self.apply_ema
+
+    def reset_input_range(self):
+        self.input_range.zero_()
+        self.apply_ema = ~self.apply_ema
+
+    @torch.no_grad()
+    def record_range(self, x):
+        if self.init_record:
+            self.element_size += x.size(2) * x.size(3)
+        x_transform = x.transpose(1, 0).reshape(x.size(1), -1)
+        input_min = x_transform.min(dim=1).values
+        input_max = x_transform.max(dim=1).values
+
+        if self.apply_ema:
+            updated_min = self.input_range[0] * self.act_range_momentum + input_min * (
+                    1 - self.act_range_momentum)
+            updated_max = self.input_range[1] * self.act_range_momentum + input_max * (
+                    1 - self.act_range_momentum)
+            self.input_range[0], self.input_range[1] = updated_min, updated_max
+        else:
+            self.input_range[0], self.input_range[1] = input_min, input_max
+            self.apply_ema = ~self.apply_ema
 
     def forward(self, x, pre_act_scaling_factor=None):
         """
@@ -529,15 +519,19 @@ class QuantBnConv2d(Module):
             #     if (self.fix_BN_threshold == None) or (self.counter < self.fix_BN_threshold):
             #         self.fix_BN = self.training_BN_mode
             #     else:
-            #         if self.counter == self.fix_BN_threshold:
+            #         if self.counter == self.fix_BN_thrQeshold:
             #             print("Start Training with Folded BN")
             #         self.fix_BN = True
 
+            #if not self.fix_BN or self.init_record:
+            #    if self.mixed_precision:
+            #        self.record_range(x)
+
             weight = self.conv.weight
             # gradient manipulation
-            if self.skt_helper and not self.fix_flag:
-                x = SKT_GRAD.apply(x, self.skt_helper, self.x_quant_mode)
-                weight = SKT_GRAD.apply(self.conv.weight, self.skt_helper, self.quant_mode)
+            if self.mixed_precision and not self.fix_BN:
+                 x = SKT_GRAD.apply(x, self.skt_helper, self.quant_mode)
+                 weight = SKT_GRAD.apply(self.conv.weight, self.skt_helper, self.quant_mode)
 
             # run the forward without folding BN
             if self.fix_BN == False:
@@ -581,6 +575,13 @@ class QuantBnConv2d(Module):
                     self.bias_integer = None
 
                 x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
+
+                if self.low_group.size(0):
+                    with torch.no_grad():
+                        # truncate the rightmost 3 bits
+                        x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
+                    x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
+
                 correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 
                 if self.bias_integer is not None:
@@ -657,6 +658,13 @@ class QuantBnConv2d(Module):
                     raise Exception('For weight, we only support symmetric quantization.')
 
                 x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
+
+                if self.low_group.size(0):
+                    with torch.no_grad():
+                        # truncate the rightmost 3 bits
+                        x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
+                    x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
+
                 correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 
                 return ((F.conv2d(x_int, self.weight_integer, None, self.conv.stride, self.conv.padding,
@@ -994,6 +1002,8 @@ class QuantConv2d(Module):
         self.bias_bit = bias_bit
         self.quantize_bias = (False if bias_bit is None else True)
         self.skt_helper = skt_helper
+        self.mixed_precision = False
+        self.init_record = False
 
     def __repr__(self):
         s = super(QuantConv2d, self).__repr__()
@@ -1014,9 +1024,13 @@ class QuantConv2d(Module):
         self.register_buffer('conv_scaling_factor', torch.zeros(self.out_channels))
 
         if self.skt_helper:
+            self.mixed_precision = True
             self.register_buffer('low_group', torch.tensor([], dtype=torch.int64))
             self.register_buffer('high_group', torch.arange(self.in_channels, dtype=torch.int64))
-            self.x_quant_mode = ''
+            self.register_buffer('input_range', torch.zeros((2, self.in_channels), device='cuda'))
+            self.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
+            self.register_buffer('prev_mask', torch.zeros(self.in_channels, dtype=torch.bool, device='cuda'))
+            self.element_size = self.conv.weight.size(0) * self.conv.weight.size(2) * self.conv.weight.size(3)
 
         if model_dict is not None :
             self.weight = Parameter(model_dict[dict_idx+'.weight'].data.clone())
@@ -1041,6 +1055,34 @@ class QuantConv2d(Module):
     def unfix(self):
         self.fix_flag = False
 
+    def init_records(self):
+        self.init_record = False
+        self.input_range.zero_()
+        self.apply_ema = ~self.apply_ema
+
+    def reset_input_range(self):
+        self.input_range.zero_()
+        self.apply_ema = ~self.apply_ema
+
+    @torch.no_grad()
+    def record_range(self, x):
+        if self.init_record:
+            self.element_size += x.size(2) * x.size(3)
+        x_transform = x.transpose(1, 0).reshape(x.size(1), -1)
+        input_min = x_transform.min(dim=1).values
+        input_max = x_transform.max(dim=1).values
+
+        if self.apply_ema:
+            updated_min = self.input_range[0] * self.act_range_momentum + input_min * (
+                    1 - self.act_range_momentum)
+            updated_max = self.input_range[1] * self.act_range_momentum + input_max * (
+                    1 - self.act_range_momentum)
+            self.input_range[0], self.input_range[1] = updated_min, updated_max
+        else:
+            self.input_range[0], self.input_range[1] = input_min, input_max
+            self.apply_ema = ~self.apply_ema
+
+
     def forward(self, x, pre_act_scaling_factor=None):
         if type(x) is tuple:
             pre_act_scaling_factor = x[1]
@@ -1064,11 +1106,15 @@ class QuantConv2d(Module):
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
+            if not self.fix_flag or self.init_record:
+                if self.mixed_precision:
+                    self.record_range(x)
+
             weight = self.weight
             # gradient manipulation
             if self.skt_helper and not self.fix_flag:
-                x = SKT_GRAD.apply(x, self.skt_helper, self.x_quant_mode)
-                weight = SKT_GRAD.apply(self.weight, self.skt_helper, self.x_quant_mode)
+                x = SKT_GRAD.apply(x, self.skt_helper, self.quant_mode)
+                weight = SKT_GRAD.apply(self.weight, self.skt_helper, self.quant_mode)
 
             if self.per_channel:
                 w_transform = weight.data.contiguous().view(self.out_channels, -1)
@@ -1110,6 +1156,12 @@ class QuantConv2d(Module):
                 self.bias_integer = None
             
             x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
+            with torch.no_grad():
+                if self.low_group.size(0):
+                    # truncate the rightmost 3 bits
+                    x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
+                    x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
+
             correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 
             if self.bias_integer is not None:

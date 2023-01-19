@@ -29,10 +29,10 @@ class SKT_GRAD(torch.autograd.Function):
         abs_val = torch.quantile(grad.abs(), quantile)
 
         # replace
-        grad = torch.where(mask & (grad.abs() <= abs_val), replace_grad * grad.sign(), grad)
+        # grad = torch.where(mask & (grad.abs() <= abs_val), replace_grad * grad.sign(), grad)
         # control
-        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
-        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 1.5, grad)
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.6, grad)
         return grad, None, None, None
 
 
@@ -389,10 +389,12 @@ class MixedSymmetricQuantFunction(Function):
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
         if low_group.size(0):
-            # truncate the rightmost 3 bits
-            new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
+            with torch.no_grad():
+                # truncate the rightmost 3 bits
+                new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
             new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], -64, 63)
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], -128, 127)
+        #new_quant_x = torch.clamp(new_quant_x, -128, 127)
 
         ctx.scale = scale
         return new_quant_x
@@ -420,11 +422,12 @@ class MixedAsymmetricQuantFunction(Function):
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
-        if low_group.size(0):
-            # truncate the rightmost 3 bits
-            new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
-            new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], 0, 127)
 
+        if low_group.size(0):
+            with torch.no_grad():
+                # truncate the rightmost 3 bits
+                new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
+            new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], 0, 127)
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], 0, 255)
 
         ctx.scale = scale

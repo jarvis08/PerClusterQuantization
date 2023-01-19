@@ -307,11 +307,7 @@ class Q_ResNet20(nn.Module):
     def reset_input_range(self):
         iterator = iter(self.modules())
         for cur in iterator:
-            if isinstance(cur, QuantAct) and cur.activation_bit < 16:
-                next_module = next(iterator)
-                while not isinstance(next_module, (QuantLinear, QuantConv2d, QuantBnConv2d)):
-                    next_module = next(iterator)
-                if isinstance(next_module, QuantLinear): break
+            if isinstance(cur, QuantBnConv2d):
                 cur.reset_input_range()
 
     def delete_counters(self):
