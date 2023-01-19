@@ -29,10 +29,10 @@ class SKT_GRAD(torch.autograd.Function):
         abs_val = torch.quantile(grad.abs(), quantile)
 
         # replace
-        # grad = torch.where(mask & (grad.abs() <= abs_val), replace_grad * grad.sign(), grad)
+        grad = torch.where(mask & (grad.abs() <= abs_val), replace_grad * grad.sign(), grad)
         # control
-        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 1.5, grad)
-        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.6, grad)
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
+        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
         return grad, None, None, None
 
 
