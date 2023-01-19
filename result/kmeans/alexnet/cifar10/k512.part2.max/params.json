@@ -1,8 +1,0 @@
-{
-    "dataset": "cifar10",
-    "clustering_method": "kmeans",
-    "repr_method": "max",
-    "partition_method": "square",
-    "num_partitions": 2,
-    "k": 512
-}

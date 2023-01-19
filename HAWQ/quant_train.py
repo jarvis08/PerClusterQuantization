@@ -226,27 +226,22 @@ def main(args_daq, data_loaders, clustering_model=None):
 
 
 def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
-    def set_args_arch(args):
+    def get_args_arch(args):
         arch = args.arch.lower()
         if arch == 'resnet20':
             return arch + "_" + args.data.lower()
         elif arch == 'densenet':
             return "densenet121"
+        elif arch == 'mobilenet':
+            return "mobilenetv2_w1"
         else:
             return arch
-
-    def reset_args_arch(args):
-        arch = args.arch.lower()
-        if 'resnet20' in arch:
-            return "resnet20"
-        else:
-            return arch
-
+        
     def create_model(args):
         pretrained = args.pretrained and not args.resume
         logging.info(
             "=> using pre-trained PyTorchCV model '{}'".format(args.arch))
-        model = ptcv_get_model(args.arch, pretrained=True)
+        model = ptcv_get_model(get_args_arch(args), pretrained=True)
         if args.distill_method != 'None':
             logging.info(
                 "=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
@@ -401,117 +396,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             len(bit_config.keys()) == name_counter))
         return model
 
-    def confusion_matrix(data_loader, model, clustering_model, args):
-        def prediction(output, target):
-            with torch.no_grad():
-                if type(output) is tuple:
-                    output = output[0]
-                _, pred = output.topk(1, 1, True, True)
-                pred = pred.t()
-                correct = pred.eq(target.view(1, -1).expand_as(pred))
-                return torch.squeeze(correct)
-        TP = 0
-        TN = 0
-        FP = 0
-        FN = 0
-        saturated = 0
-        
-        cluster_confusion_matrix = torch.zeros([7, args.cluster], dtype=torch.long).cuda()
-
-        freeze_model(model)
-        model.eval()
-
-        with torch.no_grad():
-            with tqdm(data_loader, desc="experiment ", ncols=95) as t:
-                for i, (images, target) in enumerate(t):
-                    images = images.cuda(args.gpu, non_blocking=True)
-                    target = target.cuda(args.gpu, non_blocking=True)
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
-                    
-                    unique, count = torch.unique(cluster, return_counts=True)
-                    cluster_confusion_matrix[0].put_(unique, count, accumulate=True)                # Total Cluster Counts
-                    
-                    batch_size = target.size(0)
-                    
-                    output = model(images, cluster)
-                    INT_pred = prediction(output, target)
-                    
-                    model.toggle_full_precision()
-                    output = model(images, cluster)
-                    model.toggle_full_precision()
-                    
-                    FP_pred = prediction(output, target)
-
-                    #############
-                    cluster_confusion_matrix[1].scatter_reduce_(0, cluster, FP_pred.type(torch.long), reduce="sum")  # Full Precision Correct
-                    cluster_confusion_matrix[2].scatter_reduce_(0, cluster, INT_pred.type(torch.long), reduce="sum") # Quantized Accuracy
-                    
-                    TP = torch.logical_and(FP_pred, INT_pred).type(torch.long)
-                    cluster_confusion_matrix[3].scatter_reduce_(0, cluster, TP, reduce="sum")  # Both Positive
-                    TN = torch.logical_and(~FP_pred, ~INT_pred).type(torch.long)
-                    cluster_confusion_matrix[4].scatter_reduce_(0, cluster, TN, reduce="sum")  # Both Negative
-                    FP = torch.logical_and(~FP_pred, INT_pred).type(torch.long)
-                    cluster_confusion_matrix[5].scatter_reduce_(0, cluster, FP, reduce="sum")  # FP False, QT True
-                    FN = torch.logical_and(FP_pred, ~INT_pred).type(torch.long)
-                    cluster_confusion_matrix[6].scatter_reduce_(0, cluster, FN, reduce="sum")  # FP True, QT False
-
-                    #############
-
-        print("=======================")
-        columns = ['Total','Full Precision', 'Quantized', 'TP', 'TN', 'FP', 'FN']
-        cluster_confusion_matrix_np = cluster_confusion_matrix.T.cpu().numpy()
-        cluster_confusion_matrix_df = pd.DataFrame(cluster_confusion_matrix_np, columns=columns)
-        
-        cluster = args.sub_cluster if args.nnac else args.cluster
-        cluster_confusion_matrix_df.to_csv(f"/workspace/PerClusterQuantization/{args.arch}/{args.data}/{cluster}/{args.cluster}.csv", index=False)
-        return
-
-
-    def cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args):
-        freeze_model(model)
-        aug_score, nonaug_score, test_score = clustering_model.measure_cluster_score(model, train_loader, cluster_train_loader, test_loader, args.arch)
-        # score = clustering_model.measure_cluster_distance(model, train_loader, args.arch)
-
-        cluster = args.sub_cluster if args.nnac else args.cluster
-        try:
-            df_data = pd.read_csv(f"aug_{args.arch}_{args.data}_{cluster}.csv")
-            
-            score_np = aug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            
-            score_df = pd.concat([df_data, score_df], axis=1)
-            score_df.to_csv(f"aug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-        except :
-            score_np = aug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            score_df.to_csv(f"aug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-            
-        try:
-            df_data = pd.read_csv(f"nonaug_{args.arch}_{args.data}_{cluster}.csv")
-            
-            score_np = nonaug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            
-            score_df = pd.concat([df_data, score_df], axis=1)
-            score_df.to_csv(f"nonaug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-        except :
-            score_np = nonaug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            score_df.to_csv(f"nonaug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-            
-        try:
-            df_data = pd.read_csv(f"test_{args.arch}_{args.data}_{cluster}.csv")
-            
-            score_np = test_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            
-            score_df = pd.concat([df_data, score_df], axis=1)
-            score_df.to_csv(f"test_{args.arch}_{args.data}_{cluster}.csv", index=False)
-        except :
-            score_np = test_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            score_df.to_csv(f"test_{args.arch}_{args.data}_{cluster}.csv", index=False)
-
 
     global best_acc1
     args.gpu = gpu
@@ -529,30 +413,37 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
 
-    prev_arch = args.arch
-    args.arch = set_args_arch(args)
+    ############ PREPARE MODEL ##############
+    
+    train_loader = data_loaders['aug_train']
+    test_loader = data_loaders['test']
+    cluster_train_loader = data_loaders['non_aug_train']
+
+    if clustering_model is not None and clustering_model.model is None:
+        # Prune Kmeans Features by correlation
+        # clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader) 
+        clustering_model.train_clustering_model(cluster_train_loader)
+
     fp_model, teacher = create_model(args)  # Create Model
-    copy_fp_model = deepcopy(fp_model)
-    args.arch = reset_args_arch(args)
     model_dict = transfer_param(args, fp_model) if args.transfer_param else None
     fp_model = eval_resume(args, fp_model)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    # model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster)
-    ###
     cluster_size = args.cluster if not args.nnac else args.sub_cluster
     model = get_quantize_model(args, fp_model, model_dict, quantize_arch, cluster_size)
-    ###
+    # model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster)
+    
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     model = set_quantize_param(args, model, bit_config)
-    # logging.info(model)
-    model = quant_resume(args, model)
+    
+    model = quant_resume(args, model)       # Load parameters if checkpoint is given
 
     if args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
         if args.distill_method != 'None':
             teacher = teacher.cuda(args.gpu)
+
+    ######### PREPARE MODEL DONE #########
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -565,32 +456,20 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     cudnn.benchmark = True
 
-    train_loader = data_loaders['aug_train']
-    test_loader = data_loaders['test']
-    cluster_train_loader = data_loaders['non_aug_train']
-
-    if clustering_model is not None and clustering_model.model is None:
-        # Prune Kmeans Features by correlation
-    #     clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader)
-        clustering_model.train_clustering_model(cluster_train_loader)
-
+    # Merge Before Finetune
     if args.nnac and clustering_model.final_cluster is None:
-        sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
-        sub_model = set_quantize_param(args, sub_model, bit_config)
-        sub_model = sub_model.cuda(args.gpu)
-        fp_model = copy_fp_model.cuda()
+        sub_model = deepcopy(model).cuda()
+        tmp_fp_model, _ = create_model(args)
+        tmp_fp_model = tmp_fp_model.cuda()
         
-        # print("EMA training epochs...")
-        ema_epoch = 1 if args.data == 'imagenet' else 1
-        for epoch in range(ema_epoch):
-            train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
-            
-        clustering_model.ema_nn_aware_clustering(fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
+        train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
+        clustering_model.ema_nn_aware_clustering(tmp_fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
         del sub_model
         
-        # Merge After Finetune
-        # clustering_model.ema_nn_aware_clustering(fp_model, model, cluster_train_loader, test_loader, args.arch)
-    del fp_model
+    # # Merge After Finetune
+    # if args.nnac and clustering_model.final_cluster is None:
+    #     tmp_fp_model = tmp_fp_model.cuda()
+    #     clustering_model.ema_nn_aware_clustering(tmp_fp_model, model, cluster_train_loader, test_loader, args.arch)
     
     if args.evaluate:
         validate(test_loader, model, criterion, args)
@@ -613,15 +492,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         os.mkdir(finetune_path)
     if not os.path.exists(log_path):
         os.mkdir(log_path)
-        
-
-    ### Debugging
-    # train_ema(train_loader, model, clustering_model, criterion, args)
-    # acc1 = validate(test_loader, model, clustering_model, criterion, args)
-
-    # confusion_matrix(test_loader, model, clustering_model, args)
-    # cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args)
-
 
     # Train EMA for couple epochs before training parameters
     print("EMA training epochs...")
@@ -648,7 +518,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
         # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
         #     save_checkpoint({
-        #         'epoch': epoch + 1,
+        #         'epoch': epoch,
         #         'arch': args.arch,
         #         'cluster': args.cluster,
         #         'state_dict': model,
