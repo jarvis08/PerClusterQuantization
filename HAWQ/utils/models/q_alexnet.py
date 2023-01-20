@@ -181,6 +181,12 @@ class Q_AlexNet(nn.Module):
             if isinstance(cur, QuantConv2d):
                 cur.reset_input_range()
 
+    def reset_init_records(self):
+        iterator = iter(self.modules())
+        for cur in iterator:
+            if isinstance(cur, (QuantConv2d, QuantAct)):
+                cur.init_records()
+
     def get_max_activations(self, x):
         x, act_scaling_factor = self.quant_input(x)
 

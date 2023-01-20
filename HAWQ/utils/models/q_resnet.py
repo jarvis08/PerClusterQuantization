@@ -310,6 +310,12 @@ class Q_ResNet20(nn.Module):
             if isinstance(cur, QuantBnConv2d):
                 cur.reset_input_range()
 
+    def reset_init_records(self):
+        iterator = iter(self.modules())
+        for cur in iterator:
+            if isinstance(cur, (QuantBnConv2d, QuantAct)):
+                cur.init_records()
+
     def delete_counters(self):
         if hasattr(self, 'zero_counter'):
             del self.zero_counter

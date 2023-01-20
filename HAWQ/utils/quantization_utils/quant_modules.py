@@ -193,6 +193,7 @@ class QuantAct(Module):
         self.act_percentile = act_percentile
         self.fixed_point_quantization = fixed_point_quantization
         self.num_clusters = num_clusters
+        self.init_record = True
 
         self.register_buffer('tmp', torch.zeros(self.num_clusters))
         self.register_buffer('min', torch.zeros(self.num_clusters))
@@ -228,6 +229,12 @@ class QuantAct(Module):
         """
         self.running_stat = True
         self.fix_flag = False
+
+    def init_records(self):
+        self.init_record = False
+        self.initialize = ~self.initialize
+        self.x_min.zero_()
+        self.x_max.zero_()
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
@@ -267,7 +274,7 @@ class QuantAct(Module):
 
             uniques = torch.unique(cluster)
             # calculate the quantization range of the activations
-            if self.running_stat:
+            if self.running_stat or self.init_record:
                 if self.act_percentile == 0:
                     data = x.view(x.size(0), -1).clone().detach()
                     self.min = torch.scatter_reduce(self.tmp, 0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
@@ -449,7 +456,7 @@ class QuantBnConv2d(Module):
         fix the BN statistics by setting fix_BN to True
         """
         self.fix_flag = True
-        # self.fix_BN = True
+        self.fix_BN = True
 
     def unfix(self):
         """
@@ -577,9 +584,9 @@ class QuantBnConv2d(Module):
                 x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
 
                 if self.low_group.size(0):
-                    # with torch.no_grad():
-                        # truncate the rightmost 3 bits
-                    x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
+                    # truncate the rightmost 3 bits
+                    with torch.no_grad():
+                        x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
                     x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
 
                 correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
@@ -593,29 +600,27 @@ class QuantBnConv2d(Module):
 
                 batch_mean = torch.mean(conv_output, dim=(0, 2, 3))
                 batch_var = torch.var(conv_output, dim=(0, 2, 3))
+
                 # update mean and variance in running stats
-                if not self.fix_flag:
-                    self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                                1 - self.bn.momentum) * batch_mean
-                    self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
-                    scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
-                    scaled_bias = self.bn.bias - batch_mean * scaled_weight
+                self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
+                        1 - self.bn.momentum) * batch_mean
+                self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (
+                            1 - self.bn.momentum) * batch_var
 
-                else:
-                    scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var + self.bn.eps)
-                    scaled_bias = self.bn.bias - self.bn.running_mean * scaled_weight
+                scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
+                scaled_bias = self.bn.bias - batch_mean * scaled_weight
 
-                # # update mean and variance in running stats
-                # batch_mean = torch.mean(conv_output, dim=(0, 2, 3))
-                # batch_var = torch.var(conv_output, dim=(0, 2, 3))
+                # if not self.fix_flag:
+                #     # update mean and variance in running stats
+                #     self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
+                #                     1 - self.bn.momentum) * batch_mean
+                #     self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (1 - self.bn.momentum) * batch_var
                 #
-                # self.bn.running_mean = self.bn.running_mean.detach() * self.bn.momentum + (
-                #         1 - self.bn.momentum) * batch_mean
-                # self.bn.running_var = self.bn.running_var.detach() * self.bn.momentum + (
-                #             1 - self.bn.momentum) * batch_var
-                #
-                # scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
-                # scaled_bias = self.bn.bias - batch_mean * scaled_weight
+                #     scaled_weight = self.bn.weight / torch.sqrt(batch_var + self.bn.eps)
+                #     scaled_bias = self.bn.bias - batch_mean * scaled_weight
+                # else:
+                #     scaled_weight = self.bn.weight / torch.sqrt(self.bn.running_var + self.bn.eps)
+                #     scaled_bias = self.bn.bias - self.bn.running_mean * scaled_weight
 
                 output = scaled_weight.view(1, -1, 1, 1) * conv_output + scaled_bias.view(1, -1, 1, 1)
 
@@ -675,9 +680,9 @@ class QuantBnConv2d(Module):
                 x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
 
                 if self.low_group.size(0):
-                    # with torch.no_grad():
-                        # truncate the rightmost 3 bits
-                    x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
+                    # truncate the rightmost 3 bits
+                    with torch.no_grad():
+                        x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
                     x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
 
                 correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
@@ -1127,7 +1132,7 @@ class QuantConv2d(Module):
 
             weight = self.weight
             # gradient manipulation
-            if self.skt_helper and not self.fix_flag:
+            if self.mixed_precision and not self.fix_flag:
                 x = SKT_GRAD.apply(x, self.skt_helper, self.quant_mode)
                 weight = SKT_GRAD.apply(self.weight, self.skt_helper, self.quant_mode)
 
@@ -1171,11 +1176,11 @@ class QuantConv2d(Module):
                 self.bias_integer = None
             
             x_int = x / pre_act_scaling_factor.view(-1, 1, 1, 1)
-            with torch.no_grad():
-                if self.low_group.size(0):
+            if self.low_group.size(0):
+                with torch.no_grad():
                     # truncate the rightmost 3 bits
                     x_int[:, self.low_group] = torch.round(x_int[:, self.low_group] / 8) * 8
-                    x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
+                x_int[:, self.low_group] = torch.clamp(x_int[:, self.low_group], -64, 63)
 
             correct_output_scale = bias_scaling_factor.view(bias_scaling_factor.size(0), bias_scaling_factor.size(1), 1, 1)
 

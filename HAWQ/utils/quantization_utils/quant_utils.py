@@ -389,12 +389,11 @@ class MixedSymmetricQuantFunction(Function):
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
         if low_group.size(0):
-            # with torch.no_grad():
-                # truncate the rightmost 3 bits
-            new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
+            # truncate the rightmost 3 bits
+            with torch.no_grad():
+                new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
             new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], -64, 63)
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], -128, 127)
-        #new_quant_x = torch.clamp(new_quant_x, -128, 127)
 
         ctx.scale = scale
         return new_quant_x
@@ -422,10 +421,9 @@ class MixedAsymmetricQuantFunction(Function):
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
-
         if low_group.size(0):
+            # truncate the rightmost 3 bits
             with torch.no_grad():
-                # truncate the rightmost 3 bits
                 new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
             new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], 0, 127)
         new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], 0, 255)

@@ -703,13 +703,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 element_counter += cur.in_channels * cur.element_size
 
                 # initialize params for training
-                cur.init_records()
 
         assert ch_four_counter + ch_eight_counter == ch_counter, 'total num of in-channels mismatch'
         assert neuron_four_counter + neuron_eight_counter == element_counter, 'total num of element size mismatch'
 
         model.total_ch = ch_counter
         model.total_element_size = element_counter
+        model.reset_init_records()
 
         ch_ratio = ch_four_counter / model.total_ch * 100
         neuron_ratio = neuron_four_counter / model.total_element_size * 100
@@ -762,10 +762,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
 
     if args.mixed_precision:
-        with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}_({args.schedule_unit}-{args.schedule_count}).txt', 'a') as f:
+        with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}.txt', 'a') as f:
             f.write(
-                'Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                    ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay, args.cluster,
+                'Schedule:{} {}, Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+                    args.schedule_unit, args.schedule_count, ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay, args.cluster,
                     best_epoch, time_cost, args.data, one_epoch_time))
     else:
         if not args.nnac:
