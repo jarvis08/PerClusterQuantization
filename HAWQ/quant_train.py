@@ -419,10 +419,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     test_loader = data_loaders['test']
     cluster_train_loader = data_loaders['non_aug_train']
 
-    if clustering_model is not None and clustering_model.model is None:
-        # Prune Kmeans Features by correlation
-        # clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader) 
-        clustering_model.train_clustering_model(cluster_train_loader)
+    # TODO
+    # if clustering_model is not None and clustering_model.model is None:
+    #     # Prune Kmeans Features by correlation
+    #     # clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader) 
+    #     clustering_model.train_clustering_model(cluster_train_loader)
 
     fp_model, teacher = create_model(args)  # Create Model
     model_dict = transfer_param(args, fp_model) if args.transfer_param else None
@@ -456,15 +457,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     cudnn.benchmark = True
 
+    # TODO
     # Merge Before Finetune
-    if args.nnac and clustering_model.final_cluster is None:
-        sub_model = deepcopy(model).cuda()
-        tmp_fp_model, _ = create_model(args)
-        tmp_fp_model = tmp_fp_model.cuda()
+    # if args.nnac and clustering_model.final_cluster is None:
+    #     sub_model = deepcopy(model).cuda()
+    #     tmp_fp_model, _ = create_model(args)
+    #     tmp_fp_model = tmp_fp_model.cuda()
         
-        train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
-        clustering_model.ema_nn_aware_clustering(tmp_fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
-        del sub_model
+    #     train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
+    #     clustering_model.ema_nn_aware_clustering(tmp_fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
+    #     del sub_model
         
     # # Merge After Finetune
     # if args.nnac and clustering_model.final_cluster is None:
@@ -582,7 +584,8 @@ def train_ema(train_loader, model, clustering_model, criterion, args):
                 if clustering_model is None:
                     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
                 else:
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                    # cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                    cluster = torch.randint(0, args.cluster, (images.size(0),), dtype=torch.long).cuda(args.gpu)
 
                 # compute output
                 output = model(images, cluster)
@@ -635,7 +638,8 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, ar
             if clustering_model is None:
                 cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
             else:
-                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                # cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                cluster = torch.randint(0, args.cluster, (images.size(0),), dtype=torch.long).cuda(args.gpu)
 
             # compute output
             output = model(images, cluster)
@@ -777,7 +781,8 @@ def validate(val_loader, model, clustering_model, criterion, args):
                 if clustering_model is None:
                     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
                 else:
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
+                    # cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
+                    cluster = torch.randint(0, args.cluster, (images.size(0),), dtype=torch.long).cuda(args.gpu)
 
                 # compute output
                 output = model(images, cluster)
