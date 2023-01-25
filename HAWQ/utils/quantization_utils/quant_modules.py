@@ -235,6 +235,8 @@ class QuantAct(Module):
         self.initialize = ~self.initialize
         self.x_min.zero_()
         self.x_max.zero_()
+        self.min.zero_()
+        self.max.zero_()
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
