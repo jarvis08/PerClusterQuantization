@@ -254,8 +254,6 @@ class KMeansClustering(object):
             for image, _ in t:
                 batch = self.get_partitioned_batch(image.cuda()).clone()
                 x = torch.cat((x, batch))
-
-        pdb.set_trace()
         
         n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
         # best_model = CustomPredictionModel(int(math.log2(n_prediction_cluster)))
