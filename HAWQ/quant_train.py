@@ -419,10 +419,11 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     test_loader = data_loaders['test']
     cluster_train_loader = data_loaders['non_aug_train']
 
-    # if clustering_model is not None and clustering_model.model is None:
-    #     # Prune Kmeans Features by correlation
-    #     # clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader) 
-    #     clustering_model.train_clustering_model(cluster_train_loader)
+    # TODO
+    if clustering_model is not None and clustering_model.model is None:
+        # Prune Kmeans Features by correlation
+        # clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader) 
+        clustering_model.train_clustering_model(cluster_train_loader)
 
     fp_model, teacher = create_model(args)  # Create Model
     model_dict = transfer_param(args, fp_model) if args.transfer_param else None
@@ -457,6 +458,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     cudnn.benchmark = True
 
     # Merge Before Finetune
+    # TODO
     # if args.nnac and clustering_model.final_cluster is None:
     #     sub_model = deepcopy(model).cuda()
     #     tmp_fp_model, _ = create_model(args)
@@ -488,16 +490,33 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     # finetune_path = set_kt_save_dir(args)
     # log_path = set_kt_log_dir(args)
 
+    # TODO
     if not os.path.exists(finetune_path):
         os.mkdir(finetune_path)
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
+    """
+    best_acc = 0
+    for _ in range(50):
+        acc, score = validate_per_clusters(test_loader, model, clustering_model, criterion, args)
+        if acc > best_acc:
+            best_acc = acc
+            best_score = score
+            
+    score_np = torch.squeeze(best_score).cpu().numpy()
+    score_df = pd.DataFrame(score_np)
+    score_df.to_csv(f"resnet20_cifar10_{args.cluster}.csv", header=False, index=False)
+    
+    exit()
+    """
+    
     # Train EMA for couple epochs before training parameters
     print("EMA training epochs...")
     train_ema(train_loader, model, clustering_model, criterion, args)
     acc1 = validate(test_loader, model, clustering_model, criterion, args)
-        
+    
+    
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
@@ -571,7 +590,7 @@ def train_ema(train_loader, model, clustering_model, criterion, args):
                     images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
                 else:
                     images, target = data
-                    target, cluster = target
+                    # target, cluster = target
                     
                 # measure data loading time
                 data_time.update(time.time() - end)
@@ -579,12 +598,12 @@ def train_ema(train_loader, model, clustering_model, criterion, args):
                 if args.gpu is not None:
                     images = images.cuda(args.gpu)
                     target = target.cuda(args.gpu)
-                    cluster = cluster.cuda(args.gpu)
+                    # cluster = cluster.cuda(args.gpu)
 
-                # if clustering_model is None:
-                #     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
-                # else:
-                #     cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                if clustering_model is None:
+                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
+                else:
+                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
 
                 # compute output
                 output = model(images, cluster)
@@ -625,17 +644,17 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, ar
                 images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
             else:
                 images, target = data
-                target, cluster = target
+                # target, cluster = target
                 
             if args.gpu is not None:
                 images = images.cuda(args.gpu)
                 target = target.cuda(args.gpu)
-                cluster = cluster.cuda(args.gpu)
+                # cluster = cluster.cuda(args.gpu)
 
-            # if clustering_model is None:
-            #     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
-            # else:
-            #     cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+            if clustering_model is None:
+                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
+            else:
+                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
 
             # compute output
             output = model(images, cluster)
@@ -750,6 +769,72 @@ def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_load
                     'optimizer': optimizer.state_dict(),
                 }, is_best, args.save_path)
 
+@torch.no_grad()
+def validate_per_clusters(val_loader, model, clustering_model, criterion, args):
+    @torch.no_grad()
+    def prediction(output, target):
+        if type(output) is tuple:
+            output = output[0]
+
+        _, pred = output.topk(1, 1, True, True)
+        pred = pred.t()
+
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        return torch.squeeze(correct)
+    
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    
+    # switch to evaluate mode
+    freeze_model(model)
+    model.eval()
+    
+    cluster_size = args.cluster
+    
+    cluster_pred = torch.zeros([cluster_size], dtype=torch.long).cuda()
+    cluster_size = torch.zeros([cluster_size], dtype=torch.long).cuda()
+
+    with tqdm(val_loader, desc="Validate", ncols=95) as t:
+        for i, data in enumerate(t):
+            if args.dataset == 'imagenet':
+                images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
+            else:
+                images, target = data
+                # target, cluster = target
+
+            if args.gpu is not None:
+                images = images.cuda(args.gpu)
+                target = target.cuda(args.gpu)
+                # cluster = cluster.cuda(args.gpu)
+
+            # TODO
+            # if clustering_model is None:
+            #     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
+            # else:
+            #     cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+            cluster = torch.randint(0, args.cluster, (images.size(0),), dtype=torch.long).cuda()
+            u1, c1 = torch.unique(cluster, return_counts=True)
+            cluster_size.put_(u1, c1, accumulate=True)
+
+            # compute output
+            output = model(images, cluster)
+            pred = prediction(output, target)
+            loss = criterion(output, target)
+
+            # measure accuracy and record loss
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), images.size(0))
+            top1.update(acc1[0].item(), images.size(0))
+            top5.update(acc5[0].item(), images.size(0))
+            
+            cluster_pred.put_(cluster, pred.to(torch.long), accumulate=True)
+
+            t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
+            
+    unfreeze_model(model)
+
+    return top1.avg, torch.stack((cluster_size.view(1, -1), cluster_pred.view(1, -1)), dim=0)
 
 def validate(val_loader, model, clustering_model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -769,17 +854,19 @@ def validate(val_loader, model, clustering_model, criterion, args):
                     images, target = data[0]['data'], torch.flatten(data[0]['label']).type(torch.long)
                 else:
                     images, target = data
-                    target, cluster = target
+                    # target, cluster = target
 
                 if args.gpu is not None:
                     images = images.cuda(args.gpu)
                     target = target.cuda(args.gpu)
-                    cluster = cluster.cuda(args.gpu)
+                    # cluster = cluster.cuda(args.gpu)
 
-                # if clustering_model is None:
-                #     cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
-                # else:
-                #     cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                # TODO
+                if clustering_model is None:
+                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
+                else:
+                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
+                # cluster = torch.randint(0, args.cluster, (images.size(0),), dtype=torch.long)
 
                 # compute output
                 output = model(images, cluster)

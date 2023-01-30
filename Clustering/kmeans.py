@@ -17,6 +17,51 @@ import csv
 
 from HAWQ.utils import *
 
+class Node(object):
+    def __init__(self, depth, selected_grid=None, label=0):
+        self.depth = depth
+        self.selected_grid = selected_grid
+        self.label = label
+        
+    @torch.no_grad()
+    def build_child(self, selected_grid=None):
+        self.left = Node(self.depth-1, selected_grid, self.label)
+        self.right = Node(self.depth-1, selected_grid, self.label + 2**(self.depth-1))
+    
+    @torch.no_grad()
+    def train(self, x):
+        self.size = torch.tensor([x.size(0)]).cuda()
+        if self.selected_grid is not None:
+            # If non-Root nodes
+            variance = x.var(dim=0)
+            variance[self.selected_grid] = 0
+            self.index = torch.argmax(variance).item()
+        else:
+            # If Root node
+            self.index = torch.argmax(x.var(dim=0)).item()
+        
+        self.threshold = x.median(0).values[self.index]
+        
+        if self.depth > 0:
+            selected_grid = sorted(self.selected_grid + [self.index]) if self.selected_grid is not None else [self.index]
+            mask = torch.lt(x[:,self.index], self.threshold)
+            self.build_child(selected_grid)
+            self.left.train(x[mask,:])
+            self.right.train(x[~mask,:])
+    
+    @torch.no_grad()
+    def predict(self, x):
+        if self.depth == 0:
+            return self.label
+        return torch.where(torch.lt(x[:, self.index], self.threshold), self.left.predict(x), self.right.predict(x))
+    
+    @torch.no_grad()
+    def get_cluster_size(self):
+        if self.depth == 0:
+            return self.size
+        return torch.cat((self.left.get_cluster_size(), self.right.get_cluster_size()))
+        
+        
 class CustomPredictionModel(object):
     def __init__(self, cluster_size):
         self.cluster_size = cluster_size
@@ -210,8 +255,11 @@ class KMeansClustering(object):
                 batch = self.get_partitioned_batch(image.cuda()).clone()
                 x = torch.cat((x, batch))
 
+        pdb.set_trace()
+        
         n_prediction_cluster = self.args.sub_cluster if self.args.sub_cluster else self.args.cluster
-        best_model = CustomPredictionModel(int(math.log2(n_prediction_cluster)))
+        # best_model = CustomPredictionModel(int(math.log2(n_prediction_cluster)))
+        best_model = Node(int(math.log2(n_prediction_cluster)))
         best_model.train(x)
         
         # best_model_inertia = 9999999999999999
@@ -236,12 +284,6 @@ class KMeansClustering(object):
                 'num_partitions': self.args.partition,
                 'k': self.args.cluster
             }
-            if self.args.dataset == 'imagenet':
-                args_to_save.update({
-                    'tol': self.args.kmeans_tol,
-                    'n_inits': self.args.kmeans_init,
-                    'epoch': self.args.kmeans_epoch,
-                })
             json.dump(args_to_save, f, indent=4)
         self.model = best_model
 
@@ -399,11 +441,11 @@ class KMeansClustering(object):
                 return get_final_cluster(
                     merged_clusters, self.args.sub_cluster, cur_cluster_size), cur_cluster_size
 
-            copy_model = deepcopy(dnn_model)
-            train_score = self.validate_score(
-                train_loader, copy_model).view(-1, 1)
-            test_score = self.validate_score(
-                test_loader, copy_model).view(-1, 1)
+            # copy_model = deepcopy(dnn_model)
+            # train_score = self.validate_score(
+            #     train_loader, copy_model).view(-1, 1)
+            # test_score = self.validate_score(
+            #     test_loader, copy_model).view(-1, 1)
 
             n_iter = 0
             merged_clusters = []
@@ -411,54 +453,63 @@ class KMeansClustering(object):
 
             original_size_per_clusters = n_per_clusters.clone()
             while (cur_cluster_size > self.args.cluster):
-                self.final_cluster, cur_cluster_size = merge_small_cluster(
+                final_cluster, cur_cluster_size = merge_small_cluster(
                     self,
                     ema,
                     merged_clusters,
                     original_size_per_clusters)
+            return final_cluster
+                # self.final_cluster, cur_cluster_size = merge_small_cluster(
+                #     self,
+                #     ema,
+                #     merged_clusters,
+                #     original_size_per_clusters)
 
-                train_cur_score = set_new_ema_and_score(
-                    self,
-                    dnn_model,
-                    copy_model,
-                    None,
-                    train_loader,
-                    n_per_clusters,
-                    self.args.sub_cluster - cur_cluster_size,
-                    cur_cluster_size)
-                test_cur_score = set_new_ema_and_score(
-                    self,
-                    dnn_model,
-                    copy_model,
-                    None,
-                    test_loader,
-                    n_per_clusters,
-                    self.args.sub_cluster - cur_cluster_size,
-                    cur_cluster_size)
+                # train_cur_score = set_new_ema_and_score(
+                #     self,
+                #     dnn_model,
+                #     copy_model,
+                #     None,
+                #     train_loader,
+                #     n_per_clusters,
+                #     self.args.sub_cluster - cur_cluster_size,
+                #     cur_cluster_size)
+                # test_cur_score = set_new_ema_and_score(
+                #     self,
+                #     dnn_model,
+                #     copy_model,
+                #     None,
+                #     test_loader,
+                #     n_per_clusters,
+                #     self.args.sub_cluster - cur_cluster_size,
+                #     cur_cluster_size)
 
-                train_score = torch.cat((train_score, train_cur_score), dim=1)
-                test_score = torch.cat((test_score, test_cur_score), dim=1)
-            return train_score, test_score
+                # train_score = torch.cat((train_score, train_cur_score), dim=1)
+                # test_score = torch.cat((test_score, test_cur_score), dim=1)
+            # return train_score, test_score
 
-        train_score, test_score = merge_small_clusters(
-            self, dnn_model, train_loader, test_loader, ema, n_per_clusters)
+        # train_score, test_score = merge_small_clusters(
+        #     self, dnn_model, train_loader, test_loader, ema, n_per_clusters)
 
-        score_np = train_score.cpu().numpy()
-        columns = [self.args.sub_cluster] + \
-            [i for i in reversed(
-                range(self.args.cluster, self.args.sub_cluster))]
-        score_df = pd.DataFrame(score_np, columns=columns)
-        score_df.to_csv(
-            f"train_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        # score_np = train_score.cpu().numpy()
+        # columns = [self.args.sub_cluster] + \
+        #     [i for i in reversed(
+        #         range(self.args.cluster, self.args.sub_cluster))]
+        # score_df = pd.DataFrame(score_np, columns=columns)
+        # score_df.to_csv(
+        #     f"train_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
 
-        score_np = test_score.cpu().numpy()
-        columns = [self.args.sub_cluster] + \
-            [i for i in reversed(
-                range(self.args.cluster, self.args.sub_cluster))]
-        score_df = pd.DataFrame(score_np, columns=columns)
-        score_df.to_csv(
-            f"test_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
-        exit()
+        # score_np = test_score.cpu().numpy()
+        # columns = [self.args.sub_cluster] + \
+        #     [i for i in reversed(
+        #         range(self.args.cluster, self.args.sub_cluster))]
+        # score_df = pd.DataFrame(score_np, columns=columns)
+        # score_df.to_csv(
+        #     f"test_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        # exit()
+
+        self.final_cluster = merge_small_clusters(
+            self, dnn_model, train_loader, test_loader, ema, n_per_clusters).cuda()
 
         """
         # Score Based on Error Rate
@@ -1350,10 +1401,11 @@ def save_cluster_info(args, feature_index, final_clusters):
 
     torch.save(feature_index, os.path.join(args.clustering_path, "index.pth"))
 
-    final_cluster = torch.zeros(
-        args.sub_cluster, dtype=torch.int64)
-    for sub, final in final_clusters.items():
-        final_cluster[int(sub)] = final
+    if not torch.is_tensor(final_cluster):
+        final_cluster = torch.zeros(
+            args.sub_cluster, dtype=torch.int64)
+        for sub, final in final_clusters.items():
+            final_cluster[int(sub)] = final
 
     return args, final_cluster
 

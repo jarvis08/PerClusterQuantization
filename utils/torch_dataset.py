@@ -125,7 +125,7 @@ def get_data_loaders(args, model):
         normalizer = get_normalizer(args.dataset)
 
         test_dataset = get_test_dataset(args, normalizer, model)
-        test_dataset = CustomDataset(test_dataset, args.cluster)                        # TODO
+        # test_dataset = CustomDataset(test_dataset, args.cluster)                        # TODO
         test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
         if args.mode == 'eval':
             return test_loader
@@ -133,8 +133,8 @@ def get_data_loaders(args, model):
         clustering_train_loader = None
         aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
         non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
-        aug_train_dataset = CustomDataset(aug_train_dataset, args.cluster)              # TODO
-        non_aug_train_dataset = CustomDataset(non_aug_train_dataset, args.cluster)      # TODO
+        # aug_train_dataset = CustomDataset(aug_train_dataset, args.cluster)              # TODO
+        # non_aug_train_dataset = CustomDataset(non_aug_train_dataset, args.cluster)      # TODO
 
         clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=False,
                                                 workers=args.worker)
