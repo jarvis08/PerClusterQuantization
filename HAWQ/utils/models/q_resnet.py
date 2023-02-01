@@ -55,14 +55,13 @@ class Q_ResNet18(nn.Module):
         self.quant_output.set_param(output)
 
     def forward(self, x, cluster=None):
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, act_scaling_factor = self.quant_input((x, cluster))
 
         x, weight_scaling_factor = self.quant_init_block_convbn(
             x, act_scaling_factor)
 
         x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(
-            x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_int32((x, cluster), act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
 
@@ -75,8 +74,7 @@ class Q_ResNet18(nn.Module):
 
         x = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(
-            x, act_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_output((x, cluster), act_scaling_factor)
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
 
@@ -124,12 +122,12 @@ class Q_ResNet20(nn.Module):
         self.quant_output.set_param(output)
 
     def forward(self, x, cluster=None):
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, act_scaling_factor = self.quant_input((x, cluster))
 
         x, weight_scaling_factor = self.quant_init_block_convbn(
             x, act_scaling_factor)
-        x, act_scaling_factor = self.quant_act_int32(
-            x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        
+        x, act_scaling_factor = self.quant_act_int32((x, cluster), act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
 
@@ -142,8 +140,7 @@ class Q_ResNet20(nn.Module):
 
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(
-            x, act_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_output((x, cluster), act_scaling_factor)
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
 
@@ -194,14 +191,13 @@ class Q_ResNet50(nn.Module):
         self.quant_output.set_param(output)
 
     def forward(self, x, cluster=None):
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, act_scaling_factor = self.quant_input((x, cluster))
 
         x, weight_scaling_factor = self.quant_init_convbn(
             x, act_scaling_factor)
 
         x = self.pool(x)
-        x, act_scaling_factor = self.quant_act_int32(
-            x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_int32((x, cluster), act_scaling_factor, weight_scaling_factor)
 
         x = self.act(x)
 
@@ -214,8 +210,7 @@ class Q_ResNet50(nn.Module):
 
         x, act_scaling_factor = self.final_pool(x, act_scaling_factor)
 
-        x, act_scaling_factor = self.quant_act_output(
-            x, act_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_output((x, cluster), act_scaling_factor)
         x = x.view(x.size(0), -1)
         x = self.quant_output(x, act_scaling_factor)
 
@@ -262,37 +257,33 @@ class Q_ResUnitBn(nn.Module):
     def forward(self, x, scaling_factor_int32=None, cluster=None):
         # forward using the quantized modules
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(
-                x, scaling_factor_int32, cluster=cluster)
+            x, act_scaling_factor = self.quant_act((x, cluster), scaling_factor_int32)
             identity_act_scaling_factor = act_scaling_factor.clone(
             ) if act_scaling_factor is not None else None
             identity, identity_weight_scaling_factor = self.quant_identity_convbn(
                 x, act_scaling_factor)
         else:
             identity = x
-            x, act_scaling_factor = self.quant_act(
-                x, scaling_factor_int32, cluster=cluster)
+            x, act_scaling_factor = self.quant_act((x, cluster), scaling_factor_int32)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
         x = self.act1(x)
-        x, act_scaling_factor = self.quant_act1(
-            x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act1((x, cluster), act_scaling_factor, weight_scaling_factor)
 
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
         x = self.act2(x)
-        x, act_scaling_factor = self.quant_act2(
-            x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act2((x, cluster), act_scaling_factor, weight_scaling_factor)
 
         x, weight_scaling_factor = self.quant_convbn3(x, act_scaling_factor)
 
         x = x + identity
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor,
-                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
+            x, act_scaling_factor = self.quant_act_int32((x, cluster), act_scaling_factor, weight_scaling_factor,
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor,
-                                                         identity, scaling_factor_int32, None, cluster=cluster)
+            x, act_scaling_factor = self.quant_act_int32((x, cluster),  act_scaling_factor, weight_scaling_factor,
+                                                         identity, scaling_factor_int32, None)
 
         x = self.act3(x)
 
@@ -334,32 +325,29 @@ class Q_ResBlockBn(nn.Module):
     def forward(self, x, scaling_factor_int32=None, cluster=None):
         # forward using the quantized modules
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act(
-                x, scaling_factor_int32, cluster=cluster)
+            x, act_scaling_factor = self.quant_act((x, cluster), scaling_factor_int32)
             identity_act_scaling_factor = act_scaling_factor.clone(
             ) if act_scaling_factor is not None else None
             identity, identity_weight_scaling_factor = self.quant_identity_convbn(
                 x, act_scaling_factor)
         else:
             identity = x
-            x, act_scaling_factor = self.quant_act(
-                x, scaling_factor_int32, cluster=cluster)
+            x, act_scaling_factor = self.quant_act((x, cluster), scaling_factor_int32)
 
         x, weight_scaling_factor = self.quant_convbn1(x, act_scaling_factor)
         x = self.act1(x)
-        x, act_scaling_factor = self.quant_act1(
-            x, act_scaling_factor, weight_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act1((x, cluster), act_scaling_factor, weight_scaling_factor)
 
         x, weight_scaling_factor = self.quant_convbn2(x, act_scaling_factor)
 
         x = x + identity
 
         if self.resize_identity:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor,
-                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor, cluster=cluster)
+            x, act_scaling_factor = self.quant_act_int32((x, cluster), act_scaling_factor, weight_scaling_factor,
+                                                         identity, identity_act_scaling_factor, identity_weight_scaling_factor)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor,
-                                                         identity, scaling_factor_int32, None, cluster=cluster)
+            x, act_scaling_factor = self.quant_act_int32((x, cluster), act_scaling_factor, weight_scaling_factor,
+                                                         identity, scaling_factor_int32, None)
 
         x = self.act2(x)
 

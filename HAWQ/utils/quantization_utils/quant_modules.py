@@ -191,7 +191,8 @@ class QuantAct(Module):
                  fix_flag=False,
                  act_percentile=0,
                  fixed_point_quantization=False,
-                 num_clusters=1):
+                 num_clusters=1,
+                 threshold=1):
         super(QuantAct, self).__init__()
 
         self.activation_bit = activation_bit
@@ -217,6 +218,9 @@ class QuantAct(Module):
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
         self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
         # self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
+        
+        self.counter = 0
+        self.threshold = threshold
 
         self.is_classifier = False
     def __repr__(self):
@@ -267,11 +271,14 @@ class QuantAct(Module):
         """
         if type(x) is tuple:
             if len(x) == 4:
+                pre_act_scaling_factor = x[1]
                 cluster = x[2]
                 channel_num = x[3]
             elif len(x) == 3:
+                pre_act_scaling_factor = x[1]
                 cluster = x[2]
-            pre_act_scaling_factor = x[1]
+            elif len(x) == 2:
+                cluster = x[1]
             x = x[0]
 
         # perform the quantization
@@ -289,38 +296,73 @@ class QuantAct(Module):
             uniques = torch.unique(cluster)
             # calculate the quantization range of the activations
             if self.running_stat:
-                if self.act_percentile == 0:
-                    data = x.view(x.size(0), -1).clone().detach()
-                    self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
-                    self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
-                        
-                elif self.quant_mode == 'symmetric':        # TODO
-                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
-                                                    self.act_percentile, output_tensor=True)
-                # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
-                # that is to say our asymmetric quantization should always be after ReLU, which makes
-                # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
-                # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
-                elif self.quant_mode == 'asymmetric':       # TODO
-                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)
+                if False:
+                    if self.act_percentile == 0:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
+                            
+                    elif self.quant_mode == 'symmetric':        # TODO
+                        x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
+                                                        self.act_percentile, output_tensor=True)
+                    # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
+                    # that is to say our asymmetric quantization should always be after ReLU, which makes
+                    # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
+                    # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
+                    elif self.quant_mode == 'asymmetric':       # TODO
+                        x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)
 
-                # Initialization
-                if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
-                    tmp_min = torch.index_select(self.min, 0, non_initialized)
-                    tmp_max = torch.index_select(self.max, 0, non_initialized)
-                    self.x_min.index_add_(0, non_initialized, tmp_min)
-                    self.x_max.index_add_(0, non_initialized, tmp_max)
-                    self.initialize.index_fill_(0, uniques, False)
-                
-                if self.act_range_momentum == -1:
-                    self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
-                    self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
-                else:
-                    tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                    tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                    self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
-                    self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
+                    # Initialization
+                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
+                        tmp_min = torch.index_select(self.min, 0, non_initialized)
+                        tmp_max = torch.index_select(self.max, 0, non_initialized)
+                        self.x_min.index_add_(0, non_initialized, tmp_min)
+                        self.x_max.index_add_(0, non_initialized, tmp_max)
+                        self.initialize.index_fill_(0, uniques, False)
                     
+                    if self.act_range_momentum == -1:
+                        self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
+                        self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
+                    else:
+                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                        self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
+                        self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
+                        
+                    self.min.fill_(0.)
+                    self.max.fill_(0.)
+                else:
+                    if self.counter == 0:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
+                        self.counter += 1
+                    else:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin")
+                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax")
+                        self.counter += 1
+                    
+                    # Initialization
+                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
+                        tmp_min = torch.index_select(self.min, 0, non_initialized)
+                        tmp_max = torch.index_select(self.max, 0, non_initialized)
+                        self.x_min.index_add_(0, non_initialized, tmp_min)
+                        self.x_max.index_add_(0, non_initialized, tmp_max)
+                        self.initialize.index_fill_(0, torch.flatten(self.x_max.nonzero()), False)
+                        
+                    ready = torch.flatten(self.x_max.nonzero())
+                    if self.counter == self.threshold:
+                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
+                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
+                        self.x_min.view(-1, 1).index_copy_(0, ready, tmp_min)
+                        self.x_max.view(-1, 1).index_copy_(0, ready, tmp_max)
+                        
+                        self.min.fill_(0.)
+                        self.max.fill_(0.)
+                        
+                        self.counter = 0
+                
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
                                                                            self.x_min, self.x_max, (self.num_clusters != 1))
@@ -380,27 +422,60 @@ class QuantAct(Module):
         else:
             if self.calibration_flag:
                 uniques = torch.unique(cluster)
-                if self.act_percentile == 0:
-                    data = x.view(x.size(0), -1).clone().detach()
-                    self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
-                    self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
+                if False:
+                    if self.act_percentile == 0:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
 
-                # Initialization
-                if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
-                    tmp_min = torch.index_select(self.min, 0, non_initialized)
-                    tmp_max = torch.index_select(self.max, 0, non_initialized)
-                    self.x_min.index_add_(0, non_initialized, tmp_min)
-                    self.x_max.index_add_(0, non_initialized, tmp_max)
-                    self.initialize.index_fill_(0, uniques, False)
-                
-                if self.act_range_momentum == -1:
-                    self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
-                    self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
+                    # Initialization
+                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
+                        tmp_min = torch.index_select(self.min, 0, non_initialized)
+                        tmp_max = torch.index_select(self.max, 0, non_initialized)
+                        self.x_min.index_add_(0, non_initialized, tmp_min)
+                        self.x_max.index_add_(0, non_initialized, tmp_max)
+                        self.initialize.index_fill_(0, uniques, False)
+                    
+                    if self.act_range_momentum == -1:
+                        self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
+                        self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
+                    else:
+                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                        self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
+                        self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
                 else:
-                    tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                    tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                    self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
-                    self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
+                    if self.counter == 0:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
+                        self.counter += 1
+                    else:
+                        data = x.view(x.size(0), -1).clone().detach()
+                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin")
+                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax")
+                        self.counter += 1
+                    
+                    # Initialization
+                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
+                        tmp_min = torch.index_select(self.min, 0, non_initialized)
+                        tmp_max = torch.index_select(self.max, 0, non_initialized)
+                        self.x_min.index_add_(0, non_initialized, tmp_min)
+                        self.x_max.index_add_(0, non_initialized, tmp_max)
+                        self.initialize.index_fill_(0, torch.flatten(self.x_max.nonzero()), False)
+                        
+                    ready = torch.flatten(self.x_max.nonzero())
+                    if self.counter == self.threshold:
+                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
+                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
+                        self.x_min.view(-1, 1).index_copy_(0, ready, tmp_min)
+                        self.x_max.view(-1, 1).index_copy_(0, ready, tmp_max)
+                        
+                        self.min.fill_(0.)
+                        self.max.fill_(0.)
+                        
+                        self.counter = 0
+                    
             return (x, None)
 
 

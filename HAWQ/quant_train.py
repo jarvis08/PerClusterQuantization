@@ -30,6 +30,7 @@ import torch.optim
 import torch.multiprocessing as mp
 
 import pandas as pd
+import math
 
 mp.set_sharing_strategy('file_system')
 
@@ -379,7 +380,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                 setattr(m, 'save_path', args.save_path)
                 setattr(m, 'fixed_point_quantization',
                         args.fixed_point_quantization)
-
+                
                 if type(bit_config[name]) is tuple:
                     bitwidth, symmetric = bit_config[name]
                 else:
@@ -396,6 +397,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             len(bit_config.keys()) == name_counter))
         return model
 
+    def set_window_size(args, model, window_size):
+        batch_size = args.batch_size
+        cluster_size = args.sub_cluster if args.nnac else args.cluster
+        threshold = math.ceil(window_size*cluster_size/batch_size)
+        for _, m in model.named_modules():
+            if hasattr(m, 'threshold'):
+                setattr(m, 'threshold', threshold)
+        return model
 
     global best_acc1
     args.gpu = gpu
@@ -459,14 +468,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     # Merge Before Finetune
     # TODO
-    # if args.nnac and clustering_model.final_cluster is None:
-    #     sub_model = deepcopy(model).cuda()
-    #     tmp_fp_model, _ = create_model(args)
-    #     tmp_fp_model = tmp_fp_model.cuda()
+    if args.nnac and clustering_model.final_cluster is None:
+        sub_model = deepcopy(model).cuda()
+        tmp_fp_model, _ = create_model(args)
+        tmp_fp_model = tmp_fp_model.cuda()
         
-    #     train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
-    #     clustering_model.ema_nn_aware_clustering(tmp_fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
-    #     del sub_model
+        train_ema(cluster_train_loader, sub_model, clustering_model, criterion, args)
+        clustering_model.ema_nn_aware_clustering(tmp_fp_model, sub_model, cluster_train_loader, test_loader, args.arch)
+        del sub_model
         
     # # Merge After Finetune
     # if args.nnac and clustering_model.final_cluster is None:
@@ -491,12 +500,25 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     # log_path = set_kt_log_dir(args)
 
     # TODO
-    if not os.path.exists(finetune_path):
-        os.mkdir(finetune_path)
-    if not os.path.exists(log_path):
-        os.mkdir(log_path)
-
+    # if not os.path.exists(finetune_path):
+    #     os.mkdir(finetune_path)
+    # if not os.path.exists(log_path):
+    #     os.mkdir(log_path)
+    
+    
+    
     """
+    def get_ema_for_model(model, cluster_size):
+        min_ema = torch.zeros([cluster_size, 0]).cuda()
+        max_ema = torch.zeros([cluster_size, 0]).cuda()
+        for name, m in model.named_modules():
+            if "quant_act" in name or "quant_input" in name:
+                tmp_min = getattr(m, 'x_min')
+                tmp_max = getattr(m, 'x_max')
+                min_ema = torch.cat((min_ema, tmp_min.view(-1, 1)), dim=1)
+                max_ema = torch.cat((max_ema, tmp_max.view(-1, 1)), dim=1)
+        return (min_ema, max_ema)
+        
     best_acc = 0
     for _ in range(50):
         acc, score = validate_per_clusters(test_loader, model, clustering_model, criterion, args)
@@ -506,17 +528,52 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
             
     score_np = torch.squeeze(best_score).cpu().numpy()
     score_df = pd.DataFrame(score_np)
-    score_df.to_csv(f"resnet20_cifar10_{args.cluster}.csv", header=False, index=False)
+    score_df.to_csv(f"resnet20_svhn_{args.cluster}.csv", header=False, index=False)
     
     exit()
     """
     
-    # Train EMA for couple epochs before training parameters
+    # # Train EMA for couple epochs before training parameters
+    # def get_accuracy_per_window_size(args, window_size, model, train_loader, test_loader, clustering_model, criterion):
+    #     print("EMA training epochs...")
+    #     sub_model = deepcopy(model).cuda()
+
+    #     best_acc = 0.
+    #     sub_model = set_window_size(args, sub_model, window_size)
+    #     for epoch in range(10):
+    #         train_ema(train_loader, sub_model, clustering_model, criterion, args)
+    #         acc1 = validate(test_loader, sub_model, clustering_model, criterion, args)
+    #         if acc1 > best_acc:
+    #             best_acc = acc1
+    #             best_epoch = epoch
+                
+    #         if epoch == 0:
+    #             first_acc = acc1
+        
+    #     return best_acc, best_epoch, first_acc, acc1
+    
+    # # windows = [1, int(args.batch_size/4), int(args.batch_size/2), int(args.batch_size), int(args.batch_size*2)]
+    # windows = math.ceil(math.sqrt(len(train_loader.dataset) / args.cluster))
+    # for window in windows:
+    #     best_acc, best_epoch, first_acc, last_acc = get_accuracy_per_window_size(
+    #         args, window, model, train_loader, test_loader, clustering_model, criterion)
+    #     with open(f'{args.arch}_{args.data}.txt', 'a') as f:
+    #         f.write('Cluster:{}, Window:{}, best_acc:{}, best_epoch:{}, initial_acc:{}, final_acc:{}\n'.format(
+    #             args.cluster, window, best_acc, best_epoch, first_acc, last_acc))
+    
+    # exit()
+    
+    window_size = math.ceil(math.sqrt(len(train_loader.dataset) / args.cluster))
+    model = set_window_size(args, model, window_size)
+    
     print("EMA training epochs...")
     train_ema(train_loader, model, clustering_model, criterion, args)
-    acc1 = validate(test_loader, model, clustering_model, criterion, args)
+    ema_acc = validate(test_loader, model, clustering_model, criterion, args)
     
-    
+    with open(f'{log_path}/ema_{args.cluster}.txt', 'a') as f:
+        f.write('Cluster:{}, Window:{}, ema_acc:{}\n'.format(
+            args.cluster, window_size, ema_acc))
+        
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 

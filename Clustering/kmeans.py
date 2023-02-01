@@ -108,7 +108,7 @@ class KMeansClustering(object):
         channel = data.size(1)
         _size = data.size(2)
         # n_part = self.args.partition
-        n_part = 2
+        n_part = 4
         if _buffer := ((n_part - _size % n_part) % n_part):
             m = torch.nn.ZeroPad2d((0, _buffer, 0, _buffer))
             data = m(data)
@@ -248,7 +248,7 @@ class KMeansClustering(object):
     def train_clustering_model(self, nonaug_loader):
         print('Train K-means clustering model..')
         # best_model = None
-        x = torch.zeros([0, 12]).cuda()
+        x = torch.zeros([0, 48]).cuda()
         print(">> Load Non-augmented dataset & get representations for clustering..")
         with tqdm(nonaug_loader, unit="batch", ncols=90) as t:
             for image, _ in t:
@@ -346,6 +346,14 @@ class KMeansClustering(object):
                     setattr(m, 'x_min', min[index])
                     setattr(m, 'x_max', max[index])
                     index += 1
+                    
+        def remove_all_forward_hooks(model):
+            from collections import OrderedDict
+            for _, child in model._modules.items():
+                if child is not None:
+                    if hasattr(child, "_forward_hooks"):
+                        child._forward_hooks = OrderedDict()
+                    remove_all_forward_hooks(child)
 
         def get_max_for_model(model, feature):
             def hook_fn(name):
@@ -361,10 +369,107 @@ class KMeansClustering(object):
                 if isinstance(layer, QuantAct):
                     layer.register_forward_hook(hook_fn(name))
 
+        def count_and_measure_saturated_data_per_cluster(model, feature, cluster_size):
+            def hook_fn(name):
+                def hook(module, input, output):
+                    if type(input) is tuple:
+                        input_data = input[0]
+                        data = input_data[0].detach()
+                        if len(input_data) == 2:
+                            cluster = input_data[1].detach()
+                        elif len(input_data) == 3:
+                            cluster = input_data[2].detach()
+                        elif len(input_data) == 4:
+                            cluster = input_data[2].detach()
+                        else:
+                            pdb.set_trace()
+                            
+                        
+                        if name not in feature['saturated_flag']:
+                            feature['quantization_error'][name] = torch.zeros([cluster_size], dtype=torch.float).cuda()
+                            feature['saturated_flag'][name] = torch.zeros([cluster_size], dtype=torch.long).cuda()
+                            feature['saturated_score_max'][name] = torch.zeros([cluster_size], dtype=torch.float).cuda()
+                            feature['neuron_count'][name] = data.view(data.size(0), -1).size(1)
+                            feature['saturated_neuron_count'][name] = torch.zeros([cluster_size], dtype=torch.long).cuda()
+                            feature['saturated_score_total'][name] = torch.zeros([cluster_size], dtype=torch.float).cuda()
+                            
+                        quantization_error = torch.abs(data - output[0]).view(data.size(0), -1).sum(dim=1)
+                        feature['quantization_error'][name].scatter_reduce_(0, cluster, src=quantization_error, reduce="sum")
+                            
+                        max = data.view(data.size(0), -1).amax(dim=1)
+                        saturated = torch.gt(max, module.x_max[cluster])
+                        count = torch.where(saturated == True, 1, 0)
+                        feature['saturated_flag'][name].scatter_reduce_(0, cluster, src=count, reduce="sum")
+                        
+                        saturated_max = F.relu(max - module.x_max[cluster])
+                        feature['saturated_score_max'][name].scatter_reduce_(0, cluster, src=saturated_max, reduce="sum")
+                        
+                        saturated_neuron = torch.gt(data.view(data.size(0), -1), module.x_max[cluster].view(-1, 1))
+                        saturated_neuron_count = torch.where(saturated_neuron == True, 1, 0).sum(dim=1)
+                        feature['saturated_neuron_count'][name].scatter_reduce_(0, cluster, src=saturated_neuron_count, reduce="sum")
+                        
+                        saturated_data = F.relu(data.view(data.size(0), -1) - module.x_max[cluster].view(-1, 1)).sum(dim=1)
+                        feature['saturated_score_total'][name].scatter_reduce_(0, cluster, src=saturated_data, reduce="sum")
+                        
+                return hook
+            for name, layer in model.named_modules():
+                if isinstance(layer, QuantAct):
+                    layer.register_forward_hook(hook_fn(name))
+                    
+
         print('\n>>> NN-aware Clustering..')
         # ema = torch.transpose(dnn_model.get_ema_per_layer().cuda(), 0, 1)
         _, ema = get_ema_for_model(dnn_model, self.args.sub_cluster)
 
+        feature = {}
+        feature['quantization_error'] = {}
+        feature['saturated_flag'] = {}
+        feature['saturated_score_max'] = {}
+        feature['neuron_count'] = {}
+        feature['saturated_neuron_count'] = {}
+        feature['saturated_score_total'] = {}
+        clusters = torch.zeros([0]).cuda()
+
+        # Register Hook
+        count_and_measure_saturated_data_per_cluster(dnn_model, feature, self.args.sub_cluster)
+        
+        freeze_model(dnn_model)
+        dnn_model.eval()
+        with tqdm(train_loader, desc="Collecting Cluster Information", ncols=95) as t:
+            for i, (images, _) in enumerate(t):
+                images = images.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+                # dnn_model.get_max_activations(images, cluster)
+                _ = dnn_model(images, cluster)
+
+                clusters = torch.cat((clusters, cluster))
+
+        unfreeze_model(dnn_model)
+        
+        clusters = clusters.type(torch.LongTensor).cuda()
+        _, n_per_clusters = clusters.unique(return_counts=True)
+
+        quantization_error = torch.stack(list(feature['quantization_error'].values()))
+        saturated_flag = torch.stack(list(feature['saturated_flag'].values()))
+        saturated_score_max = torch.stack(list(feature['saturated_score_max'].values()))
+        neuron_count = torch.tensor(list(feature['neuron_count'].values())).cuda()
+        saturated_neuron_count = torch.stack(list(feature['saturated_neuron_count'].values()))
+        saturated_score_total = torch.stack(list(feature['saturated_score_total'].values()))
+        
+        
+        remove_all_forward_hooks(dnn_model)
+        
+        train_accuracy, train_cluster_size = self.validate_accuracy_per_clusters(train_loader, dnn_model, self.args.sub_cluster)
+        test_accuracy, test_cluster_size = self.validate_accuracy_per_clusters(test_loader, dnn_model, self.args.sub_cluster)
+        
+        score_np = test_score.cpu().numpy()
+        score_df = pd.DataFrame(score_np)
+        score_df.to_csv(
+            f"test_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
+        exit()
+        
+        
+        """
         feature = {}
         clusters = torch.zeros([0]).cuda()
         max = torch.zeros([0, ema.size(1)]).cuda()
@@ -390,7 +495,9 @@ class KMeansClustering(object):
         # maxs = dnn_model.max_counter
         clusters = clusters.type(torch.LongTensor).cuda()
         _, n_per_clusters = clusters.unique(return_counts=True)
-
+        """
+        
+        """
         # Representation 고정, Cluster Size 고정
         # 크기가 작은 클러스터 N 개 선정, 각각 가장 가까운 Cluster 와 매핑 후 한번에 Merge
         # 하지만, Cycle가 발생할 수 있어 확정적으로 원하는 개수의 Final Cluster 생성 불가능
@@ -505,10 +612,12 @@ class KMeansClustering(object):
         # score_df.to_csv(
         #     f"test_{arch}_{self.args.dataset}_{self.args.sub_cluster}.csv", index=False)
         # exit()
-
+        """
+        
         self.final_cluster = merge_small_clusters(
             self, dnn_model, train_loader, test_loader, ema, n_per_clusters).cuda()
-
+        
+        
         """
         # Score Based on Error Rate
         copy_model = deepcopy(dnn_model)
@@ -806,6 +915,76 @@ class KMeansClustering(object):
         unfreeze_model(model)
 
         return torch.stack((false_pred_new.view(1, -1), new_cluster_size.view(1, -1), wrong_pred_new.view(1, -1)), dim=0)
+
+    @torch.no_grad()
+    def validate_accuracy_per_clusters(self, loader, model, cluster_size):
+        @torch.no_grad()
+        def accuracy(output, target, topk=(1,)):
+            """Computes the accuracy over the k top predictions for the specified values of k"""
+            maxk = max(topk)
+            batch_size = target.size(0)
+
+            _, pred = output.topk(maxk, 1, True, True)
+            pred = pred.t()
+            correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+            res = []
+            for k in topk:
+                correct_k = correct[:k].reshape(-1).float().sum(0,
+                                                                keepdim=True)
+                res.append(correct_k.mul_(100.0 / batch_size))
+            return res
+
+        @torch.no_grad()
+        def prediction(output, target):
+            if type(output) is tuple:
+                output = output[0]
+
+            _, pred = output.topk(1, 1, True, True)
+            pred = pred.t()
+
+            correct = pred.eq(target.view(1, -1).expand_as(pred))
+            return torch.squeeze(correct)
+
+        accuracy_per_cluster = torch.zeros([cluster_size], dtype=torch.long).cuda()
+        cluster_size = torch.zeros([cluster_size], dtype=torch.long).cuda()
+
+        fp_top1 = AverageMeter('FP_Acc@1', ':6.2f')
+        top1 = AverageMeter('Acc@1', ':6.2f')
+
+        # switch to evaluate mode
+        freeze_model(model)
+        model.eval()
+
+        with tqdm(loader, desc="Validate", ncols=95) as t:
+            for i, data in enumerate(t):
+                if self.args.dataset == 'imagenet':
+                    images, target = data[0]['data'], torch.flatten(
+                        data[0]['label']).type(torch.long)
+                else:
+                    images, target = data
+
+                images = images.cuda()
+                target = target.cuda()
+                cluster = self.predict_cluster_of_batch(images).cuda()
+                u1, c1 = torch.unique(cluster, return_counts=True)
+                cluster_size.put_(u1, c1, accumulate=True)
+                
+                # compute output
+                output = model(images, cluster)
+                Q_pred = prediction(output, target)
+
+                pred = torch.where(Q_pred == True, 1, 0)
+                accuracy_per_cluster.scatter_reduce_(0, cluster, src=pred, reduce="sum")
+                
+                acc1, _ = accuracy(output, target, topk=(1, 5))
+                top1.update(acc1[0].item(), images.size(0))
+
+                t.set_postfix(fp_acc1=fp_top1.avg, acc1=top1.avg)
+
+        unfreeze_model(model)
+        
+        return accuracy_per_cluster / cluster_size, cluster_size
 
     # @torch.no_grad()
     # def max_nn_aware_clustering(self, dnn_model, train_loader, arch, print_log=True):

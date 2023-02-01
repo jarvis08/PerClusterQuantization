@@ -125,36 +125,31 @@ class Q_AlexNet(nn.Module):
 
 
     def forward(self, x, cluster=None):
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, act_scaling_factor = self.quant_input((x, cluster))
 
         x, conv_scaling_factor = self.conv1(x, act_scaling_factor)
         x = self.act1(x)
-        x, act_scaling_factor = self.quant_act1(
-            x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act1((x, cluster), act_scaling_factor, conv_scaling_factor)
 
         x, act_scaling_factor = self.maxpool1(x, act_scaling_factor)
 
         x, conv_scaling_factor = self.conv2(x, act_scaling_factor)
         x = self.act2(x)
-        x, act_scaling_factor = self.quant_act2(
-            x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act2((x, cluster), act_scaling_factor, conv_scaling_factor)
 
         x, act_scaling_factor = self.maxpool2(x, act_scaling_factor)
 
         x, conv_scaling_factor = self.conv3(x, act_scaling_factor)
         x = self.act3(x)
-        x, act_scaling_factor = self.quant_act3(
-            x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act3((x, cluster), act_scaling_factor, conv_scaling_factor)
 
         x, conv_scaling_factor = self.conv4(x, act_scaling_factor)
         x = self.act4(x)
-        x, act_scaling_factor = self.quant_act4(
-            x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act4((x, cluster), act_scaling_factor, conv_scaling_factor)
 
         x, conv_scaling_factor = self.conv5(x, act_scaling_factor)
         x = self.act5(x)
-        x, act_scaling_factor = self.quant_act5(
-            x, act_scaling_factor, conv_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act5((x, cluster), act_scaling_factor, conv_scaling_factor)
 
         x, act_scaling_factor = self.maxpool3(x, act_scaling_factor)
         x, act_scaling_factor = self.avgpool(x, act_scaling_factor)
@@ -163,13 +158,11 @@ class Q_AlexNet(nn.Module):
 
         x, fc_scaling_factor = self.fc1(x, act_scaling_factor)
         x = self.act6(x)
-        x, act_scaling_factor = self.quant_act6(
-            x, act_scaling_factor, fc_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act6((x, cluster), act_scaling_factor, fc_scaling_factor)
 
         x, fc_scaling_factor = self.fc2(x, act_scaling_factor)
         x = self.act7(x)
-        x, act_scaling_factor = self.quant_act7(
-            x, act_scaling_factor, fc_scaling_factor, cluster=cluster)
+        x, act_scaling_factor = self.quant_act7((x, cluster), act_scaling_factor, fc_scaling_factor)
 
         x = self.fc3(x, act_scaling_factor)
 
