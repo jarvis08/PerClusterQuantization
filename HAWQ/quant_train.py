@@ -537,31 +537,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
     statistics = pd.DataFrame(statistics)
     statistics.to_csv(f"{args.arch}_{args.dataset}_{args.range_ratio}_{args.gradient_manipulation_ratio}.csv", index=False)
     
-    
-        # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-        #     save_checkpoint({
-        #         'epoch': epoch + 1,
-        #         'arch': args.arch,
-        #         'state_dict': model.state_dict(),
-        #         'best_acc1': best_acc1,
-        #         'optimizer': optimizer.state_dict(),
-        #     }, is_best, finetune_path)
-
-    # test_score = best_acc1
-
-    # time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
-
-    # if args.mixed_precision:
-    #     with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}.txt', 'a') as f:
-    #         f.write(
-    #             'Schedule:{} {}, Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-    #                 args.schedule_unit, args.schedule_count, ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay,
-    #                 best_epoch, time_cost, args.data, one_epoch_time))
-    # else:
-    #     with open(f'{log_path}.txt', 'a') as f:
-    #         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-    #             args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, best_epoch, time_cost, args.data, one_epoch_time))
-        
 
 def train_ema(train_loader, model, criterion, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
@@ -598,65 +573,6 @@ def train_ema(train_loader, model, criterion, epoch, args):
                 top5.update(acc5[0].item(), images.size(0))
 
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
-
-
-def incremental_channel_selection(model, range_ratio):
-    def get_weight_range(weight):
-        w_transform = weight.transpose(1, 0).contiguous().view(weight.size(1), -1)
-        return torch.max(w_transform.amin(dim=1).abs(), w_transform.amax(dim=1).abs())
-    
-    def get_activation_range(activation_range):
-        if activation_range[0].min() >= 0.:
-            return activation_range[1] - activation_range[0]
-        return torch.max(activation_range[1].abs(), activation_range[0].abs())
-    
-    def get_weight_candidate_channel(range, ratio):
-        return torch.where(range <= range.max() * ratio, 1, 0)
-    
-    def get_activation_max_range(x_min, x_max):
-        if x_min >= 0.:
-            return x_max - x_min
-        return torch.max(x_max.abs(), x_min.abs())
-    
-    def get_activation_candidate_channel(range, max_range, ratio):
-        return torch.where(range <= max_range * ratio, 1, 0)
-    
-    total_low_bit_channel, total_orig_bit_channel, total_low_bit_weight, total_orig_bit_weight = 0, 0, 0, 0
-    for module in model.modules():
-        if isinstance(module, QuantAct):
-            prev_module = module
-        elif isinstance(module, (QuantConv2d, QuantBnConv2d)):
-            weight = module.weight.detach() if isinstance(module, QuantConv2d) else module.conv.weight.detach()
-            weight_range = get_weight_range(weight)
-            input_range = get_activation_range(module.input_range)
-            input_max_range = get_activation_max_range(prev_module.x_min, prev_module.x_max)
-
-            # candidate channel selection
-            weight_bits = get_weight_candidate_channel(weight_range, range_ratio)
-            input_bits = get_activation_candidate_channel(input_range, input_max_range, range_ratio)
-            
-            # low bit channel selection
-            new_selected_channel = torch.logical_and(input_bits, weight_bits)
-            accumulated_selected_channel = torch.logical_or(module.selected_channel, new_selected_channel)
-            
-            # accumulate new selected channel to selected channel pool
-            module.selected_channel = accumulated_selected_channel
-            module.selected_channel_index = accumulated_selected_channel.nonzero().view(-1)
-
-            # statistic
-            low_bit_channel = module.selected_channel_index.size(0)
-            orig_bit_channel = module.selected_channel.size(0)
-            weight_parameter_count = int(torch.numel(weight) / weight.size(1))
-            
-            total_low_bit_channel += low_bit_channel
-            total_orig_bit_channel += orig_bit_channel
-            total_low_bit_weight += low_bit_channel * weight_parameter_count
-            total_orig_bit_weight += orig_bit_channel * weight_parameter_count
-
-    channel_ratio = total_low_bit_channel / total_orig_bit_channel * 100
-    parameter_ratio = total_low_bit_weight / total_orig_bit_weight * 100
-    # print("Int-4 channel ratio : {:.2f}%, parameter ratio : {:.2f}%".format(channel_ratio, parameter_ratio))
-    return torch.tensor((channel_ratio, parameter_ratio)).view(-1, 1)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -792,6 +708,65 @@ def validate(val_loader, model, criterion, args):
     unfreeze_model(model)
 
     return torch.tensor([top1.avg])
+
+
+def incremental_channel_selection(model, range_ratio):
+    def get_weight_range(weight):
+        w_transform = weight.transpose(1, 0).contiguous().view(weight.size(1), -1)
+        return torch.max(w_transform.amin(dim=1).abs(), w_transform.amax(dim=1).abs())
+    
+    def get_activation_range(activation_range):
+        if activation_range[0].min() >= 0.:
+            return activation_range[1] - activation_range[0]
+        return torch.max(activation_range[1].abs(), activation_range[0].abs())
+    
+    def get_weight_candidate_channel(range, ratio):
+        return torch.where(range <= range.max() * ratio, 1, 0)
+    
+    def get_activation_max_range(x_min, x_max):
+        if x_min >= 0.:
+            return x_max - x_min
+        return torch.max(x_max.abs(), x_min.abs())
+    
+    def get_activation_candidate_channel(range, max_range, ratio):
+        return torch.where(range <= max_range * ratio, 1, 0)
+    
+    total_low_bit_channel, total_orig_bit_channel, total_low_bit_weight, total_orig_bit_weight = 0, 0, 0, 0
+    for module in model.modules():
+        if isinstance(module, QuantAct):
+            prev_module = module
+        elif isinstance(module, (QuantConv2d, QuantBnConv2d)):
+            weight = module.weight.detach() if isinstance(module, QuantConv2d) else module.conv.weight.detach()
+            weight_range = get_weight_range(weight)
+            input_range = get_activation_range(module.input_range)
+            input_max_range = get_activation_max_range(prev_module.x_min, prev_module.x_max)
+
+            # candidate channel selection
+            weight_bits = get_weight_candidate_channel(weight_range, range_ratio)
+            input_bits = get_activation_candidate_channel(input_range, input_max_range, range_ratio)
+            
+            # low bit channel selection
+            new_selected_channel = torch.logical_and(input_bits, weight_bits)
+            accumulated_selected_channel = torch.logical_or(module.selected_channel, new_selected_channel)
+            
+            # accumulate new selected channel to selected channel pool
+            module.selected_channel = accumulated_selected_channel
+            module.selected_channel_index = accumulated_selected_channel.nonzero().view(-1)
+
+            # statistic
+            low_bit_channel = module.selected_channel_index.size(0)
+            orig_bit_channel = module.selected_channel.size(0)
+            weight_parameter_count = int(torch.numel(weight) / weight.size(1))
+            
+            total_low_bit_channel += low_bit_channel
+            total_orig_bit_channel += orig_bit_channel
+            total_low_bit_weight += low_bit_channel * weight_parameter_count
+            total_orig_bit_weight += orig_bit_channel * weight_parameter_count
+
+    channel_ratio = total_low_bit_channel / total_orig_bit_channel * 100
+    parameter_ratio = total_low_bit_weight / total_orig_bit_weight * 100
+    # print("Int-4 channel ratio : {:.2f}%, parameter ratio : {:.2f}%".format(channel_ratio, parameter_ratio))
+    return torch.tensor((channel_ratio, parameter_ratio)).view(-1, 1)
 
 
 def save_checkpoint(state, is_best, filename=None):
