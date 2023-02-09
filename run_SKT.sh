@@ -11,11 +11,10 @@ MODEL=${2}              # alexnet / resnet20
 DATASET=${3}            # cifar10 / cifar100 / svhn
 LEARNING_RATE=${4}      # 0.001 / 0.0001
 MIXED_PRECISION=${5}    # true / false
-RANGE_RATIO=${6}        # 0.5 ~ 0.7
-SCHEDULE_UNIT=${7}      # epoch / iter
-SCHEDULE_COUNT=${8}     # 1 / 10 / 100
-#REPLACE_GRAD=${9} # 1e-4 / 1e-5 / 1e-6 / 1e-7 / 1e-8
-#QUANTILE=${10}      # 0 / 0.25 / 0.5 / 0.75 / 1
+SCHEDULE_UNIT=${6}      # epoch / iter
+SCHEDULE_COUNT=${7}     # 1 / 10 / 100
+RANGE_RATIO=${8}        # 0.5 ~ 0.7
+GRADT_MANI_RATIO=${9}   # 0.1 ~ 0.3
 #####################################################
 
 if [ "$MIXED_PRECISION" = true ]; then 
@@ -39,6 +38,7 @@ if [ "$MIXED_PRECISION" = true ]; then
             --range_ratio $RANGE_RATIO \
             --schedule_unit $SCHEDULE_UNIT \
             --schedule_count $SCHEDULE_COUNT \
+            --gradient_manipulation_ratio $GRADT_MANI_RATIO \
             --mixed_precision
     else
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
@@ -62,6 +62,7 @@ if [ "$MIXED_PRECISION" = true ]; then
             --range_ratio $RANGE_RATIO \
             --schedule_unit $SCHEDULE_UNIT \
             --schedule_count $SCHEDULE_COUNT \
+            --gradient_manipulation_ratio $GRADT_MANI_RATIO \
             --mixed_precision
     fi
 else
@@ -103,5 +104,3 @@ else
             --dnn_path $PRETRAINED_MODEL_PATH/$DATASET/$MODEL/checkpoint.pth
     fi
 fi
-
-

@@ -431,7 +431,7 @@ class QuantBnConv2d(Module):
         self.register_buffer('selected_channel', torch.zeros(self.in_channels, dtype=torch.bool, device='cuda'))
         self.register_buffer('selected_channel_index', torch.tensor([], dtype=torch.int64))
         self.register_buffer('input_range', torch.zeros((2, self.in_channels), device='cuda'))
-        self.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
+        self.apply_ema = True
         
     def __repr__(self):
         conv_s = super(QuantBnConv2d, self).__repr__()
@@ -462,7 +462,7 @@ class QuantBnConv2d(Module):
 
     def reset_input_range(self):
         self.input_range.zero_()
-        self.apply_ema = ~self.apply_ema
+        self.apply_ema = True
 
     @torch.no_grad()
     def record_range(self, x):
@@ -479,7 +479,7 @@ class QuantBnConv2d(Module):
             self.input_range[1] = self.input_range[1] * self.act_range_momentum + input_min * (1 - self.act_range_momentum)
         else:
             self.input_range[0], self.input_range[1] = input_max, input_min
-            self.apply_ema = ~self.apply_ema
+            self.apply_ema = False
 
     def forward(self, x, pre_act_scaling_factor=None):
         """
@@ -524,7 +524,7 @@ class QuantBnConv2d(Module):
             weight = self.conv.weight
             # gradient manipulation
             if self.mixed_precision and not self.fix_flag:
-                x = SKT_GRAD.apply(x, self.skt_helper)
+                # x = SKT_GRAD.apply(x, self.skt_helper)
                 weight = SKT_GRAD.apply(self.conv.weight, self.skt_helper)
 
             # run the forward without folding BN
@@ -1047,7 +1047,7 @@ class QuantConv2d(Module):
         self.register_buffer('selected_channel', torch.zeros(self.in_channels, dtype=torch.bool, device='cuda'))
         self.register_buffer('selected_channel_index', torch.tensor([], dtype=torch.int64))
         self.register_buffer('input_range', torch.zeros((2, self.in_channels), device='cuda'))
-        self.register_buffer('apply_ema', torch.zeros(1, dtype=torch.bool, device='cuda'))
+        self.apply_ema = True
     
     def fix(self):
         self.fix_flag = True
@@ -1063,7 +1063,7 @@ class QuantConv2d(Module):
 
     def reset_input_range(self):
         self.input_range.zero_()
-        self.apply_ema = ~self.apply_ema
+        self.apply_ema = True
 
     @torch.no_grad()
     def record_range(self, x):
@@ -1080,7 +1080,7 @@ class QuantConv2d(Module):
             self.input_range[1] = self.input_range[1] * self.act_range_momentum + input_min * (1 - self.act_range_momentum)
         else:
             self.input_range[0], self.input_range[1] = input_max, input_min
-            self.apply_ema = ~self.apply_ema
+            self.apply_ema = False
 
     def forward(self, x, pre_act_scaling_factor=None):
         if type(x) is tuple:
@@ -1110,7 +1110,7 @@ class QuantConv2d(Module):
             weight = self.weight
             # gradient manipulation
             if self.mixed_precision and not self.fix_flag:
-                x = SKT_GRAD.apply(x, self.skt_helper)
+                # x = SKT_GRAD.apply(x, self.skt_helper)
                 weight = SKT_GRAD.apply(self.weight, self.skt_helper)
 
             if self.per_channel:

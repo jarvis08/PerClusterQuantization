@@ -29,6 +29,7 @@ import torch.optim
 import torch.multiprocessing as mp
 
 import pandas as pd
+import numpy as np
 
 mp.set_sharing_strategy('file_system')
 
@@ -173,10 +174,10 @@ parser.add_argument('--dnn_path', default='', type=str,
 parser.add_argument('--mixed_precision',
                     action='store_true',
                     help='For SKT')
-parser.add_argument('--replace_grad',
+parser.add_argument('--gradient_manipulation_ratio',
                     type=float,
-                    default=1e-5,
-                    help='grad value to replace input gradient for manipulation')
+                    default=0.1,
+                    help='grad range for manipulation')
 parser.add_argument('--range_ratio',
                     type=float,
                     default=0.5,
@@ -473,7 +474,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
         return
 
     best_epoch = 0
-    best_acc1 = 0
+    best_acc1 = torch.zeros([1])
     tuning_start_time = time.time()
     tuning_fin_time = None
     one_epoch_time = None
@@ -490,6 +491,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
+    accuracy = torch.zeros([0])
+    ratio = torch.zeros([2, 0])
     # # Train EMA for couple epochs before training parameters
     for epoch in range(args.start_epoch, 1):
         print("EMA training epochs...")
@@ -502,23 +505,25 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             
             train_ema(train_loader, model, criterion, epoch, args)
             acc1 = validate(test_loader, model, criterion, args)
-
-            incremental_channel_selection(model, args.range_ratio)
+            
+            accuracy = torch.cat((accuracy, acc1))  # Initial Validate Accuracy
+            ratio = torch.cat((ratio, incremental_channel_selection(model, args.range_ratio)), dim=1)   # Initial Channel Ratio
         else:
             train_ema(train_loader, model, criterion, epoch, args)
-            acc1 = validate(test_loader, model, criterion, args)
+            accuracy = torch.cat((accuracy, validate(test_loader, model, criterion, args)))
     
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
         if args.mixed_precision:
-            ch_ratio, neuron_ratio = skt_train(train_loader, model, criterion, optimizer, epoch, args)
+            ratio = torch.cat((ratio, skt_train(train_loader, model, criterion, optimizer, epoch, args)), dim=1)    # Channel Ratio
         else:
             train(train_loader, model, criterion, optimizer, epoch, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
         acc1 = validate(test_loader, model, criterion, args)
+        accuracy = torch.cat((accuracy, acc1))  # Validate Accuracy
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -526,8 +531,13 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             best_acc1 = max(acc1, best_acc1)
             best_epoch = epoch
 
-        logging.info(f'Best acc at epoch {best_epoch}: {best_acc1}')
+        logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f}')
 
+    statistics = torch.cat((accuracy.view(1, -1), ratio)).numpy()
+    statistics = pd.DataFrame(statistics)
+    statistics.to_csv(f"{args.arch}_{args.dataset}_{args.range_ratio}_{args.gradient_manipulation_ratio}.csv", index=False)
+    
+    
         # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
         #     save_checkpoint({
         #         'epoch': epoch + 1,
@@ -537,20 +547,20 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
         #         'optimizer': optimizer.state_dict(),
         #     }, is_best, finetune_path)
 
-    test_score = best_acc1
+    # test_score = best_acc1
 
-    time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
+    # time_cost = get_time_cost_in_string(tuning_fin_time - tuning_start_time)
 
-    if args.mixed_precision:
-        with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}.txt', 'a') as f:
-            f.write(
-                'Schedule:{} {}, Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                    args.schedule_unit, args.schedule_count, ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay,
-                    best_epoch, time_cost, args.data, one_epoch_time))
-    else:
-        with open(f'{log_path}.txt', 'a') as f:
-            f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, best_epoch, time_cost, args.data, one_epoch_time))
+    # if args.mixed_precision:
+    #     with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}.txt', 'a') as f:
+    #         f.write(
+    #             'Schedule:{} {}, Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+    #                 args.schedule_unit, args.schedule_count, ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay,
+    #                 best_epoch, time_cost, args.data, one_epoch_time))
+    # else:
+    #     with open(f'{log_path}.txt', 'a') as f:
+    #         f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+    #             args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, best_epoch, time_cost, args.data, one_epoch_time))
         
 
 def train_ema(train_loader, model, criterion, epoch, args):
@@ -645,8 +655,8 @@ def incremental_channel_selection(model, range_ratio):
 
     channel_ratio = total_low_bit_channel / total_orig_bit_channel * 100
     parameter_ratio = total_low_bit_weight / total_orig_bit_weight * 100
-    print("Int-4 channel ratio : {:.2f}%, parameter ratio : {:.2f}%".format(channel_ratio, parameter_ratio))
-    return channel_ratio, parameter_ratio
+    # print("Int-4 channel ratio : {:.2f}%, parameter ratio : {:.2f}%".format(channel_ratio, parameter_ratio))
+    return torch.tensor((channel_ratio, parameter_ratio)).view(-1, 1)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -732,11 +742,11 @@ def skt_train(train_loader, model, criterion, optimizer, epoch, args):
             global_iter += 1
             # candidate channel selection
             if global_iter % update_interval == 0:
-                channel_ratio, parameter_ratio = incremental_channel_selection(model, args.range_ratio)
+                ratio = incremental_channel_selection(model, args.range_ratio)
                 reset_model_record(model)
 
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
-    return channel_ratio, parameter_ratio
+    return ratio
 
 
 def validate(val_loader, model, criterion, args):
@@ -781,7 +791,7 @@ def validate(val_loader, model, criterion, args):
 
     unfreeze_model(model)
 
-    return top1.avg
+    return torch.tensor([top1.avg])
 
 
 def save_checkpoint(state, is_best, filename=None):

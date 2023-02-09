@@ -17,10 +17,10 @@ class SKT_GRAD(Function):
             range = x_transform.amax(dim=1) - x_transform.amin(dim=1)
         else:
             range = torch.max(x_transform.amax(dim=1).abs(), x_transform.amin(dim=1).abs())
-        positive_mask = torch.logical_and(x < (range.max() * (skt_helper.range_ratio + 0.2)), 
+        positive_mask = torch.logical_and(x < (range.max() * (skt_helper.range_ratio + skt_helper.manipulation_ratio)), 
                                           x > (range.max() * (0.5)))
         negative_mask = torch.logical_and(x > (-range.max() * (0.5)), 
-                                          x < (-range.max() * (skt_helper.range_ratio + 0.2)))
+                                          x < (-range.max() * (skt_helper.range_ratio + skt_helper.manipulation_ratio)))
 
         ctx.save_for_backward(positive_mask, negative_mask)
         return x
