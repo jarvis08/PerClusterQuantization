@@ -14,20 +14,11 @@ import random
 
 from HAWQ.utils.quantization_utils.quant_modules import freeze_model, unfreeze_model
 
-
 class SKT_Helper(object):
-    def __init__(self):
-        self.repl_grad = None
-        self.quantile = None
-        self.schedule_unit = None
-        self.schedule_count = None
-
-    def set_skt_arguments(self, args):
+    def __init__(self, args):
         self.replace_grad = torch.tensor(args.replace_grad, dtype=torch.float32, device='cuda')
         self.quantile = torch.tensor(args.quantile, dtype=torch.float32, device='cuda')
         self.range_ratio = args.range_ratio
-        self.schedule_unit = args.schedule_unit
-        self.schedule_count = args.schedule_count
 
 class InputContainer(object):
     def __init__(self, data_loader, clustering_model, num_clusters, dataset_name, model_name, batch_size):

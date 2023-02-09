@@ -15,23 +15,6 @@ def get_normalizer(dataset_name):
         return transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1201, 0.1231, 0.1052))
 
 
-def split_dataset_into_train_and_val(full_dataset, dataset_name):
-    n_data = len(full_dataset)
-    indices = list(range(n_data))
-
-    if dataset_name == 'svhn':
-        train_idx = indices[:n_data - 6000]
-        val_idx = indices[n_data - 6000:]
-    else:
-        train_size = int(n_data * 0.9)
-        train_idx = indices[:train_size]
-        val_idx = indices[train_size:]
-
-    train_dataset = torch.utils.data.Subset(full_dataset, train_idx)
-    val_dataset = torch.utils.data.Subset(full_dataset, val_idx)
-    return train_dataset, val_dataset
-
-
 def get_augmented_train_dataset(args, normalizer, model):
     train_resolution = 224
     if model == "inceptionv3":
@@ -132,19 +115,12 @@ def get_data_loaders(args, model):
         if args.mode == 'eval':
             return test_loader
 
-        clustering_train_loader = None
-        aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
-        non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
-        # data split
-        non_aug_train_dataset, val_dataset = split_dataset_into_train_and_val(non_aug_train_dataset, args.dataset)
+        train_dataset = get_augmented_train_dataset(args, normalizer, model)
 
-        clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=True,
-                                                workers=args.worker)
-        train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
-        val_loader = get_data_loader(val_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+        train_loader = get_data_loader(train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     else:
         from .dali import get_dali_dataloader
         train_loader = get_dali_dataloader(128, os.path.join(args.imagenet, 'train'), is_training=True, num_workers=4)
         test_loader = get_dali_dataloader(256, os.path.join(args.imagenet, 'val'), is_training=False, num_workers=4)
         clustering_train_loader = get_dali_dataloader(512, os.path.join(args.imagenet, 'train'), is_training=False, num_workers=4)
-    return {'aug_train': train_loader, 'val': val_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}
+    return {'train': train_loader, 'test': test_loader}

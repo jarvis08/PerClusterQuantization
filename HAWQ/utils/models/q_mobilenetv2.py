@@ -16,7 +16,7 @@ class Q_LinearBottleneck(nn.Module):
                 out_channels,
                 stride,
                 expansion,
-                num_clusters=1):
+                remove_exp_conv):
         """
         So-called 'Linear Bottleneck' layer. It is used as a quantized MobileNetV2 unit.
         Parameters:
@@ -31,150 +31,63 @@ class Q_LinearBottleneck(nn.Module):
             Strides of the second convolution layer.
         expansion : bool
             Whether do expansion of channels.
+        remove_exp_conv : bool
+            Whether to remove expansion convolution.
         """
         super(Q_LinearBottleneck, self).__init__()
         self.residual = (in_channels == out_channels) and (stride == 1)
         mid_channels = in_channels * 6 if expansion else in_channels
+        self.use_exp_conv = (expansion or (not remove_exp_conv))
         self.activatition_func = nn.ReLU6()
 
-        self.quant_act = QuantAct(num_clusters=num_clusters)
+        self.quant_act = QuantAct()
 
-        self.conv1 = QuantBnConv2d()
-        self.conv1.set_param(model.conv1.conv, model.conv1.bn)
-        self.quant_act1 = QuantAct(num_clusters=num_clusters)
+        if self.use_exp_conv:
+            self.conv1 = QuantBnConv2d()
+            self.conv1.set_param(model.conv1.conv, model.conv1.bn)
+            self.quant_act1 = QuantAct()
 
         self.conv2 = QuantBnConv2d()
         self.conv2.set_param(model.conv2.conv, model.conv2.bn)
-        self.quant_act2 = QuantAct(num_clusters=num_clusters)
+        self.quant_act2 = QuantAct()
 
         self.conv3 = QuantBnConv2d()
         self.conv3.set_param(model.conv3.conv, model.conv3.bn)
 
-        self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
+        self.quant_act_int32 = QuantAct()
 
-    def forward(self, x, scaling_factor_int32=None, cluster=None):
+    def forward(self, x, scaling_factor_int32=None):
         if self.residual:
             identity = x
 
-        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
+        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None)
 
-        x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+        if self.use_exp_conv:
+            x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
+            x = self.activatition_func(x)
+            x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None)
 
-        x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+            x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
+            x = self.activatition_func(x)
+            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None)
 
-        x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
+            # note that, there is no activation for the last conv
+            x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
+        else:
+            x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
+            x = self.activatition_func(x)
+            x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None)
+
+            # note that, there is no activation for the last conv
+            x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
 
         if self.residual:
             x = x + identity
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None, cluster=cluster)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None)
         else:
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
+            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None)
 
         return x, act_scaling_factor
-
-    def accumulate_output_max_distribution(self, x, cluster, n_clusters, head, l_idx, scaling_factor_int32=None):
-        if self.residual:
-            identity = x
-            
-        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
-        x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        
-        ##################################
-        l_idx = head.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-        
-        x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-        x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
-        x = self.activatition_func(x)
-
-        ##################################
-        l_idx = head.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-        
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-        x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
-
-        if self.residual:
-            x = x + identity
-            
-            ##################################
-            l_idx = head.update_max_accumulator(x, cluster, l_idx)
-            ##################################
-            
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None, cluster=cluster)
-        else:
-            ##################################
-            l_idx = head.update_max_accumulator(x, cluster, l_idx)
-            ##################################
-                
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
-        return x, l_idx, act_scaling_factor
-
-
-    def get_output_max_distribution(self, x, cluster, n_clusters, max_counter, l_idx, initialized, scaling_factor_int32=None):
-        if not initialized:
-            max_counter.append([[] for _ in range(n_clusters)])
-            max_counter.append([[] for _ in range(n_clusters)])
-            max_counter.append([[] for _ in range(n_clusters)])
-            
-        if self.residual:
-            identity = x
-            
-        x, act_scaling_factor = self.quant_act(x, scaling_factor_int32, None, None, None, None, cluster=cluster)
-
-        x, weight_scaling_factor = self.conv1(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
-        
-        x, self.act_scaling_factor = self.quant_act1(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-
-        x, weight_scaling_factor = self.conv2(x, act_scaling_factor)
-        x = self.activatition_func(x)
-
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if max_counter[l_idx][cluster] == []:
-            max_counter[l_idx][cluster] = _max
-        else:
-            max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
-        
-        x, act_scaling_factor = self.quant_act2(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-
-        x, weight_scaling_factor = self.conv3(x, act_scaling_factor)
-
-        if self.residual:
-            x = x + identity
-            
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if max_counter[l_idx][cluster] == []:
-                max_counter[l_idx][cluster] = _max
-            else:
-                max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
-            
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, identity, scaling_factor_int32, None, cluster=cluster)
-        else:
-            l_idx += 1
-            _max = x.view(x.size(0), -1).max(dim=1).values
-            if max_counter[l_idx][cluster] == []:
-                max_counter[l_idx][cluster] = _max
-            else:
-                max_counter[l_idx][cluster] = torch.cat([max_counter[l_idx][cluster], _max])
-                
-            x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
-
-        return x, l_idx, act_scaling_factor
 
 
 class Q_MobileNetV2(nn.Module):
@@ -190,6 +103,8 @@ class Q_MobileNetV2(nn.Module):
         Number of output channels for the initial unit.
     final_block_channels : int
         Number of output channels for the final block of the feature extractor.
+    remove_exp_conv : bool
+        Whether to remove expansion convolution.
     in_channels : int, default 3
         Number of input channels.
     in_size : tuple of two ints, default (224, 224)
@@ -202,10 +117,10 @@ class Q_MobileNetV2(nn.Module):
                  channels,
                  init_block_channels,
                  final_block_channels,
+                 remove_exp_conv,
                  in_channels=3,
                  in_size=(224, 224),
-                 num_classes=1000,
-                 num_clusters=1):
+                 num_classes=1000):
         super(Q_MobileNetV2, self).__init__()
         self.in_size = in_size
         self.num_classes = num_classes
@@ -213,14 +128,14 @@ class Q_MobileNetV2(nn.Module):
         self.activatition_func = nn.ReLU6()
 
         # add input quantization
-        self.quant_input = QuantAct(num_clusters=num_clusters)
+        self.quant_input = QuantAct()
 
         # change the inital block
         self.add_module("init_block", QuantBnConv2d())
 
         self.init_block.set_param(model.features.init_block.conv, model.features.init_block.bn)
 
-        self.quant_act_int32 = QuantAct(num_clusters=num_clusters)
+        self.quant_act_int32 = QuantAct()
 
         self.features = nn.Sequential()
         # change the middle blocks
@@ -240,161 +155,62 @@ class Q_MobileNetV2(nn.Module):
                     out_channels=out_channels,
                     stride=stride,
                     expansion=expansion,
-                    num_clusters=num_clusters
+                    remove_exp_conv=remove_exp_conv,
                     ))
 
                 in_channels = out_channels
             self.features.add_module("stage{}".format(i + 1), stage)
 
         # change the final block
-        self.quant_act_before_final_block = QuantAct(num_clusters=num_clusters)
-        
+        self.quant_act_before_final_block = QuantAct()
         self.features.add_module("final_block", QuantBnConv2d())
+
         self.features.final_block.set_param(model.features.final_block.conv, model.features.final_block.bn)
-        self.quant_act_int32_final = QuantAct(num_clusters=num_clusters)
+        self.quant_act_int32_final = QuantAct()
 
         in_channels = final_block_channels
 
         self.features.add_module("final_pool", QuantAveragePool2d())
         self.features.final_pool.set_param(model.features.final_pool)
-        self.quant_act_output = QuantAct(num_clusters=num_clusters)
+        self.quant_act_output = QuantAct()
 
         self.output = QuantConv2d()
         self.output.set_param(model.output)
 
-    def forward(self, x, cluster):
+    def forward(self, x):
         # quantize input
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
+        x, act_scaling_factor = self.quant_input(x)
 
         # the init block
         x, weight_scaling_factor = self.init_block(x, act_scaling_factor)
         x = self.activatition_func(x)
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None)
 
         # the feature block
         for i, channels_per_stage in enumerate(self.channels):
             cur_stage = getattr(self.features, f'stage{i+1}')
             for j, out_channels in enumerate(channels_per_stage):
                 cur_unit = getattr(cur_stage, f'unit{j+1}')
-                x, act_scaling_factor = cur_unit(x, act_scaling_factor, cluster=cluster)
 
-        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None, cluster=cluster)
+                x, act_scaling_factor = cur_unit(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None)
         x, weight_scaling_factor = self.features.final_block(x, act_scaling_factor)
         x = self.activatition_func(x)
-        x, act_scaling_factor = self.quant_act_int32_final(x, act_scaling_factor, weight_scaling_factor, None, None, None, cluster=cluster)
+        x, act_scaling_factor = self.quant_act_int32_final(x, act_scaling_factor, weight_scaling_factor, None, None, None)
 
         # the final pooling
         x = self.features.final_pool(x, act_scaling_factor)
 
         # the output
-        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, None, None, None, None, cluster=cluster)
-        x, _ = self.output(x, act_scaling_factor)
+        x, act_scaling_factor = self.quant_act_output(x, act_scaling_factor, None, None, None, None)
+        x, act_scaling_factor = self.output(x, act_scaling_factor)
 
         x = x.view(x.size(0), -1)
 
         return x
 
-    def toggle_full_precision(self):
-        # print('Model Toggle full precision FUNC')
-        for module in self.modules():
-            if isinstance(module, (QuantAct, QuantLinear, QuantBnConv2d, QuantBn, QuantConv2d)):
-                precision = getattr(module, 'full_precision_flag')
-                setattr(module, 'full_precision_flag', not precision)
 
-    def update_max_accumulator(self, x, cluster, l_idx):
-        if type(x) is tuple:
-            x = x[0]
-        _max = torch.scatter_reduce(self.zero_buffer, 0, cluster, src=x.view(x.size(0), -1).max(dim=1).values, reduce=self.reduce)
-        self.max_accumulator[l_idx] = self.max_accumulator[l_idx].max(_max)
-        return l_idx + 1    
-    
-    def accumulate_output_max_distribution(self, x, cluster, n_clusters, l_idx=0, reduce='amax'):
-        if not hasattr(self, 'max_accumulator'):
-            self.reduce = reduce
-            self.max_accumulator = torch.zeros([54, n_clusters]).cuda()
-            self.zero_buffer = torch.zeros(n_clusters).cuda()
-            
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
-        x, weight_scaling_factor = self.init_block(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        
-        ##################################
-        l_idx = self.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-            
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-        
-        # the feature block
-        for i, channels_per_stage in enumerate(self.channels):
-            cur_stage = getattr(self.features, f'stage{i+1}')
-            for j, out_channels in enumerate(channels_per_stage):
-                cur_unit = getattr(cur_stage, f'unit{j+1}')
-                x, l_idx, act_scaling_factor = cur_unit.accumulate_output_max_distribution(x, cluster, n_clusters, self,
-                                                                                           l_idx, act_scaling_factor)
-
-        ##################################
-        l_idx = self.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-            
-        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None, cluster=cluster)
-        x, weight_scaling_factor = self.features.final_block(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        
-        ##################################
-        l_idx = self.update_max_accumulator(x, cluster, l_idx)
-        ##################################
-            
-    
-    def get_output_max_distribution(self, x, cluster, n_clusters):
-        initialized = True
-        if not hasattr(self, 'max_counter'):
-            initialized = False
-            self.max_counter = []
-            self.max_counter.append([[] for _ in range(n_clusters)])
-            self.max_counter.append([[] for _ in range(n_clusters)])
-            self.max_counter.append([[] for _ in range(n_clusters)])
-        
-        x, act_scaling_factor = self.quant_input(x, cluster=cluster)
-        x, weight_scaling_factor = self.init_block(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        
-        l_idx = 0
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-            
-        x, act_scaling_factor = self.quant_act_int32(x, act_scaling_factor, weight_scaling_factor, None, None, cluster=cluster)
-        
-        # the feature block
-        for i, channels_per_stage in enumerate(self.channels):
-            cur_stage = getattr(self.features, f'stage{i+1}')
-            for j, out_channels in enumerate(channels_per_stage):
-                cur_unit = getattr(cur_stage, f'unit{j+1}')
-                x, l_idx, act_scaling_factor = cur_unit.get_output_max_distribution(x, cluster, n_clusters, self.max_counter, l_idx,
-                                                                             initialized, act_scaling_factor)
-
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-            
-        x, act_scaling_factor = self.quant_act_before_final_block(x, act_scaling_factor, None, None, None, None, cluster=cluster)
-        x, weight_scaling_factor = self.features.final_block(x, act_scaling_factor)
-        x = self.activatition_func(x)
-        
-        l_idx += 1
-        _max = x.view(x.size(0), -1).max(dim=1).values
-        if self.max_counter[l_idx][cluster] == []:
-            self.max_counter[l_idx][cluster] = _max
-        else:
-            self.max_counter[l_idx][cluster] = torch.cat([self.max_counter[l_idx][cluster], _max])
-            
-
-def q_get_mobilenetv2(model, width_scale, num_clusters=None):
+def q_get_mobilenetv2(model, width_scale, remove_exp_conv=False):
     """
     Create quantized MobileNetV2 model with specific parameters.
     Parameters:
@@ -403,6 +219,8 @@ def q_get_mobilenetv2(model, width_scale, num_clusters=None):
         The pretrained floating-point MobileNetV2.
     width_scale : float
         Scale factor for width of layers.
+    remove_exp_conv : bool, default False
+        Whether to remove expansion convolution.
     """
 
     init_block_channels = 32
@@ -428,12 +246,12 @@ def q_get_mobilenetv2(model, width_scale, num_clusters=None):
         channels=channels,
         init_block_channels=init_block_channels,
         final_block_channels=final_block_channels,
-        num_clusters=num_clusters)
+        remove_exp_conv=remove_exp_conv)
 
     return net
 
 
-def q_mobilenetv2_w1(model, num_clusters=None):
+def q_mobilenetv2_w1(model):
     """
     Quantized 1.0 MobileNetV2-224 model from 'MobileNetV2: Inverted Residuals and Linear Bottlenecks,'
     https://arxiv.org/abs/1801.04381.
@@ -441,4 +259,4 @@ def q_mobilenetv2_w1(model, num_clusters=None):
     model : nn.Module
         The pretrained floating-point MobileNetV2.
     """
-    return q_get_mobilenetv2(model, width_scale=1.0, num_clusters=num_clusters)
+    return q_get_mobilenetv2(model, width_scale=1.0)

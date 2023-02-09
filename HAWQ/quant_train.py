@@ -139,13 +139,9 @@ parser.add_argument('--weight-percentile',
                          '(0 means no percentile, 99.9 means cut off 0.1%)')
 
 parser.add_argument('--channel-wise',
-                    action='store_false',
+                    type=bool,
+                    default=False,
                     help='whether to use channel-wise quantizaiton or not')
-
-# parser.add_argument('--channel-wise',
-#                     type=bool,
-#                     default=False,
-#                     help='whether to use channel-wise quantizaiton or not')
 
 parser.add_argument('--bias-bit',
                     type=int,
@@ -247,23 +243,18 @@ def main(args_daq, data_loaders, clustering_model=None):
     ngpus_per_node = torch.cuda.device_count()
 
     # Simply call main_worker function
-    main_worker(args.gpu, ngpus_per_node, args, data_loaders, clustering_model)
+    main_worker(args.gpu, ngpus_per_node, args, data_loaders)
 
 
-def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
-    def set_args_arch(args):
+def main_worker(gpu, ngpus_per_node, args, data_loaders):
+    def get_args_arch(args):
         arch = args.arch.lower()
         if arch == 'resnet20':
             return arch + "_" + args.data.lower()
         elif arch == 'densenet':
             return "densenet121"
-        else:
-            return arch
-
-    def reset_args_arch(args):
-        arch = args.arch.lower()
-        if 'resnet20' in arch:
-            return "resnet20"
+        elif arch == 'mobilenet':
+            return "mobilenetv2_w1"
         else:
             return arch
 
@@ -271,7 +262,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         pretrained = args.pretrained and not args.resume
         logging.info(
             "=> using pre-trained PyTorchCV model '{}'".format(args.arch))
-        model = ptcv_get_model(args.arch, pretrained=True)
+        model = ptcv_get_model(get_args_arch(args), pretrained=True)
         if args.distill_method != 'None':
             logging.info(
                 "=> using pre-trained PyTorchCV teacher '{}'".format(args.teacher_arch))
@@ -374,9 +365,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     checkpoint = torch.load(args.resume, map_location=loc)
                 args.start_epoch = checkpoint['epoch']
                 best_acc1 = checkpoint['best_acc1']
-                if args.gpu is not None:
-                    # best_acc1 may be from a checkpoint from a different GPU
-                    best_acc1 = best_acc1.to(args.gpu)
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 logging.info("=> loaded optimizer and meta information from checkpoint '{}' (epoch {})".
                              format(args.resume, checkpoint['epoch']))
@@ -385,10 +373,10 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
                     "=> no checkpoint found at '{}'".format(args.resume))
         return optimizer
 
-    def get_quantize_model(args, model, model_dict, quantize_arch, num_clusters, skt_helper=None):
+    def get_quantize_model(args, model, model_dict, quantize_arch):
         if args.arch.lower() == 'alexnet':
-            return quantize_arch(model, model_dict, num_clusters, skt_helper)
-        return quantize_arch(model, num_clusters, skt_helper)
+            return quantize_arch(model, model_dict)
+        return quantize_arch(model)
 
     def set_quantize_param(args, model, bit_config):
         name_counter = 0
@@ -420,7 +408,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
                 if hasattr(m, 'activation_bit'):
                     setattr(m, 'activation_bit', bitwidth)
-                    if bitwidth == 4 and not symmetric:
+                    # if (bitwidth == 4) and not symmetric:
+                    if 'quant_input' not in name and not symmetric:
                         setattr(m, 'quant_mode', 'asymmetric')
                 else:
                     setattr(m, 'weight_bit', bitwidth)
@@ -445,32 +434,26 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
 
-    skt_helper = None
-    if args.mixed_precision:
-        assert args.schedule_unit in ['iter', 'epoch'], f'Not supported schedule unit : {args.schedule_unit}'
-        skt_helper = SKT_Helper()
-        skt_helper.set_skt_arguments(args)
+    ############ PREPARE MODEL ##############
 
-    prev_arch = args.arch
-    args.arch = set_args_arch(args)
     fp_model, teacher = create_model(args)  # Create Model
-    args.arch = reset_args_arch(args)
     model_dict = transfer_param(args, fp_model) if args.transfer_param else None
     fp_model = eval_resume(args, fp_model)
 
     quantize_arch = quantize_arch_dict[args.arch]
-    model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.cluster, skt_helper)
+    model = get_quantize_model(args, fp_model, model_dict, quantize_arch)
     bit_config = bit_config_dict["bit_config_" + args.arch + "_" + args.quant_scheme]
     model = set_quantize_param(args, model, bit_config)
-    # logging.info(model)
+
     model = quant_resume(args, model)
 
     if args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
         if args.distill_method != 'None':
             teacher = teacher.cuda(args.gpu)
 
+    ######### PREPARE MODEL DONE #########
+    
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
@@ -482,37 +465,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
     cudnn.benchmark = True
 
-    train_loader = data_loaders['aug_train']
-    val_loader = data_loaders['val']
+    train_loader = data_loaders['train']
     test_loader = data_loaders['test']
-    cluster_train_loader = data_loaders['non_aug_train']
-
-    if clustering_model is not None and clustering_model.model is None:
-    #     clustering_model.feature_index = clustering_model.get_high_corr_features(model, cluster_train_loader)
-        clustering_model.train_clustering_model(cluster_train_loader)
-
-    if args.nnac and clustering_model.final_cluster is None:
-        ###
-        # model.toggle_full_precision()
-        # freeze_model(model)
-        # clustering_model.zero_max_nn_aware_clustering(
-        # clustering_model.max_nn_aware_clustering(
-        #     model, cluster_train_loader, args.arch)
-        ###
-        sub_model = get_quantize_model(args, fp_model, model_dict, quantize_arch, args.sub_cluster)
-        sub_model = set_quantize_param(args, sub_model, bit_config)
-        sub_model = sub_model.cuda(args.gpu)
-        
-        print("EMA training epochs...")
-        ema_epoch = 2 if args.data == 'imagenet' else 10
-        for epoch in range(args.start_epoch, ema_epoch):
-            train_ema(train_loader, sub_model, clustering_model, criterion, epoch, args)
-            
-        sub_model.toggle_full_precision()
-        freeze_model(sub_model)
-        clustering_model.ema_nn_aware_clustering(sub_model, cluster_train_loader, args.arch)
-        del sub_model
-    del fp_model
     
     if args.evaluate:
         validate(test_loader, model, criterion, args)
@@ -535,209 +489,36 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
         os.mkdir(finetune_path)
     if not os.path.exists(log_path):
         os.mkdir(log_path)
-        
-    
-    def confusion_matrix(data_loader, model, clustering_model, args):
-        def prediction(output, target):
-            with torch.no_grad():
-                if type(output) is tuple:
-                    output = output[0]
-                _, pred = output.topk(1, 1, True, True)
-                pred = pred.t()
-                correct = pred.eq(target.view(1, -1).expand_as(pred))
-                return torch.squeeze(correct)
-        TP = 0
-        TN = 0
-        FP = 0
-        FN = 0
-        saturated = 0
-        
-        cluster_confusion_matrix = torch.zeros([7, args.cluster], dtype=torch.long).cuda()
-
-        freeze_model(model)
-        model.eval()
-
-        with torch.no_grad():
-            with tqdm(data_loader, desc="experiment ", ncols=95) as t:
-                for i, (images, target) in enumerate(t):
-                    images = images.cuda(args.gpu, non_blocking=True)
-                    target = target.cuda(args.gpu, non_blocking=True)
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
-                    
-                    unique, count = torch.unique(cluster, return_counts=True)
-                    cluster_confusion_matrix[0].put_(unique, count, accumulate=True)                # Total Cluster Counts
-                    
-                    batch_size = target.size(0)
-                    
-                    output = model(images, cluster)
-                    INT_pred = prediction(output, target)
-                    
-                    model.toggle_full_precision()
-                    output = model(images, cluster)
-                    model.toggle_full_precision()
-                    
-                    FP_pred = prediction(output, target)
-
-                    #############
-                    cluster_confusion_matrix[1].scatter_reduce_(0, cluster, FP_pred.type(torch.long), reduce="sum")  # Full Precision Correct
-                    cluster_confusion_matrix[2].scatter_reduce_(0, cluster, INT_pred.type(torch.long), reduce="sum") # Quantized Accuracy
-                    
-                    TP = torch.logical_and(FP_pred, INT_pred).type(torch.long)
-                    cluster_confusion_matrix[3].scatter_reduce_(0, cluster, TP, reduce="sum")  # Both Positive
-                    TN = torch.logical_and(~FP_pred, ~INT_pred).type(torch.long)
-                    cluster_confusion_matrix[4].scatter_reduce_(0, cluster, TN, reduce="sum")  # Both Negative
-                    FP = torch.logical_and(~FP_pred, INT_pred).type(torch.long)
-                    cluster_confusion_matrix[5].scatter_reduce_(0, cluster, FP, reduce="sum")  # FP False, QT True
-                    FN = torch.logical_and(FP_pred, ~INT_pred).type(torch.long)
-                    cluster_confusion_matrix[6].scatter_reduce_(0, cluster, FN, reduce="sum")  # FP True, QT False
-
-                    #############
-
-        print("=======================")
-        columns = ['Total','Full Precision', 'Quantized', 'TP', 'TN', 'FP', 'FN']
-        cluster_confusion_matrix_np = cluster_confusion_matrix.T.cpu().numpy()
-        cluster_confusion_matrix_df = pd.DataFrame(cluster_confusion_matrix_np, columns=columns)
-        
-        cluster = args.sub_cluster if args.nnac else args.cluster
-        cluster_confusion_matrix_df.to_csv(f"/workspace/PerClusterQuantization/{args.arch}/{args.data}/{cluster}/{args.cluster}.csv", index=False)
-        return
-
-
-    def cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args):
-        freeze_model(model)
-        aug_score, nonaug_score, test_score = clustering_model.measure_cluster_score(model, train_loader, cluster_train_loader, test_loader, args.arch)
-        # score = clustering_model.measure_cluster_distance(model, train_loader, args.arch)
-
-        cluster = args.sub_cluster if args.nnac else args.cluster
-        try:
-            df_data = pd.read_csv(f"aug_{args.arch}_{args.data}_{cluster}.csv")
-            
-            score_np = aug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            
-            score_df = pd.concat([df_data, score_df], axis=1)
-            score_df.to_csv(f"aug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-        except :
-            score_np = aug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            score_df.to_csv(f"aug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-            
-        try:
-            df_data = pd.read_csv(f"nonaug_{args.arch}_{args.data}_{cluster}.csv")
-            
-            score_np = nonaug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            
-            score_df = pd.concat([df_data, score_df], axis=1)
-            score_df.to_csv(f"nonaug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-        except :
-            score_np = nonaug_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            score_df.to_csv(f"nonaug_{args.arch}_{args.data}_{cluster}.csv", index=False)
-            
-        try:
-            df_data = pd.read_csv(f"test_{args.arch}_{args.data}_{cluster}.csv")
-            
-            score_np = test_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            
-            score_df = pd.concat([df_data, score_df], axis=1)
-            score_df.to_csv(f"test_{args.arch}_{args.data}_{cluster}.csv", index=False)
-        except :
-            score_np = test_score.cpu().numpy()
-            score_df = pd.DataFrame(score_np, columns=[str(args.cluster)])
-            score_df.to_csv(f"test_{args.arch}_{args.data}_{cluster}.csv", index=False)
-
-
-    ###
-
-    # for epoch in range(args.start_epoch, 10):
-    #     train_ema(train_loader, model, clustering_model, criterion, epoch, args)
-    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
-
-    # confusion_matrix(test_loader, model, clustering_model, args)
-    # cluster_score(train_loader, cluster_train_loader, test_loader, model, clustering_model, args)
 
     # # Train EMA for couple epochs before training parameters
-    # ema_epoch = 2 if args.data == 'imagenet' else 10
-    # for epoch in range(args.start_epoch, ema_epoch):
-    #     print("EMA training epochs...")
-    #     train_ema(train_loader, model, clustering_model, criterion, epoch, args)
-    #     acc1 = validate(test_loader, model, clustering_model, criterion, args)
+    for epoch in range(args.start_epoch, 1):
+        print("EMA training epochs...")
+        if args.mixed_precision:
+            global update_interval, global_iter
+            update_interval, global_iter = (args.schedule_count, 0) if args.schedule_unit == 'iter' else (len(train_loader), 0)
+            
+            skt_helper = SKT_Helper(args)
+            set_mixed_precision(model, skt_helper)
+            
+            train_ema(train_loader, model, criterion, epoch, args)
+            acc1 = validate(test_loader, model, criterion, args)
 
-
-    def initial_incremental_channel_selection(model):
-        neuron_four_counter, neuron_eight_counter, ch_four_counter, ch_eight_counter = 0, 0, 0, 0
-        ch_counter, element_counter = 0, 0
-        range_ratio = model.skt_helper.range_ratio
-        iterator = iter(model.modules())
-        for cur in iterator:
-            if isinstance(cur, (QuantConv2d, QuantBnConv2d)):
-                in_channel = cur.in_channels
-                # candidate channel selection
-                if isinstance(cur, QuantConv2d):
-                    weight_group = cur.weight.transpose(1, 0).reshape(in_channel, -1)
-                else:
-                    weight_group = cur.conv.weight.transpose(1, 0).reshape(in_channel, -1)
-                weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
-
-                if cur.quant_mode == 'asymmetric':
-                    input_range = cur.input_range[1] - cur.input_range[0]
-                else:
-                    input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
-
-                # int4 channel selection
-                weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
-                input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
-                mask = torch.logical_and(input_bits, weight_bits)
-
-                cur.prev_mask[mask] = True
-                cur.low_group = mask.nonzero(as_tuple=True)[0]
-                cur.high_group = (~mask).nonzero(as_tuple=True)[0]
-
-                ch_four_counter += len(cur.low_group)
-                ch_eight_counter += len(cur.high_group)
-                neuron_four_counter += len(cur.low_group) * cur.element_size
-                neuron_eight_counter += len(cur.high_group) * cur.element_size
-                ch_counter += cur.in_channels
-                element_counter += cur.in_channels * cur.element_size
-
-                # initialize params for training
-
-        assert ch_four_counter + ch_eight_counter == ch_counter, 'total num of in-channels mismatch'
-        assert neuron_four_counter + neuron_eight_counter == element_counter, 'total num of element size mismatch'
-
-        model.total_ch = ch_counter
-        model.total_element_size = element_counter
-        model.reset_init_records()
-
-        ch_ratio = ch_four_counter / model.total_ch * 100
-        neuron_ratio = neuron_four_counter / model.total_element_size * 100
-        print("Initial Int-4 Neuron ratio : {:.2f}%".format(neuron_ratio))
-        return ch_ratio, neuron_ratio
-
-
-    if args.mixed_precision:
-        validate(val_loader, model, clustering_model, criterion, args)
-        initial_incremental_channel_selection(model)
-        global iter_cnt, res_iters
-        res_iters = 0
-        if args.schedule_unit == 'epoch':
-            iter_cnt = len(train_loader)
+            incremental_channel_selection(model, args.range_ratio)
         else:
-            iter_cnt = args.schedule_count
-
+            train_ema(train_loader, model, criterion, epoch, args)
+            acc1 = validate(test_loader, model, criterion, args)
+    
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
         if args.mixed_precision:
-            ch_ratio, neuron_ratio = skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
+            ch_ratio, neuron_ratio = skt_train(train_loader, model, criterion, optimizer, epoch, args)
         else:
-            train(train_loader, model, clustering_model, criterion, optimizer, epoch, args)
+            train(train_loader, model, criterion, optimizer, epoch, args)
         tuning_fin_time = time.time()
         one_epoch_time = get_time_cost_in_string(
             tuning_fin_time - tuning_start_time)
-        acc1 = validate(test_loader, model, clustering_model, criterion, args)
+        acc1 = validate(test_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -747,15 +528,14 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
 
         logging.info(f'Best acc at epoch {best_epoch}: {best_acc1}')
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'cluster': args.cluster,
-                'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
-                'optimizer': optimizer.state_dict(),
-            }, is_best, finetune_path)
+        # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+        #     save_checkpoint({
+        #         'epoch': epoch + 1,
+        #         'arch': args.arch,
+        #         'state_dict': model.state_dict(),
+        #         'best_acc1': best_acc1,
+        #         'optimizer': optimizer.state_dict(),
+        #     }, is_best, finetune_path)
 
     test_score = best_acc1
 
@@ -764,23 +544,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders, clustering_model):
     if args.mixed_precision:
         with open(f'{log_path}/LR_{args.lr}_range_{args.range_ratio}.txt', 'a') as f:
             f.write(
-                'Schedule:{} {}, Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                    args.schedule_unit, args.schedule_count, ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay, args.cluster,
+                'Schedule:{} {}, Channel:{:.2f}, Neuron:{:.2f} Acc:{:.2f}, REPL:{} QUANTILE:{} LR:{}, Batch:{}, Weight decay: {} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+                    args.schedule_unit, args.schedule_count, ch_ratio, neuron_ratio, test_score, args.replace_grad, args.quantile, args.lr, args.batch_size, args.weight_decay,
                     best_epoch, time_cost, args.data, one_epoch_time))
     else:
-        if not args.nnac:
-            with open(f'{log_path}/cluster_{args.cluster}.txt', 'a') as f:
-                f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                    args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
-        else:
-            with open(f'{log_path}/cluster_{args.sub_cluster}->{args.cluster}.txt', 'a') as f:
-                f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Cluster:{} Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
-                    args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, args.cluster, best_epoch, time_cost, args.data, one_epoch_time))
+        with open(f'{log_path}.txt', 'a') as f:
+            f.write('Bit:{}, Acc:{:.2f}, LR:{}, Batch:{}, Weight decay: {}, Best Epoch:{}, Time:{}, Data:{}, 1 epoch time: {}\n'.format(
+                args.quant_scheme, test_score, args.lr, args.batch_size, args.weight_decay, best_epoch, time_cost, args.data, one_epoch_time))
+        
 
-
-def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
+def train_ema(train_loader, model, criterion, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
@@ -791,7 +564,6 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
     else:
         model.train()
 
-    end = time.time()
     with torch.no_grad():
         with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
             # for i, (images, target) in enumerate(t):
@@ -801,20 +573,12 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
                 else:
                     images, target = data
 
-                # measure data loading time
-                data_time.update(time.time() - end)
-
                 if args.gpu is not None:
                     images = images.cuda(args.gpu)
                     target = target.cuda(args.gpu)
 
-                if clustering_model is None:
-                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
-                else:
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
-
                 # compute output
-                output = model(images, cluster)
+                output = model(images)
                 loss = criterion(output, target)
 
                 # measure accuracy and record loss
@@ -823,57 +587,69 @@ def train_ema(train_loader, model, clustering_model, criterion, epoch, args):
                 top1.update(acc1[0].item(), images.size(0))
                 top5.update(acc5[0].item(), images.size(0))
 
-                # measure elapsed time
-                batch_time.update(time.time() - end)
-                end = time.time()
-
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
 
-def incremental_channel_selection(model, epoch):
-    neuron_four_counter, neuron_eight_counter, ch_four_counter, ch_eight_counter = 0, 0, 0, 0
-    range_ratio = model.skt_helper.range_ratio
-    iterator = iter(model.modules())
+def incremental_channel_selection(model, range_ratio):
+    def get_weight_range(weight):
+        w_transform = weight.transpose(1, 0).contiguous().view(weight.size(1), -1)
+        return torch.max(w_transform.amin(dim=1).abs(), w_transform.amax(dim=1).abs())
+    
+    def get_activation_range(activation_range):
+        if activation_range[0].min() >= 0.:
+            return activation_range[1] - activation_range[0]
+        return torch.max(activation_range[1].abs(), activation_range[0].abs())
+    
+    def get_weight_candidate_channel(range, ratio):
+        return torch.where(range <= range.max() * ratio, 1, 0)
+    
+    def get_activation_max_range(x_min, x_max):
+        if x_min >= 0.:
+            return x_max - x_min
+        return torch.max(x_max.abs(), x_min.abs())
+    
+    def get_activation_candidate_channel(range, max_range, ratio):
+        return torch.where(range <= max_range * ratio, 1, 0)
+    
+    total_low_bit_channel, total_orig_bit_channel, total_low_bit_weight, total_orig_bit_weight = 0, 0, 0, 0
+    for module in model.modules():
+        if isinstance(module, QuantAct):
+            prev_module = module
+        elif isinstance(module, (QuantConv2d, QuantBnConv2d)):
+            weight = module.weight.detach() if isinstance(module, QuantConv2d) else module.conv.weight.detach()
+            weight_range = get_weight_range(weight)
+            input_range = get_activation_range(module.input_range)
+            input_max_range = get_activation_max_range(prev_module.x_min, prev_module.x_max)
 
-    for cur in iterator:
-        if isinstance(cur, (QuantConv2d, QuantBnConv2d)):
-            in_channel = cur.in_channels
+            # candidate channel selection
+            weight_bits = get_weight_candidate_channel(weight_range, range_ratio)
+            input_bits = get_activation_candidate_channel(input_range, input_max_range, range_ratio)
+            
+            # low bit channel selection
+            new_selected_channel = torch.logical_and(input_bits, weight_bits)
+            accumulated_selected_channel = torch.logical_or(module.selected_channel, new_selected_channel)
+            
+            # accumulate new selected channel to selected channel pool
+            module.selected_channel = accumulated_selected_channel
+            module.selected_channel_index = accumulated_selected_channel.nonzero().view(-1)
 
-            # candidate channel selction
-            if isinstance(cur, QuantConv2d):
-                weight_group = cur.weight.transpose(1, 0).reshape(in_channel, -1)
-            else:
-                weight_group = cur.conv.weight.transpose(1, 0).reshape(in_channel, -1)
-            weight_range = torch.max(weight_group.max(dim=1).values.abs(), weight_group.min(dim=1).values.abs())
+            # statistic
+            low_bit_channel = module.selected_channel_index.size(0)
+            orig_bit_channel = module.selected_channel.size(0)
+            weight_parameter_count = int(torch.numel(weight) / weight.size(1))
+            
+            total_low_bit_channel += low_bit_channel
+            total_orig_bit_channel += orig_bit_channel
+            total_low_bit_weight += low_bit_channel * weight_parameter_count
+            total_orig_bit_weight += orig_bit_channel * weight_parameter_count
 
-            if cur.quant_mode == 'asymmetric':
-                input_range = cur.input_range[1] - cur.input_range[0]
-            else:
-                input_range = torch.max(cur.input_range[0].abs(), cur.input_range[1].abs())
-
-            # int4 channel selection
-            weight_bits = torch.where(weight_range <= weight_range.max() * range_ratio, 1, 0)
-            input_bits = torch.where(input_range <= input_range.max() * range_ratio, 1, 0)
-            mask = torch.logical_and(input_bits, weight_bits)
-
-            cur.prev_mask = torch.logical_or(cur.prev_mask, mask)
-            cur.low_group = cur.prev_mask.nonzero(as_tuple=True)[0]
-            cur.high_group = (~cur.prev_mask).nonzero(as_tuple=True)[0]
-
-            ch_four_counter += len(cur.low_group)
-            ch_eight_counter += len(cur.high_group)
-            neuron_four_counter += len(cur.low_group) * cur.element_size
-            neuron_eight_counter += len(cur.high_group) * cur.element_size
-
-    ch_ratio = ch_four_counter / model.total_ch * 100
-    neuron_ratio = neuron_four_counter / model.total_element_size * 100
-    print("Epoch {} Int-4 Neuron ratio : {:.2f}%".format(epoch, neuron_ratio))
-    return ch_ratio, neuron_ratio
+    channel_ratio = total_low_bit_channel / total_orig_bit_channel * 100
+    parameter_ratio = total_low_bit_weight / total_orig_bit_weight * 100
+    print("Int-4 channel ratio : {:.2f}%, parameter ratio : {:.2f}%".format(channel_ratio, parameter_ratio))
+    return channel_ratio, parameter_ratio
 
 
-def train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
+def train(train_loader, model, criterion, optimizer, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
@@ -892,20 +668,12 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, ar
             else:
                 images, target = data
 
-            # measure data loading time
-            data_time.update(time.time() - end)
-
             if args.gpu is not None:
                 images = images.cuda(args.gpu)
                 target = target.cuda(args.gpu)
 
-            if clustering_model is None:
-                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
-            else:
-                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
-
             # compute output
-            output = model(images, cluster)
+            output = model(images)
             loss = criterion(output, target)
 
             # measure accuracy and record loss
@@ -918,22 +686,16 @@ def train(train_loader, model, clustering_model, criterion, optimizer, epoch, ar
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
+            
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
 
-def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch, args):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
+def skt_train(train_loader, model, criterion, optimizer, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
 
-    global iter_cnt, res_iters
+    global update_interval, global_iter
 
     # switch to train mode
     if args.fix_BN == True:
@@ -941,7 +703,6 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
     else:
         model.train()
     
-    end = time.time()
     with tqdm(train_loader, desc="Epoch {} ".format(epoch), ncols=95) as t:
         for i, data in enumerate(t):
             if args.dataset == 'imagenet':
@@ -949,20 +710,12 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
             else:
                 images, target = data
 
-            # measure data loading time
-            data_time.update(time.time() - end)
-
             if args.gpu is not None:
                 images = images.cuda(args.gpu)
                 target = target.cuda(args.gpu)
 
-            if clustering_model is None:
-                cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu)
-            else:
-                cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu)
-
             # compute output
-            output = model(images, cluster)
+            output = model(images)
             loss = criterion(output, target)
 
             # measure accuracy and record loss
@@ -976,114 +729,17 @@ def skt_train(train_loader, model, clustering_model, criterion, optimizer, epoch
             loss.backward()
             optimizer.step()
 
+            global_iter += 1
             # candidate channel selection
-            if (i + 1 + res_iters) % iter_cnt == 0:
-                ch_ratio, neuron_ratio = incremental_channel_selection(model, epoch)
-                model.reset_input_range()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+            if global_iter % update_interval == 0:
+                channel_ratio, parameter_ratio = incremental_channel_selection(model, args.range_ratio)
+                reset_model_record(model)
 
             t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
-    res_iters = (len(train_loader) + res_iters) % iter_cnt
-    return ch_ratio, neuron_ratio
+    return channel_ratio, parameter_ratio
 
 
-def train_kd(train_loader, model, teacher, criterion, optimizer, epoch, val_loader, args, ngpus_per_node,
-             dataset_length):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
-    progress = ProgressMeter(
-        len(train_loader),
-        [batch_time, data_time, losses, top1, top5],
-        prefix="Epoch: [{}]".format(epoch))
-
-    # switch to train mode
-    if args.fix_BN == True:
-        model.eval()
-    else:
-        model.train()
-    teacher.eval()
-
-    end = time.time()
-
-    for i, (images, target) in enumerate(train_loader):
-        # measure data loading time
-        data_time.update(time.time() - end)
-
-        if args.gpu is not None:
-            images = images.cuda(args.gpu, non_blocking=True)
-        target = target.cuda(args.gpu, non_blocking=True)
-
-        # compute output
-        output = model(images)
-        if args.distill_method != 'None':
-            with torch.no_grad():
-                teacher_output = teacher(images)
-
-        if args.distill_method == 'None':
-            loss = criterion(output, target)
-        elif args.distill_method == 'KD_naive':
-            loss = loss_kd(output, target, teacher_output, args)
-        else:
-            raise NotImplementedError
-
-        # measure accuracy and record loss
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        losses.update(loss.item(), images.size(0))
-        top1.update(acc1[0], images.size(0))
-        top5.update(acc5[0], images.size(0))
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        if i % args.print_freq == 0:
-            progress.display(i)
-        if i % args.print_freq == 0 and args.rank == 0:
-            print('Epoch {epoch_} [{iters}]  Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(epoch_=epoch, iters=i,
-                                                                                               top1=top1, top5=top5))
-
-        if i % ((dataset_length // (
-                args.batch_size * args.evaluate_times)) + 2) == 0 and i > 0 and args.evaluate_times > 0:
-            acc1 = validate(val_loader, model, criterion, args)
-
-            # switch to train mode
-            if args.fix_BN == True:
-                model.eval()
-            else:
-                model.train()
-
-            # remember best acc@1 and save checkpoint
-            global best_acc1
-            is_best = acc1 > best_acc1
-            best_acc1 = max(acc1, best_acc1)
-
-            if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                                                        and args.rank % ngpus_per_node == 0):
-                if not os.path.exists(args.save_path):
-                    os.makedirs(args.save_path)
-
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': args.arch,
-                    'state_dict': model.state_dict(),
-                    'best_acc1': best_acc1,
-                    'optimizer': optimizer.state_dict(),
-                }, is_best, args.save_path)
-
-
-def validate(val_loader, model, clustering_model, criterion, args):
-    batch_time = AverageMeter('Time', ':6.3f')
+def validate(val_loader, model, criterion, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
@@ -1093,7 +749,6 @@ def validate(val_loader, model, clustering_model, criterion, args):
     model.eval()
 
     with torch.no_grad():
-        end = time.time()
         with tqdm(val_loader, desc="Validate", ncols=95) as t:
             for i, data in enumerate(t):
                 if args.dataset == 'imagenet':
@@ -1104,14 +759,9 @@ def validate(val_loader, model, clustering_model, criterion, args):
                 if args.gpu is not None:
                     images = images.cuda(args.gpu, non_blocking=True)
                     target = target.cuda(args.gpu, non_blocking=True)
-                    
-                if clustering_model is None:
-                    cluster = torch.zeros(images.size(0), dtype=torch.long).cuda(args.gpu, non_blocking=True)
-                else:
-                    cluster = clustering_model.predict_cluster_of_batch(images).cuda(args.gpu, non_blocking=True)
 
                 # compute output
-                output = model(images, cluster)
+                output = model(images)
                 loss = criterion(output, target)
 
                 # measure accuracy and record loss
@@ -1120,18 +770,14 @@ def validate(val_loader, model, clustering_model, criterion, args):
                 top1.update(acc1[0].item(), images.size(0))
                 top5.update(acc5[0].item(), images.size(0))
 
-                # measure elapsed time
-                batch_time.update(time.time() - end)
-                end = time.time()
-
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
-    torch.save({'convbn_scaling_factor': {k: v for k, v in model.state_dict().items() if 'convbn_scaling_factor' in k},
-                'fc_scaling_factor': {k: v for k, v in model.state_dict().items() if 'fc_scaling_factor' in k},
-                'weight_integer': {k: v for k, v in model.state_dict().items() if 'weight_integer' in k},
-                'bias_integer': {k: v for k, v in model.state_dict().items() if 'bias_integer' in k},
-                'act_scaling_factor': {k: v for k, v in model.state_dict().items() if 'act_scaling_factor' in k},
-                }, args.save_path + 'quantized_checkpoint.pth.tar')
+    # torch.save({'convbn_scaling_factor': {k: v for k, v in model.state_dict().items() if 'convbn_scaling_factor' in k},
+    #             'fc_scaling_factor': {k: v for k, v in model.state_dict().items() if 'fc_scaling_factor' in k},
+    #             'weight_integer': {k: v for k, v in model.state_dict().items() if 'weight_integer' in k},
+    #             'bias_integer': {k: v for k, v in model.state_dict().items() if 'bias_integer' in k},
+    #             'act_scaling_factor': {k: v for k, v in model.state_dict().items() if 'act_scaling_factor' in k},
+    #             }, args.save_path + 'quantized_checkpoint.pth.tar')
 
     unfreeze_model(model)
 

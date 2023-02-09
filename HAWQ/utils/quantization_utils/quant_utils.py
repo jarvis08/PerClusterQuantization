@@ -9,42 +9,35 @@ from decimal import Decimal
 from torch.autograd import Function, Variable
 
 
-class SKT_GRAD(torch.autograd.Function):
+class SKT_GRAD(Function):
     @staticmethod
-    def forward(ctx, x, skt_helper, quant_mode):
-        x_reshaped = x.transpose(1, 0).reshape(x.size(1), -1)
-        if quant_mode == 'symmetric':
-            max_per_ch = torch.max(x_reshaped.max(dim=1).values.abs(), x_reshaped.min(dim=1).values.abs())
+    def forward(ctx, x, skt_helper):
+        x_transform = x.transpose(1, 0).contiguous().view(x.size(1), -1)
+        if x_transform.min() >= 0.:
+            range = x_transform.amax(dim=1) - x_transform.amin(dim=1)
         else:
-            max_per_ch = x_reshaped.max(dim=1).values - x_reshaped.min(dim=1).values
-        mask = x > (max_per_ch.max() * skt_helper.range_ratio)
+            range = torch.max(x_transform.amax(dim=1).abs(), x_transform.amin(dim=1).abs())
+        positive_mask = torch.logical_and(x < (range.max() * (skt_helper.range_ratio + 0.2)), 
+                                          x > (range.max() * (0.5)))
+        negative_mask = torch.logical_and(x > (-range.max() * (0.5)), 
+                                          x < (-range.max() * (skt_helper.range_ratio + 0.2)))
 
-        ctx.save_for_backward(mask, torch.sign(x), skt_helper.replace_grad, skt_helper.quantile)
+        ctx.save_for_backward(positive_mask, negative_mask)
         return x
 
     @staticmethod
     def backward(ctx, grad):
-        mask, sign_info, replace_grad, quantile = ctx.saved_tensors
-        grad_sign = torch.sign(grad) * sign_info
-        abs_val = torch.quantile(grad.abs(), quantile)
-
-        # replace
-        grad = torch.where(mask & (grad.abs() <= abs_val), replace_grad * grad.sign(), grad)
-        # control
-        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign > 0), grad * 2, grad)
-        grad = torch.where(mask & (grad.abs() > abs_val) & (grad_sign < 0), grad * 0.5, grad)
+        positive_mask, negative_mask = ctx.saved_tensors
+        grad_sign = torch.sign(grad)
+        
+        # positive
+        grad = torch.where(positive_mask & (grad_sign < 0.), grad / 2, grad)
+        grad = torch.where(positive_mask & (grad_sign > 0.), grad * 2, grad)
+        
+        # negative
+        grad = torch.where(negative_mask & (grad_sign > 0.), grad / 2, grad)
+        grad = torch.where(negative_mask & (grad_sign < 0.), grad * 2, grad)
         return grad, None, None, None
-
-
-def clamp(input, min, max, inplace=False):
-    """
-    Clamp tensor input to (min, max).
-    input: input tensor to be clamped
-    """
-    if inplace:
-        input.clamp_(min, max)
-        return input
-    return torch.clamp(input, min, max)
 
 
 def transfer_conv_size(input_tensor):
@@ -64,7 +57,7 @@ def transfer_numpy_float(inputs):
     return np.array(tmp_output)
 
 
-def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False, num_cluster=1):
+def get_percentile_min_max_pcq(input, lower_percentile, upper_percentile, output_tensor=False):
     """
     Calculate the percentile max and min values in a given tensor
 
@@ -282,6 +275,28 @@ class ste_round(Function):
         return grad_output.clone()
 
 
+class ste_trunc(Function):
+    @staticmethod
+    def forward(ctx, x):
+        with torch.no_grad():
+            return torch.trunc(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output.clone()
+
+
+class ste_clamp(Function):
+    @staticmethod
+    def forward(ctx, x, min, max):
+        with torch.no_grad():
+            return torch.clamp(x, min, max)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output.clone(), None, None
+    
+
 class SymmetricQuantFunction(Function):
     """
     Class to quantize the given floating-point values using symmetric quantization with given range and bitwidth.
@@ -375,10 +390,29 @@ class AsymmetricQuantFunction(Function):
         return grad_output.clone() / scale, None, None, None
 
 
+class SymmetricClampLowBit(Function):
+    @staticmethod
+    def forward(ctx, x, k):
+        c = 2 ** (k - 2) - 2 ** 3
+        return torch.clamp(torch.trunc(torch.bitwise_right_shift(x, 3))*8, -c, c)
+
+    def backward(ctx, grad_output):
+        return grad_output, None
+
+class AsymmetricClampLowBit(Function):
+    @staticmethod
+    def forward(ctx, x, k):
+        c = 2 ** (k - 1) - 2 ** 3
+        return torch.clamp(torch.trunc(torch.bitwise_right_shift(x, 3))*8, 0, c)
+
+    def backward(ctx, grad_output):
+        return grad_output, None
+
 class MixedSymmetricQuantFunction(Function):
     @staticmethod
-    def forward(ctx, x, low_group, high_group, specified_scale=None):
-
+    def forward(ctx, x, k, selected_channel, specified_scale=None):
+        n = 2 ** (k - 1) - 1
+        
         if specified_scale is not None:
             scale = specified_scale
         else:
@@ -388,27 +422,24 @@ class MixedSymmetricQuantFunction(Function):
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
-        if low_group.size(0):
+        if selected_channel.size(0):
             # truncate the rightmost 3 bits
-            with torch.no_grad():
-                new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
-            new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], -64, 63)
-        new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], -128, 127)
+            new_quant_x[:, selected_channel] = SymmetricClampLowBit.apply(new_quant_x[:, selected_channel], k)
+            
+        new_quant_x = torch.clamp(new_quant_x, -n - 1, n)
 
         ctx.scale = scale
         return new_quant_x
 
     @staticmethod
     def backward(ctx, grad_output):
-
-        scale = ctx.scale
-
-        return grad_output.clone() / scale, None, None, None
+        return grad_output.clone() / ctx.scale, None, None, None
 
 
 class MixedAsymmetricQuantFunction(Function):
     @staticmethod
-    def forward(ctx, x, low_group, high_group, specified_scale=None, specified_zero_point=None):
+    def forward(ctx, x, k, selected_channel, specified_scale=None, specified_zero_point=None):
+        n = 2 ** k - 1
         if specified_scale is not None:
             scale = specified_scale
         else:
@@ -421,12 +452,11 @@ class MixedAsymmetricQuantFunction(Function):
 
         new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
 
-        if low_group.size(0):
+        if selected_channel.size(0):
             # truncate the rightmost 3 bits
-            with torch.no_grad():
-                new_quant_x[:, low_group] = torch.round(new_quant_x[:, low_group] / 8) * 8
-            new_quant_x[:, low_group] = torch.clamp(new_quant_x[:, low_group], 0, 127)
-        new_quant_x[:, high_group] = torch.clamp(new_quant_x[:, high_group], 0, 255)
+            new_quant_x[:, selected_channel] = AsymmetricClampLowBit.apply(new_quant_x[:, selected_channel], k)
+            
+        new_quant_x = torch.clamp(new_quant_x, 0, n)
 
         ctx.scale = scale
 
@@ -434,16 +464,7 @@ class MixedAsymmetricQuantFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-
-        scale = ctx.scale
-        # if len(grad_output.shape) == 4:
-        #     scale = scale.view(-1, 1, 1, 1)
-        # # reshape scale and zeropoint for linear weights
-        # elif len(grad_output.shape) == 2:
-        #     scale = scale.view(-1, 1)
-        # else:
-        #     scale = scale.view(-1)
-        return grad_output.clone() / scale, None, None, None
+        return grad_output.clone() / ctx.scale, None, None, None
 
 
 class transfer_float_averaging_to_int_averaging(Function):
