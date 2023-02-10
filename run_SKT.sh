@@ -79,7 +79,7 @@ else
             --wd 1e-4 \
             --pretrained \
             --channel-wise false \
-            --quant-scheme uniform4 \
+            --quant-scheme uniform8 \
             --gpu 0 \
             --data $DATASET \
             --batch-size 128
@@ -96,7 +96,7 @@ else
             --wd 1e-4 \
             --pretrained \
             --channel-wise false \
-            --quant-scheme uniform4 \
+            --quant-scheme uniform8 \
             --gpu 0 \
             --data $DATASET \
             --batch-size 128 \

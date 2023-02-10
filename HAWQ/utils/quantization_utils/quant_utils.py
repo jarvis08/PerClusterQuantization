@@ -11,12 +11,9 @@ from torch.autograd import Function, Variable
 
 class SKT_GRAD(Function):
     @staticmethod
-    def forward(ctx, x, skt_helper):
-        x_transform = x.transpose(1, 0).contiguous().view(x.size(1), -1)
-        if x_transform.min() >= 0.:
-            range = x_transform.amax(dim=1) - x_transform.amin(dim=1)
-        else:
-            range = torch.max(x_transform.amax(dim=1).abs(), x_transform.amin(dim=1).abs())
+    def forward(ctx, x, skt_helper, min, max):
+        range = max - min if min >= 0. else torch.max(max.abs(), min.abs())
+            
         positive_mask = torch.logical_and(x < (range.max() * (skt_helper.range_ratio + skt_helper.manipulation_ratio)), 
                                           x > (range.max() * (0.5)))
         negative_mask = torch.logical_and(x > (-range.max() * (0.5)), 

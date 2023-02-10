@@ -202,7 +202,9 @@ class QuantAct(Module):
         self.fix_flag = fix_flag
         self.act_percentile = act_percentile
         self.fixed_point_quantization = fixed_point_quantization
+        self.mixed_precision = False
         self.init_record = True
+        self.skt_helper = None
 
         self.register_buffer('x_min', torch.zeros(1))
         self.register_buffer('x_max', torch.zeros(1))
@@ -216,6 +218,10 @@ class QuantAct(Module):
 
         self.is_classifier = False
 
+    def set_mixed_precision(self, skt_helper):
+        self.mixed_precision = True
+        self.skt_helper = skt_helper
+        
     def __repr__(self):
         return "{0}(activation_bit={1}, full_precision_flag={2}, " \
                "quant_mode={3}".format(self.__class__.__name__, self.activation_bit,
@@ -351,10 +357,11 @@ class QuantAct(Module):
                                                          concat_weight_scaling_factor)
             
             if len(quant_act_int.shape) == 4:
-                correct_output_scale = self.act_scaling_factor.view(-1, 1, 1, 1)
-            else:
-                correct_output_scale = self.act_scaling_factor.view(-1, 1)
-            return (quant_act_int * correct_output_scale, self.act_scaling_factor)
+                output = quant_act_int * self.act_scaling_factor.view(-1, 1, 1, 1)
+                if self.mixed_precision and not self.fix_flag:
+                    output = SKT_GRAD.apply(output, self.skt_helper, self.x_min, self.x_max)
+                return (output, self.act_scaling_factor)
+            return (quant_act_int * self.act_scaling_factor.view(-1, 1), self.act_scaling_factor)
         else:
             return (x, None)
 
@@ -525,7 +532,7 @@ class QuantBnConv2d(Module):
             # gradient manipulation
             if self.mixed_precision and not self.fix_flag:
                 # x = SKT_GRAD.apply(x, self.skt_helper)
-                weight = SKT_GRAD.apply(self.conv.weight, self.skt_helper)
+                weight = SKT_GRAD.apply(weight, self.skt_helper, weight.min().view(1), weight.max().view(1))
 
             # run the forward without folding BN
             if self.fix_BN == False:
@@ -1111,7 +1118,7 @@ class QuantConv2d(Module):
             # gradient manipulation
             if self.mixed_precision and not self.fix_flag:
                 # x = SKT_GRAD.apply(x, self.skt_helper)
-                weight = SKT_GRAD.apply(self.weight, self.skt_helper)
+                weight = SKT_GRAD.apply(weight, self.skt_helper, weight.min().view(1), weight.max().view(1))
 
             if self.per_channel:
                 w_transform = weight.data.contiguous().view(self.out_channels, -1)
@@ -1221,5 +1228,5 @@ def reset_model_record(model):
 
 def set_mixed_precision(model, skt_helper):
     for m in model.modules():
-        if isinstance(m, (QuantConv2d, QuantBnConv2d)):
+        if isinstance(m, (QuantAct, QuantConv2d, QuantBnConv2d)):
             m.set_mixed_precision(skt_helper)
