@@ -351,15 +351,15 @@ class QuantAct(Module):
                     if concat_weight_scaling_factor is None:
                         concat_weight_scaling_factor = self.concat_weight_scaling_factor
                     quant_act_int = fixedpoint_fn.apply(x, self.activation_bit, self.quant_mode,
-                                                         self.act_scaling_factor, 2, pre_act_scaling_factor,
-                                                         pre_weight_scaling_factor,
-                                                         concat, concat_scaling_factor,
-                                                         concat_weight_scaling_factor)
+                                                        self.act_scaling_factor, 2, pre_act_scaling_factor,
+                                                        pre_weight_scaling_factor,
+                                                        concat, concat_scaling_factor,
+                                                        concat_weight_scaling_factor)
             
             if len(quant_act_int.shape) == 4:
                 output = quant_act_int * self.act_scaling_factor.view(-1, 1, 1, 1)
-                if self.mixed_precision and not self.fix_flag:
-                    output = SKT_GRAD.apply(output, self.skt_helper, self.x_min, self.x_max)
+                # if self.mixed_precision and not self.fix_flag:
+                #     output = SKT_GRAD.apply(output, self.skt_helper, self.x_min, self.x_max)
                 return (output, self.act_scaling_factor)
             return (quant_act_int * self.act_scaling_factor.view(-1, 1), self.act_scaling_factor)
         else:
@@ -531,7 +531,6 @@ class QuantBnConv2d(Module):
             weight = self.conv.weight
             # gradient manipulation
             if self.mixed_precision and not self.fix_flag:
-                # x = SKT_GRAD.apply(x, self.skt_helper)
                 weight = SKT_GRAD.apply(weight, self.skt_helper, weight.min().view(1), weight.max().view(1))
 
             # run the forward without folding BN
@@ -1117,7 +1116,6 @@ class QuantConv2d(Module):
             weight = self.weight
             # gradient manipulation
             if self.mixed_precision and not self.fix_flag:
-                # x = SKT_GRAD.apply(x, self.skt_helper)
                 weight = SKT_GRAD.apply(weight, self.skt_helper, weight.min().view(1), weight.max().view(1))
 
             if self.per_channel:

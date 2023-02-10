@@ -516,7 +516,8 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
         adjust_learning_rate(optimizer, epoch, args)
 
         if args.mixed_precision:
-            ratio = torch.cat((ratio, skt_train(train_loader, model, criterion, optimizer, epoch, args)), dim=1)    # Channel Ratio
+            r = skt_train(train_loader, model, criterion, optimizer, epoch, args)
+            ratio = torch.cat((ratio, r), dim=1)    # Channel Ratio
         else:
             train(train_loader, model, criterion, optimizer, epoch, args)
         tuning_fin_time = time.time()
@@ -531,7 +532,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             best_acc1 = max(acc1, best_acc1)
             best_epoch = epoch
 
-        logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f}')
+        logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f} / Channel Ratio: {r[0].item():.3f} / Parameter Ratio: {r[1].item():.3f}')
 
     statistics = torch.cat((accuracy.view(1, -1), ratio)).numpy()
     statistics = pd.DataFrame(statistics)
