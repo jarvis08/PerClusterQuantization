@@ -513,7 +513,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             accuracy = torch.cat((accuracy, validate(test_loader, model, criterion, args)))
     
     for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch, args)
+        # adjust_learning_rate(optimizer, epoch, args)
 
         if args.mixed_precision:
             r = skt_train(train_loader, model, criterion, optimizer, epoch, args)

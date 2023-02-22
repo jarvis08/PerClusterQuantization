@@ -358,8 +358,8 @@ class QuantAct(Module):
             
             if len(quant_act_int.shape) == 4:
                 output = quant_act_int * self.act_scaling_factor.view(-1, 1, 1, 1)
-                if self.activation_bit <= 8 and self.mixed_precision and not self.fix_flag:
-                    output = SKT_GRAD.apply(output, self.skt_helper, self.x_min, self.x_max)
+                # if self.activation_bit <= 8 and self.mixed_precision and not self.fix_flag:
+                #     output = SKT_GRAD.apply(output, self.skt_helper, self.x_min, self.x_max)
                 return (output, self.act_scaling_factor)
             return (quant_act_int * self.act_scaling_factor.view(-1, 1), self.act_scaling_factor)
         else:

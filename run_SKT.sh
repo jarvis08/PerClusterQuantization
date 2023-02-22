@@ -14,7 +14,7 @@ MIXED_PRECISION=${5}    # true / false
 SCHEDULE_UNIT=${6}      # epoch / iter
 SCHEDULE_COUNT=${7}     # 1 / 10 / 100
 RANGE_RATIO=${8}        # 0.5 ~ 0.7
-GRADT_MANI_RATIO=${9}   # 0.1 ~ 0.3
+GRAD_MANI_RATIO=${9}   # 0.1 ~ 0.3
 #####################################################
 
 if [ "$MIXED_PRECISION" = true ]; then 
@@ -38,7 +38,7 @@ if [ "$MIXED_PRECISION" = true ]; then
             --range_ratio $RANGE_RATIO \
             --schedule_unit $SCHEDULE_UNIT \
             --schedule_count $SCHEDULE_COUNT \
-            --gradient_manipulation_ratio $GRADT_MANI_RATIO \
+            --gradient_manipulation_ratio $GRAD_MANI_RATIO \
             --mixed_precision
     else
         CUDA_VISIBLE_DEVICES=${GPU_NUM} python main.py \
@@ -62,7 +62,7 @@ if [ "$MIXED_PRECISION" = true ]; then
             --range_ratio $RANGE_RATIO \
             --schedule_unit $SCHEDULE_UNIT \
             --schedule_count $SCHEDULE_COUNT \
-            --gradient_manipulation_ratio $GRADT_MANI_RATIO \
+            --gradient_manipulation_ratio $GRAD_MANI_RATIO \
             --mixed_precision
     fi
 else
