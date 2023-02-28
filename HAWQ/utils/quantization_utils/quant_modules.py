@@ -111,7 +111,6 @@ class QuantLinear(Module):
             else:
                 raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
-
             w = self.weight
             w_transform = w.data.detach()
             # calculate the quantization range of weights and bias
@@ -185,7 +184,6 @@ class QuantAct(Module):
                  activation_bit=4,
                  act_range_momentum=0.95,
                  full_precision_flag=False,
-                 calibration_flag=False,
                  running_stat=True,
                  quant_mode="symmetric",
                  fix_flag=False,
@@ -198,7 +196,6 @@ class QuantAct(Module):
         self.activation_bit = activation_bit
         self.act_range_momentum = act_range_momentum
         self.full_precision_flag = full_precision_flag
-        self.calibration_flag = calibration_flag
         self.running_stat = running_stat
         self.quant_mode = quant_mode
         self.fix_flag = fix_flag
@@ -217,7 +214,6 @@ class QuantAct(Module):
         self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
         self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
         self.register_buffer('concat_weight_scaling_factor', torch.ones(1))
-        # self.register_buffer('isDaq', torch.zeros(1, dtype=torch.bool))
         
         self.counter = 0
         self.threshold = threshold
@@ -247,12 +243,6 @@ class QuantAct(Module):
         
     def deactivate_full_precision(self):
         self.full_precision_flag = False
-        
-    def activate_calibration(self):
-        self.calibration_flag = True
-        
-    def deactivate_calibration(self):
-        self.calibration_flag = False
 
     def forward(self, x, pre_act_scaling_factor=None, pre_weight_scaling_factor=None, identity=None,
                 identity_scaling_factor=None, identity_weight_scaling_factor=None, concat=None,
@@ -296,82 +286,61 @@ class QuantAct(Module):
             uniques = torch.unique(cluster)
             # calculate the quantization range of the activations
             if self.running_stat:
-                if False:
-                    if self.act_percentile == 0:
-                        data = x.view(x.size(0), -1).clone().detach()
-                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
-                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
-                            
-                    elif self.quant_mode == 'symmetric':        # TODO
-                        x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
-                                                        self.act_percentile, output_tensor=True)
-                    # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
-                    # that is to say our asymmetric quantization should always be after ReLU, which makes
-                    # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
-                    # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
-                    elif self.quant_mode == 'asymmetric':       # TODO
-                        x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)
+                if self.act_percentile == 0:
+                    data = x.view(x.size(0), -1).clone().detach()
+                    self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
+                    self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
+                        
+                elif self.quant_mode == 'symmetric':        # TODO
+                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 100 - self.act_percentile,
+                                                    self.act_percentile, output_tensor=True)
+                # Note that our asymmetric quantization is implemented using scaled unsigned integers without zero_points,
+                # that is to say our asymmetric quantization should always be after ReLU, which makes
+                # the minimum value to be always 0. As a result, if we use percentile mode for asymmetric quantization,
+                # the lower_percentile will be set to 0 in order to make sure the final x_min is 0.
+                elif self.quant_mode == 'asymmetric':       # TODO
+                    x_min, x_max = get_percentile_min_max(x.detach().view(-1), 0, self.act_percentile, output_tensor=True)
 
-                    # Initialization
-                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
-                        tmp_min = torch.index_select(self.min, 0, non_initialized)
-                        tmp_max = torch.index_select(self.max, 0, non_initialized)
-                        self.x_min.index_add_(0, non_initialized, tmp_min)
-                        self.x_max.index_add_(0, non_initialized, tmp_max)
-                        self.initialize.index_fill_(0, uniques, False)
-                    
-                    if self.act_range_momentum == -1:
-                        self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
-                        self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
-                    else:
-                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                        self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
-                        self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
-                        
-                    self.min.fill_(0.)
-                    self.max.fill_(0.)
+                # Initialization
+                if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
+                    tmp_min = torch.index_select(self.min, 0, non_initialized)
+                    tmp_max = torch.index_select(self.max, 0, non_initialized)
+                    self.x_min.index_add_(0, non_initialized, tmp_min)
+                    self.x_max.index_add_(0, non_initialized, tmp_max)
+                    self.initialize.index_fill_(0, uniques, False)
+                
+                if self.act_range_momentum == -1:
+                    self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
+                    self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
                 else:
-                    if self.counter == 0:
-                        data = x.view(x.size(0), -1).clone().detach()
-                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
-                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
-                        self.counter += 1
-                    else:
-                        data = x.view(x.size(0), -1).clone().detach()
-                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin")
-                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax")
-                        self.counter += 1
-                    
-                    # Initialization
-                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
-                        tmp_min = torch.index_select(self.min, 0, non_initialized)
-                        tmp_max = torch.index_select(self.max, 0, non_initialized)
-                        self.x_min.index_add_(0, non_initialized, tmp_min)
-                        self.x_max.index_add_(0, non_initialized, tmp_max)
-                        self.initialize.index_fill_(0, torch.flatten(self.x_max.nonzero()), False)
-                        
-                    ready = torch.flatten(self.x_max.nonzero())
-                    if self.counter == self.threshold:
-                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
-                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
-                        self.x_min.view(-1, 1).index_copy_(0, ready, tmp_min)
-                        self.x_max.view(-1, 1).index_copy_(0, ready, tmp_max)
-                        
-                        self.min.fill_(0.)
-                        self.max.fill_(0.)
-                        
-                        self.counter = 0
+                    tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                    tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
+                    self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
+                    self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
                 
             if self.quant_mode == 'symmetric':
                 self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
-                                                                           self.x_min, self.x_max, (self.num_clusters != 1))
+                                                            self.x_min, self.x_max, (self.num_clusters != 1))
             # Note that our asymmetric quantization is implemented using scaled unsigned integers
             # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
             # and the self.act_zero_point should be 0.
             else:
-                self.act_scaling_factor, self.act_zero_point = asymmetric_linear_quantization_params(
+                # self.act_scaling_factor, self.act_zero_point = asymmetric_linear_quantization_params(
+                self.act_scaling_factor = asymmetric_linear_quantization_params(
                     self.activation_bit, self.x_min, self.x_max, True)
+                
+            if False:
+                if self.act_scaling_factor.requires_grad is False:
+                    if self.quant_mode == 'symmetric':
+                        self.act_scaling_factor = torch.nn.Parameter(symmetric_linear_quantization_params(self.activation_bit,
+                                                                    self.x_min, self.x_max, (self.num_clusters != 1)))
+                    # Note that our asymmetric quantization is implemented using scaled unsigned integers
+                    # without zero_point shift. As a result, asymmetric quantization should be after ReLU,
+                    # and the self.act_zero_point should be 0.
+                    else:
+                        self.act_scaling_factor = torch.nn.Parameter(asymmetric_linear_quantization_params(
+                                                                    self.activation_bit, self.x_min, self.x_max, True))
+                pass
                 
             act_scaling_factor = self.act_scaling_factor[cluster]
             if (pre_act_scaling_factor is None) or (self.fixed_point_quantization == True):
@@ -420,62 +389,6 @@ class QuantAct(Module):
                 correct_output_scale = act_scaling_factor.view(-1, 1)
             return (quant_act_int * correct_output_scale, act_scaling_factor)
         else:
-            if self.calibration_flag:
-                uniques = torch.unique(cluster)
-                if False:
-                    if self.act_percentile == 0:
-                        data = x.view(x.size(0), -1).clone().detach()
-                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
-                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
-
-                    # Initialization
-                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
-                        tmp_min = torch.index_select(self.min, 0, non_initialized)
-                        tmp_max = torch.index_select(self.max, 0, non_initialized)
-                        self.x_min.index_add_(0, non_initialized, tmp_min)
-                        self.x_max.index_add_(0, non_initialized, tmp_max)
-                        self.initialize.index_fill_(0, uniques, False)
-                    
-                    if self.act_range_momentum == -1:
-                        self.x_min.index_copy_(0, uniques, torch.index_select(torch.minimum(self.x_min, self.min), 0, uniques).view(-1, 1))
-                        self.x_max.index_copy_(0, uniques, torch.index_select(torch.maximum(self.x_max, self.max), 0, uniques).view(-1, 1))
-                    else:
-                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, uniques).view(-1, 1)
-                        self.x_min.view(-1, 1).index_copy_(0, uniques, tmp_min)
-                        self.x_max.view(-1, 1).index_copy_(0, uniques, tmp_max)
-                else:
-                    if self.counter == 0:
-                        data = x.view(x.size(0), -1).clone().detach()
-                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin", include_self=False)
-                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax", include_self=False)
-                        self.counter += 1
-                    else:
-                        data = x.view(x.size(0), -1).clone().detach()
-                        self.min.scatter_reduce_(0, cluster, src=data.amin(dim=1), reduce="amin")
-                        self.max.scatter_reduce_(0, cluster, src=data.amax(dim=1), reduce="amax")
-                        self.counter += 1
-                    
-                    # Initialization
-                    if (non_initialized := torch.flatten(self.initialize.nonzero())).size(0):
-                        tmp_min = torch.index_select(self.min, 0, non_initialized)
-                        tmp_max = torch.index_select(self.max, 0, non_initialized)
-                        self.x_min.index_add_(0, non_initialized, tmp_min)
-                        self.x_max.index_add_(0, non_initialized, tmp_max)
-                        self.initialize.index_fill_(0, torch.flatten(self.x_max.nonzero()), False)
-                        
-                    ready = torch.flatten(self.x_max.nonzero())
-                    if self.counter == self.threshold:
-                        tmp_min = torch.index_select(self.x_min * self.act_range_momentum + self.min * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
-                        tmp_max = torch.index_select(self.x_max * self.act_range_momentum + self.max * (1 - self.act_range_momentum), 0, ready).view(-1, 1)
-                        self.x_min.view(-1, 1).index_copy_(0, ready, tmp_min)
-                        self.x_max.view(-1, 1).index_copy_(0, ready, tmp_max)
-                        
-                        self.min.fill_(0.)
-                        self.max.fill_(0.)
-                        
-                        self.counter = 0
-                    
             return (x, None)
 
 
@@ -596,6 +509,7 @@ class QuantBnConv2d(Module):
             #         self.fix_BN = True
 
             # run the forward without folding BN
+            
             if self.fix_BN == False:
                 if self.per_channel:
                     w_transform = self.conv.weight.data.contiguous().view(self.conv.out_channels, -1)
@@ -1198,16 +1112,6 @@ def unfreeze_model(model):
             if isinstance(mod, nn.Module) and 'norm' not in attr:
                 unfreeze_model(mod)
 
-
-def activate_calibration(model):
-    for module in model.modules():
-        if isinstance(module, (QuantAct)):
-            module.activate_calibration()
-        
-def deactivate_calibration(model):
-    for module in model.modules():
-        if isinstance(module, (QuantAct)):
-            module.deactivate_calibration()
     
 def activate_full_precision(model):
     for module in model.modules():

@@ -130,7 +130,6 @@ def get_data_loaders(args, model):
         if args.mode == 'eval':
             return test_loader
 
-        clustering_train_loader = None
         aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
         non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
         # aug_train_dataset = CustomDataset(aug_train_dataset, args.cluster)              # TODO
@@ -140,24 +139,41 @@ def get_data_loaders(args, model):
                                                 workers=args.worker)
         train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     else:
-        from .dali import get_dali_dataloader
-        train_resolution, test_resolution = (224, 256) if model != "inceptionv3" else (299, 342)
-        train_loader = get_dali_dataloader(128, 
-                                        os.path.join(args.imagenet, 'train'), 
-                                        crop=train_resolution, 
-                                        size=test_resolution, 
-                                        is_training=True, 
-                                        num_workers=4)
-        test_loader = get_dali_dataloader(256, 
-                                        os.path.join(args.imagenet, 'val'), 
-                                        crop=train_resolution, 
-                                        size=test_resolution, 
-                                        is_training=False, 
-                                        num_workers=4)
-        clustering_train_loader = get_dali_dataloader(512, 
-                                                    os.path.join(args.imagenet, 'train'), 
-                                                    crop=train_resolution, 
-                                                    size=test_resolution, 
-                                                    is_training=False, 
-                                                    num_workers=4)
+        # from .dali import get_dali_dataloader
+        # train_resolution, test_resolution = (224, 256) if model != "inceptionv3" else (299, 342)
+        # train_loader = get_dali_dataloader(128, 
+        #                                 os.path.join(args.imagenet, 'train'), 
+        #                                 crop=train_resolution, 
+        #                                 size=test_resolution, 
+        #                                 is_training=True, 
+        #                                 num_workers=4)
+        # test_loader = get_dali_dataloader(256, 
+        #                                 os.path.join(args.imagenet, 'val'), 
+        #                                 crop=train_resolution, 
+        #                                 size=test_resolution, 
+        #                                 is_training=False, 
+        #                                 num_workers=4)
+        # clustering_train_loader = get_dali_dataloader(512, 
+        #                                             os.path.join(args.imagenet, 'train'), 
+        #                                             crop=train_resolution, 
+        #                                             size=test_resolution, 
+        #                                             is_training=False, 
+        #                                             num_workers=4)
+        
+        normalizer = get_normalizer(args.dataset)
+        test_dataset = get_test_dataset(args, normalizer, model)
+        test_loader = get_data_loader(test_dataset, batch_size=args.val_batch, shuffle=False, workers=args.worker)
+        if args.mode == 'eval':
+            return test_loader
+        
+        aug_train_dataset = get_augmented_train_dataset(args, normalizer, model)
+        non_aug_train_dataset = get_non_augmented_train_dataset(args, normalizer, model)
+        
+        old_dataset_length = len(aug_train_dataset)
+        new_dataset_length = int(old_dataset_length * args.data_percentage)
+        aug_train_dataset, _ = torch.utils.data.random_split(aug_train_dataset, [new_dataset_length, old_dataset_length - new_dataset_length])
+        non_aug_train_dataset, _ = torch.utils.data.random_split(non_aug_train_dataset, [new_dataset_length, old_dataset_length - new_dataset_length])
+        
+        clustering_train_loader = get_data_loader(non_aug_train_dataset, batch_size=512, shuffle=False, workers=args.worker)
+        train_loader = get_data_loader(aug_train_dataset, batch_size=args.batch, shuffle=True, workers=args.worker)
     return {'aug_train': train_loader, 'test': test_loader, 'non_aug_train': clustering_train_loader}
