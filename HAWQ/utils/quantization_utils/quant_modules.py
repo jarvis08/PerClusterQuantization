@@ -62,7 +62,7 @@ class QuantLinear(Module):
         return s
 
     def set_param(self, linear, model_dict=None, dict_idx=None):
-        #self.in_features = linear.in_features
+        self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.register_buffer('fc_scaling_factor', torch.zeros(self.out_features))
         if model_dict is not None :

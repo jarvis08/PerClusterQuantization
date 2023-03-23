@@ -475,9 +475,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
 
     best_epoch = 0
     best_acc1 = torch.zeros([1])
-    tuning_start_time = time.time()
-    tuning_fin_time = None
-    one_epoch_time = None
 
     ### LOG DIRECTORY ###
     # finetune_path = set_save_dir(args)
@@ -491,8 +488,125 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
+    from thop import profile
+    
+    def count_conv2d(m, x, y):
+        def l_prod(in_list):
+            res = 1
+            for _ in in_list:
+                res *= _
+            return res
+        
+        def calculate_conv2d_flops(input_size: list, output_size: list, kernel_size: list, groups: int, bias: bool = False):
+            # n, out_c, oh, ow = output_size
+            # n, in_c, ih, iw = input_size
+            # out_c, in_c, kh, kw = kernel_size
+            in_c = input_size[1]
+            g = groups
+            return l_prod(output_size) * (in_c // g) * l_prod(kernel_size[2:])
+        
+        x = x[0]
+        
+        # kernel_ops = torch.zeros(m.weight.size()[2:]).numel()
+        # bias_ops = 1 if m.bias is not None else 0
+        if hasattr(m, 'selected_channel_index'):
+            INT8 = m.selected_channel.size(0) - m.selected_channel_index.size(0)
+            m.total_ops += calculate_conv2d_flops(
+                input_size = list(x[:,:INT8].shape),
+                output_size = list(y[0].shape),
+                kernel_size = list(m.weight[:,:INT8].shape),
+                groups = m.groups,
+                bias = m.bias
+            )
+        else:
+            m.total_ops += calculate_conv2d_flops(
+                input_size = list(x.shape),
+                output_size = list(y[0].shape),
+                kernel_size = list(m.weight.shape),
+                groups = m.groups,
+                bias = m.bias
+            )
+
+    def count_bnconv2d(m, x, y):
+        def l_prod(in_list):
+            res = 1
+            for _ in in_list:
+                res *= _
+            return res
+        
+        def calculate_conv2d_flops(input_size: list, output_size: list, kernel_size: list, groups: int, bias: bool = False):
+            # n, out_c, oh, ow = output_size
+            # n, in_c, ih, iw = input_size
+            # out_c, in_c, kh, kw = kernel_size
+            in_c = input_size[1]
+            g = groups
+            return l_prod(output_size) * (in_c // g) * l_prod(kernel_size[2:])
+        
+        x = x[0]
+        
+        kernel_ops = torch.zeros(m.conv.weight.size()[2:]).numel()
+        bias_ops = 1 if m.conv.bias is not None else 0
+        
+        if hasattr(m, 'selected_channel_index'):
+            INT8 = m.selected_channel.size(0) - m.selected_channel_index.size(0)
+            m.total_ops += calculate_conv2d_flops(
+                input_size = list(x[:,:INT8].shape),
+                output_size = list(y[0].shape),
+                kernel_size = list(m.conv.weight[:,:INT8].shape),
+                groups = m.conv.groups,
+                bias = m.conv.bias
+            )
+        else:
+            m.total_ops += calculate_conv2d_flops(
+                input_size = list(x.shape),
+                output_size = list(y[0].shape),
+                kernel_size = list(m.conv.weight.shape),
+                groups = m.conv.groups,
+                bias = m.conv.bias
+            )
+        
+
+    def count_linear(m, x, y):
+        def calculate_linear(in_feature, num_elements):
+            return torch.DoubleTensor([int(in_feature * num_elements)])
+        
+        total_mul = m.in_features
+        if isinstance(y, tuple):
+            num_elements = y[0].numel()
+        else:
+            num_elements = y.numel()
+        m.total_ops += calculate_linear(total_mul, num_elements)
+
+
+    def count_act(m, x, y):
+        def calculate_quant(input_size):
+            return torch.DoubleTensor([2 * input_size])
+        
+        x = x[0]
+        m.total_ops += calculate_quant(x.numel())
+    
+    
+    def count_bn(m, x, y):
+        def calculate_norm(input_size):
+            return torch.DoubleTensor([2 * input_size])
+        
+        x = x[0]
+        m.total_ops += calculate_norm(x.numel()) * 2
+    
     accuracy = torch.zeros([0])
     ratio = torch.zeros([2, 0])
+    macs = torch.zeros([0])
+    
+    temp = torch.randn(1, 3, 32, 32).cuda()
+    mac, _ = profile(model, inputs=(temp, ),
+                    custom_ops={QuantConv2d: count_conv2d,
+                                QuantBnConv2d: count_bnconv2d,
+                                QuantBn: count_bn,
+                                QuantLinear: count_linear,
+                                QuantAct: count_act,
+                                })
+    macs = torch.cat((macs, torch.tensor([mac])))
+    
     # # Train EMA for couple epochs before training parameters
     for epoch in range(args.start_epoch, 1):
         print("EMA training epochs...")
@@ -505,9 +619,17 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             
             train_ema(train_loader, model, criterion, epoch, args)
             acc1 = validate(test_loader, model, criterion, args)
+            mac, _ = profile(model, inputs=(temp, ),
+                            custom_ops={QuantConv2d: count_conv2d,
+                                        QuantBnConv2d: count_bnconv2d,
+                                        QuantBn: count_bn,
+                                        QuantLinear: count_linear,
+                                        QuantAct: count_act,
+                                        })
             
             accuracy = torch.cat((accuracy, acc1))  # Initial Validate Accuracy
             ratio = torch.cat((ratio, incremental_channel_selection(model, args.range_ratio)), dim=1)   # Initial Channel Ratio
+            macs = torch.cat((macs, torch.tensor([mac])))
         else:
             train_ema(train_loader, model, criterion, epoch, args)
             accuracy = torch.cat((accuracy, validate(test_loader, model, criterion, args)))
@@ -520,11 +642,16 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             ratio = torch.cat((ratio, r), dim=1)    # Channel Ratio
         else:
             train(train_loader, model, criterion, optimizer, epoch, args)
-        tuning_fin_time = time.time()
-        one_epoch_time = get_time_cost_in_string(
-            tuning_fin_time - tuning_start_time)
         acc1 = validate(test_loader, model, criterion, args)
+        mac, _ = profile(model, inputs=(temp, ),
+                        custom_ops={QuantConv2d: count_conv2d,
+                                    QuantBnConv2d: count_bnconv2d,
+                                    QuantBn: count_bn,
+                                    QuantLinear: count_linear,
+                                    QuantAct: count_act,
+                                    })
         accuracy = torch.cat((accuracy, acc1))  # Validate Accuracy
+        macs = torch.cat((macs, torch.tensor([mac])))
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -534,7 +661,7 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
 
         logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f} / Channel Ratio: {r[0].item():.3f} / Parameter Ratio: {r[1].item():.3f}')
 
-    statistics = torch.cat((accuracy.view(1, -1), ratio)).numpy()
+    statistics = torch.cat((accuracy.view(1, -1), ratio, macs.view(1, -1))).numpy()
     statistics = pd.DataFrame(statistics)
     statistics.to_csv(f"{args.arch}_{args.dataset}_{args.range_ratio}_{args.gradient_manipulation_ratio}.csv", index=False)
     
@@ -575,7 +702,7 @@ def train_ema(train_loader, model, criterion, epoch, args):
 
                 t.set_postfix(acc1=top1.avg, acc5=top5.avg, loss=losses.avg)
 
-
+ 
 def train(train_loader, model, criterion, optimizer, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -753,7 +880,7 @@ def incremental_channel_selection(model, range_ratio):
             # accumulate new selected channel to selected channel pool
             module.selected_channel = accumulated_selected_channel
             module.selected_channel_index = accumulated_selected_channel.nonzero().view(-1)
-
+            
             # statistic
             low_bit_channel = module.selected_channel_index.size(0)
             orig_bit_channel = module.selected_channel.size(0)
