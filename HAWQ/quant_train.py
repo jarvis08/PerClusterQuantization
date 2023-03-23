@@ -598,14 +598,6 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
     macs = torch.zeros([0])
     
     temp = torch.randn(1, 3, 32, 32).cuda()
-    mac, _ = profile(model, inputs=(temp, ),
-                    custom_ops={QuantConv2d: count_conv2d,
-                                QuantBnConv2d: count_bnconv2d,
-                                QuantBn: count_bn,
-                                QuantLinear: count_linear,
-                                QuantAct: count_act,
-                                })
-    macs = torch.cat((macs, torch.tensor([mac])))
     
     # # Train EMA for couple epochs before training parameters
     for epoch in range(args.start_epoch, 1):
