@@ -20,6 +20,7 @@ import warnings
 
 from tqdm import tqdm
 
+import pdb
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -488,6 +489,89 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
+
+    def remove_all_forward_hooks(model):
+        from collections import OrderedDict
+        for _, child in model._modules.items():
+            if child is not None:
+                if hasattr(child, "_forward_hooks"):
+                    child._forward_hooks = OrderedDict()
+                remove_all_forward_hooks(child)
+                
+                
+    def measure_saturation_sensitivity(model, feature, count, scale=0):
+        def hook_fn(name):
+            def hook(module, input, output):
+                fine_grained_weight = module.weight_integer.unsqueeze(0).transpose(0, 2)
+                fine_grained_input = (input[0] / input[1]).unsqueeze(0).transpose(0, 2)
+                
+                conv_args = dict(bias = None,
+                                stride = module.conv.stride,
+                                padding = module.conv.padding,
+                                dilation = module.conv.dilation,
+                                groups = module.conv.groups
+                                )
+                
+                if name not in feature:
+                    feature[name] = torch.zeros(output[0].shape[1:]).cuda()
+                    count[name] = torch.zeros(0).cuda()
+                    
+                out = torch.zeros_like(output[0])
+                max = torch.zeros_like(output[0])
+                for i in range(fine_grained_weight.size(0)):
+                    out += F.conv2d(fine_grained_input[i], fine_grained_weight[i], **conv_args)
+                    max = torch.max(max, torch.abs(out))
+                
+                margin_bits = int(module.weight_bit / 2) * scale
+                buffer_bits = module.weight_bit + margin_bits - 1
+                saturated = torch.gt(max, 2**buffer_bits)
+                
+                feature[name] += torch.sum(saturated, dim=0)
+                count[name] = torch.cat((count[name],torch.any(saturated.view(saturated.size(0), -1), dim=1)))
+                
+                s1s2 = input[1] * output[1].view(1, -1, 1, 1)
+                output = list(output)
+                output[0] = ((output[0] / s1s2 + 2**buffer_bits) % 2**(buffer_bits+1) - 2**buffer_bits) * s1s2
+                return tuple(output)
+            return hook
+        
+        for name, layer in model.named_modules():
+            if isinstance(layer, (QuantConv2d, QuantBnConv2d)):
+                layer.register_forward_hook(hook_fn(name))
+
+
+    # train_ema(train_loader, model, criterion, 0, args)
+    # validate(test_loader, model, criterion, args)
+    
+    # count_saturated_data = [{}, {}, {}, {}, {}, {}, {}]
+    # features = [{}, {}, {}, {}, {}, {}, {}]
+    
+    # for i, (feature, count) in enumerate(zip(features, count_saturated_data)):
+    #     measure_saturation_sensitivity(model, feature, count, scale=i)
+    #     validate(test_loader, model, criterion, args)
+    #     remove_all_forward_hooks(model)
+    
+    # for i, (feature, count) in enumerate(zip(features, count_saturated_data)):
+    #     saturated_neuron_count = 0
+    #     saturation_count = 0
+    #     total_neuron_size = 0
+    #     saturated_data = torch.zeros([len(test_loader.dataset)], dtype=torch.bool).cuda()
+    #     for _, v in feature.items():
+    #         saturated_neuron_count += v.count_nonzero().item()
+    #         saturation_count += v.sum().item()
+    #         total_neuron_size += v.numel()
+    #     for _, v in count.items():
+    #         saturated_data = torch.logical_or(saturated_data, v.to(torch.bool))
+    #     average_saturated_neurons = saturation_count / len(test_loader.dataset)
+    #     saturation_ratio = saturation_count / (total_neuron_size * len(test_loader.dataset))
+    #     saturation_data_ratio = saturated_data.sum() / saturated_data.size(0)
+    #     print(f"buffer bits : {16} -> {4 + 2*i}... saturated neurons : {saturated_neuron_count}, \
+    #         average saturated neurons : {average_saturated_neurons}, \
+    #         saturation ratio : {saturation_ratio} \
+    #         saturated data ratio : {saturation_data_ratio}")
+        
+    # exit()
+    
     from thop import profile
     
     def count_conv2d(m, x, y):
@@ -611,17 +695,17 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             
             train_ema(train_loader, model, criterion, epoch, args)
             acc1 = validate(test_loader, model, criterion, args)
-            mac, _ = profile(model, inputs=(temp, ),
-                            custom_ops={QuantConv2d: count_conv2d,
-                                        QuantBnConv2d: count_bnconv2d,
-                                        QuantBn: count_bn,
-                                        QuantLinear: count_linear,
-                                        QuantAct: count_act,
-                                        })
+            # mac, _ = profile(model, inputs=(temp, ),
+            #                    custom_ops={QuantConv2d: count_conv2d,
+            #                             QuantBnConv2d: count_bnconv2d,
+            #                             QuantBn: count_bn,
+            #                             QuantLinear: count_linear,
+            #                             QuantAct: count_act,
+            #                             })
             
             accuracy = torch.cat((accuracy, acc1))  # Initial Validate Accuracy
             ratio = torch.cat((ratio, incremental_channel_selection(model, args.range_ratio)), dim=1)   # Initial Channel Ratio
-            macs = torch.cat((macs, torch.tensor([mac])))
+            # macs = torch.cat((macs, torch.tensor([mac])))
         else:
             train_ema(train_loader, model, criterion, epoch, args)
             accuracy = torch.cat((accuracy, validate(test_loader, model, criterion, args)))
@@ -635,15 +719,15 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
         else:
             train(train_loader, model, criterion, optimizer, epoch, args)
         acc1 = validate(test_loader, model, criterion, args)
-        mac, _ = profile(model, inputs=(temp, ),
-                        custom_ops={QuantConv2d: count_conv2d,
-                                    QuantBnConv2d: count_bnconv2d,
-                                    QuantBn: count_bn,
-                                    QuantLinear: count_linear,
-                                    QuantAct: count_act,
-                                    })
+        # mac, _ = profile(model, inputs=(temp, ),
+        #                 custom_ops={QuantConv2d: count_conv2d,
+        #                             QuantBnConv2d: count_bnconv2d,
+        #                             QuantBn: count_bn,
+        #                             QuantLinear: count_linear,
+        #                             QuantAct: count_act,
+        #                             })
         accuracy = torch.cat((accuracy, acc1))  # Validate Accuracy
-        macs = torch.cat((macs, torch.tensor([mac])))
+        # macs = torch.cat((macs, torch.tensor([mac])))
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -651,12 +735,45 @@ def main_worker(gpu, ngpus_per_node, args, data_loaders):
             best_acc1 = max(acc1, best_acc1)
             best_epoch = epoch
 
-        logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f} / Channel Ratio: {r[0].item():.3f} / Parameter Ratio: {r[1].item():.3f}')
+        if args.mixed_precision:
+            logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f} / Channel Ratio: {r[0].item():.3f} / Parameter Ratio: {r[1].item():.3f}')
+        else:
+            logging.info(f'Acc at epoch {epoch}: {acc1.item():.3f} / Best acc at epoch {best_epoch}: {best_acc1.item():.3f}')
 
-    statistics = torch.cat((accuracy.view(1, -1), ratio, macs.view(1, -1))).numpy()
-    statistics = pd.DataFrame(statistics)
-    statistics.to_csv(f"{args.arch}_{args.dataset}_{args.range_ratio}_{args.gradient_manipulation_ratio}.csv", index=False)
+
+
+    # statistics = torch.cat((accuracy.view(1, -1), ratio, macs.view(1, -1))).numpy()
+    # statistics = pd.DataFrame(statistics)
+    # statistics.to_csv(f"{args.arch}_{args.dataset}_{args.range_ratio}_{args.gradient_manipulation_ratio}.csv", index=False)
     
+    
+    count_saturated_data = [{}, {}, {}, {}, {}, {}, {}]
+    features = [{}, {}, {}, {}, {}, {}, {}]
+    
+    for i, (feature, count) in enumerate(zip(features, count_saturated_data)):
+        measure_saturation_sensitivity(model, feature, count, scale=i)
+        # swap_and_measure_saturation_sensitivity(model, feature, count, scale=i)
+        validate(test_loader, model, criterion, args)
+        remove_all_forward_hooks(model)
+    
+    for i, (feature, count) in enumerate(zip(features, count_saturated_data)):
+        saturated_neuron_count = 0
+        saturation_count = 0
+        total_neuron_size = 0
+        saturated_data = torch.zeros([len(test_loader.dataset)], dtype=torch.bool).cuda()
+        for _, v in feature.items():
+            saturated_neuron_count += v.count_nonzero().item()
+            saturation_count += v.sum().item()
+            total_neuron_size += v.numel()
+        for _, v in count.items():
+            saturated_data = torch.logical_or(saturated_data, v.to(torch.bool))
+        average_saturated_neurons = saturation_count / len(test_loader.dataset)
+        saturation_ratio = saturation_count / (total_neuron_size * len(test_loader.dataset))
+        saturation_data_ratio = saturated_data.sum() / saturated_data.size(0)
+        print(f"buffer bits : {16} -> {4 + 2*i}... saturated neurons : {saturated_neuron_count}, \
+            average saturated neurons : {average_saturated_neurons}, \
+            saturation ratio : {saturation_ratio} \
+            saturated data ratio : {saturation_data_ratio}")
 
 def train_ema(train_loader, model, criterion, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
